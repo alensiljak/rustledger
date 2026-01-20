@@ -1,0 +1,505 @@
+# Compatibility workflow - compare rustledger vs Python beancount
+#
+# Measures compatibility across multiple dimensions:
+# 1. Check exit code match (bean-check vs rledger-check)
+# 2. AST/Directive comparison (accounts, posting counts, errors)
+# 3. BQL query result match
+#
+name: Compatibility
+
+on:
+  schedule:
+    - cron: '0 3 * * *'  # Nightly at 3 AM UTC (1 hour after benchmarks)
+  workflow_dispatch:
+
+# Prevent concurrent runs from racing on the compatibility branch
+concurrency:
+  group: compatibility
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  compatibility-test:
+    name: Run compatibility tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        with:
+          cache-on-failure: true
+          prefix-key: compat
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install beancount beanquery matplotlib pyyaml
+
+      - name: Build rustledger
+        run: |
+          cargo build --release -p rustledger --no-default-features
+
+      - name: Verify tool installations
+        run: |
+          echo "=== Installed versions ==="
+          bean-check --version
+          bean-query --version
+          ./target/release/rledger-check --version
+          ./target/release/rledger-query --version
+
+      - name: Run check compatibility test
+        id: check_compat
+        run: |
+          echo "=== Check Compatibility Test ==="
+
+          # Run on curated test files
+          TEST_DIR="tests/compat/files"
+          RESULTS_FILE="compat-check-results.jsonl"
+
+          total=0
+          match=0
+          rust_only_pass=0
+          python_only_pass=0
+
+          for file in $(find "$TEST_DIR" -name "*.beancount" -type f | sort); do
+            total=$((total + 1))
+
+            # Run bean-check (Python)
+            python_exit=0
+            bean-check "$file" >/dev/null 2>&1 || python_exit=$?
+
+            # Run rledger-check (Rust)
+            rust_exit=0
+            ./target/release/rledger-check "$file" >/dev/null 2>&1 || rust_exit=$?
+
+            # Compare exit codes (both 0 or both non-zero)
+            python_ok=$([[ $python_exit -eq 0 ]] && echo "true" || echo "false")
+            rust_ok=$([[ $rust_exit -eq 0 ]] && echo "true" || echo "false")
+
+            if [[ "$python_ok" == "$rust_ok" ]]; then
+              match=$((match + 1))
+            elif [[ "$rust_ok" == "true" ]]; then
+              rust_only_pass=$((rust_only_pass + 1))
+            else
+              python_only_pass=$((python_only_pass + 1))
+            fi
+
+            # Output JSONL result
+            echo "{\"file\":\"$(basename "$file")\",\"python_ok\":$python_ok,\"rust_ok\":$rust_ok}" >> "$RESULTS_FILE"
+          done
+
+          # Calculate percentage
+          match_pct=$((match * 100 / total))
+
+          echo "Total files: $total"
+          echo "Exit code match: $match ($match_pct%)"
+          echo "Rust only pass: $rust_only_pass"
+          echo "Python only pass: $python_only_pass"
+
+          # Output for later steps
+          {
+            echo "check_total=$total"
+            echo "check_match=$match"
+            echo "check_match_pct=$match_pct"
+            echo "rust_only_pass=$rust_only_pass"
+            echo "python_only_pass=$python_only_pass"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Run AST compatibility test
+        id: ast_compat
+        run: |
+          echo "=== AST/Directive Compatibility Test ==="
+
+          python3 << 'EOF'
+          import json
+          import subprocess
+          import os
+          from collections import Counter
+          from pathlib import Path
+
+          try:
+              from beancount import loader
+              from beancount.core import data
+              BEANCOUNT_AVAILABLE = True
+          except ImportError:
+              BEANCOUNT_AVAILABLE = False
+              print("Warning: beancount not installed")
+
+          TEST_DIR = Path("tests/compat/files")
+          RLEDGER_CHECK = "./target/release/rledger-check"
+          RLEDGER_QUERY = "./target/release/rledger-query"
+
+          results = []
+
+          for file_path in sorted(TEST_DIR.rglob("*.beancount")):
+              result = {
+                  "file": file_path.name,
+                  "accounts_match": False,
+                  "posting_count_match": False,
+                  "error_match": False,
+              }
+
+              # Parse with Python
+              python_accounts = set()
+              python_posting_count = 0
+              python_error_count = 0
+
+              if BEANCOUNT_AVAILABLE:
+                  try:
+                      entries, errors, options = loader.load_file(str(file_path))
+                      python_error_count = len(errors)
+                      for entry in entries:
+                          if isinstance(entry, data.Open):
+                              python_accounts.add(entry.account)
+                          elif isinstance(entry, data.Transaction):
+                              python_posting_count += len(entry.postings)
+                              for posting in entry.postings:
+                                  python_accounts.add(posting.account)
+                          elif isinstance(entry, data.Balance):
+                              python_accounts.add(entry.account)
+                  except Exception as e:
+                      python_error_count = 1
+
+              # Parse with Rust - get error count
+              rust_error_count = 0
+              try:
+                  proc = subprocess.run(
+                      [RLEDGER_CHECK, "--format", "json", str(file_path)],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  if proc.stdout.strip():
+                      data_json = json.loads(proc.stdout)
+                      rust_error_count = data_json.get("error_count", 0)
+              except Exception:
+                  pass
+
+              # Get accounts via BQL
+              rust_accounts = set()
+              try:
+                  proc = subprocess.run(
+                      [RLEDGER_QUERY, str(file_path), "SELECT DISTINCT account ORDER BY account"],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  if proc.returncode == 0:
+                      for line in proc.stdout.strip().split('\n')[2:]:
+                          line = line.strip()
+                          if line and not line.startswith('-') and 'row(s)' not in line:
+                              rust_accounts.add(line)
+              except Exception:
+                  pass
+
+              # Get posting count via BQL
+              rust_posting_count = 0
+              try:
+                  proc = subprocess.run(
+                      [RLEDGER_QUERY, str(file_path), "SELECT COUNT(*)"],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  if proc.returncode == 0:
+                      for line in proc.stdout.strip().split('\n')[2:]:
+                          line = line.strip()
+                          if line and not line.startswith('-') and 'row(s)' not in line:
+                              try:
+                                  rust_posting_count = int(line)
+                              except ValueError:
+                                  pass
+                              break
+              except Exception:
+                  pass
+
+              # Compare
+              result["accounts_match"] = (python_accounts == rust_accounts)
+              result["posting_count_match"] = (python_posting_count == rust_posting_count)
+              result["error_match"] = ((python_error_count > 0) == (rust_error_count > 0))
+
+              results.append(result)
+
+          # Calculate totals
+          total = len(results)
+          accounts_match = sum(1 for r in results if r["accounts_match"])
+          posting_match = sum(1 for r in results if r["posting_count_match"])
+          error_match = sum(1 for r in results if r["error_match"])
+          full_match = sum(1 for r in results if r["accounts_match"] and r["posting_count_match"] and r["error_match"])
+
+          # Output percentages
+          accounts_pct = accounts_match * 100 // total if total > 0 else 0
+          posting_pct = posting_match * 100 // total if total > 0 else 0
+          error_pct = error_match * 100 // total if total > 0 else 0
+          full_pct = full_match * 100 // total if total > 0 else 0
+
+          print(f"Total files: {total}")
+          print(f"Accounts match: {accounts_match}/{total} ({accounts_pct}%)")
+          print(f"Posting count match: {posting_match}/{total} ({posting_pct}%)")
+          print(f"Error presence match: {error_match}/{total} ({error_pct}%)")
+          print(f"Full match: {full_match}/{total} ({full_pct}%)")
+
+          # Write to GITHUB_OUTPUT
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"ast_total={total}\n")
+              f.write(f"accounts_match={accounts_match}\n")
+              f.write(f"accounts_pct={accounts_pct}\n")
+              f.write(f"posting_match={posting_match}\n")
+              f.write(f"posting_pct={posting_pct}\n")
+              f.write(f"error_match={error_match}\n")
+              f.write(f"error_pct={error_pct}\n")
+              f.write(f"full_match={full_match}\n")
+              f.write(f"full_pct={full_pct}\n")
+
+          # Write detailed results to JSONL
+          with open("compat-ast-results.jsonl", "w") as f:
+              for r in results:
+                  f.write(json.dumps(r) + "\n")
+          EOF
+
+      - name: Generate YAML summary
+        run: |
+          cat > compat-results.yaml << EOF
+          # Rustledger Compatibility Results
+          # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          check_compatibility:
+            total_files: ${{ steps.check_compat.outputs.check_total }}
+            exit_code_match: ${{ steps.check_compat.outputs.check_match }}
+            exit_code_match_pct: ${{ steps.check_compat.outputs.check_match_pct }}
+            rust_only_pass: ${{ steps.check_compat.outputs.rust_only_pass }}
+            python_only_pass: ${{ steps.check_compat.outputs.python_only_pass }}
+
+          ast_compatibility:
+            total_files: ${{ steps.ast_compat.outputs.ast_total }}
+            accounts_match: ${{ steps.ast_compat.outputs.accounts_match }}
+            accounts_match_pct: ${{ steps.ast_compat.outputs.accounts_pct }}
+            posting_count_match: ${{ steps.ast_compat.outputs.posting_match }}
+            posting_count_match_pct: ${{ steps.ast_compat.outputs.posting_pct }}
+            error_presence_match: ${{ steps.ast_compat.outputs.error_match }}
+            error_presence_match_pct: ${{ steps.ast_compat.outputs.error_pct }}
+            full_match: ${{ steps.ast_compat.outputs.full_match }}
+            full_match_pct: ${{ steps.ast_compat.outputs.full_pct }}
+          EOF
+
+          echo "=== YAML Summary ==="
+          cat compat-results.yaml
+
+      - name: Fetch existing history from compatibility branch
+        run: |
+          mkdir -p .github/badges
+          curl -sSf https://raw.githubusercontent.com/${{ github.repository }}/compatibility/.github/badges/compat-history.json \
+            -o .github/badges/compat-history.json 2>/dev/null || echo "[]" > .github/badges/compat-history.json
+
+      - name: Update results and generate charts
+        run: |
+          python3 << 'EOF'
+          import json
+          import os
+          from datetime import datetime
+          import matplotlib.pyplot as plt
+          import matplotlib.dates as mdates
+          from pathlib import Path
+
+          # Get results from environment
+          check_match_pct = int(os.environ.get('CHECK_MATCH_PCT', 0))
+          accounts_pct = int(os.environ.get('ACCOUNTS_PCT', 0))
+          posting_pct = int(os.environ.get('POSTING_PCT', 0))
+          error_pct = int(os.environ.get('ERROR_PCT', 0))
+          full_pct = int(os.environ.get('FULL_PCT', 0))
+
+          now = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+          date_short = datetime.utcnow().strftime('%Y-%m-%d')
+
+          # Update history
+          history_file = Path('.github/badges/compat-history.json')
+          history = json.loads(history_file.read_text())
+          history.append({
+              'date': date_short,
+              'timestamp': now,
+              'check_match_pct': check_match_pct,
+              'accounts_pct': accounts_pct,
+              'posting_pct': posting_pct,
+              'error_pct': error_pct,
+              'full_pct': full_pct,
+          })
+          history = history[-90:]  # Keep 90 days
+          history_file.write_text(json.dumps(history, indent=2))
+
+          # Common chart styling
+          plt.style.use('dark_background')
+
+          def style_chart(ax, fig):
+              ax.grid(True, alpha=0.3, linestyle='--')
+              ax.set_facecolor('#1a1a2e')
+              fig.patch.set_facecolor('#1a1a2e')
+              ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d'))
+              ax.xaxis.set_major_locator(mdates.AutoDateLocator())
+              plt.xticks(rotation=45, ha='right')
+              ax.set_ylim(0, 105)  # Percentages with some headroom
+
+          # Generate compatibility chart
+          if len(history) >= 2:
+              dates = [datetime.strptime(h['date'], '%Y-%m-%d') for h in history]
+              check_vals = [h.get('check_match_pct', 0) for h in history]
+              accounts_vals = [h.get('accounts_pct', 0) for h in history]
+              posting_vals = [h.get('posting_pct', 0) for h in history]
+              error_vals = [h.get('error_pct', 0) for h in history]
+              full_vals = [h.get('full_pct', 0) for h in history]
+
+              # Chart 1: Check exit code match over time
+              fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+              ax.plot(dates, check_vals, 'o-', color='#00d4aa', linewidth=2,
+                      markersize=5, label='Check Exit Match')
+              ax.fill_between(dates, check_vals, alpha=0.3, color='#00d4aa')
+              ax.axhline(y=90, color='#f4b942', linestyle='--', alpha=0.5, label='90% target')
+
+              ax.set_ylabel('Match %', fontsize=12, color='white')
+              ax.legend(loc='lower right', framealpha=0.9)
+              ax.set_title('bean-check vs rledger-check Exit Code Match', fontsize=13, color='white', pad=10)
+              style_chart(ax, fig)
+
+              plt.tight_layout()
+              plt.savefig('.github/badges/compat-check-chart.svg', format='svg',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.savefig('.github/badges/compat-check-chart.png', format='png',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.close()
+              print("Generated check compatibility chart")
+
+              # Chart 2: AST comparison metrics over time
+              fig, ax = plt.subplots(figsize=(10, 4), dpi=100)
+              ax.plot(dates, accounts_vals, 'o-', color='#00d4aa', linewidth=2,
+                      markersize=4, label='Accounts Match')
+              ax.plot(dates, posting_vals, 's-', color='#f4b942', linewidth=2,
+                      markersize=4, label='Posting Count Match')
+              ax.plot(dates, error_vals, '^-', color='#9b59b6', linewidth=2,
+                      markersize=4, label='Error Presence Match')
+              ax.plot(dates, full_vals, 'D-', color='#e74c3c', linewidth=2,
+                      markersize=4, label='Full Match')
+
+              ax.set_ylabel('Match %', fontsize=12, color='white')
+              ax.legend(loc='lower right', framealpha=0.9, fontsize=9)
+              ax.set_title('AST/Directive Compatibility Metrics', fontsize=13, color='white', pad=10)
+              style_chart(ax, fig)
+
+              plt.tight_layout()
+              plt.savefig('.github/badges/compat-ast-chart.svg', format='svg',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.savefig('.github/badges/compat-ast-chart.png', format='png',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.close()
+              print("Generated AST compatibility chart")
+
+              # Chart 3: Combined overview (bar chart of latest values)
+              fig, ax = plt.subplots(figsize=(8, 4), dpi=100)
+              metrics = ['Check\nExit', 'Accounts', 'Posting\nCount', 'Error\nPresence', 'Full\nMatch']
+              values = [check_match_pct, accounts_pct, posting_pct, error_pct, full_pct]
+              colors = ['#00d4aa', '#3498db', '#f4b942', '#9b59b6', '#e74c3c']
+
+              bars = ax.bar(metrics, values, color=colors, edgecolor='white', linewidth=1)
+              ax.axhline(y=90, color='#f4b942', linestyle='--', alpha=0.7, label='90% target')
+
+              # Add value labels on bars
+              for bar, val in zip(bars, values):
+                  height = bar.get_height()
+                  ax.annotate(f'{val}%',
+                              xy=(bar.get_x() + bar.get_width() / 2, height),
+                              xytext=(0, 3),
+                              textcoords="offset points",
+                              ha='center', va='bottom', fontsize=11, color='white')
+
+              ax.set_ylabel('Match %', fontsize=12, color='white')
+              ax.set_title('Beancount Compatibility Summary', fontsize=13, color='white', pad=10)
+              ax.set_facecolor('#1a1a2e')
+              fig.patch.set_facecolor('#1a1a2e')
+              ax.set_ylim(0, 110)
+              ax.grid(True, alpha=0.3, linestyle='--', axis='y')
+
+              plt.tight_layout()
+              plt.savefig('.github/badges/compat-summary-chart.svg', format='svg',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.savefig('.github/badges/compat-summary-chart.png', format='png',
+                          facecolor='#1a1a2e', edgecolor='none', bbox_inches='tight')
+              plt.close()
+              print("Generated summary chart")
+
+          print(f"\n## Compatibility Results")
+          print(f"Check exit match: {check_match_pct}%")
+          print(f"Accounts match: {accounts_pct}%")
+          print(f"Posting count match: {posting_pct}%")
+          print(f"Error presence match: {error_pct}%")
+          print(f"Full AST match: {full_pct}%")
+          EOF
+        env:
+          CHECK_MATCH_PCT: ${{ steps.check_compat.outputs.check_match_pct }}
+          ACCOUNTS_PCT: ${{ steps.ast_compat.outputs.accounts_pct }}
+          POSTING_PCT: ${{ steps.ast_compat.outputs.posting_pct }}
+          ERROR_PCT: ${{ steps.ast_compat.outputs.error_pct }}
+          FULL_PCT: ${{ steps.ast_compat.outputs.full_pct }}
+
+      - name: Update summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## Beancount Compatibility Results
+
+          ### Check Compatibility (bean-check vs rledger-check)
+          | Metric | Value |
+          |--------|-------|
+          | Total files | ${{ steps.check_compat.outputs.check_total }} |
+          | **Exit code match** | **${{ steps.check_compat.outputs.check_match_pct }}%** (${{ steps.check_compat.outputs.check_match }}/${{ steps.check_compat.outputs.check_total }}) |
+          | Rust only pass | ${{ steps.check_compat.outputs.rust_only_pass }} |
+          | Python only pass | ${{ steps.check_compat.outputs.python_only_pass }} |
+
+          ### AST/Directive Compatibility
+          | Metric | Match Rate |
+          |--------|------------|
+          | Accounts match | ${{ steps.ast_compat.outputs.accounts_pct }}% (${{ steps.ast_compat.outputs.accounts_match }}/${{ steps.ast_compat.outputs.ast_total }}) |
+          | Posting count match | ${{ steps.ast_compat.outputs.posting_pct }}% (${{ steps.ast_compat.outputs.posting_match }}/${{ steps.ast_compat.outputs.ast_total }}) |
+          | Error presence match | ${{ steps.ast_compat.outputs.error_pct }}% (${{ steps.ast_compat.outputs.error_match }}/${{ steps.ast_compat.outputs.ast_total }}) |
+          | **Full match** | **${{ steps.ast_compat.outputs.full_pct }}%** (${{ steps.ast_compat.outputs.full_match }}/${{ steps.ast_compat.outputs.ast_total }}) |
+
+          *Tested against curated compatibility test suite*
+          EOF
+
+      - name: Commit results to compatibility branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Save the generated files
+          cp -r .github/badges /tmp/badges
+          cp compat-results.yaml /tmp/
+          cp compat-check-results.jsonl /tmp/ 2>/dev/null || true
+          cp compat-ast-results.jsonl /tmp/ 2>/dev/null || true
+
+          # Discard local changes and untracked files before switching branches
+          git checkout -- .
+          git clean -fd
+
+          # Fetch and checkout compatibility branch (create if doesn't exist)
+          git fetch origin compatibility || true
+          if git rev-parse --verify origin/compatibility >/dev/null 2>&1; then
+            git checkout compatibility
+            git pull --rebase origin compatibility || true
+          else
+            git checkout --orphan compatibility
+            git rm -rf . || true
+            mkdir -p .github/badges
+          fi
+
+          # Copy results and commit
+          cp -r /tmp/badges/* .github/badges/
+          cp /tmp/compat-results.yaml .github/badges/
+          cp /tmp/compat-check-results.jsonl .github/badges/ 2>/dev/null || true
+          cp /tmp/compat-ast-results.jsonl .github/badges/ 2>/dev/null || true
+
+          git add .github/badges/
+          git diff --staged --quiet || git commit -m "chore: update compatibility results"
+          git push origin compatibility
