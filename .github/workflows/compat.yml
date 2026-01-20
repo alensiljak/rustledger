@@ -71,7 +71,7 @@ jobs:
       - name: Run comprehensive compatibility test
         id: compat_test
         run: |
-          echo "=== Comprehensive Compatibility Test ==="
+          echo "=== Comprehensive Compatibility Test (Parallel) ==="
 
           python3 << 'EOF'
           import json
@@ -79,9 +79,11 @@ jobs:
           import os
           import re
           from collections import Counter, defaultdict
+          from concurrent.futures import ThreadPoolExecutor, as_completed
           from pathlib import Path
           from dataclasses import dataclass, field, asdict
           from typing import Optional
+          import multiprocessing
 
           try:
               from beancount import loader
@@ -94,6 +96,10 @@ jobs:
           TEST_DIR = Path("tests/compat/files")
           RLEDGER_CHECK = "./target/release/rledger-check"
           RLEDGER_QUERY = "./target/release/rledger-query"
+
+          # Use available CPUs, but cap at 8 for CI stability
+          MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
+          print(f"Running with {MAX_WORKERS} parallel workers")
 
           # Category mapping based on directory structure
           def get_category(file_path: Path) -> str:
@@ -132,13 +138,10 @@ jobs:
                   return (self.check_match and self.accounts_match and
                           self.posting_count_match and self.error_presence_match)
 
-          results = []
-          category_stats = defaultdict(lambda: {"total": 0, "check_match": 0, "full_match": 0})
-
-          for file_path in sorted(TEST_DIR.rglob("*.beancount")):
+          def test_file(file_path: Path) -> FileResult:
+              """Test a single file - designed to run in parallel."""
               category = get_category(file_path)
               result = FileResult(file=file_path.name, category=category)
-              category_stats[category]["total"] += 1
 
               # === Python parsing ===
               python_accounts = set()
@@ -150,10 +153,9 @@ jobs:
                       result.python_ok = (len(errors) == 0)
                       result.python_error_count = len(errors)
 
-                      # Extract error types (first word after the colon)
+                      # Extract error types
                       for err in errors[:5]:
                           err_str = str(err)
-                          # Try to extract error code/type
                           match = re.search(r':\s*(\w+Error|\w+Warning|[A-Z]\d+)', err_str)
                           if match:
                               result.python_error_types.append(match.group(1))
@@ -187,7 +189,6 @@ jobs:
                       try:
                           data_json = json.loads(proc.stdout)
                           result.rust_error_count = data_json.get("error_count", 0)
-                          # Extract error codes
                           for diag in data_json.get("diagnostics", [])[:5]:
                               code = diag.get("code", "")
                               if code:
@@ -239,13 +240,37 @@ jobs:
 
               result.posting_count_match = (result.python_posting_count == result.rust_posting_count)
 
-              # Update category stats
-              if result.check_match:
-                  category_stats[category]["check_match"] += 1
-              if result.full_match:
-                  category_stats[category]["full_match"] += 1
+              return result
 
-              results.append(result)
+          # === Run tests in parallel ===
+          files = sorted(TEST_DIR.rglob("*.beancount"))
+          print(f"Testing {len(files)} files...")
+
+          results = []
+          completed = 0
+
+          with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+              futures = {executor.submit(test_file, f): f for f in files}
+              for future in as_completed(futures):
+                  try:
+                      result = future.result()
+                      results.append(result)
+                      completed += 1
+                      if completed % 20 == 0:
+                          print(f"  Progress: {completed}/{len(files)} files")
+                  except Exception as e:
+                      print(f"Error testing {futures[future]}: {e}")
+
+          print(f"Completed {len(results)} files")
+
+          # === Calculate category stats (after parallel execution) ===
+          category_stats = defaultdict(lambda: {"total": 0, "check_match": 0, "full_match": 0})
+          for r in results:
+              category_stats[r.category]["total"] += 1
+              if r.check_match:
+                  category_stats[r.category]["check_match"] += 1
+              if r.full_match:
+                  category_stats[r.category]["full_match"] += 1
 
           # === Calculate totals ===
           total = len(results)
@@ -354,16 +379,21 @@ jobs:
       - name: Run BQL compatibility test
         id: bql_compat
         run: |
-          echo "=== BQL Compatibility Test ==="
+          echo "=== BQL Compatibility Test (Parallel) ==="
 
           python3 << 'EOF'
           import json
           import subprocess
           import os
           from pathlib import Path
+          from concurrent.futures import ThreadPoolExecutor, as_completed
+          import multiprocessing
 
           TEST_DIR = Path("tests/compat/files")
           RLEDGER_QUERY = "./target/release/rledger-query"
+
+          MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
+          print(f"Running BQL tests with {MAX_WORKERS} parallel workers")
 
           # Standard queries to test
           QUERIES = [
@@ -371,6 +401,49 @@ jobs:
               "SELECT COUNT(*) AS total",
               "SELECT currency, COUNT(*) AS count GROUP BY currency ORDER BY count DESC LIMIT 5",
           ]
+
+          def extract_data(output):
+              """Extract data rows, skipping headers, separators, row counts."""
+              lines = []
+              for line in output.strip().split('\n')[2:]:
+                  line = line.strip()
+                  if line and not line.startswith('-') and 'row(s)' not in line:
+                      lines.append(' '.join(line.split()))
+              return sorted(lines)
+
+          def test_bql_query(args):
+              """Test a single BQL query - designed to run in parallel."""
+              file_path, filename, query = args
+
+              # Run Python bean-query
+              try:
+                  py_proc = subprocess.run(
+                      ["bean-query", str(file_path), query],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  py_out = py_proc.stdout
+              except Exception:
+                  py_out = "ERROR"
+
+              # Run Rust rledger-query
+              try:
+                  rs_proc = subprocess.run(
+                      [RLEDGER_QUERY, str(file_path), query],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  rs_out = rs_proc.stdout
+              except Exception:
+                  rs_out = "ERROR"
+
+              py_data = extract_data(py_out)
+              rs_data = extract_data(rs_out)
+              match = (py_data == rs_data)
+
+              return {
+                  "file": filename,
+                  "query": query[:50],
+                  "match": match,
+              }
 
           # Load check results to find files that passed both
           valid_files = []
@@ -384,65 +457,30 @@ jobs:
               pass
 
           valid_files = valid_files[:30]  # Test up to 30 files
-          print(f"Testing BQL on {len(valid_files)} valid files...")
+          print(f"Testing BQL on {len(valid_files)} valid files with {len(QUERIES)} queries each...")
 
-          total_queries = 0
-          matching_queries = 0
-          results = []
-
+          # Build list of (file_path, filename, query) tuples
+          test_cases = []
           for filename in valid_files:
-              # Find full path
               matches = list(TEST_DIR.rglob(filename))
               if not matches:
                   continue
               file_path = matches[0]
-
               for query in QUERIES:
-                  total_queries += 1
+                  test_cases.append((file_path, filename, query))
 
-                  # Run Python bean-query
+          # Run tests in parallel
+          results = []
+          with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+              futures = [executor.submit(test_bql_query, tc) for tc in test_cases]
+              for future in as_completed(futures):
                   try:
-                      py_proc = subprocess.run(
-                          ["bean-query", str(file_path), query],
-                          capture_output=True, text=True, timeout=30
-                      )
-                      py_out = py_proc.stdout
-                  except Exception:
-                      py_out = "ERROR"
+                      results.append(future.result())
+                  except Exception as e:
+                      print(f"Error: {e}")
 
-                  # Run Rust rledger-query
-                  try:
-                      rs_proc = subprocess.run(
-                          [RLEDGER_QUERY, str(file_path), query],
-                          capture_output=True, text=True, timeout=30
-                      )
-                      rs_out = rs_proc.stdout
-                  except Exception:
-                      rs_out = "ERROR"
-
-                  # Extract data rows (skip headers, separators, row counts)
-                  def extract_data(output):
-                      lines = []
-                      for line in output.strip().split('\n')[2:]:
-                          line = line.strip()
-                          if line and not line.startswith('-') and 'row(s)' not in line:
-                              # Normalize whitespace
-                              lines.append(' '.join(line.split()))
-                      return sorted(lines)
-
-                  py_data = extract_data(py_out)
-                  rs_data = extract_data(rs_out)
-
-                  match = (py_data == rs_data)
-                  if match:
-                      matching_queries += 1
-
-                  results.append({
-                      "file": filename,
-                      "query": query[:50],
-                      "match": match,
-                  })
-
+          total_queries = len(results)
+          matching_queries = sum(1 for r in results if r["match"])
           bql_pct = matching_queries * 100 // total_queries if total_queries > 0 else 0
 
           print(f"BQL queries tested: {total_queries}")

@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -e
 
-# BQL Compatibility Test
+# BQL Compatibility Test (Parallel)
 # Compares bean-query (Python) vs rledger-query (Rust) on valid beancount files
 # Run inside: nix develop --command ./scripts/compat-bql-test.sh
+#
+# Environment variables:
+#   PARALLEL_JOBS: Number of parallel workers (default: CPU count, max 8)
 
 FIXTURES_DIR="${1:-tests/compat-full}"
 RESULTS_DIR="tests/compat-results"
@@ -15,18 +18,16 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/bql_results_$TIMESTAMP.jsonl"
 
-# Standard queries to test
-QUERIES=(
-    "SELECT DISTINCT account ORDER BY account LIMIT 20"
-    "SELECT COUNT(*) AS total_txns"
-    "SELECT currency, COUNT(*) AS count GROUP BY currency ORDER BY count DESC LIMIT 10"
-    "SELECT YEAR(date) AS year, COUNT(*) AS count GROUP BY year ORDER BY year"
-)
+# Parallel settings
+PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+[ "$PARALLEL_JOBS" -gt 8 ] && PARALLEL_JOBS=8
 
-echo "=== BQL Compatibility Test ==="
+echo "=== BQL Compatibility Test (Parallel) ==="
 echo ""
 
 mkdir -p "$RESULTS_DIR"
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
 
 # Build rustledger
 echo "Building rustledger..."
@@ -44,7 +45,7 @@ if ! command -v bean-query &> /dev/null; then
     exit 1
 fi
 
-echo "Testing BQL queries on valid files..."
+echo "Using $PARALLEL_JOBS parallel workers"
 echo ""
 
 # Find files that passed both check tests (use most recent results)
@@ -58,56 +59,95 @@ fi
 mapfile -t valid_files < <(jq -r 'select(.match == true and .python.exit == 0 and .rust.exit == 0) | .file' "$COMPAT_RESULTS" | head -50)
 
 echo "Found ${#valid_files[@]} files that passed both implementations"
-echo "Testing first 50 with ${#QUERIES[@]} queries each..."
+echo "Testing with 4 queries each..."
 echo ""
 
-total_queries=0
-matching_queries=0
-failed_queries=0
+# Standard queries to test
+QUERIES_FILE="$TEMP_DIR/queries.txt"
+cat > "$QUERIES_FILE" << 'EOF'
+SELECT DISTINCT account ORDER BY account LIMIT 20
+SELECT COUNT(*) AS total_txns
+SELECT currency, COUNT(*) AS count GROUP BY currency ORDER BY count DESC LIMIT 10
+SELECT YEAR(date) AS year, COUNT(*) AS count GROUP BY year ORDER BY year
+EOF
 
+# Create test script for parallel execution
+cat > "$TEMP_DIR/test_bql.sh" << 'SCRIPT'
+#!/usr/bin/env bash
+file="$1"
+query="$2"
+FIXTURES_DIR="$3"
+RLEDGER_QUERY="$4"
+
+full_path="$FIXTURES_DIR/$file"
+[ ! -f "$full_path" ] && exit 0
+
+# Run Python bean-query
+py_out=$(bean-query "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
+
+# Run Rust rledger-query
+rs_out=$("$RLEDGER_QUERY" "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
+
+# Extract data rows (skip headers, separators, row counts)
+py_data=$(echo "$py_out" | grep -v "^-" | grep -v "row(s)" | tail -n +2 | tr -s ' \t' ' ' | sed 's/^ //; s/ $//' | sort)
+rs_data=$(echo "$rs_out" | grep -v "^-" | grep -v "row(s)" | tail -n +2 | tr -s ' \t' ' ' | sed 's/^ //; s/ $//' | sort)
+
+if [ "$py_data" = "$rs_data" ]; then
+    match="true"
+else
+    match="false"
+fi
+
+# Output JSON result (escape query for JSON)
+query_escaped=$(echo "$query" | head -c 50 | sed 's/"/\\"/g')
+echo "{\"file\":\"$file\",\"query\":\"$query_escaped\",\"match\":$match}"
+SCRIPT
+chmod +x "$TEMP_DIR/test_bql.sh"
+
+# Build list of all (file, query) pairs
+TEST_CASES_FILE="$TEMP_DIR/test_cases.txt"
+> "$TEST_CASES_FILE"
 for file in "${valid_files[@]}"; do
-    full_path="$FIXTURES_DIR/$file"
-    if [ ! -f "$full_path" ]; then
-        continue
-    fi
-
-    for query in "${QUERIES[@]}"; do
-        total_queries=$((total_queries + 1))
-
-        # Run Python bean-query
-        py_out=$(bean-query "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
-
-        # Run Rust rledger-query
-        rs_out=$("$RLEDGER_QUERY" "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
-
-        # Extract data rows only (skip headers, separators, row counts)
-        # Python format: header, separator (dashes), data rows
-        # Rust format: header, separator (dashes), data rows, "N row(s)"
-        py_data=$(echo "$py_out" | grep -v "^-" | grep -v "row(s)" | tail -n +2 | tr -s ' \t' ' ' | sed 's/^ //; s/ $//' | sort)
-        rs_data=$(echo "$rs_out" | grep -v "^-" | grep -v "row(s)" | tail -n +2 | tr -s ' \t' ' ' | sed 's/^ //; s/ $//' | sort)
-
-        if [ "$py_data" = "$rs_data" ]; then
-            matching_queries=$((matching_queries + 1))
-            match="true"
-        else
-            failed_queries=$((failed_queries + 1))
-            match="false"
-        fi
-
-        # Log result
-        echo "{\"file\":\"$file\",\"query\":\"${query:0:50}\",\"match\":$match}" >> "$RESULTS_FILE"
-    done
-
-    # Progress
-    printf "\r  Tested: %d queries (%d match, %d differ)    " "$total_queries" "$matching_queries" "$failed_queries"
+    while IFS= read -r query; do
+        echo "$file	$query" >> "$TEST_CASES_FILE"
+    done < "$QUERIES_FILE"
 done
 
+total_cases=$(wc -l < "$TEST_CASES_FILE" | tr -d ' ')
+echo "Running $total_cases BQL tests..."
 echo ""
+
+start_time=$(date +%s)
+
+# Run tests in parallel
+while IFS=$'\t' read -r file query; do
+    echo "$file"$'\t'"$query"
+done < "$TEST_CASES_FILE" | \
+    xargs -P "$PARALLEL_JOBS" -I {} bash -c '
+        IFS=$'"'"'\t'"'"' read -r file query <<< "{}"
+        '"$TEMP_DIR"'/test_bql.sh "$file" "$query" "'"$FIXTURES_DIR"'" "'"$RLEDGER_QUERY"'"
+    ' > "$RESULTS_FILE"
+
+end_time=$(date +%s)
+elapsed=$((end_time - start_time))
+
 echo ""
 echo "=== BQL Results Summary ==="
 echo ""
+
+total_queries=$(wc -l < "$RESULTS_FILE" | tr -d ' ')
+matching_queries=$(grep -c '"match":true' "$RESULTS_FILE" || echo 0)
+failed_queries=$((total_queries - matching_queries))
+
+if [ "$total_queries" -gt 0 ]; then
+    match_pct=$((matching_queries * 100 / total_queries))
+else
+    match_pct=0
+fi
+
 echo "Total queries:    $total_queries"
-echo "Matching:         $matching_queries ($((matching_queries * 100 / total_queries))%)"
+echo "Matching:         $matching_queries ($match_pct%)"
 echo "Different:        $failed_queries"
+echo "Execution time:   ${elapsed}s"
 echo ""
 echo "Results in: $RESULTS_FILE"

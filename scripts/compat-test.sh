@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# Beancount Compatibility Test Harness
+# Beancount Compatibility Test Harness (Parallel)
 # Compares bean-check (Python) vs rledger-check (Rust) on all .beancount files
 # Run inside: nix develop --command ./scripts/compat-test.sh [directory]
 #
@@ -23,17 +23,24 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/results_$TIMESTAMP.jsonl"
 SUMMARY_FILE="$RESULTS_DIR/summary_$TIMESTAMP.md"
 
+# Parallel settings
+PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
+# Cap at 8 for stability
+[ "$PARALLEL_JOBS" -gt 8 ] && PARALLEL_JOBS=8
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo "=== Beancount Compatibility Test Harness ==="
+echo "=== Beancount Compatibility Test Harness (Parallel) ==="
 echo ""
 
-# Create results directory
+# Create results directory and temp directory
 mkdir -p "$RESULTS_DIR"
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
 
 # Build rustledger in release mode
 echo "Building rustledger..."
@@ -54,15 +61,8 @@ fi
 echo "Using:"
 echo "  Python: $(bean-check --version 2>&1 | head -1 || echo 'bean-check available')"
 echo "  Rust:   $($RLEDGER_CHECK --version 2>&1 || echo 'rledger-check available')"
+echo "  Parallel jobs: $PARALLEL_JOBS"
 echo ""
-
-# Counters
-total=0
-parse_match=0
-check_match=0
-parse_fail_rust=0
-parse_fail_python=0
-check_mismatch=0
 
 # Find all beancount files
 mapfile -t files < <(find "$FIXTURES_DIR" -name "*.beancount" -type f | sort)
@@ -72,121 +72,93 @@ echo "Found $total_files .beancount files to test"
 echo "Results will be written to: $RESULTS_FILE"
 echo ""
 
-# Progress tracking
-progress=0
+# Export variables and functions for parallel execution
+export FIXTURES_DIR RLEDGER_CHECK TEMP_DIR
+
+# Create a test script that can be run in parallel
+cat > "$TEMP_DIR/test_one.sh" << 'SCRIPT'
+#!/usr/bin/env bash
+file="$1"
+FIXTURES_DIR="$2"
+RLEDGER_CHECK="$3"
+TEMP_DIR="$4"
+
+relpath="${file#$FIXTURES_DIR/}"
+
+# Run Python bean-check
+py_stderr=$(mktemp)
+bean-check "$file" >/dev/null 2>"$py_stderr" && py_exit=0 || py_exit=$?
+py_err=$(cat "$py_stderr" | head -c 500)
+rm -f "$py_stderr"
+
+# Run Rust rledger-check
+rs_stderr=$(mktemp)
+"$RLEDGER_CHECK" "$file" >/dev/null 2>"$rs_stderr" && rs_exit=0 || rs_exit=$?
+rs_err=$(cat "$rs_stderr" | head -c 500)
+rm -f "$rs_stderr"
+
+# Determine parse errors
+py_parse_error=false
+rs_parse_error=false
+echo "$py_err" | grep -qi "syntax error\|parse error\|unexpected" && py_parse_error=true
+echo "$rs_err" | grep -qi "syntax error\|parse error\|unexpected" && rs_parse_error=true
+
+# Check if exits match
+exit_match=false
+if [ "$py_exit" -eq 0 ] && [ "$rs_exit" -eq 0 ]; then
+    exit_match=true
+elif [ "$py_exit" -ne 0 ] && [ "$rs_exit" -ne 0 ]; then
+    exit_match=true
+fi
+
+# Count errors
+py_error_count=$(echo "$py_err" | grep -c "error\|Error" || echo 0)
+rs_error_count=$(echo "$rs_err" | grep -c "error\|Error" || echo 0)
+[[ "$py_error_count" =~ ^[0-9]+$ ]] || py_error_count=0
+[[ "$rs_error_count" =~ ^[0-9]+$ ]] || rs_error_count=0
+
+# Escape special chars for JSON
+py_err_escaped=$(echo "$py_err" | head -c 200 | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
+rs_err_escaped=$(echo "$rs_err" | head -c 200 | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
+
+# Output JSON result
+echo "{\"file\":\"$relpath\",\"python\":{\"exit\":$py_exit,\"parse_error\":$py_parse_error,\"error_count\":$py_error_count,\"stderr\":\"$py_err_escaped\"},\"rust\":{\"exit\":$rs_exit,\"parse_error\":$rs_parse_error,\"error_count\":$rs_error_count,\"stderr\":\"$rs_err_escaped\"},\"match\":$exit_match}"
+SCRIPT
+chmod +x "$TEMP_DIR/test_one.sh"
+
+echo "Running tests with $PARALLEL_JOBS parallel jobs..."
+echo ""
+
 start_time=$(date +%s)
 
-test_file() {
-    local file="$1"
-    local relpath="${file#$FIXTURES_DIR/}"
+# Run tests in parallel using xargs
+# Each job outputs one JSON line to stdout
+printf '%s\n' "${files[@]}" | \
+    xargs -P "$PARALLEL_JOBS" -I {} "$TEMP_DIR/test_one.sh" {} "$FIXTURES_DIR" "$RLEDGER_CHECK" "$TEMP_DIR" \
+    > "$RESULTS_FILE" 2>/dev/null
 
-    # Run Python bean-check
-    local py_stdout py_stderr py_exit
-    py_stdout=$(mktemp)
-    py_stderr=$(mktemp)
-    bean-check "$file" >"$py_stdout" 2>"$py_stderr" && py_exit=0 || py_exit=$?
-    local py_out=$(cat "$py_stdout")
-    local py_err=$(cat "$py_stderr")
-    rm -f "$py_stdout" "$py_stderr"
+end_time=$(date +%s)
+elapsed=$((end_time - start_time))
 
-    # Run Rust rledger-check
-    local rs_stdout rs_stderr rs_exit
-    rs_stdout=$(mktemp)
-    rs_stderr=$(mktemp)
-    "$RLEDGER_CHECK" "$file" >"$rs_stdout" 2>"$rs_stderr" && rs_exit=0 || rs_exit=$?
-    local rs_out=$(cat "$rs_stdout")
-    local rs_err=$(cat "$rs_stderr")
-    rm -f "$rs_stdout" "$rs_stderr"
-
-    # Determine if it's a parse error
-    local py_parse_error=false
-    local rs_parse_error=false
-
-    if echo "$py_err" | grep -qi "syntax error\|parse error\|unexpected"; then
-        py_parse_error=true
-    fi
-    if echo "$rs_err" | grep -qi "syntax error\|parse error\|unexpected"; then
-        rs_parse_error=true
-    fi
-
-    # Check if exits match
-    local exit_match=false
-    if [ "$py_exit" -eq 0 ] && [ "$rs_exit" -eq 0 ]; then
-        exit_match=true
-    elif [ "$py_exit" -ne 0 ] && [ "$rs_exit" -ne 0 ]; then
-        exit_match=true
-    fi
-
-    # Count errors in output (rough heuristic)
-    local py_error_count=$(echo "$py_err" | grep -c "error\|Error" || true)
-    local rs_error_count=$(echo "$rs_err" | grep -c "error\|Error" || true)
-    # Ensure counts are numeric
-    py_error_count=${py_error_count:-0}
-    rs_error_count=${rs_error_count:-0}
-    [[ "$py_error_count" =~ ^[0-9]+$ ]] || py_error_count=0
-    [[ "$rs_error_count" =~ ^[0-9]+$ ]] || rs_error_count=0
-
-    # Convert bash booleans to JSON booleans
-    local exit_match_json="false"
-    local py_parse_json="false"
-    local rs_parse_json="false"
-    [ "$exit_match" = "true" ] && exit_match_json="true"
-    [ "$py_parse_error" = "true" ] && py_parse_json="true"
-    [ "$rs_parse_error" = "true" ] && rs_parse_json="true"
-
-    # Build JSON manually to avoid jq escaping issues
-    local py_err_short="${py_err:0:200}"
-    local rs_err_short="${rs_err:0:200}"
-    # Escape special chars for JSON
-    py_err_short=$(echo "$py_err_short" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
-    rs_err_short=$(echo "$rs_err_short" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
-
-    # Output JSON result (one line per file)
-    local json_result="{\"file\":\"$relpath\",\"python\":{\"exit\":$py_exit,\"parse_error\":$py_parse_json,\"error_count\":$py_error_count,\"stderr\":\"$py_err_short\"},\"rust\":{\"exit\":$rs_exit,\"parse_error\":$rs_parse_json,\"error_count\":$rs_error_count,\"stderr\":\"$rs_err_short\"},\"match\":$exit_match_json}"
-
-    echo "$json_result" >> "$RESULTS_FILE"
-
-    # Update counters
-    total=$((total + 1))
-    if [ "$exit_match" = "true" ]; then
-        check_match=$((check_match + 1))
-    else
-        check_mismatch=$((check_mismatch + 1))
-    fi
-
-    if [ "$py_parse_error" = "true" ] && [ "$rs_parse_error" = "false" ]; then
-        parse_fail_python=$((parse_fail_python + 1))
-    elif [ "$rs_parse_error" = "true" ] && [ "$py_parse_error" = "false" ]; then
-        parse_fail_rust=$((parse_fail_rust + 1))
-    fi
-
-    if [ "$py_parse_error" = "$rs_parse_error" ]; then
-        parse_match=$((parse_match + 1))
-    fi
-
-    # Progress indicator
-    progress=$((progress + 1))
-    if [ $((progress % 50)) -eq 0 ]; then
-        local pct=$((progress * 100 / total_files))
-        local elapsed=$(($(date +%s) - start_time))
-        local rate=$((progress / (elapsed + 1)))
-        local eta=$(((total_files - progress) / (rate + 1)))
-        printf "\r  Progress: %d/%d (%d%%) - ETA: %ds    " "$progress" "$total_files" "$pct" "$eta"
-    fi
-}
-
-echo "Running tests..."
-echo ""
-
-# Process all files
-for file in "${files[@]}"; do
-    test_file "$file"
-done
-
-echo ""
+echo "Completed in ${elapsed}s"
 echo ""
 echo "=== Results Summary ==="
 echo ""
+
+# Calculate statistics from results
+total=$(wc -l < "$RESULTS_FILE" | tr -d ' ')
+check_match=$(grep -c '"match":true' "$RESULTS_FILE" || echo 0)
+check_mismatch=$((total - check_match))
+
+# Parse match (both have parse error or both don't)
+parse_match=$(jq -r 'select(.python.parse_error == .rust.parse_error)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+parse_fail_python=$(jq -r 'select(.python.parse_error == true and .rust.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+parse_fail_rust=$(jq -r 'select(.rust.parse_error == true and .python.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+
+# Ensure numeric
+[ -z "$parse_match" ] && parse_match=0
+[ -z "$parse_fail_python" ] && parse_fail_python=0
+[ -z "$parse_fail_rust" ] && parse_fail_rust=0
 
 # Calculate percentages
 parse_pct=$((parse_match * 100 / total))
@@ -194,6 +166,7 @@ check_pct=$((check_match * 100 / total))
 
 # Display summary
 echo "Files tested:       $total"
+echo "Execution time:     ${elapsed}s ($((total / (elapsed + 1))) files/sec)"
 echo ""
 echo "Parse behavior match: $parse_match/$total ($parse_pct%)"
 echo "  - Python parse error only: $parse_fail_python"
@@ -216,6 +189,12 @@ Generated: $(date)
 | Files tested | $total | 100% |
 | Parse match | $parse_match | $parse_pct% |
 | Check exit match | $check_match | $check_pct% |
+
+## Performance
+
+- **Execution time:** ${elapsed}s
+- **Parallel jobs:** $PARALLEL_JOBS
+- **Rate:** $((total / (elapsed + 1))) files/sec
 
 ## Parse Behavior
 

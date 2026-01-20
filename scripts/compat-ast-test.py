@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-AST/Directive Comparison Test
+AST/Directive Comparison Test (Parallel)
 
 Compares the parsed output between Python beancount and rustledger,
 going beyond exit codes to compare:
@@ -12,12 +12,18 @@ going beyond exit codes to compare:
 Usage:
     python scripts/compat-ast-test.py [directory]
     python scripts/compat-ast-test.py tests/compat/files
+
+Environment variables:
+    PARALLEL_JOBS: Number of parallel workers (default: CPU count, max 8)
 """
 
 import json
 import subprocess
 import sys
+import os
+import multiprocessing
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -30,6 +36,9 @@ try:
 except ImportError:
     BEANCOUNT_AVAILABLE = False
     print("Warning: beancount not installed, Python comparison disabled")
+
+# Parallel settings
+MAX_WORKERS = min(int(os.environ.get('PARALLEL_JOBS', multiprocessing.cpu_count())), 8)
 
 
 @dataclass
@@ -195,23 +204,40 @@ def compare_results(file_path: str, python: Optional[ParseResult], rust: Optiona
     return result
 
 
+def test_single_file(args) -> ComparisonResult:
+    """Test a single file - designed to run in parallel."""
+    file_path, rledger_check, rledger_query = args
+    python_result = parse_with_python(file_path)
+    rust_result = parse_with_rust(file_path, rledger_check, rledger_query)
+    return compare_results(str(file_path), python_result, rust_result)
+
+
 def run_comparison(directory: Path, rledger_check: str, rledger_query: str) -> list[ComparisonResult]:
-    """Run comparison on all beancount files in directory."""
-    results = []
+    """Run comparison on all beancount files in directory (parallel)."""
     files = list(directory.rglob("*.beancount"))
 
-    print(f"Comparing {len(files)} files...")
+    print(f"Comparing {len(files)} files with {MAX_WORKERS} parallel workers...")
     print()
 
-    for i, file_path in enumerate(files):
-        if (i + 1) % 10 == 0:
-            print(f"  Progress: {i + 1}/{len(files)}", end='\r')
+    results = []
+    completed = 0
 
-        python_result = parse_with_python(file_path)
-        rust_result = parse_with_rust(file_path, rledger_check, rledger_query)
-        comparison = compare_results(str(file_path), python_result, rust_result)
-        results.append(comparison)
+    # Build args for parallel execution
+    test_args = [(f, rledger_check, rledger_query) for f in files]
 
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = [executor.submit(test_single_file, args) for args in test_args]
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+                results.append(result)
+                completed += 1
+                if completed % 20 == 0:
+                    print(f"  Progress: {completed}/{len(files)}", end='\r')
+            except Exception as e:
+                print(f"Error: {e}")
+
+    print(f"  Completed: {len(results)}/{len(files)}    ")
     print()
     return results
 
