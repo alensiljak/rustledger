@@ -5,8 +5,13 @@ set -e
 # Compares bean-query (Python) vs rledger-query (Rust) on valid beancount files
 # Run inside: nix develop --command ./scripts/compat-bql-test.sh
 
-FIXTURES_DIR="spec/fixtures"
-RESULTS_DIR="spec/fixtures/compat-results"
+FIXTURES_DIR="${1:-tests/compat-full}"
+RESULTS_DIR="tests/compat-results"
+
+# Fall back to curated files if full suite doesn't exist
+if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then
+    FIXTURES_DIR="tests/compat/files"
+fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/bql_results_$TIMESTAMP.jsonl"
 

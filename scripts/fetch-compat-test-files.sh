@@ -3,7 +3,7 @@ set -e
 # Fetch beancount test files from multiple sources for compatibility testing
 # Run inside: nix develop --command ./scripts/fetch-compat-test-files.sh
 
-DEST="spec/fixtures/compat"
+DEST="tests/compat-full"
 TMPDIR="/tmp/beancount-fetch-$$"
 
 echo "=== Beancount Compatibility Test File Fetcher ==="
@@ -182,9 +182,10 @@ done
 echo ""
 echo "Total new files: $total"
 
-# Count existing files
-existing=$(find spec/fixtures/lima-tests spec/fixtures/examples -name "*.beancount" -type f 2>/dev/null | wc -l)
-echo "Existing files:  $existing"
-echo "Grand total:     $((total + existing))"
+# Count curated files
+curated=$(find tests/compat/files -name "*.beancount" -type f 2>/dev/null | wc -l)
+echo "Curated files:   $curated (committed)"
+echo "Grand total:     $((total + curated))"
 echo ""
-echo "Files stored in: $DEST"
+echo "Full test suite stored in: $DEST"
+echo "Curated test suite in:     tests/compat/files/"

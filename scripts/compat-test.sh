@@ -3,10 +3,22 @@ set -e
 
 # Beancount Compatibility Test Harness
 # Compares bean-check (Python) vs rledger-check (Rust) on all .beancount files
-# Run inside: nix develop --command ./scripts/compat-test.sh
+# Run inside: nix develop --command ./scripts/compat-test.sh [directory]
+#
+# Examples:
+#   ./scripts/compat-test.sh                    # Test full suite (tests/compat-full)
+#   ./scripts/compat-test.sh tests/compat/files # Test curated files only
 
-FIXTURES_DIR="spec/fixtures"
-RESULTS_DIR="spec/fixtures/compat-results"
+# Default to full test suite, but allow override via argument
+FIXTURES_DIR="${1:-tests/compat-full}"
+RESULTS_DIR="tests/compat-results"
+
+# Fall back to curated files if full suite doesn't exist
+if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then
+    echo "Full test suite not found at $FIXTURES_DIR"
+    echo "Falling back to curated files..."
+    FIXTURES_DIR="tests/compat/files"
+fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/results_$TIMESTAMP.jsonl"
 SUMMARY_FILE="$RESULTS_DIR/summary_$TIMESTAMP.md"

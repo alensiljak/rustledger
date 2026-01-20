@@ -129,11 +129,12 @@ Note: The 69% match rate compares actual data values, ignoring formatting differ
 ```bash
 # Inside nix develop shell:
 
-# Fetch test files
-./scripts/fetch-compat-test-files.sh
+# Quick test with curated files (~100 files, committed)
+./scripts/compat-test.sh tests/compat/files
 
-# Run comparison tests
-./scripts/compat-test.sh
+# Full test suite (~800 files, downloaded)
+./scripts/fetch-compat-test-files.sh  # Download first
+./scripts/compat-test.sh               # Runs on tests/compat-full/
 
 # Run BQL comparison
 ./scripts/compat-bql-test.sh
@@ -142,13 +143,38 @@ Note: The 69% match rate compares actual data values, ignoring formatting differ
 python scripts/analyze-compat-results.py
 ```
 
-## Files
+## Directory Structure
 
-- `scripts/fetch-compat-test-files.sh` - Downloads test files from GitHub
-- `scripts/compat-test.sh` - Main test harness
-- `scripts/analyze-compat-results.py` - Results analysis
-- `spec/fixtures/compat/` - Downloaded test files
-- `spec/fixtures/compat-results/` - Test output
+```
+tests/compat/                    # Curated test suite (committed)
+├── README.md                    # Test documentation
+├── sources.toml                 # Source documentation and licenses
+└── files/                       # ~100 curated beancount files
+    ├── parser/                  # Parser edge cases
+    ├── validation/              # Validation scenarios
+    ├── plugins/                 # Plugin configurations
+    ├── real-world/              # Real-world examples
+    └── edge-cases/              # Known compatibility differences
+
+tests/compat-full/               # Full test suite (gitignored, downloaded)
+├── beancount-v2/                # Official beancount v2 files
+├── beancount-v3/                # Official beancount v3 files
+├── parser-lima/                 # Parser conformance tests
+├── fava/                        # Fava web interface tests
+├── beangulp/                    # Importer framework examples
+├── ledger2beancount/            # Converter tests
+├── beancount-import/            # Import test data
+└── community/                   # Community project files
+
+tests/compat-results/            # Test output (gitignored)
+```
+
+## Scripts
+
+- `scripts/fetch-compat-test-files.sh` - Downloads full test suite from GitHub
+- `scripts/compat-test.sh` - Main test harness (bean-check vs rledger-check)
+- `scripts/compat-bql-test.sh` - BQL query comparison
+- `scripts/analyze-compat-results.py` - Results analysis and reporting
 
 ## Improving Compatibility
 
