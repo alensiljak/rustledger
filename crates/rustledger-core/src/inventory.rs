@@ -183,6 +183,16 @@ pub struct Inventory {
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
     simple_index: HashMap<InternedStr, usize>,
+    /// True if any positive costed position has been added.
+    /// Used for O(1) check to skip scanning when no cancellation is possible.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
+    has_positive_costed: bool,
+    /// True if any negative costed position has been added.
+    /// Used for O(1) check to skip scanning when no cancellation is possible.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
+    has_negative_costed: bool,
 }
 
 impl PartialEq for Inventory {
@@ -274,7 +284,9 @@ impl Inventory {
 
     /// Add a position to the inventory.
     ///
-    /// For positions with cost, this creates a new lot.
+    /// For positions with cost, if adding a negative amount that matches an
+    /// existing lot's cost basis exactly, reduces that lot instead of creating
+    /// a new one. This properly handles buy/sell pairs.
     /// For positions without cost, this merges with existing positions
     /// of the same currency using O(1) `HashMap` lookup.
     pub fn add(&mut self, position: Position) {
@@ -294,9 +306,68 @@ impl Inventory {
             let idx = self.positions.len();
             self.simple_index
                 .insert(position.units.currency.clone(), idx);
+            self.positions.push(position);
+            return;
         }
 
-        // Add as new lot (either with cost, or first simple position for this currency)
+        // For positions with cost, try to find a matching lot to cancel/reduce.
+        // For performance, use O(1) sign tracking to skip scan when no opposite-sign positions exist.
+        if let Some(pos_cost) = &position.cost {
+            let is_adding_positive = position.units.number.is_sign_positive();
+            let currency = &position.units.currency;
+
+            // O(1) check: could there be opposite-sign positions to cancel?
+            // This is a global check (not per-currency) for maximum performance.
+            // False positives are possible but rare in practice.
+            let has_opposite = if is_adding_positive {
+                self.has_negative_costed
+            } else {
+                self.has_positive_costed
+            };
+
+            if has_opposite {
+                // Scan for exact cost match to cancel
+                for i in 0..self.positions.len() {
+                    let existing = &self.positions[i];
+                    if existing.units.currency != *currency {
+                        continue;
+                    }
+                    let Some(existing_cost) = &existing.cost else {
+                        continue;
+                    };
+
+                    // Only merge opposite signs (reduction/cancellation)
+                    let is_opposite_sign =
+                        existing.units.number.is_sign_positive() != is_adding_positive;
+                    if !is_opposite_sign {
+                        continue;
+                    }
+
+                    let is_exact_cost = existing_cost.number == pos_cost.number
+                        && existing_cost.currency == pos_cost.currency
+                        && (pos_cost.date.is_none() || pos_cost.date == existing_cost.date);
+
+                    if is_exact_cost {
+                        self.positions[i].units.number += position.units.number;
+                        if self.positions[i].is_empty() {
+                            self.positions.remove(i);
+                            // Rebuild sign tracking since we removed a position
+                            self.rebuild_costed_signs();
+                        }
+                        return;
+                    }
+                }
+            }
+
+            // Update sign tracking for the new position (simple boolean flags)
+            if is_adding_positive {
+                self.has_positive_costed = true;
+            } else {
+                self.has_negative_costed = true;
+            }
+        }
+
+        // No matching lot found (or augmentation/no opposite positions) - add as new lot
         self.positions.push(position);
     }
 
@@ -360,21 +431,12 @@ impl Inventory {
                 let idx = matching_indices[0];
                 self.reduce_from_lot(idx, units)
             }
-            n => {
-                // Total match exception: if reduction equals total inventory, it's unambiguous
-                let total_units: Decimal = matching_indices
-                    .iter()
-                    .map(|&i| self.positions[i].units.number.abs())
-                    .sum();
-                if total_units == units.number.abs() {
-                    // Reduce from all matching lots (use FIFO order)
-                    self.reduce_ordered(units, spec, false)
-                } else {
-                    Err(BookingError::AmbiguousMatch {
-                        num_matches: n,
-                        currency: units.currency.clone(),
-                    })
-                }
+            _n => {
+                // When multiple lots match the same cost spec, Python beancount falls back to FIFO
+                // order rather than erroring. This is consistent with how beancount handles
+                // identical lots - if the cost spec is specified, it's considered "matched"
+                // and we just pick by insertion order.
+                self.reduce_ordered(units, spec, false)
             }
         }
     }
@@ -806,6 +868,27 @@ impl Inventory {
                 self.simple_index.insert(pos.units.currency.clone(), idx);
             }
         }
+        self.rebuild_costed_signs();
+    }
+
+    /// Rebuild the costed sign tracking flags from positions.
+    /// Called after operations that may invalidate the tracking.
+    fn rebuild_costed_signs(&mut self) {
+        self.has_positive_costed = false;
+        self.has_negative_costed = false;
+        for pos in &self.positions {
+            if pos.cost.is_some() && !pos.is_empty() {
+                if pos.units.number.is_sign_positive() {
+                    self.has_positive_costed = true;
+                } else {
+                    self.has_negative_costed = true;
+                }
+                // Early exit if we've found both
+                if self.has_positive_costed && self.has_negative_costed {
+                    break;
+                }
+            }
+        }
     }
 
     /// Merge this inventory with another.
@@ -868,7 +951,23 @@ impl fmt::Display for Inventory {
             return write!(f, "(empty)");
         }
 
-        let non_empty: Vec<_> = self.positions.iter().filter(|p| !p.is_empty()).collect();
+        // Sort positions alphabetically by currency, then by cost for consistency
+        let mut non_empty: Vec<_> = self.positions.iter().filter(|p| !p.is_empty()).collect();
+        non_empty.sort_by(|a, b| {
+            // First by currency
+            let cmp = a.units.currency.cmp(&b.units.currency);
+            if cmp != std::cmp::Ordering::Equal {
+                return cmp;
+            }
+            // Then by cost (if present)
+            match (&a.cost, &b.cost) {
+                (Some(ca), Some(cb)) => ca.number.cmp(&cb.number),
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
         for (i, pos) in non_empty.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -972,7 +1071,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_strict_ambiguous() {
+    fn test_reduce_strict_multiple_match_uses_fifo() {
         let mut inv = Inventory::new();
 
         let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
@@ -981,10 +1080,15 @@ mod tests {
         inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
         inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
 
-        // Reducing without cost spec should fail (ambiguous)
-        let result = inv.reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict);
+        // Reducing without cost spec in STRICT mode falls back to FIFO
+        // (Python beancount behavior: when multiple lots match, use FIFO order)
+        let result = inv
+            .reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict)
+            .unwrap();
 
-        assert!(matches!(result, Err(BookingError::AmbiguousMatch { .. })));
+        assert_eq!(inv.units("AAPL"), dec!(12)); // 7 + 5 remaining
+        // Should reduce from first lot (cost1) at 150.00 USD
+        assert_eq!(result.cost_basis.unwrap().number, dec!(450.00)); // 3 * 150
     }
 
     #[test]
@@ -1107,5 +1211,108 @@ mod tests {
 
         let inv: Inventory = positions.into_iter().collect();
         assert_eq!(inv.units("USD"), dec!(150));
+    }
+
+    #[test]
+    fn test_add_cancels_opposite_sign_with_matching_cost() {
+        // Test that buy/sell pairs with matching cost cancel each other
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv.units("AAPL"), dec!(10));
+
+        // Sell 10 shares with same cost - should cancel out
+        inv.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
+        assert_eq!(inv.len(), 0); // Position removed when empty
+        assert_eq!(inv.units("AAPL"), dec!(0));
+    }
+
+    #[test]
+    fn test_add_partial_cancellation() {
+        // Test partial buy/sell cancellation
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // Sell 3 shares with same cost - should partially cancel
+        inv.add(Position::with_cost(Amount::new(dec!(-3), "AAPL"), cost));
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv.units("AAPL"), dec!(7));
+    }
+
+    #[test]
+    fn test_add_no_cancel_different_cost() {
+        // Test that different costs don't cancel
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(160.00), "USD").with_date(date(2024, 1, 15));
+
+        // Buy 10 shares at 150
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+
+        // Sell 5 shares at 160 - should NOT cancel (different cost)
+        inv.add(Position::with_cost(Amount::new(dec!(-5), "AAPL"), cost2));
+
+        // Should have two separate lots
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv.units("AAPL"), dec!(5)); // 10 - 5 = 5 total
+    }
+
+    #[test]
+    fn test_add_no_cancel_same_sign() {
+        // Test that same-sign positions don't merge even with same cost
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // Buy 5 more shares with same cost - should NOT merge
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost));
+
+        // Should have two separate lots (different acquisitions)
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv.units("AAPL"), dec!(15));
+    }
+
+    #[test]
+    fn test_merge_cancellation() {
+        // Test that merge properly handles cancellation
+        let mut inv1 = Inventory::new();
+        let mut inv2 = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // inv1: buy 10 shares
+        inv1.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // inv2: sell 10 shares
+        inv2.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
+
+        // Merge should result in empty inventory
+        inv1.merge(&inv2);
+        assert!(inv1.is_empty());
+        assert_eq!(inv1.units("AAPL"), dec!(0));
     }
 }

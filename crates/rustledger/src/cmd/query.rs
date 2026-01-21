@@ -14,6 +14,8 @@
 use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result};
 use clap::Parser;
+use rustledger_booking::{BookingEngine, expand_pads};
+use rustledger_core::BookingMethod;
 use rustledger_core::Directive;
 use rustledger_loader::Loader;
 use rustledger_query::{Executor, Value, parse as parse_query};
@@ -133,11 +135,34 @@ fn run(args: &Args) -> Result<()> {
         anyhow::bail!("file has parse errors");
     }
 
-    // Get directives (move, not clone)
-    let directives: Vec<_> = load_result
+    // Get directives and expand pads + book transactions
+    // This matches Python beancount behavior where:
+    // 1. Pad directives are expanded into synthetic transactions
+    // 2. Queries run on fully booked entries (lot matching + interpolation)
+    let raw_directives: Vec<_> = load_result
         .directives
         .into_iter()
         .map(|s| s.value)
+        .collect();
+
+    // Expand pad directives into synthetic transactions
+    let expanded_directives = expand_pads(&raw_directives);
+
+    // Book transactions (lot matching + interpolation)
+    let mut booking_engine = BookingEngine::with_method(BookingMethod::Fifo);
+    let directives: Vec<_> = expanded_directives
+        .into_iter()
+        .map(|d| {
+            if let Directive::Transaction(txn) = &d {
+                // Book and interpolate: fills in empty cost specs and missing amounts
+                if let Ok(result) = booking_engine.book_and_interpolate(txn) {
+                    // Apply the booked transaction to update inventory
+                    booking_engine.apply(&result.transaction);
+                    return Directive::Transaction(result.transaction);
+                }
+            }
+            d
+        })
         .collect();
 
     if args.verbose {
@@ -351,18 +376,59 @@ fn format_value(value: &Value, numberify: bool) -> String {
             }
         }
         Value::Inventory(inv) => {
-            let positions: Vec<String> = inv
-                .positions()
+            // Sort positions matching beanquery's positionsortkey():
+            // 1. Currency (alphabetically)
+            // 2. Quantity (descending - larger quantities first)
+            // 3. Cost currency, cost number, cost date
+            let mut sorted_positions: Vec<_> = inv.positions().iter().collect();
+            sorted_positions.sort_by(|a, b| {
+                // 1. Currency alphabetically
+                if a.units.currency != b.units.currency {
+                    return a.units.currency.cmp(&b.units.currency);
+                }
+
+                // 2. Quantity descending (larger first)
+                let qty_cmp = b.units.number.cmp(&a.units.number); // Note: b before a for descending
+                if qty_cmp != std::cmp::Ordering::Equal {
+                    return qty_cmp;
+                }
+
+                // 3. Cost details
+                match (&a.cost, &b.cost) {
+                    (Some(ca), Some(cb)) => {
+                        // Cost currency
+                        if ca.currency != cb.currency {
+                            return ca.currency.cmp(&cb.currency);
+                        }
+                        // Cost number
+                        if ca.number != cb.number {
+                            return ca.number.cmp(&cb.number);
+                        }
+                        // Cost date
+                        ca.date.cmp(&cb.date)
+                    }
+                    (Some(_), None) => std::cmp::Ordering::Greater,
+                    (None, Some(_)) => std::cmp::Ordering::Less,
+                    (None, None) => std::cmp::Ordering::Equal,
+                }
+            });
+
+            let positions: Vec<String> = sorted_positions
                 .iter()
+                .filter(|p| !p.is_empty())
                 .map(|p| {
                     if numberify {
                         p.units.number.to_string()
                     } else {
-                        format!("{} {}", p.units.number, p.units.currency)
+                        let mut s = format!("{} {}", p.units.number, p.units.currency);
+                        if let Some(ref cost) = p.cost {
+                            s.push_str(&format!(" {{{} {}}}", cost.number, cost.currency));
+                        }
+                        s
                     }
                 })
                 .collect();
-            positions.join(", ")
+            positions.join("   ")
         }
         Value::StringSet(set) => set.join(", "),
         Value::Null => String::new(),

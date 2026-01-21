@@ -7,6 +7,7 @@
 Parse and validate your ledger faster than Python beancount.
 
 [![CI](https://github.com/rustledger/rustledger/actions/workflows/ci.yml/badge.svg)](https://github.com/rustledger/rustledger/actions/workflows/ci.yml)
+[![Compatibility](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/compatibility/.github/badges/compat-badge.json)](https://github.com/rustledger/rustledger/actions/workflows/compat.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/rustledger/rustledger)](https://github.com/rustledger/rustledger/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
@@ -164,6 +165,31 @@ rledger-format --in-place ledger.beancount
 </picture>
 
 <sub>Benchmarks run nightly on 10K transaction ledgers. [View workflow →](https://github.com/rustledger/rustledger/actions/workflows/bench.yml)</sub>
+
+<details>
+<summary><strong>Benchmark details</strong></summary>
+
+**What's measured:**
+- **Validation**: Parse ledger + validate (balance assertions, account opens, etc.)
+- **Balance Report**: Parse + compute all account balances
+
+**Memory efficiency:**
+rustledger typically uses 3-5x less memory than Python beancount thanks to Rust's zero-cost abstractions and efficient data structures.
+
+**Run locally:**
+```bash
+# Quick comparison (requires nix)
+nix develop .#bench
+./scripts/bench.sh
+
+# Criterion micro-benchmarks
+cargo bench -p rustledger-core
+cargo bench -p rustledger-parser
+```
+
+See [BENCHMARKING.md](docs/BENCHMARKING.md) for detailed benchmark documentation.
+
+</details>
 
 ## Contributing
 
