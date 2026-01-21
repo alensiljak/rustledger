@@ -208,7 +208,7 @@ impl Inventory {
     }
 
     /// Get mutable access to all positions.
-    pub fn positions_mut(&mut self) -> &mut Vec<Position> {
+    pub const fn positions_mut(&mut self) -> &mut Vec<Position> {
         &mut self.positions
     }
 

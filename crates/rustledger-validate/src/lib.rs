@@ -362,17 +362,17 @@ impl LedgerState {
     }
 
     /// Set whether to require commodity declarations.
-    pub fn set_require_commodities(&mut self, require: bool) {
+    pub const fn set_require_commodities(&mut self, require: bool) {
         self.options.require_commodities = require;
     }
 
     /// Set whether to check document files.
-    pub fn set_check_documents(&mut self, check: bool) {
+    pub const fn set_check_documents(&mut self, check: bool) {
         self.options.check_documents = check;
     }
 
     /// Set whether to warn about future dates.
-    pub fn set_warn_future_dates(&mut self, warn: bool) {
+    pub const fn set_warn_future_dates(&mut self, warn: bool) {
         self.options.warn_future_dates = warn;
     }
 
