@@ -9,7 +9,9 @@ rustledger uses multiple benchmarking systems for different purposes:
 | System | Purpose | When to Use |
 |--------|---------|-------------|
 | **Criterion** | Micro-benchmarks for components | Local development, PR validation |
+| **PR Benchmarks** | Quick comparison on pull requests | Automatic on PRs touching Rust code |
 | **CI Comparison** | Compare against beancount/ledger/hledger | Nightly tracking, release validation |
+| **Scaling Benchmarks** | Test performance across input sizes | Manual trigger for scaling analysis |
 | **Local Script** | Quick full-tool comparison | Before submitting performance PRs |
 
 ## Quick Start
@@ -42,7 +44,7 @@ cargo bench -p rustledger-parser -- parse_large
 cargo bench -p rustledger-core -- inventory_merge
 ```
 
-Results are saved to `target/criterion/` with HTML reports.
+Results are saved to `target/criterion/` with HTML reports. Open `target/criterion/report/index.html` in a browser to view interactive charts.
 
 ### Full Tool Comparison (Local)
 
@@ -121,7 +123,76 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 - History: `.github/badges/validation-history.json`, `.github/badges/balance-history.json`
 - Charts: `.github/badges/*.svg`
 
-### 3. Local Comparison Script
+**Commands used:**
+- Validation: `rledger-check` (rustledger), `bean-check` (beancount), `ledger accounts` (ledger), `hledger check` (hledger)
+- Balance: `rledger-report balances` (rustledger), `bean-query BALANCES` (beancount), `ledger balance` (ledger), `hledger balance` (hledger)
+
+### 3. PR Benchmarks
+
+**Workflow:** `.github/workflows/bench-pr.yml`
+
+**Triggers:**
+- Pull requests to `main` that modify:
+  - `crates/**/*.rs`
+  - `Cargo.toml`
+  - `Cargo.lock`
+
+**What it measures:**
+- Quick validation benchmark (1K transactions for speed)
+- Memory usage (Peak RSS)
+- Comparison against baseline from main branch
+
+**Tools compared:**
+- rustledger vs beancount only (ledger/hledger omitted for speed)
+
+**Output:**
+- Posts/updates a PR comment with results
+- Shows speedup factor and memory comparison
+- Indicates change vs main branch baseline (with emoji: 🚀 faster, ✅ stable, ⚠️ slower)
+
+**Also runs:**
+- Criterion benchmarks for `rustledger-core` and `rustledger-parser`
+
+### 4. Scaling Benchmarks
+
+**Workflow:** `.github/workflows/bench.yml` (scaling job)
+
+**Trigger:** Manual via `workflow_dispatch` with `scaling: true`
+
+**What it measures:**
+- Performance across multiple input sizes: 1K, 5K, 10K, 50K transactions
+- Helps identify algorithmic complexity issues (O(n) vs O(n²))
+
+**Tools compared:**
+- rustledger, beancount, hledger (ledger omitted for build time)
+
+**Output:**
+- Separate job per size (matrix strategy)
+- Results uploaded as artifacts
+- Summary table in workflow run
+
+**When to use:**
+- Before merging significant algorithmic changes
+- Investigating performance scaling behavior
+- Comparing against hledger's similar scaling benchmarks
+
+### 5. Memory Profiling
+
+The CI comparison benchmark includes memory profiling using `/usr/bin/time -v`:
+
+**Metric:** Peak RSS (Resident Set Size) in MB
+
+**Method:**
+- Runs each tool 3 times
+- Takes median of "Maximum resident set size" values
+- Reports in workflow summary
+
+**Interpreting results:**
+- Lower is better
+- rustledger typically uses significantly less memory than Python beancount
+- Memory usage scales with ledger size
+
+### 6. Local Comparison Script
 
 **Script:** `scripts/bench.sh`
 
@@ -136,6 +207,10 @@ The script:
 1. Generates test ledgers (`.beancount` and `.ledger` formats)
 2. Runs hyperfine with 10 iterations, 3 warmups
 3. Outputs JSON and formatted summary
+
+**Additional scripts:**
+- `scripts/bench-compare.py` - Compare benchmark results and detect regressions
+- `scripts/generate-bench-charts.py` - Generate Vega chart specs from history
 
 ## Input Size Guidelines
 
