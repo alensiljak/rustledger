@@ -15,6 +15,28 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 REPO_NAME="$(basename "$REPO_ROOT")"
 WORKTREE_BASE="$(dirname "$REPO_ROOT")"
 
+# Detect the default branch (main, master, etc.)
+get_default_branch() {
+    # Try to get from remote HEAD
+    local default_branch
+    default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+    if [[ -n "$default_branch" ]]; then
+        echo "$default_branch"
+        return
+    fi
+    # Fallback: check for common default branches
+    for branch in main master; do
+        if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+            echo "$branch"
+            return
+        fi
+    done
+    # Last resort
+    echo "main"
+}
+
+DEFAULT_BRANCH="$(get_default_branch)"
+
 usage() {
     cat <<EOF
 Worktree helper for parallel development sessions
@@ -73,8 +95,8 @@ cmd_new() {
         echo "Creating worktree for existing branch: $branch"
         git worktree add "$wt_path" "$branch"
     else
-        echo "Creating worktree with new branch: $branch (from main)"
-        git worktree add -b "$branch" "$wt_path" main
+        echo "Creating worktree with new branch: $branch (from $DEFAULT_BRANCH)"
+        git worktree add -b "$branch" "$wt_path" "$DEFAULT_BRANCH"
     fi
 
     echo ""
@@ -112,13 +134,11 @@ cmd_remove() {
 }
 
 cmd_clean() {
-    echo "Removing all worktrees except main..."
+    echo "Removing all worktrees except $DEFAULT_BRANCH..."
 
-    local worktrees
-    worktrees=$(git worktree list --porcelain | grep "^worktree " | cut -d' ' -f2-)
-
-    for wt in $worktrees; do
-        if [[ "$wt" != "$REPO_ROOT" ]]; then
+    # Use while read loop to properly handle paths with spaces
+    git worktree list --porcelain | grep "^worktree " | cut -d' ' -f2- | while IFS= read -r wt; do
+        if [[ -n "$wt" && "$wt" != "$REPO_ROOT" ]]; then
             echo "Removing: $wt"
             git worktree remove "$wt" --force 2>/dev/null || true
         fi
