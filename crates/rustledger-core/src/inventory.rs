@@ -1216,4 +1216,107 @@ mod tests {
         let inv: Inventory = positions.into_iter().collect();
         assert_eq!(inv.units("USD"), dec!(150));
     }
+
+    #[test]
+    fn test_add_cancels_opposite_sign_with_matching_cost() {
+        // Test that buy/sell pairs with matching cost cancel each other
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv.units("AAPL"), dec!(10));
+
+        // Sell 10 shares with same cost - should cancel out
+        inv.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
+        assert_eq!(inv.len(), 0); // Position removed when empty
+        assert_eq!(inv.units("AAPL"), dec!(0));
+    }
+
+    #[test]
+    fn test_add_partial_cancellation() {
+        // Test partial buy/sell cancellation
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // Sell 3 shares with same cost - should partially cancel
+        inv.add(Position::with_cost(Amount::new(dec!(-3), "AAPL"), cost));
+        assert_eq!(inv.len(), 1);
+        assert_eq!(inv.units("AAPL"), dec!(7));
+    }
+
+    #[test]
+    fn test_add_no_cancel_different_cost() {
+        // Test that different costs don't cancel
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(160.00), "USD").with_date(date(2024, 1, 15));
+
+        // Buy 10 shares at 150
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+
+        // Sell 5 shares at 160 - should NOT cancel (different cost)
+        inv.add(Position::with_cost(Amount::new(dec!(-5), "AAPL"), cost2));
+
+        // Should have two separate lots
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv.units("AAPL"), dec!(5)); // 10 - 5 = 5 total
+    }
+
+    #[test]
+    fn test_add_no_cancel_same_sign() {
+        // Test that same-sign positions don't merge even with same cost
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // Buy 10 shares
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // Buy 5 more shares with same cost - should NOT merge
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost));
+
+        // Should have two separate lots (different acquisitions)
+        assert_eq!(inv.len(), 2);
+        assert_eq!(inv.units("AAPL"), dec!(15));
+    }
+
+    #[test]
+    fn test_merge_cancellation() {
+        // Test that merge properly handles cancellation
+        let mut inv1 = Inventory::new();
+        let mut inv2 = Inventory::new();
+
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        // inv1: buy 10 shares
+        inv1.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+
+        // inv2: sell 10 shares
+        inv2.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
+
+        // Merge should result in empty inventory
+        inv1.merge(&inv2);
+        assert!(inv1.is_empty());
+        assert_eq!(inv1.units("AAPL"), dec!(0));
+    }
 }
