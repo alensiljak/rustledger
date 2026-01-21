@@ -278,7 +278,8 @@ impl Inventory {
     /// of the same currency using O(1) `HashMap` lookup.
     ///
     /// For positions with cost, this adds as a new lot (O(1)).
-    /// Lot aggregation for display purposes is handled separately at query time.
+    /// Lot aggregation for display purposes is handled separately at output time
+    /// (e.g., in the query result formatter).
     pub fn add(&mut self, position: Position) {
         if position.is_empty() {
             return;

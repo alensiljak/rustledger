@@ -526,12 +526,13 @@ impl Options {
 
         // Check each component
         for part in value.split(':') {
-            if part.is_empty() {
-                return false;
-            }
             // First char of each component should be uppercase letter
-            let first = part.chars().next().unwrap();
-            if !first.is_ascii_uppercase() {
+            if let Some(first) = part.chars().next() {
+                if !first.is_ascii_uppercase() {
+                    return false;
+                }
+            } else {
+                // Empty component
                 return false;
             }
         }

@@ -136,7 +136,7 @@ impl BookingEngine {
     pub fn book(&self, txn: &Transaction) -> Result<BookedTransaction, BookingError> {
         let mut result = txn.clone();
         let mut gains = Vec::new();
-        let mut booked_indices = Vec::new();
+        let mut booked_indices = std::collections::HashSet::new();
         // Track posting expansions: (original_idx, expanded_postings)
         let mut expansions: Vec<(usize, Vec<Posting>)> = Vec::new();
 
@@ -178,7 +178,7 @@ impl BookingEngine {
                                         // (matched_pos.units has the inventory sign, but we need
                                         // the reduction sign which is opposite)
                                         let expanded_units = rustledger_core::Amount::new(
-                                            -matched_pos.units.number,
+                                            -matched_pos.units.number, // Negate: inventory→reduction
                                             matched_pos.units.currency.clone(),
                                         );
                                         new_posting.units =
@@ -197,7 +197,7 @@ impl BookingEngine {
                                         expanded.push(new_posting);
                                     }
                                     expansions.push((idx, expanded));
-                                    booked_indices.push(idx);
+                                    booked_indices.insert(idx);
                                 } else if let Some(cost_basis) = &booking_result.cost_basis {
                                     // Single lot match - update posting in place
                                     let per_unit = cost_basis.number / units.number.abs();
@@ -221,7 +221,7 @@ impl BookingEngine {
                                         label: None,
                                         merge: false,
                                     });
-                                    booked_indices.push(idx);
+                                    booked_indices.insert(idx);
                                 }
 
                                 // Calculate capital gain if there's a price
@@ -277,7 +277,7 @@ impl BookingEngine {
                                     label: cost_spec.label.clone(),
                                     merge: cost_spec.merge,
                                 });
-                                booked_indices.push(idx);
+                                booked_indices.insert(idx);
                             }
                         }
                     }
@@ -348,7 +348,7 @@ impl BookingEngine {
         Ok(BookedTransaction {
             transaction: result,
             gains,
-            booked_indices,
+            booked_indices: booked_indices.into_iter().collect(),
         })
     }
 
