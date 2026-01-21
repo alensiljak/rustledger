@@ -584,8 +584,8 @@ fn test_registry_list_all() {
 
 #[test]
 fn test_auto_accounts_generates_opens() {
-    use rustledger_plugin::*;
     use rustledger_plugin::types::*;
+    use rustledger_plugin::*;
 
     let registry = NativePluginRegistry::new();
     let plugin = registry.find("auto_accounts").unwrap();
@@ -647,12 +647,12 @@ fn test_auto_accounts_generates_opens() {
     );
 
     // First two should be Open directives
-    let opens: Vec<_> = output
+    let open_count = output
         .directives
         .iter()
         .filter(|d| d.directive_type == "open")
-        .collect();
-    assert_eq!(opens.len(), 2, "expected 2 open directives");
+        .count();
+    assert_eq!(open_count, 2, "expected 2 open directives");
 
     // Now test the full round-trip: convert back to Directive and validate
     let directives = wrappers_to_directives(&output.directives).unwrap();
@@ -680,8 +680,8 @@ fn test_auto_accounts_generates_opens() {
 #[test]
 fn test_auto_accounts_same_date_ordering() {
     // Test case: Open directive should come before Transaction on same date
-    use rustledger_plugin::*;
     use rustledger_plugin::types::*;
+    use rustledger_plugin::*;
 
     let registry = NativePluginRegistry::new();
     let plugin = registry.find("auto_accounts").unwrap();
@@ -768,10 +768,7 @@ fn test_auto_accounts_same_date_ordering() {
         .position(|d| d.directive_type == "transaction" && d.date == "2016-08-30")
         .expect("should have Transaction on 2016-08-30");
 
-    eprintln!(
-        "\nOpen Expenses:FIXME:A at index {}, Transaction at index {}",
-        idx_open_fixme, idx_txn
-    );
+    eprintln!("\nOpen Expenses:FIXME:A at index {idx_open_fixme}, Transaction at index {idx_txn}");
 
     assert!(
         idx_open_fixme < idx_txn,
@@ -807,8 +804,7 @@ fn test_auto_accounts_same_date_ordering() {
         .expect("should have Transaction after conversion");
 
     eprintln!(
-        "\nAfter conversion: Open at {}, Transaction at {}",
-        converted_idx_open, converted_idx_txn
+        "\nAfter conversion: Open at {converted_idx_open}, Transaction at {converted_idx_txn}"
     );
 
     assert!(

@@ -15,7 +15,7 @@ use rustledger_loader::{
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::PluginManager;
 use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions, wrappers_to_directives};
-use rustledger_validate::{validate_with_options, ValidationOptions};
+use rustledger_validate::{ValidationOptions, validate_with_options};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -27,7 +27,7 @@ use tracing_subscriber::fmt::format::FmtSpan;
 ///
 /// This function attempts to verify if a plugin module exists in the Python environment
 /// by running `python3 -c "import <module>"`. For file-based plugins (paths ending in .py
-/// or containing /), it checks if the file exists.
+/// or containing path separators), it checks if the file exists.
 ///
 /// Returns `true` if the plugin appears to be available, `false` otherwise.
 fn check_python_plugin_exists(plugin_name: &str) -> bool {
@@ -35,7 +35,7 @@ fn check_python_plugin_exists(plugin_name: &str) -> bool {
     let is_py_file = std::path::Path::new(plugin_name)
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
-    if is_py_file || plugin_name.contains('/') || plugin_name.contains('\\') {
+    if is_py_file || plugin_name.contains(std::path::MAIN_SEPARATOR) {
         // For relative paths, we can't easily resolve them without knowing the
         // beancount file's directory, so we'll be conservative and assume they exist
         // if they look like file paths. Python beancount will validate them properly.
@@ -43,8 +43,13 @@ fn check_python_plugin_exists(plugin_name: &str) -> bool {
     }
 
     // For module-style plugins, try to import with Python
+    // Use sys.argv to safely pass the plugin name without shell interpolation
     let output = std::process::Command::new("python3")
-        .args(["-c", &format!("import {plugin_name}")])
+        .args([
+            "-c",
+            "import importlib, sys; importlib.import_module(sys.argv[1])",
+            plugin_name,
+        ])
         .output();
 
     match output {
@@ -571,7 +576,7 @@ fn run(args: &Args) -> Result<ExitCode> {
     let account_types: Vec<String> = options
         .account_types()
         .iter()
-        .map(|s| s.to_string())
+        .map(|s| (*s).to_string())
         .collect();
 
     // Build list of native plugins to run from CLI args
@@ -786,7 +791,7 @@ fn run(args: &Args) -> Result<ExitCode> {
 
     // Build validation options with account types from loader options
     // Set document_base to the file's directory for relative path resolution
-    let document_base = file.parent().map(|p| p.to_path_buf());
+    let document_base = file.parent().map(std::path::Path::to_path_buf);
     let validation_options = ValidationOptions {
         account_types,
         document_base,

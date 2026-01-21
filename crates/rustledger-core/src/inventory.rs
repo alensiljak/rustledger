@@ -314,8 +314,8 @@ impl Inventory {
                     if let Some(existing_cost) = &existing.cost {
                         // Match if same cost number and currency
                         // For date: if pos_cost has no date, match any; if it has date, must match
-                        let date_matches = pos_cost.date.is_none()
-                            || pos_cost.date == existing_cost.date;
+                        let date_matches =
+                            pos_cost.date.is_none() || pos_cost.date == existing_cost.date;
 
                         if existing_cost.number == pos_cost.number
                             && existing_cost.currency == pos_cost.currency

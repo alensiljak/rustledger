@@ -57,7 +57,7 @@ pub enum Token<'src> {
     /// Sub-accounts must start with uppercase letter, digit, or CJK character (matching Python beancount).
     /// Supports Unicode letters (e.g., Expenses:École-républicaine, Assets:沪深300).
     /// `\p{Lo}` matches CJK characters and other scripts without case distinction.
-    /// The account type prefix is validated later against options (name_assets, etc.).
+    /// The account type prefix is validated later against options (`name_assets`, etc.).
     #[regex(r"\p{Lu}\p{L}*(-\p{L}+)*(:[\p{Lu}\p{Lo}0-9][\p{L}0-9-]*)+")]
     Account(&'src str),
 
@@ -225,7 +225,7 @@ pub enum Token<'src> {
     #[regex(r";[^\n\r]*", allow_greedy = true)]
     Comment(&'src str),
 
-    /// Hash token `#` used as separator in cost specs: {per_unit # total currency}
+    /// Hash token `#` used as separator in cost specs: `{per_unit # total currency}`
     /// Note: In Python beancount, `#` is only a comment at the START of a line.
     /// Mid-line `# text` is NOT a comment - it's either a cost separator or syntax error.
     /// Start-of-line hash comments are handled in post-processing (tokenize function).
@@ -269,7 +269,10 @@ pub enum Token<'src> {
 impl Token<'_> {
     /// Returns true if this is a transaction flag (* or !).
     pub const fn is_txn_flag(&self) -> bool {
-        matches!(self, Self::Star | Self::Pending | Self::Flag(_) | Self::Hash)
+        matches!(
+            self,
+            Self::Star | Self::Pending | Self::Flag(_) | Self::Hash
+        )
     }
 
     /// Returns true if this is a keyword that starts a directive.
@@ -391,15 +394,20 @@ pub fn tokenize(source: &str) -> Vec<(Token<'_>, Span)> {
                 let comment_start = span.start;
                 let line_end = source[span.end..]
                     .find('\n')
-                    .map(|i| span.end + i)
-                    .unwrap_or(source.len());
+                    .map_or(source.len(), |i| span.end + i);
                 let comment_text = &source[comment_start..line_end];
-                tokens.push((Token::Comment(comment_text), Span { start: comment_start, end: line_end }));
+                tokens.push((
+                    Token::Comment(comment_text),
+                    Span {
+                        start: comment_start,
+                        end: line_end,
+                    },
+                ));
                 // Skip lexer tokens until we reach the newline
                 while let Some(peek_result) = lexer.next() {
                     let peek_span = lexer.span();
                     let peek_end = peek_span.end;
-                    if let Ok(Token::Newline) = peek_result {
+                    if peek_result == Ok(Token::Newline) {
                         tokens.push((Token::Newline, peek_span.into()));
                         at_line_start = true;
                         last_newline_end = peek_end;
@@ -407,7 +415,6 @@ pub fn tokenize(source: &str) -> Vec<(Token<'_>, Span)> {
                     }
                     // Skip other tokens on the comment line
                 }
-                continue;
             }
             Ok(token) => {
                 // Check for indentation at line start

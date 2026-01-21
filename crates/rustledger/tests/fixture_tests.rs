@@ -222,7 +222,7 @@ fn lima_test_expects_parse_error(name: &str) -> bool {
         || name.contains("CostEmptyComponents")   // empty cost spec components
         || name.contains("CostWithSlashes")       // cost with slashes notation
         || name.contains("CommentInPostingsInvalid") // invalid comment in postings
-        || name.contains("TagThenLink")           // tag ordering edge case
+        || name.contains("TagThenLink") // tag ordering edge case
 }
 
 #[test]

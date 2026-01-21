@@ -192,7 +192,9 @@ pub fn process_pads(directives: &[Directive]) -> PadResult {
 
                     // Mark the pad as used and track that this currency has been padded
                     pending.used = true;
-                    pending.padded_currencies.insert(bal.amount.currency.clone());
+                    pending
+                        .padded_currencies
+                        .insert(bal.amount.currency.clone());
                 }
                 // If no pending pad, nothing to do (balance will be checked normally)
             }

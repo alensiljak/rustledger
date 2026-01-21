@@ -460,7 +460,7 @@ impl NativePlugin for AutoAccountsPlugin {
                             .entry(posting.account.clone())
                             .and_modify(|existing| {
                                 if wrapper.date < *existing {
-                                    *existing = wrapper.date.clone();
+                                    existing.clone_from(&wrapper.date);
                                 }
                             })
                             .or_insert_with(|| wrapper.date.clone());
@@ -471,7 +471,7 @@ impl NativePlugin for AutoAccountsPlugin {
                         .entry(data.account.clone())
                         .and_modify(|existing| {
                             if wrapper.date < *existing {
-                                *existing = wrapper.date.clone();
+                                existing.clone_from(&wrapper.date);
                             }
                         })
                         .or_insert_with(|| wrapper.date.clone());
@@ -481,7 +481,7 @@ impl NativePlugin for AutoAccountsPlugin {
                         .entry(data.account.clone())
                         .and_modify(|existing| {
                             if wrapper.date < *existing {
-                                *existing = wrapper.date.clone();
+                                existing.clone_from(&wrapper.date);
                             }
                         })
                         .or_insert_with(|| wrapper.date.clone());
@@ -489,7 +489,7 @@ impl NativePlugin for AutoAccountsPlugin {
                         .entry(data.source_account.clone())
                         .and_modify(|existing| {
                             if wrapper.date < *existing {
-                                *existing = wrapper.date.clone();
+                                existing.clone_from(&wrapper.date);
                             }
                         })
                         .or_insert_with(|| wrapper.date.clone());

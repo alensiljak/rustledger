@@ -285,13 +285,13 @@ pub struct ValidationOptions {
     pub warn_future_dates: bool,
     /// Base directory for resolving relative document paths.
     pub document_base: Option<std::path::PathBuf>,
-    /// Valid account type prefixes (from options like name_assets, name_liabilities, etc.).
-    /// Defaults to ["Assets", "Liabilities", "Equity", "Income", "Expenses"].
+    /// Valid account type prefixes (from options like `name_assets`, `name_liabilities`, etc.).
+    /// Defaults to `["Assets", "Liabilities", "Equity", "Income", "Expenses"]`.
     pub account_types: Vec<String>,
-    /// Whether to infer tolerance from cost (matches Python beancount's infer_tolerance_from_cost).
-    /// When true, tolerance for cost-based postings is calculated as: units_quantum * cost_per_unit.
+    /// Whether to infer tolerance from cost (matches Python beancount's `infer_tolerance_from_cost`).
+    /// When true, tolerance for cost-based postings is calculated as: `units_quantum * cost_per_unit`.
     pub infer_tolerance_from_cost: bool,
-    /// Tolerance multiplier (matches Python beancount's inferred_tolerance_multiplier).
+    /// Tolerance multiplier (matches Python beancount's `inferred_tolerance_multiplier`).
     /// Default is 0.5.
     pub tolerance_multiplier: Decimal,
 }
@@ -500,7 +500,7 @@ pub fn validate_with_options(
 /// Returns None if valid, or Some(reason) if invalid.
 ///
 /// The `account_types` parameter specifies valid account type prefixes (from options
-/// like name_assets, name_liabilities, etc.). Defaults are: Assets, Liabilities,
+/// like `name_assets`, `name_liabilities`, etc.). Defaults are: Assets, Liabilities,
 /// Equity, Income, Expenses.
 fn validate_account_name(account: &str, account_types: &[String]) -> Option<String> {
     if account.is_empty() {
@@ -788,7 +788,7 @@ fn validate_posting_currency(
 /// Tolerance is calculated per-currency based on:
 /// 1. The quantum (precision) of amounts in postings
 /// 2. Cost-based tolerance when `infer_tolerance_from_cost` is enabled:
-///    tolerance = units_quantum * cost_per_unit * tolerance_multiplier
+///    `tolerance = units_quantum * cost_per_unit * tolerance_multiplier`
 fn validate_transaction_balance(
     txn: &Transaction,
     options: &ValidationOptions,
@@ -846,11 +846,14 @@ fn decimal_quantum(value: Decimal) -> Decimal {
 /// Calculate per-currency tolerances for a transaction.
 ///
 /// When `infer_tolerance_from_cost` is enabled, for each posting with a cost:
-///   tolerance = units_quantum * cost_per_unit * tolerance_multiplier
+///   `tolerance = units_quantum * cost_per_unit * tolerance_multiplier`
 ///
 /// The tolerance for each cost currency is the maximum of all such values
 /// computed from postings with costs in that currency.
-fn calculate_tolerances(txn: &Transaction, options: &ValidationOptions) -> HashMap<String, Decimal> {
+fn calculate_tolerances(
+    txn: &Transaction,
+    options: &ValidationOptions,
+) -> HashMap<String, Decimal> {
     let mut tolerances: HashMap<String, Decimal> = HashMap::new();
 
     // Default tolerance based on quantum of amounts in postings
@@ -968,11 +971,9 @@ fn process_inventory_reduction(
             if booking_method == BookingMethod::Strict && !has_positive_lots {
                 if let Some(cost_spec) = &posting.cost {
                     // Need cost per unit (or total) and currency to create a new lot
-                    let cost_number = cost_spec.number_per.or_else(|| {
-                        cost_spec
-                            .number_total
-                            .map(|t| t / units.number.abs())
-                    });
+                    let cost_number = cost_spec
+                        .number_per
+                        .or_else(|| cost_spec.number_total.map(|t| t / units.number.abs()));
 
                     // Infer currency from cost spec, price annotation, or fall back
                     let cost_currency = cost_spec.currency.clone().or_else(|| {
@@ -999,8 +1000,7 @@ fn process_inventory_reduction(
                         } else {
                             cost
                         };
-                        let position =
-                            rustledger_core::Position::with_cost(units.clone(), cost);
+                        let position = rustledger_core::Position::with_cost(units.clone(), cost);
                         inv.add(position);
                         return; // Successfully created sell-to-open position
                     }
@@ -1235,10 +1235,7 @@ fn validate_note(state: &LedgerState, note: &Note, errors: &mut Vec<ValidationEr
     if !state.accounts.contains_key(&note.account) {
         errors.push(ValidationError::new(
             ErrorCode::AccountNotOpen,
-            format!(
-                "Invalid reference to unknown account '{}'",
-                note.account
-            ),
+            format!("Invalid reference to unknown account '{}'", note.account),
             note.date,
         ));
     }

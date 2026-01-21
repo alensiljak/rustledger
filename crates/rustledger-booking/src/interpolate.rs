@@ -244,7 +244,8 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
         let rounded_residual = residual.round_dp(2);
 
         result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
-            -rounded_residual, &currency,
+            -rounded_residual,
+            &currency,
         )));
         filled_indices.push(idx);
 
@@ -284,8 +285,10 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                 let mut new_posting = original_posting.clone();
                 // Round to 2 decimal places to match Python beancount behavior
                 let rounded_residual = residual.round_dp(2);
-                new_posting.units =
-                    Some(IncompleteAmount::Complete(Amount::new(-rounded_residual, currency)));
+                new_posting.units = Some(IncompleteAmount::Complete(Amount::new(
+                    -rounded_residual,
+                    currency,
+                )));
                 result.postings.push(new_posting);
                 filled_indices.push(result.postings.len() - 1);
                 residuals.insert(currency.clone(), Decimal::ZERO);
@@ -298,7 +301,8 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                     // Round to 2 decimal places to match Python beancount behavior
                     let rounded_residual = residual.round_dp(2);
                     result.postings[*idx].units = Some(IncompleteAmount::Complete(Amount::new(
-                        -rounded_residual, currency,
+                        -rounded_residual,
+                        currency,
                     )));
                     filled_indices.push(*idx);
                     residuals.insert(currency.clone(), Decimal::ZERO);
@@ -720,18 +724,9 @@ mod tests {
     fn test_interpolate_multi_currency_three_currencies() {
         // Three currencies with one elided posting
         let txn = Transaction::new(date(2024, 1, 15), "Multi-currency test")
-            .with_posting(Posting::new(
-                "Assets:Cash",
-                Amount::new(dec!(100), "USD"),
-            ))
-            .with_posting(Posting::new(
-                "Assets:Cash",
-                Amount::new(dec!(200), "EUR"),
-            ))
-            .with_posting(Posting::new(
-                "Assets:Cash",
-                Amount::new(dec!(300), "GBP"),
-            ))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(100), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(200), "EUR")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(300), "GBP")))
             .with_posting(Posting::auto("Equity:Opening"));
 
         let result = interpolate(&txn).expect("interpolation should succeed");

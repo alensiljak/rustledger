@@ -14,7 +14,7 @@
 use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result};
 use clap::Parser;
-use rustledger_booking::{expand_pads, BookingEngine};
+use rustledger_booking::{BookingEngine, expand_pads};
 use rustledger_core::BookingMethod;
 use rustledger_core::Directive;
 use rustledger_loader::Loader;
@@ -139,7 +139,11 @@ fn run(args: &Args) -> Result<()> {
     // This matches Python beancount behavior where:
     // 1. Pad directives are expanded into synthetic transactions
     // 2. Queries run on fully booked entries (lot matching + interpolation)
-    let raw_directives: Vec<_> = load_result.directives.into_iter().map(|s| s.value).collect();
+    let raw_directives: Vec<_> = load_result
+        .directives
+        .into_iter()
+        .map(|s| s.value)
+        .collect();
 
     // Expand pad directives into synthetic transactions
     let expanded_directives = expand_pads(&raw_directives);

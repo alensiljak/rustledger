@@ -395,10 +395,7 @@ fn tok_comment<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], (), TokE
 {
     any()
         .filter(|t: &SpannedToken<'_>| {
-            matches!(
-                t.token,
-                Token::Comment(_) | Token::PercentComment(_)
-            )
+            matches!(t.token, Token::Comment(_) | Token::PercentComment(_))
         })
         .to(())
 }
@@ -674,33 +671,28 @@ fn tok_cost_components<'src>()
         tok_comma().to(None), // Comma as optional separator
     ));
 
-    item.repeated()
-        .collect::<Vec<_>>()
-        .try_map(|items, span| {
-            let mut components = Vec::new();
-            let mut last_was_comma = true; // Start true to detect leading comma
+    item.repeated().collect::<Vec<_>>().try_map(|items, span| {
+        let mut components = Vec::new();
+        let mut last_was_comma = true; // Start true to detect leading comma
 
-            for item in items {
-                match item {
-                    Some(comp) => {
-                        components.push(comp);
-                        last_was_comma = false;
-                    }
-                    None => {
-                        // Comma
-                        if last_was_comma {
-                            // Leading comma or consecutive commas - error
-                            return Err(chumsky::error::Rich::custom(
-                                span,
-                                "empty cost component not allowed".to_string(),
-                            ));
-                        }
-                        last_was_comma = true;
-                    }
+        for item in items {
+            if let Some(comp) = item {
+                components.push(comp);
+                last_was_comma = false;
+            } else {
+                // Comma
+                if last_was_comma {
+                    // Leading comma or consecutive commas - error
+                    return Err(chumsky::error::Rich::custom(
+                        span,
+                        "empty cost component not allowed".to_string(),
+                    ));
                 }
+                last_was_comma = true;
             }
-            Ok(components)
-        })
+        }
+        Ok(components)
+    })
 }
 
 /// Parse a cost specification: { ... }, {{ ... }}, or {# ... }.
@@ -1041,12 +1033,7 @@ fn tok_posting_or_meta<'src>()
         .ignore_then(tok_comment())
         .to(None);
 
-    choice((
-        meta_entry,
-        tags_links_line,
-        posting_line,
-        comment_line,
-    ))
+    choice((meta_entry, tags_links_line, posting_line, comment_line))
 }
 
 /// Parse a transaction directive.
@@ -1072,75 +1059,77 @@ fn tok_transaction_directive<'src>()
         .then(tag_or_link.repeated().collect::<Vec<_>>())
         .then_ignore(tok_comment().or_not())
         .then(tok_posting_or_meta().repeated().collect::<Vec<_>>())
-        .map(|((((date, flag_opt), string_items), tag_link_items), items)| {
-            let flag = flag_opt.unwrap_or('*');
+        .map(
+            |((((date, flag_opt), string_items), tag_link_items), items)| {
+                let flag = flag_opt.unwrap_or('*');
 
-            let mut strings = Vec::new();
-            let mut tags = Vec::new();
-            let mut links = Vec::new();
-            let mut has_pipe = false;
+                let mut strings = Vec::new();
+                let mut tags = Vec::new();
+                let mut links = Vec::new();
+                let mut has_pipe = false;
 
-            // Process string items (payee/narration with optional pipe)
-            for item in string_items {
-                match item {
-                    TxnHeaderItem::String(s) => strings.push(s),
-                    TxnHeaderItem::Pipe => has_pipe = true,
-                    _ => {}
-                }
-            }
-
-            // Process tags and links (must come after strings)
-            for item in tag_link_items {
-                match item {
-                    TxnHeaderItem::Tag(t) => tags.push(t),
-                    TxnHeaderItem::Link(l) => links.push(l),
-                    _ => {}
-                }
-            }
-
-            // Handle deprecated pipe syntax: "payee" | "narration"
-            // When pipe is present, we expect exactly two strings
-            let (payee, narration) = if has_pipe && strings.len() >= 2 {
-                // Deprecated: payee | narration
-                (Some(strings.remove(0)), strings.remove(0))
-            } else {
-                match strings.len() {
-                    0 => (None, String::new()),
-                    1 => (None, strings.remove(0)),
-                    _ => (Some(strings.remove(0)), strings.remove(0)),
-                }
-            };
-
-            let mut txn = Transaction::new(date, narration).with_flag(flag);
-            if let Some(p) = payee {
-                txn = txn.with_payee(p);
-            }
-            for t in tags {
-                txn = txn.with_tag(&t);
-            }
-            for l in links {
-                txn = txn.with_link(&l);
-            }
-            for item in items.into_iter().flatten() {
-                match item {
-                    PostingOrMeta::Posting(p) => {
-                        txn = txn.with_posting(p);
+                // Process string items (payee/narration with optional pipe)
+                for item in string_items {
+                    match item {
+                        TxnHeaderItem::String(s) => strings.push(s),
+                        TxnHeaderItem::Pipe => has_pipe = true,
+                        _ => {}
                     }
-                    PostingOrMeta::Meta(k, v) => {
-                        txn.meta.insert(k, v);
+                }
+
+                // Process tags and links (must come after strings)
+                for item in tag_link_items {
+                    match item {
+                        TxnHeaderItem::Tag(t) => tags.push(t),
+                        TxnHeaderItem::Link(l) => links.push(l),
+                        _ => {}
                     }
-                    PostingOrMeta::TagsLinks(t, l) => {
-                        for tag in t {
-                            txn = txn.with_tag(&tag);
+                }
+
+                // Handle deprecated pipe syntax: "payee" | "narration"
+                // When pipe is present, we expect exactly two strings
+                let (payee, narration) = if has_pipe && strings.len() >= 2 {
+                    // Deprecated: payee | narration
+                    (Some(strings.remove(0)), strings.remove(0))
+                } else {
+                    match strings.len() {
+                        0 => (None, String::new()),
+                        1 => (None, strings.remove(0)),
+                        _ => (Some(strings.remove(0)), strings.remove(0)),
+                    }
+                };
+
+                let mut txn = Transaction::new(date, narration).with_flag(flag);
+                if let Some(p) = payee {
+                    txn = txn.with_payee(p);
+                }
+                for t in tags {
+                    txn = txn.with_tag(&t);
+                }
+                for l in links {
+                    txn = txn.with_link(&l);
+                }
+                for item in items.into_iter().flatten() {
+                    match item {
+                        PostingOrMeta::Posting(p) => {
+                            txn = txn.with_posting(p);
                         }
-                        for link in l {
-                            txn = txn.with_link(&link);
+                        PostingOrMeta::Meta(k, v) => {
+                            txn.meta.insert(k, v);
+                        }
+                        PostingOrMeta::TagsLinks(t, l) => {
+                            for tag in t {
+                                txn = txn.with_tag(&tag);
+                            }
+                            for link in l {
+                                txn = txn.with_link(&link);
+                            }
                         }
                     }
                 }
-            }
-            (date, Directive::Transaction(txn), has_pipe)
-        })
+                (date, Directive::Transaction(txn), has_pipe)
+            },
+        )
 }
 
 /// Parse a balance directive.
@@ -1163,18 +1152,16 @@ fn tok_balance_directive<'src>()
         .then(amount_with_tolerance)
         .then_ignore(tok_comment().or_not())
         .then(tok_meta_lines())
-        .map(
-            |(((date, account), (amount, tolerance)), meta)| {
-                let mut bal = Balance::new(date, account, amount);
-                if let Some(t) = tolerance {
-                    bal = bal.with_tolerance(t);
-                }
-                for (k, v) in meta {
-                    bal.meta.insert(k, v);
-                }
-                (date, Directive::Balance(bal))
-            },
-        )
+        .map(|(((date, account), (amount, tolerance)), meta)| {
+            let mut bal = Balance::new(date, account, amount);
+            if let Some(t) = tolerance {
+                bal = bal.with_tolerance(t);
+            }
+            for (k, v) in meta {
+                bal.meta.insert(k, v);
+            }
+            (date, Directive::Balance(bal))
+        })
 }
 
 /// Parse an open directive.
@@ -1530,25 +1517,28 @@ pub fn parse(source: &str) -> ParseResult {
         match item {
             ParsedItem::Directive(d) => {
                 // Apply pushed tags to transactions
-                let tags_only: Vec<InternedStr> = tag_stack.iter().map(|(t, _)| t.clone()).collect();
+                let tags_only: Vec<InternedStr> =
+                    tag_stack.iter().map(|(t, _)| t.clone()).collect();
                 let d = apply_pushed_tags(d, &tags_only);
                 // Apply pushed meta to all directives
-                let meta_only: Vec<(String, MetaValue)> =
-                    meta_stack.iter().map(|(k, v, _)| (k.clone(), v.clone())).collect();
+                let meta_only: Vec<(String, MetaValue)> = meta_stack
+                    .iter()
+                    .map(|(k, v, _)| (k.clone(), v.clone()))
+                    .collect();
                 let d = apply_pushed_meta(d, &meta_only);
                 directives.push(Spanned::new(d, span));
             }
             ParsedItem::DirectiveWithPipe(d) => {
                 // Emit deprecation warning for pipe symbol
-                push_pop_errors.push(ParseError::new(
-                    ParseErrorKind::DeprecatedPipeSymbol,
-                    span,
-                ));
+                push_pop_errors.push(ParseError::new(ParseErrorKind::DeprecatedPipeSymbol, span));
                 // Still process the directive normally
-                let tags_only: Vec<InternedStr> = tag_stack.iter().map(|(t, _)| t.clone()).collect();
+                let tags_only: Vec<InternedStr> =
+                    tag_stack.iter().map(|(t, _)| t.clone()).collect();
                 let d = apply_pushed_tags(d, &tags_only);
-                let meta_only: Vec<(String, MetaValue)> =
-                    meta_stack.iter().map(|(k, v, _)| (k.clone(), v.clone())).collect();
+                let meta_only: Vec<(String, MetaValue)> = meta_stack
+                    .iter()
+                    .map(|(k, v, _)| (k.clone(), v.clone()))
+                    .collect();
                 let d = apply_pushed_meta(d, &meta_only);
                 directives.push(Spanned::new(d, span));
             }
@@ -1561,10 +1551,7 @@ pub fn parse(source: &str) -> ParseResult {
                     tag_stack.remove(pos);
                 } else {
                     // Error: poptag for a tag that was never pushed
-                    push_pop_errors.push(ParseError::new(
-                        ParseErrorKind::InvalidPoptag(tag),
-                        span,
-                    ));
+                    push_pop_errors.push(ParseError::new(ParseErrorKind::InvalidPoptag(tag), span));
                 }
             }
             ParsedItem::Pushmeta(key, value) => meta_stack.push((key, value, span)),
@@ -1573,10 +1560,8 @@ pub fn parse(source: &str) -> ParseResult {
                     meta_stack.remove(pos);
                 } else {
                     // Error: popmeta for a key that was never pushed
-                    push_pop_errors.push(ParseError::new(
-                        ParseErrorKind::InvalidPopmeta(key),
-                        span,
-                    ));
+                    push_pop_errors
+                        .push(ParseError::new(ParseErrorKind::InvalidPopmeta(key), span));
                 }
             }
             ParsedItem::Comment => {}

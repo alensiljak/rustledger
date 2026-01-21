@@ -85,6 +85,11 @@ TEMP_DIR="$4"
 
 relpath="${file#$FIXTURES_DIR/}"
 
+# Escape string for safe JSON embedding (limit to 200 chars)
+escape_json() {
+    echo "$1" | head -c 200 | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' '
+}
+
 # Run Python bean-check
 py_stderr=$(mktemp)
 bean-check "$file" >/dev/null 2>"$py_stderr" && py_exit=0 || py_exit=$?
@@ -118,9 +123,9 @@ rs_error_count=$(echo "$rs_err" | grep -c "error\|Error" || echo 0)
 [[ "$py_error_count" =~ ^[0-9]+$ ]] || py_error_count=0
 [[ "$rs_error_count" =~ ^[0-9]+$ ]] || rs_error_count=0
 
-# Escape special chars for JSON
-py_err_escaped=$(echo "$py_err" | head -c 200 | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
-rs_err_escaped=$(echo "$rs_err" | head -c 200 | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g' | tr '\n' ' ')
+# Escape special chars for JSON using helper function
+py_err_escaped=$(escape_json "$py_err")
+rs_err_escaped=$(escape_json "$rs_err")
 
 # Output JSON result
 echo "{\"file\":\"$relpath\",\"python\":{\"exit\":$py_exit,\"parse_error\":$py_parse_error,\"error_count\":$py_error_count,\"stderr\":\"$py_err_escaped\"},\"rust\":{\"exit\":$rs_exit,\"parse_error\":$rs_parse_error,\"error_count\":$rs_error_count,\"stderr\":\"$rs_err_escaped\"},\"match\":$exit_match}"

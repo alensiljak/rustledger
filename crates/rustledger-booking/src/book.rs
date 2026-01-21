@@ -175,9 +175,7 @@ impl BookingEngine {
                                             rustledger_core::PriceAnnotation::Unit(a) => {
                                                 a.number * units.number.abs()
                                             }
-                                            rustledger_core::PriceAnnotation::Total(a) => {
-                                                a.number
-                                            }
+                                            rustledger_core::PriceAnnotation::Total(a) => a.number,
                                             _ => continue,
                                         };
 
@@ -233,7 +231,7 @@ impl BookingEngine {
                                 }
                                 rustledger_core::PriceAnnotation::UnitIncomplete(inc)
                                 | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                                    inc.currency().map(|c| c.into())
+                                    inc.currency().map(Into::into)
                                 }
                                 _ => None,
                             })
@@ -241,17 +239,14 @@ impl BookingEngine {
 
                         // Check if this is a reduction (opposite sign exists in inventory)
                         // Reductions get their date from matched lot, augmentations get txn date
-                        let is_reduction = self
-                            .inventories
-                            .get(&posting.account)
-                            .map(|inv| {
+                        let is_reduction =
+                            self.inventories.get(&posting.account).is_some_and(|inv| {
                                 inv.positions().iter().any(|pos| {
                                     pos.units.currency == units.currency
                                         && pos.units.number.is_sign_positive()
                                             != units.number.is_sign_positive()
                                 })
-                            })
-                            .unwrap_or(false);
+                            });
 
                         // Fill in date for augmentations only (not reductions)
                         let inferred_date = if is_reduction {
@@ -309,10 +304,10 @@ impl BookingEngine {
                             Some(*per_unit)
                         } else if let Some(total) = &cost_spec.number_total {
                             // Convert total cost to per-unit cost
-                            if !units.number.is_zero() {
-                                Some(*total / units.number.abs())
-                            } else {
+                            if units.number.is_zero() {
                                 None
+                            } else {
+                                Some(*total / units.number.abs())
                             }
                         } else {
                             None
@@ -327,7 +322,7 @@ impl BookingEngine {
                                 }
                                 rustledger_core::PriceAnnotation::UnitIncomplete(inc)
                                 | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                                    inc.currency().map(|c| c.into())
+                                    inc.currency().map(Into::into)
                                 }
                                 _ => None,
                             })
@@ -465,7 +460,7 @@ mod tests {
 
         // Check inventory before sell
         let inv = engine.inventory(&"Assets:Stock".into()).unwrap();
-        eprintln!("Inventory before sell: {:?}", inv);
+        eprintln!("Inventory before sell: {inv:?}");
 
         let booked = engine.book(&sell).unwrap();
         eprintln!(
@@ -508,7 +503,7 @@ mod tests {
 
         // Check inventory
         let inv = engine.inventory(&"Assets:Stock".into()).unwrap();
-        eprintln!("Inventory after total cost buy: {:?}", inv);
+        eprintln!("Inventory after total cost buy: {inv:?}");
         assert_eq!(inv.units("VIIIX"), dec!(1.763));
 
         // Check cost was calculated correctly (300/1.763 ≈ 170.16)
@@ -537,7 +532,7 @@ mod tests {
         engine.apply(&sell);
 
         let inv = engine.inventory(&"Assets:Stock".into()).unwrap();
-        eprintln!("Inventory after SELLOPT: {:?}", inv);
+        eprintln!("Inventory after SELLOPT: {inv:?}");
 
         // Check that the AAPL position has cost with USD currency
         let aapl_pos = inv
@@ -546,7 +541,7 @@ mod tests {
             .find(|p| p.units.currency.as_ref() == "AAPL")
             .expect("Should have AAPL position");
 
-        eprintln!("AAPL position: {:?}", aapl_pos);
+        eprintln!("AAPL position: {aapl_pos:?}");
 
         assert!(aapl_pos.cost.is_some(), "AAPL position should have cost");
         let cost = aapl_pos.cost.as_ref().unwrap();
