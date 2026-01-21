@@ -148,6 +148,14 @@ impl fmt::Display for BookingError {
 
 impl std::error::Error for BookingError {}
 
+/// Tracks sign presence for positions with cost for a currency.
+/// Used to enable O(1) check for potential cancellations.
+#[derive(Debug, Clone, Copy, Default)]
+struct SignPresence {
+    has_positive: bool,
+    has_negative: bool,
+}
+
 /// An inventory is a collection of positions.
 ///
 /// It tracks all positions for an account and supports booking operations
@@ -183,6 +191,12 @@ pub struct Inventory {
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
     simple_index: HashMap<InternedStr, usize>,
+    /// Tracks sign presence for costed positions by currency.
+    /// Enables O(1) check for whether opposite-sign positions exist.
+    /// Not serialized - rebuilt on demand.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
+    costed_signs: HashMap<InternedStr, SignPresence>,
 }
 
 impl PartialEq for Inventory {
@@ -300,44 +314,65 @@ impl Inventory {
             return;
         }
 
-        // For positions with cost, try to find a matching lot to merge/reduce
-        // Merge criteria: same cost number, currency, and compatible date
-        // Date matching: if incoming position has no date, it matches any date
-        //                if incoming has a date, it must match exactly
-        // This allows:
-        // - Negative positions to reduce positive positions (buy/sell cancellation)
-        // - Positive positions with IDENTICAL cost (incl date) to be merged
+        // For positions with cost, try to find a matching lot to cancel/reduce.
+        // For performance, use O(1) sign tracking to skip scan when no opposite-sign positions exist.
         if let Some(pos_cost) = &position.cost {
-            for i in 0..self.positions.len() {
-                let existing = &self.positions[i];
-                if existing.units.currency == position.units.currency {
-                    if let Some(existing_cost) = &existing.cost {
-                        // Match if same cost number and currency
-                        // For date: if pos_cost has no date, match any; if it has date, must match
-                        let date_matches =
-                            pos_cost.date.is_none() || pos_cost.date == existing_cost.date;
+            let is_adding_positive = position.units.number.is_sign_positive();
+            let currency = &position.units.currency;
 
-                        if existing_cost.number == pos_cost.number
-                            && existing_cost.currency == pos_cost.currency
-                            && date_matches
-                        {
-                            // When costs match exactly, always merge:
-                            // - Same signs: augmenting a position (long+long or short+short)
-                            // - Opposite signs: reducing a position (selling long or closing short)
-                            // Merge/reduce the existing lot
-                            self.positions[i].units.number += position.units.number;
-                            // Remove if now empty
-                            if self.positions[i].is_empty() {
-                                self.positions.remove(i);
-                            }
-                            return;
+            // O(1) check: are there opposite-sign positions for this currency?
+            let has_opposite = self.costed_signs.get(currency).is_some_and(|signs| {
+                if is_adding_positive {
+                    signs.has_negative
+                } else {
+                    signs.has_positive
+                }
+            });
+
+            if has_opposite {
+                // Scan for exact cost match to cancel
+                for i in 0..self.positions.len() {
+                    let existing = &self.positions[i];
+                    if existing.units.currency != *currency {
+                        continue;
+                    }
+                    let Some(existing_cost) = &existing.cost else {
+                        continue;
+                    };
+
+                    // Only merge opposite signs (reduction/cancellation)
+                    let is_opposite_sign =
+                        existing.units.number.is_sign_positive() != is_adding_positive;
+                    if !is_opposite_sign {
+                        continue;
+                    }
+
+                    let is_exact_cost = existing_cost.number == pos_cost.number
+                        && existing_cost.currency == pos_cost.currency
+                        && (pos_cost.date.is_none() || pos_cost.date == existing_cost.date);
+
+                    if is_exact_cost {
+                        self.positions[i].units.number += position.units.number;
+                        if self.positions[i].is_empty() {
+                            self.positions.remove(i);
+                            // Rebuild sign tracking since we removed a position
+                            self.rebuild_costed_signs();
                         }
+                        return;
                     }
                 }
             }
+
+            // Update sign tracking for the new position
+            let signs = self.costed_signs.entry(currency.clone()).or_default();
+            if is_adding_positive {
+                signs.has_positive = true;
+            } else {
+                signs.has_negative = true;
+            }
         }
 
-        // No matching lot found - add as new lot
+        // No matching lot found (or augmentation/no opposite positions) - add as new lot
         self.positions.push(position);
     }
 
@@ -836,6 +871,26 @@ impl Inventory {
                     pos.units.currency
                 );
                 self.simple_index.insert(pos.units.currency.clone(), idx);
+            }
+        }
+        self.rebuild_costed_signs();
+    }
+
+    /// Rebuild the `costed_signs` tracking from positions.
+    /// Called after operations that may invalidate the tracking.
+    fn rebuild_costed_signs(&mut self) {
+        self.costed_signs.clear();
+        for pos in &self.positions {
+            if pos.cost.is_some() && !pos.is_empty() {
+                let signs = self
+                    .costed_signs
+                    .entry(pos.units.currency.clone())
+                    .or_default();
+                if pos.units.number.is_sign_positive() {
+                    signs.has_positive = true;
+                } else {
+                    signs.has_negative = true;
+                }
             }
         }
     }
