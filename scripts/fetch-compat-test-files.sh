@@ -6,6 +6,8 @@ set -e
 #
 # This script downloads .beancount files from various open source projects
 # to create a comprehensive compatibility test suite.
+#
+# Target: ~800+ real beancount files from diverse sources
 
 DEST="tests/compat-full"
 TMPDIR="/tmp/beancount-fetch-$$"

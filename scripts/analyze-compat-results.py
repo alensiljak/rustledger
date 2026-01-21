@@ -16,7 +16,7 @@ from pathlib import Path
 
 
 def load_jsonl(path: Path) -> list[dict]:
-    """Load a JSONL file."""
+    """Load a JSONL file, skipping malformed lines."""
     results = []
     with open(path) as f:
         for line in f:
@@ -25,7 +25,8 @@ def load_jsonl(path: Path) -> list[dict]:
                 try:
                     results.append(json.loads(line))
                 except json.JSONDecodeError:
-                    pass
+                    # Skip malformed JSON lines (may occur from truncated output or encoding issues)
+                    continue
     return results
 
 

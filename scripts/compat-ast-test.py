@@ -153,9 +153,9 @@ def parse_with_rust(file_path: Path, rledger_check: str, rledger_query: str) -> 
             for line in lines[2:]:  # Skip header and separator
                 if line.strip() and not line.startswith('-') and 'row(s)' not in line:
                     result.accounts.add(line.strip())
-    except Exception:
-        # BQL query failure is non-fatal; we continue with empty accounts set
-        pass
+    except Exception as e:
+        # BQL query failure is non-fatal; record error and continue with empty accounts set
+        result.raw_errors.append(f"accounts query: {e}")
 
     # Get posting count via BQL (COUNT(*) counts postings)
     try:
@@ -173,12 +173,12 @@ def parse_with_rust(file_path: Path, rledger_check: str, rledger_query: str) -> 
                     try:
                         result.posting_count = int(line)
                     except ValueError:
-                        # Non-numeric output is unexpected; leave posting_count as 0
+                        # Non-integer lines (headers/footers) are expected; ignore them
                         pass
                     break
-    except Exception:
-        # BQL query failure is non-fatal; we continue with posting_count=0
-        pass
+    except Exception as e:
+        # BQL query failure is non-fatal; record error and continue with posting_count=0
+        result.raw_errors.append(f"posting count query: {e}")
 
     return result
 
