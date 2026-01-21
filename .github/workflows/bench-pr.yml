@@ -145,15 +145,8 @@ jobs:
           echo "rustledger: ${rustledger_mb}MB"
           echo "beancount:  ${beancount_mb}MB"
 
-      - name: Run Criterion benchmarks
-        id: criterion
-        run: |
-          # Run key Criterion benchmarks and capture summary
-          cargo bench -p rustledger-core -- --noplot 2>&1 | tee criterion-output.txt || true
-          cargo bench -p rustledger-parser -- --noplot 2>&1 | tee -a criterion-output.txt || true
-
-          # Extract key metrics
-          echo "criterion_ran=true" >> $GITHUB_OUTPUT
+      # Note: Criterion benchmarks removed - they're tracked in ci.yml on main branch pushes
+      # and weren't being reported in the PR comment anyway
 
       - name: Fetch baseline from main branch
         id: baseline
