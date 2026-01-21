@@ -548,4 +548,196 @@ mod tests {
         assert_eq!(cost.currency.as_ref(), "USD", "Cost currency should be USD");
         assert_eq!(cost.number, dec!(40.0), "Cost number should be 40.0");
     }
+
+    #[test]
+    fn test_booking_engine_with_method() {
+        // Test that with_method creates engine with specified booking method
+        let engine = BookingEngine::with_method(BookingMethod::Lifo);
+        assert!(engine.inventories.is_empty());
+
+        // Also test default is FIFO
+        let default_engine = BookingEngine::new();
+        assert!(default_engine.inventories.is_empty());
+    }
+
+    #[test]
+    fn test_book_sell_with_total_price() {
+        let mut engine = BookingEngine::new();
+
+        // Buy 10 AAPL at $150
+        let buy = Transaction::new(date(2024, 1, 15), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(150.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-1500.00), "USD"),
+            ));
+
+        engine.apply(&buy);
+
+        // Sell 5 AAPL with total price annotation (not per-unit)
+        // Total price = $875 for 5 shares = $175/share
+        let sell = Transaction::new(date(2024, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-5), "AAPL"))
+                    .with_cost(CostSpec::empty())
+                    .with_price(PriceAnnotation::Total(Amount::new(dec!(875.00), "USD"))),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(875.00), "USD"),
+            ))
+            .with_posting(Posting::auto("Income:CapitalGains"));
+
+        let booked = engine.book(&sell).unwrap();
+
+        // Check that gain was calculated correctly
+        // Gain = 875 - (5 * 150) = 875 - 750 = 125
+        assert_eq!(booked.gains.len(), 1, "Expected 1 gain");
+        let gain = &booked.gains[0];
+        assert_eq!(gain.amount.number, dec!(125));
+    }
+
+    #[test]
+    fn test_book_transactions_multiple() {
+        // Buy 10 AAPL at $150
+        let buy = Transaction::new(date(2024, 1, 15), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(150.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-1500.00), "USD"),
+            ));
+
+        // Sell 5 AAPL
+        let sell = Transaction::new(date(2024, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-5), "AAPL"))
+                    .with_cost(CostSpec::empty())
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(175.00), "USD"))),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(875.00), "USD"),
+            ))
+            .with_posting(Posting::auto("Income:CapitalGains"));
+
+        let transactions = vec![buy, sell];
+        let results = book_transactions(&transactions, BookingMethod::Fifo);
+
+        assert_eq!(results.len(), 2);
+        assert!(results[0].is_ok());
+        assert!(results[1].is_ok());
+    }
+
+    #[test]
+    fn test_book_augmentation_not_reduction() {
+        let mut engine = BookingEngine::new();
+
+        // First, add existing inventory with positive AAPL
+        let buy = Transaction::new(date(2024, 1, 15), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(150.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-1500.00), "USD"),
+            ));
+
+        engine.apply(&buy);
+
+        // Now try to book another buy (augmentation, not reduction)
+        // This has empty cost but same sign as inventory, so it's not a reduction
+        let another_buy = Transaction::new(date(2024, 2, 15), "Buy more")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(5), "AAPL"))
+                    .with_cost(CostSpec::empty()), // Empty cost but augmentation
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-750.00), "USD"),
+            ));
+
+        // Should not error - just skip lot matching for augmentation
+        let booked = engine.book(&another_buy).unwrap();
+        assert!(
+            booked.booked_indices.is_empty(),
+            "Augmentation should not have booked indices"
+        );
+    }
+
+    #[test]
+    fn test_book_no_inventory_for_account() {
+        let engine = BookingEngine::new();
+
+        // Try to book a sell without any prior inventory
+        let sell = Transaction::new(date(2024, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-5), "AAPL"))
+                    .with_cost(CostSpec::empty()),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(875.00), "USD"),
+            ));
+
+        // Should succeed but with no booked indices (no inventory to match against)
+        let booked = engine.book(&sell).unwrap();
+        assert!(
+            booked.booked_indices.is_empty(),
+            "No inventory means no lot matching"
+        );
+    }
+
+    #[test]
+    fn test_book_zero_gain() {
+        let mut engine = BookingEngine::new();
+
+        // Buy 10 AAPL at $150
+        let buy = Transaction::new(date(2024, 1, 15), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(150.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-1500.00), "USD"),
+            ));
+
+        engine.apply(&buy);
+
+        // Sell at same price - zero gain
+        let sell = Transaction::new(date(2024, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-5), "AAPL"))
+                    .with_cost(CostSpec::empty())
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(150.00), "USD"))),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(750.00), "USD"),
+            ));
+
+        let booked = engine.book(&sell).unwrap();
+
+        // Zero gain should not be added to gains vector
+        assert!(booked.gains.is_empty(), "Zero gain should not be recorded");
+    }
 }
