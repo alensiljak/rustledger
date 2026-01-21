@@ -652,4 +652,156 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_readonly_option_warning() {
+        let mut opts = Options::new();
+        opts.set("filename", "/some/path.beancount");
+
+        assert_eq!(opts.warnings.len(), 1);
+        assert_eq!(opts.warnings[0].code, "E7005");
+        assert!(opts.warnings[0].message.contains("may not be set"));
+    }
+
+    #[test]
+    fn test_invalid_account_name_validation() {
+        // Test account_rounding with invalid value
+        let mut opts = Options::new();
+        opts.set("account_rounding", "invalid");
+
+        assert_eq!(opts.warnings.len(), 1);
+        assert_eq!(opts.warnings[0].code, "E7002");
+        assert!(opts.warnings[0].message.contains("Invalid leaf account"));
+    }
+
+    #[test]
+    fn test_valid_account_name() {
+        let mut opts = Options::new();
+        opts.set("account_rounding", "Equity:Rounding");
+
+        assert!(
+            opts.warnings.is_empty(),
+            "Valid account name should not produce warnings: {:?}",
+            opts.warnings
+        );
+        assert_eq!(opts.account_rounding, Some("Equity:Rounding".to_string()));
+    }
+
+    #[test]
+    fn test_render_commas_with_numeric_values() {
+        let mut opts = Options::new();
+        opts.set("render_commas", "1");
+        assert!(opts.render_commas);
+        assert!(opts.warnings.is_empty());
+
+        let mut opts2 = Options::new();
+        opts2.set("render_commas", "0");
+        assert!(!opts2.render_commas);
+        assert!(opts2.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_processing_mode_validation() {
+        // Valid values
+        let mut opts = Options::new();
+        opts.set("plugin_processing_mode", "default");
+        assert!(opts.warnings.is_empty());
+        assert_eq!(opts.plugin_processing_mode, "default");
+
+        let mut opts2 = Options::new();
+        opts2.set("plugin_processing_mode", "raw");
+        assert!(opts2.warnings.is_empty());
+        assert_eq!(opts2.plugin_processing_mode, "raw");
+
+        // Invalid value
+        let mut opts3 = Options::new();
+        opts3.set("plugin_processing_mode", "invalid");
+        assert_eq!(opts3.warnings.len(), 1);
+        assert_eq!(opts3.warnings[0].code, "E7002");
+    }
+
+    #[test]
+    fn test_deprecated_plugin_option() {
+        let mut opts = Options::new();
+        opts.set("plugin", "some.plugin");
+
+        assert_eq!(opts.warnings.len(), 1);
+        assert_eq!(opts.warnings[0].code, "E7004");
+        assert!(opts.warnings[0].message.contains("deprecated"));
+    }
+
+    #[test]
+    fn test_deprecated_allow_pipe_separator() {
+        let mut opts = Options::new();
+        opts.set("allow_pipe_separator", "true");
+
+        assert_eq!(opts.warnings.len(), 1);
+        assert_eq!(opts.warnings[0].code, "E7004");
+        assert!(opts.warnings[0].message.contains("deprecated"));
+    }
+
+    #[test]
+    fn test_is_valid_account() {
+        // Valid accounts
+        assert!(Options::is_valid_account("Assets:Bank"));
+        assert!(Options::is_valid_account("Equity:Rounding:Precision"));
+
+        // Invalid accounts
+        assert!(!Options::is_valid_account("invalid")); // No colon
+        assert!(!Options::is_valid_account("assets:bank")); // Lowercase
+        assert!(!Options::is_valid_account("Assets:")); // Empty component
+        assert!(!Options::is_valid_account(":Bank")); // Empty first component
+    }
+
+    #[test]
+    fn test_account_validation_options() {
+        // Test all account options that require validation
+        let account_options = [
+            "account_rounding",
+            "account_current_conversions",
+            "account_unrealized_gains",
+            "account_previous_balances",
+            "account_previous_earnings",
+            "account_previous_conversions",
+            "account_current_earnings",
+        ];
+
+        for opt in account_options {
+            let mut opts = Options::new();
+            opts.set(opt, "lowercase:invalid");
+
+            assert!(
+                !opts.warnings.is_empty(),
+                "Option '{opt}' should warn on invalid account name"
+            );
+            assert_eq!(opts.warnings[0].code, "E7002");
+        }
+    }
+
+    #[test]
+    fn test_inferred_tolerance_default() {
+        let mut opts = Options::new();
+        opts.set("inferred_tolerance_default", "USD:0.005");
+
+        assert!(opts.warnings.is_empty());
+        assert_eq!(
+            opts.inferred_tolerance_default.get("USD"),
+            Some(&rust_decimal_macros::dec!(0.005))
+        );
+
+        // Test wildcard
+        let mut opts2 = Options::new();
+        opts2.set("inferred_tolerance_default", "*:0.01");
+        assert!(opts2.warnings.is_empty());
+        assert_eq!(
+            opts2.inferred_tolerance_default.get("*"),
+            Some(&rust_decimal_macros::dec!(0.01))
+        );
+
+        // Test invalid format
+        let mut opts3 = Options::new();
+        opts3.set("inferred_tolerance_default", "INVALID");
+        assert_eq!(opts3.warnings.len(), 1);
+        assert_eq!(opts3.warnings[0].code, "E7002");
+    }
 }
