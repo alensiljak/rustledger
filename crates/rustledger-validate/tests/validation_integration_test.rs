@@ -193,7 +193,9 @@ fn test_e3001_transaction_unbalanced() {
 }
 
 #[test]
-fn test_e3003_no_postings() {
+fn test_e3003_no_postings_allowed() {
+    // Python beancount allows transactions with no postings (metadata-only).
+    // We match this behavior and do NOT report an error.
     let directives = vec![
         Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
         // Transaction with no postings
@@ -202,8 +204,8 @@ fn test_e3003_no_postings() {
 
     let errors = validate_directives(&directives);
     assert!(
-        errors.contains(&ErrorCode::NoPostings),
-        "expected E3003 NoPostings error"
+        !errors.contains(&ErrorCode::NoPostings),
+        "should NOT report E3003 NoPostings error (Python allows empty transactions)"
     );
 }
 

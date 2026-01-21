@@ -25,8 +25,8 @@ SUMMARY_FILE="$RESULTS_DIR/summary_$TIMESTAMP.md"
 
 # Parallel settings
 PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
-# Cap at 8 for stability
-[ "$PARALLEL_JOBS" -gt 8 ] && PARALLEL_JOBS=8
+# Cap at 16 for stability
+[ "$PARALLEL_JOBS" -gt 16 ] && PARALLEL_JOBS=16
 
 # Colors for output
 RED='\033[0;31m'
@@ -91,17 +91,18 @@ bean-check "$file" >/dev/null 2>"$py_stderr" && py_exit=0 || py_exit=$?
 py_err=$(cat "$py_stderr" | head -c 500)
 rm -f "$py_stderr"
 
-# Run Rust rledger-check
-rs_stderr=$(mktemp)
-"$RLEDGER_CHECK" "$file" >/dev/null 2>"$rs_stderr" && rs_exit=0 || rs_exit=$?
-rs_err=$(cat "$rs_stderr" | head -c 500)
-rm -f "$rs_stderr"
+# Run Rust rledger-check (capture both stdout and stderr since errors go to stdout)
+# Strip ANSI codes to avoid breaking JSON
+rs_output=$(mktemp)
+"$RLEDGER_CHECK" "$file" >"$rs_output" 2>&1 && rs_exit=0 || rs_exit=$?
+rs_err=$(cat "$rs_output" | sed 's/\x1b\[[0-9;]*m//g' | head -c 500)
+rm -f "$rs_output"
 
 # Determine parse errors
 py_parse_error=false
 rs_parse_error=false
-echo "$py_err" | grep -qi "syntax error\|parse error\|unexpected" && py_parse_error=true
-echo "$rs_err" | grep -qi "syntax error\|parse error\|unexpected" && rs_parse_error=true
+echo "$py_err" | grep -qi "syntax error\|parse error\|unexpected\|invalid token" && py_parse_error=true
+echo "$rs_err" | grep -qi "syntax error\|parse error\|unexpected\|invalid token" && rs_parse_error=true
 
 # Check if exits match
 exit_match=false
@@ -151,9 +152,10 @@ check_match=$(grep -c '"match":true' "$RESULTS_FILE" || echo 0)
 check_mismatch=$((total - check_match))
 
 # Parse match (both have parse error or both don't)
-parse_match=$(jq -r 'select(.python.parse_error == .rust.parse_error)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-parse_fail_python=$(jq -r 'select(.python.parse_error == true and .rust.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
-parse_fail_rust=$(jq -r 'select(.rust.parse_error == true and .python.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+# Use -c (compact) to ensure one line per match for accurate counting
+parse_match=$(jq -c 'select(.python.parse_error == .rust.parse_error)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+parse_fail_python=$(jq -c 'select(.python.parse_error == true and .rust.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
+parse_fail_rust=$(jq -c 'select(.rust.parse_error == true and .python.parse_error == false)' "$RESULTS_FILE" 2>/dev/null | wc -l | tr -d ' ')
 
 # Ensure numeric
 [ -z "$parse_match" ] && parse_match=0
@@ -211,7 +213,7 @@ EOF
 echo "### Files with exit code mismatch:" >> "$SUMMARY_FILE"
 echo "" >> "$SUMMARY_FILE"
 
-jq -r 'select(.match == false) | "- \(.file): Python=\(.python.exit), Rust=\(.rust.exit)"' "$RESULTS_FILE" >> "$SUMMARY_FILE" 2>/dev/null || true
+jq -r 'select(.match == false) | "- \(.file): Python=\(.python.exit), Rust=\(.rust.exit)"' "$RESULTS_FILE" 2>/dev/null | head -50 >> "$SUMMARY_FILE" || true
 
 echo "" >> "$SUMMARY_FILE"
 echo "## Details" >> "$SUMMARY_FILE"

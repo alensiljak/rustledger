@@ -38,7 +38,7 @@ except ImportError:
     print("Warning: beancount not installed, Python comparison disabled")
 
 # Parallel settings
-MAX_WORKERS = min(int(os.environ.get('PARALLEL_JOBS', multiprocessing.cpu_count())), 8)
+MAX_WORKERS = min(int(os.environ.get('PARALLEL_JOBS', multiprocessing.cpu_count())), 16)
 
 
 @dataclass

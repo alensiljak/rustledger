@@ -33,11 +33,18 @@ const KNOWN_OPTIONS: &[&str] = &[
     "long_string_maxlines",
     "documents",
     "insert_pythonpath",
-    "plugin_processing_mode",
 ];
 
 /// Options that can be specified multiple times.
-const REPEATABLE_OPTIONS: &[&str] = &["operating_currency", "insert_pythonpath", "documents"];
+const REPEATABLE_OPTIONS: &[&str] = &[
+    "operating_currency",
+    "insert_pythonpath",
+    "documents",
+    "inferred_tolerance_default",
+];
+
+/// Options that are read-only and cannot be set by users.
+const READONLY_OPTIONS: &[&str] = &["filename"];
 
 /// Option validation warning.
 #[derive(Debug, Clone)]
@@ -55,7 +62,7 @@ pub struct OptionWarning {
 /// Beancount file options.
 ///
 /// These correspond to the `option` directives in beancount files.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Options {
     /// Title for the ledger.
     pub title: Option<String>,
@@ -146,6 +153,12 @@ pub struct Options {
     pub warnings: Vec<OptionWarning>,
 }
 
+impl Default for Options {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Options {
     /// Create new options with defaults.
     #[must_use]
@@ -196,6 +209,17 @@ impl Options {
                 option: key.to_string(),
                 value: value.to_string(),
             });
+        }
+
+        // Check for read-only options (E7005)
+        if READONLY_OPTIONS.contains(&key) {
+            self.warnings.push(OptionWarning {
+                code: "E7005",
+                message: format!("Option '{key}' may not be set"),
+                option: key.to_string(),
+                value: value.to_string(),
+            });
+            return; // Don't apply the value
         }
 
         // Check for duplicate non-repeatable options (E7003)
@@ -282,7 +306,10 @@ impl Options {
                 self.booking_method = value.to_string();
             }
             "render_commas" => {
-                if !value.eq_ignore_ascii_case("true") && !value.eq_ignore_ascii_case("false") {
+                // Accept TRUE/FALSE, true/false, 1/0 (Python beancount compatibility)
+                let is_true = value.eq_ignore_ascii_case("true") || value == "1";
+                let is_false = value.eq_ignore_ascii_case("false") || value == "0";
+                if !is_true && !is_false {
                     self.warnings.push(OptionWarning {
                         code: "E7002",
                         message: format!(
@@ -292,7 +319,7 @@ impl Options {
                         value: value.to_string(),
                     });
                 }
-                self.render_commas = value.eq_ignore_ascii_case("true");
+                self.render_commas = is_true;
             }
             "filename" => self.filename = Some(value.to_string()),
             "account_previous_balances" => self.account_previous_balances = value.to_string(),
@@ -333,6 +360,13 @@ impl Options {
                 self.experiment_explicit_tolerances = value.eq_ignore_ascii_case("true");
             }
             "allow_pipe_separator" => {
+                // This option is deprecated in Python beancount
+                self.warnings.push(OptionWarning {
+                    code: "E7004",
+                    message: "Option 'allow_pipe_separator' is deprecated".to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                });
                 self.allow_pipe_separator = value.eq_ignore_ascii_case("true");
             }
             "long_string_maxlines" => {
@@ -349,7 +383,18 @@ impl Options {
                     });
                 }
             }
-            "documents" => self.documents.push(value.to_string()),
+            "documents" => {
+                // Validate that document root exists
+                if !std::path::Path::new(value).exists() {
+                    self.warnings.push(OptionWarning {
+                        code: "E7006",
+                        message: format!("Document root '{value}' does not exist"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.documents.push(value.to_string());
+            }
             _ => {
                 // Unknown options go to custom map
                 self.custom.insert(key.to_string(), value.to_string());

@@ -274,7 +274,9 @@ impl Inventory {
 
     /// Add a position to the inventory.
     ///
-    /// For positions with cost, this creates a new lot.
+    /// For positions with cost, if adding a negative amount that matches an
+    /// existing lot's cost basis exactly, reduces that lot instead of creating
+    /// a new one. This properly handles buy/sell pairs.
     /// For positions without cost, this merges with existing positions
     /// of the same currency using O(1) `HashMap` lookup.
     pub fn add(&mut self, position: Position) {
@@ -294,9 +296,48 @@ impl Inventory {
             let idx = self.positions.len();
             self.simple_index
                 .insert(position.units.currency.clone(), idx);
+            self.positions.push(position);
+            return;
         }
 
-        // Add as new lot (either with cost, or first simple position for this currency)
+        // For positions with cost, try to find a matching lot to merge/reduce
+        // Merge criteria: same cost number, currency, and compatible date
+        // Date matching: if incoming position has no date, it matches any date
+        //                if incoming has a date, it must match exactly
+        // This allows:
+        // - Negative positions to reduce positive positions (buy/sell cancellation)
+        // - Positive positions with IDENTICAL cost (incl date) to be merged
+        if let Some(pos_cost) = &position.cost {
+            for i in 0..self.positions.len() {
+                let existing = &self.positions[i];
+                if existing.units.currency == position.units.currency {
+                    if let Some(existing_cost) = &existing.cost {
+                        // Match if same cost number and currency
+                        // For date: if pos_cost has no date, match any; if it has date, must match
+                        let date_matches = pos_cost.date.is_none()
+                            || pos_cost.date == existing_cost.date;
+
+                        if existing_cost.number == pos_cost.number
+                            && existing_cost.currency == pos_cost.currency
+                            && date_matches
+                        {
+                            // When costs match exactly, always merge:
+                            // - Same signs: augmenting a position (long+long or short+short)
+                            // - Opposite signs: reducing a position (selling long or closing short)
+                            // Merge/reduce the existing lot
+                            self.positions[i].units.number += position.units.number;
+                            // Remove if now empty
+                            if self.positions[i].is_empty() {
+                                self.positions.remove(i);
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
+        // No matching lot found - add as new lot
         self.positions.push(position);
     }
 
@@ -360,21 +401,12 @@ impl Inventory {
                 let idx = matching_indices[0];
                 self.reduce_from_lot(idx, units)
             }
-            n => {
-                // Total match exception: if reduction equals total inventory, it's unambiguous
-                let total_units: Decimal = matching_indices
-                    .iter()
-                    .map(|&i| self.positions[i].units.number.abs())
-                    .sum();
-                if total_units == units.number.abs() {
-                    // Reduce from all matching lots (use FIFO order)
-                    self.reduce_ordered(units, spec, false)
-                } else {
-                    Err(BookingError::AmbiguousMatch {
-                        num_matches: n,
-                        currency: units.currency.clone(),
-                    })
-                }
+            _n => {
+                // When multiple lots match the same cost spec, Python beancount falls back to FIFO
+                // order rather than erroring. This is consistent with how beancount handles
+                // identical lots - if the cost spec is specified, it's considered "matched"
+                // and we just pick by insertion order.
+                self.reduce_ordered(units, spec, false)
             }
         }
     }
@@ -868,7 +900,23 @@ impl fmt::Display for Inventory {
             return write!(f, "(empty)");
         }
 
-        let non_empty: Vec<_> = self.positions.iter().filter(|p| !p.is_empty()).collect();
+        // Sort positions alphabetically by currency, then by cost for consistency
+        let mut non_empty: Vec<_> = self.positions.iter().filter(|p| !p.is_empty()).collect();
+        non_empty.sort_by(|a, b| {
+            // First by currency
+            let cmp = a.units.currency.cmp(&b.units.currency);
+            if cmp != std::cmp::Ordering::Equal {
+                return cmp;
+            }
+            // Then by cost (if present)
+            match (&a.cost, &b.cost) {
+                (Some(ca), Some(cb)) => ca.number.cmp(&cb.number),
+                (Some(_), None) => std::cmp::Ordering::Greater,
+                (None, Some(_)) => std::cmp::Ordering::Less,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
         for (i, pos) in non_empty.iter().enumerate() {
             if i > 0 {
                 write!(f, ", ")?;
@@ -972,7 +1020,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_strict_ambiguous() {
+    fn test_reduce_strict_multiple_match_uses_fifo() {
         let mut inv = Inventory::new();
 
         let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
@@ -981,10 +1029,15 @@ mod tests {
         inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
         inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
 
-        // Reducing without cost spec should fail (ambiguous)
-        let result = inv.reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict);
+        // Reducing without cost spec in STRICT mode falls back to FIFO
+        // (Python beancount behavior: when multiple lots match, use FIFO order)
+        let result = inv
+            .reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict)
+            .unwrap();
 
-        assert!(matches!(result, Err(BookingError::AmbiguousMatch { .. })));
+        assert_eq!(inv.units("AAPL"), dec!(12)); // 7 + 5 remaining
+        // Should reduce from first lot (cost1) at 150.00 USD
+        assert_eq!(result.cost_basis.unwrap().number, dec!(450.00)); // 3 * 150
     }
 
     #[test]

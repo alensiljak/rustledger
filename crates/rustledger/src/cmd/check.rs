@@ -15,7 +15,7 @@ use rustledger_loader::{
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::PluginManager;
 use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions, wrappers_to_directives};
-use rustledger_validate::validate;
+use rustledger_validate::{validate_with_options, ValidationOptions};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -287,13 +287,17 @@ fn run(args: &Args) -> Result<ExitCode> {
     // Build source cache for error reporting
     let mut cache = SourceCache::new();
     for source_file in load_result.source_map.files() {
-        let content = std::fs::read_to_string(&source_file.path).unwrap_or_else(|_| String::new());
+        // Use lossy UTF-8 decoding to handle non-UTF-8 files gracefully
+        let content = std::fs::read(&source_file.path)
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
         let path_str = source_file.path.display().to_string();
         cache.add(&path_str, content);
     }
 
-    // Also add the main file
-    let main_content = std::fs::read_to_string(file)
+    // Also add the main file (use lossy decoding for non-UTF-8 files)
+    let main_content = std::fs::read(file)
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
         .with_context(|| format!("failed to read {}", file.display()))?;
     cache.add(&file.display().to_string(), main_content);
 
@@ -434,9 +438,10 @@ fn run(args: &Args) -> Result<ExitCode> {
         }
     }
 
-    // Report option warnings (E7001, E7002, E7003)
+    // Report option errors (E7001, E7002, E7003)
+    // In Python beancount, invalid options are errors, not warnings
     let main_file_str = file.display().to_string();
-    let option_warning_count = load_result.options.warnings.len();
+    let option_error_count = load_result.options.warnings.len();
     for warning in &load_result.options.warnings {
         if json_mode {
             diagnostics.push(JsonDiagnostic {
@@ -445,16 +450,17 @@ fn run(args: &Args) -> Result<ExitCode> {
                 column: 1,
                 end_line: 1,
                 end_column: 1,
-                severity: "warning".to_string(),
+                severity: "error".to_string(),
                 code: warning.code.to_string(),
                 message: warning.message.clone(),
                 hint: None,
                 context: None,
             });
         } else if !args.quiet {
-            writeln!(stdout, "warning[{}]: {}", warning.code, warning.message)?;
+            writeln!(stdout, "error[{}]: {}", warning.code, warning.message)?;
         }
     }
+    error_count += option_error_count;
 
     // Validate plugins declared in the beancount file
     // Like Python beancount, report an error if a plugin is not found
@@ -560,6 +566,13 @@ fn run(args: &Args) -> Result<ExitCode> {
 
     // Extract directives (move, not clone)
     let mut directives: Vec<_> = spanned_directives.into_iter().map(|s| s.value).collect();
+
+    // Save account types before options are partially moved
+    let account_types: Vec<String> = options
+        .account_types()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     // Build list of native plugins to run from CLI args
     let mut native_plugins_to_run = args.native_plugins.clone();
@@ -715,7 +728,25 @@ fn run(args: &Args) -> Result<ExitCode> {
                         *txn = result.transaction;
                         None
                     }
-                    Err(e) => Some((txn.date, txn.narration.to_string(), e)),
+                    Err(e) => {
+                        // Skip CannotInferCurrency errors when transaction has empty cost specs
+                        // because the cost will be filled by lot matching during validation.
+                        // This matches Python beancount behavior where booking runs before interpolation.
+                        let has_empty_cost_spec = txn.postings.iter().any(|p| {
+                            if let Some(cost) = &p.cost {
+                                cost.number_per.is_none() && cost.number_total.is_none()
+                            } else {
+                                false
+                            }
+                        });
+                        if has_empty_cost_spec
+                            && matches!(e, InterpolationError::CannotInferCurrency { .. })
+                        {
+                            None // Skip error - lot matching will handle this
+                        } else {
+                            Some((txn.date, txn.narration.to_string(), e))
+                        }
+                    }
                 }
             } else {
                 None
@@ -753,7 +784,15 @@ fn run(args: &Args) -> Result<ExitCode> {
         eprintln!("Validating {} directives...", directives.len());
     }
 
-    let validation_errors = validate(&directives);
+    // Build validation options with account types from loader options
+    // Set document_base to the file's directory for relative path resolution
+    let document_base = file.parent().map(|p| p.to_path_buf());
+    let validation_options = ValidationOptions {
+        account_types,
+        document_base,
+        ..Default::default()
+    };
+    let validation_errors = validate_with_options(&directives, validation_options);
     let validation_error_count = validation_errors
         .iter()
         .filter(|e| !e.code.is_warning())
@@ -792,7 +831,7 @@ fn run(args: &Args) -> Result<ExitCode> {
 
     // Print summary / output
     let elapsed = start.elapsed();
-    let warning_count = option_warning_count + validation_warning_count + plugin_warning_count;
+    let warning_count = validation_warning_count + plugin_warning_count;
 
     if json_mode {
         let output = JsonOutput {

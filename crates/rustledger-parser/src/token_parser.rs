@@ -24,6 +24,8 @@ use rustledger_core::{
 };
 
 use crate::ParseResult;
+#[allow(unused_imports)]
+use crate::ParseWarning;
 use crate::error::{ParseError, ParseErrorKind};
 use crate::logos_lexer::{Token, tokenize};
 use crate::span::{Span, Spanned};
@@ -306,6 +308,14 @@ fn tok_link<'src>()
         .labelled("link")
 }
 
+/// Match a pipe token (deprecated separator).
+fn tok_pipe<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], (), TokExtra<'src>> + Clone {
+    any()
+        .filter(|t: &SpannedToken<'_>| matches!(t.token, Token::Pipe))
+        .to(())
+        .labelled("pipe")
+}
+
 /// Match a metadata key token and extract the key (without colon).
 fn tok_meta_key<'src>()
 -> impl Parser<'src, &'src [SpannedToken<'src>], &'src str, TokExtra<'src>> + Clone {
@@ -380,10 +390,16 @@ fn tok_deep_indent<'src>()
 }
 
 /// Match a comment token and ignore it.
+/// Handles semicolon comments (;), hash comments (# ), and percent comments (%).
 fn tok_comment<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], (), TokExtra<'src>> + Clone
 {
     any()
-        .filter(|t: &SpannedToken<'_>| matches!(t.token, Token::Comment(_)))
+        .filter(|t: &SpannedToken<'_>| {
+            matches!(
+                t.token,
+                Token::Comment(_) | Token::PercentComment(_)
+            )
+        })
         .to(())
 }
 
@@ -401,6 +417,7 @@ fn tok_flag<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], char, TokEx
         .map(|t: SpannedToken<'src>| match t.token {
             Token::Star => '*',
             Token::Pending => '!',
+            Token::Hash => '#', // Forecast plugin uses # as a flag
             Token::Flag(s) => s.chars().next().unwrap_or('?'),
             _ => '?',
         })
@@ -534,7 +551,7 @@ enum TokCostComponent {
 /// Parse a hash token (# used as separator in cost specs).
 fn tok_hash<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], (), TokExtra<'src>> + Clone {
     any()
-        .filter(|t: &SpannedToken<'_>| matches!(t.token, Token::Flag("#")))
+        .filter(|t: &SpannedToken<'_>| matches!(t.token, Token::Hash))
         .to(())
 }
 
@@ -645,21 +662,45 @@ fn build_tok_cost_spec(components: Vec<TokCostComponent>, is_total_brace: bool) 
     spec
 }
 
-/// Parse cost components with optional commas/slashes as delimiters.
-/// Allows empty components: {, 100.0 USD, , }
+/// Parse cost components with optional commas between them.
+/// Components can be adjacent (e.g., {100 # 5 USD}) or comma-separated (e.g., {100 USD, 2024-01-01}).
+/// Empty components (leading comma, consecutive commas) are NOT allowed per Python beancount.
 fn tok_cost_components<'src>()
 -> impl Parser<'src, &'src [SpannedToken<'src>], Vec<TokCostComponent>, TokExtra<'src>> + Clone {
-    // A delimiter is a comma or slash
-    let delimiter = tok_comma().or(tok_slash()).to(());
+    // Each item is either a component or a comma (delimiter)
+    // We parse them all and filter out the delimiters
+    let item = choice((
+        tok_cost_component().map(Some),
+        tok_comma().to(None), // Comma as optional separator
+    ));
 
-    // Cost item: either a real component or a delimiter (to be skipped)
-    let cost_item = choice((tok_cost_component().map(Some), delimiter.to(None)));
-
-    // Parse items and filter out the None values (delimiters)
-    cost_item
-        .repeated()
+    item.repeated()
         .collect::<Vec<_>>()
-        .map(|items| items.into_iter().flatten().collect())
+        .try_map(|items, span| {
+            let mut components = Vec::new();
+            let mut last_was_comma = true; // Start true to detect leading comma
+
+            for item in items {
+                match item {
+                    Some(comp) => {
+                        components.push(comp);
+                        last_was_comma = false;
+                    }
+                    None => {
+                        // Comma
+                        if last_was_comma {
+                            // Leading comma or consecutive commas - error
+                            return Err(chumsky::error::Rich::custom(
+                                span,
+                                "empty cost component not allowed".to_string(),
+                            ));
+                        }
+                        last_was_comma = true;
+                    }
+                }
+            }
+            Ok(components)
+        })
 }
 
 /// Parse a cost specification: { ... }, {{ ... }}, or {# ... }.
@@ -760,6 +801,8 @@ fn tok_meta_value<'src>()
 #[derive(Debug, Clone)]
 enum ParsedItem {
     Directive(Directive),
+    /// A directive that used the deprecated pipe symbol (emits warning)
+    DirectiveWithPipe(Directive),
     Option(String, String),
     Include(String),
     Plugin(String, Option<String>),
@@ -846,6 +889,8 @@ enum TxnHeaderItem {
     String(String),
     Tag(String),
     Link(String),
+    /// Deprecated pipe separator between payee and narration
+    Pipe,
 }
 
 /// Posting, metadata, or tag/link continuation.
@@ -989,56 +1034,81 @@ fn tok_posting_or_meta<'src>()
         .map(|p| Some(PostingOrMeta::Posting(p)));
 
     // Comment with indentation (within posting block)
+    // Note: Python beancount requires comments within transactions to be indented.
+    // Unindented comments terminate the transaction.
     let comment_line = tok_newline()
         .ignore_then(tok_indent())
         .ignore_then(tok_comment())
         .to(None);
-
-    // Comment without indentation (at column 0) - still allowed within transaction
-    let unindented_comment = tok_newline().ignore_then(tok_comment()).to(None);
 
     choice((
         meta_entry,
         tags_links_line,
         posting_line,
         comment_line,
-        unindented_comment,
     ))
 }
 
 /// Parse a transaction directive.
+/// Python beancount requires: DATE FLAG [PAYEE] [NARRATION] [TAGS/LINKS]
+/// Strings must come before tags and links.
 fn tok_transaction_directive<'src>()
--> impl Parser<'src, &'src [SpannedToken<'src>], (NaiveDate, Directive), TokExtra<'src>> {
-    let header_item = choice((
+-> impl Parser<'src, &'src [SpannedToken<'src>], (NaiveDate, Directive, bool), TokExtra<'src>> {
+    // Parse strings first (with optional pipe between payee and narration)
+    let string_item = choice((
         tok_string().map(TxnHeaderItem::String),
+        tok_pipe().to(TxnHeaderItem::Pipe),
+    ));
+
+    // Then parse tags and links (after strings)
+    let tag_or_link = choice((
         tok_tag().map(|t| TxnHeaderItem::Tag(t.to_string())),
         tok_link().map(|l| TxnHeaderItem::Link(l.to_string())),
     ));
 
     tok_date()
         .then(choice((tok_txn().to(None), tok_flag().map(Some))))
-        .then(header_item.repeated().collect::<Vec<_>>())
+        .then(string_item.repeated().collect::<Vec<_>>())
+        .then(tag_or_link.repeated().collect::<Vec<_>>())
         .then_ignore(tok_comment().or_not())
         .then(tok_posting_or_meta().repeated().collect::<Vec<_>>())
-        .map(|(((date, flag_opt), header_items), items)| {
+        .map(|((((date, flag_opt), string_items), tag_link_items), items)| {
             let flag = flag_opt.unwrap_or('*');
 
             let mut strings = Vec::new();
             let mut tags = Vec::new();
             let mut links = Vec::new();
+            let mut has_pipe = false;
 
-            for item in header_items {
+            // Process string items (payee/narration with optional pipe)
+            for item in string_items {
                 match item {
                     TxnHeaderItem::String(s) => strings.push(s),
-                    TxnHeaderItem::Tag(t) => tags.push(t),
-                    TxnHeaderItem::Link(l) => links.push(l),
+                    TxnHeaderItem::Pipe => has_pipe = true,
+                    _ => {}
                 }
             }
 
-            let (payee, narration) = match strings.len() {
-                0 => (None, String::new()),
-                1 => (None, strings.remove(0)),
-                _ => (Some(strings.remove(0)), strings.remove(0)),
+            // Process tags and links (must come after strings)
+            for item in tag_link_items {
+                match item {
+                    TxnHeaderItem::Tag(t) => tags.push(t),
+                    TxnHeaderItem::Link(l) => links.push(l),
+                    _ => {}
+                }
+            }
+
+            // Handle deprecated pipe syntax: "payee" | "narration"
+            // When pipe is present, we expect exactly two strings
+            let (payee, narration) = if has_pipe && strings.len() >= 2 {
+                // Deprecated: payee | narration
+                (Some(strings.remove(0)), strings.remove(0))
+            } else {
+                match strings.len() {
+                    0 => (None, String::new()),
+                    1 => (None, strings.remove(0)),
+                    _ => (Some(strings.remove(0)), strings.remove(0)),
+                }
             };
 
             let mut txn = Transaction::new(date, narration).with_flag(flag);
@@ -1069,7 +1139,7 @@ fn tok_transaction_directive<'src>()
                     }
                 }
             }
-            (date, Directive::Transaction(txn))
+            (date, Directive::Transaction(txn), has_pipe)
         })
 }
 
@@ -1086,15 +1156,15 @@ fn tok_balance_directive<'src>()
         .then(tok_currency())
         .map(|((num, tol), curr)| (Amount::new(num, curr), tol));
 
+    // Note: Python beancount does not allow cost specs on balance assertions
     tok_date()
         .then_ignore(tok_balance())
         .then(tok_account())
         .then(amount_with_tolerance)
-        .then(tok_cost_spec().or_not()) // Optional cost spec for balance with cost
         .then_ignore(tok_comment().or_not())
         .then(tok_meta_lines())
         .map(
-            |((((date, account), (amount, tolerance)), _cost), meta)| {
+            |(((date, account), (amount, tolerance)), meta)| {
                 let mut bal = Balance::new(date, account, amount);
                 if let Some(t) = tolerance {
                     bal = bal.with_tolerance(t);
@@ -1315,8 +1385,17 @@ fn tok_custom_directive<'src>()
 /// Parse a dated directive.
 fn tok_dated_directive<'src>()
 -> impl Parser<'src, &'src [SpannedToken<'src>], ParsedItem, TokExtra<'src>> {
-    choice((
-        tok_transaction_directive(),
+    // Handle transaction directive separately to track pipe usage
+    let transaction = tok_transaction_directive().map(|(_, directive, has_pipe)| {
+        if has_pipe {
+            ParsedItem::DirectiveWithPipe(directive)
+        } else {
+            ParsedItem::Directive(directive)
+        }
+    });
+
+    // Other directives
+    let other_directives = choice((
         tok_balance_directive(),
         tok_open_directive(),
         tok_close_directive(),
@@ -1329,7 +1408,9 @@ fn tok_dated_directive<'src>()
         tok_price_directive(),
         tok_custom_directive(),
     ))
-    .map(|(_, directive)| ParsedItem::Directive(directive))
+    .map(|(_, directive)| ParsedItem::Directive(directive));
+
+    choice((transaction, other_directives))
 }
 
 /// Match a shebang line (e.g., #!/usr/bin/env bean-web).
@@ -1437,38 +1518,85 @@ pub fn parse(source: &str) -> ParseResult {
     let mut includes = Vec::new();
     let mut plugins = Vec::new();
 
-    // Tag stack for pushtag/poptag
-    let mut tag_stack: Vec<InternedStr> = Vec::new();
-    // Meta stack for pushmeta/popmeta
-    let mut meta_stack: Vec<(String, MetaValue)> = Vec::new();
+    // Tag stack for pushtag/poptag: (tag, span)
+    let mut tag_stack: Vec<(InternedStr, Span)> = Vec::new();
+    // Meta stack for pushmeta/popmeta: (key, value, span)
+    let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::new();
+    // Additional validation errors for push/pop
+    let mut push_pop_errors: Vec<ParseError> = Vec::new();
 
     for (item, start_idx, end_idx) in items {
         let span = index_to_byte_span(&tokens, start_idx, end_idx);
         match item {
             ParsedItem::Directive(d) => {
                 // Apply pushed tags to transactions
-                let d = apply_pushed_tags(d, &tag_stack);
+                let tags_only: Vec<InternedStr> = tag_stack.iter().map(|(t, _)| t.clone()).collect();
+                let d = apply_pushed_tags(d, &tags_only);
                 // Apply pushed meta to all directives
-                let d = apply_pushed_meta(d, &meta_stack);
+                let meta_only: Vec<(String, MetaValue)> =
+                    meta_stack.iter().map(|(k, v, _)| (k.clone(), v.clone())).collect();
+                let d = apply_pushed_meta(d, &meta_only);
+                directives.push(Spanned::new(d, span));
+            }
+            ParsedItem::DirectiveWithPipe(d) => {
+                // Emit deprecation warning for pipe symbol
+                push_pop_errors.push(ParseError::new(
+                    ParseErrorKind::DeprecatedPipeSymbol,
+                    span,
+                ));
+                // Still process the directive normally
+                let tags_only: Vec<InternedStr> = tag_stack.iter().map(|(t, _)| t.clone()).collect();
+                let d = apply_pushed_tags(d, &tags_only);
+                let meta_only: Vec<(String, MetaValue)> =
+                    meta_stack.iter().map(|(k, v, _)| (k.clone(), v.clone())).collect();
+                let d = apply_pushed_meta(d, &meta_only);
                 directives.push(Spanned::new(d, span));
             }
             ParsedItem::Option(k, v) => options.push((k, v, span)),
             ParsedItem::Include(p) => includes.push((p, span)),
             ParsedItem::Plugin(p, c) => plugins.push((p, c, span)),
-            ParsedItem::Pushtag(tag) => tag_stack.push(tag.into()),
+            ParsedItem::Pushtag(tag) => tag_stack.push((tag.into(), span)),
             ParsedItem::Poptag(tag) => {
-                if let Some(pos) = tag_stack.iter().rposition(|t| t.as_str() == tag) {
+                if let Some(pos) = tag_stack.iter().rposition(|(t, _)| t.as_str() == tag) {
                     tag_stack.remove(pos);
+                } else {
+                    // Error: poptag for a tag that was never pushed
+                    push_pop_errors.push(ParseError::new(
+                        ParseErrorKind::InvalidPoptag(tag),
+                        span,
+                    ));
                 }
             }
-            ParsedItem::Pushmeta(key, value) => meta_stack.push((key, value)),
+            ParsedItem::Pushmeta(key, value) => meta_stack.push((key, value, span)),
             ParsedItem::Popmeta(key) => {
-                if let Some(pos) = meta_stack.iter().rposition(|(k, _)| k == &key) {
+                if let Some(pos) = meta_stack.iter().rposition(|(k, _, _)| k == &key) {
                     meta_stack.remove(pos);
+                } else {
+                    // Error: popmeta for a key that was never pushed
+                    push_pop_errors.push(ParseError::new(
+                        ParseErrorKind::InvalidPopmeta(key),
+                        span,
+                    ));
                 }
             }
             ParsedItem::Comment => {}
         }
+    }
+
+    // Check for unclosed pushtags
+    for (tag, span) in &tag_stack {
+        push_pop_errors.push(ParseError::new(
+            ParseErrorKind::UnclosedPushtag(tag.to_string()),
+            *span,
+        ));
+    }
+
+    // Check for unclosed pushmeta
+    for (key, _, span) in &meta_stack {
+        push_pop_errors.push(ParseError::new(
+            ParseErrorKind::UnclosedPushmeta(key.clone()),
+            *span,
+        ));
     }
 
     let errors: Vec<ParseError> = errs
@@ -1776,12 +1904,22 @@ pub fn parse(source: &str) -> ParseResult {
         })
         .collect();
 
+    // TODO: Collect warnings for deprecated syntax (pipe separator)
+    // For now, return empty warnings - full warning collection requires
+    // tracking spans during parsing
+    let warnings = Vec::new();
+
+    // Combine parsing errors with push/pop validation errors
+    let mut all_errors = errors;
+    all_errors.extend(push_pop_errors);
+
     ParseResult {
         directives,
         options,
         includes,
         plugins,
-        errors,
+        errors: all_errors,
+        warnings,
     }
 }
 
@@ -2005,5 +2143,61 @@ option "title" "Test Ledger"
             "Parser errors: {:?}",
             result.errors
         );
+    }
+
+    #[test]
+    fn test_poptag_without_pushtag() {
+        // Error: poptag for a tag that was never pushed
+        let result = parse("poptag #trip-to-nowhere\n");
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "Expected 1 error for invalid poptag"
+        );
+        assert!(matches!(
+            &result.errors[0].kind,
+            ParseErrorKind::InvalidPoptag(_)
+        ));
+    }
+
+    #[test]
+    fn test_pushtag_without_poptag() {
+        // Error: pushtag that was never popped
+        let result = parse("pushtag #trip-to-nowhere\n");
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "Expected 1 error for unclosed pushtag"
+        );
+        assert!(matches!(
+            &result.errors[0].kind,
+            ParseErrorKind::UnclosedPushtag(_)
+        ));
+    }
+
+    #[test]
+    fn test_pushtag_poptag_balanced() {
+        // No error: balanced pushtag/poptag
+        let result = parse("pushtag #trip\n\npoptag #trip\n");
+        assert!(
+            result.errors.is_empty(),
+            "Expected no errors for balanced push/pop: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_popmeta_without_pushmeta() {
+        // Error: popmeta for a key that was never pushed
+        let result = parse("popmeta location:\n");
+        assert_eq!(
+            result.errors.len(),
+            1,
+            "Expected 1 error for invalid popmeta"
+        );
+        assert!(matches!(
+            &result.errors[0].kind,
+            ParseErrorKind::InvalidPopmeta(_)
+        ));
     }
 }
