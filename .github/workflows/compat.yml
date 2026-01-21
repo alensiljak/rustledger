@@ -13,15 +13,19 @@ name: Compatibility
 on:
   schedule:
     - cron: '0 3 * * *'  # Nightly at 3 AM UTC (1 hour after benchmarks)
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+    branches: [main]
   workflow_dispatch:
 
 # Prevent concurrent runs from racing on the compatibility branch
 concurrency:
-  group: compatibility
-  cancel-in-progress: false
+  group: compatibility-${{ github.event.pull_request.number || 'nightly' }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,6 +35,11 @@ jobs:
     name: Run compatibility tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Run on: nightly schedule, manual trigger, or release PRs
+    if: >
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
 
@@ -796,7 +805,82 @@ jobs:
           *Tested against curated compatibility test suite (93 files)*
           EOF
 
+      - name: Post PR comment (release PRs only)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            // Read results
+            let resultsYaml = '';
+            try {
+              resultsYaml = fs.readFileSync('compat-results.yaml', 'utf8');
+            } catch (e) {
+              resultsYaml = 'Results file not found';
+            }
+
+            // Parse key metrics from the summary
+            const checkMatch = resultsYaml.match(/check_match_rate:\s*([\d.]+)/);
+            const bqlMatch = resultsYaml.match(/bql_match_rate:\s*([\d.]+)/);
+            const totalFiles = resultsYaml.match(/total_files:\s*(\d+)/);
+            const passedFiles = resultsYaml.match(/passed_files:\s*(\d+)/);
+
+            const checkRate = checkMatch ? checkMatch[1] : 'N/A';
+            const bqlRate = bqlMatch ? bqlMatch[1] : 'N/A';
+            const total = totalFiles ? totalFiles[1] : '?';
+            const passed = passedFiles ? passedFiles[1] : '?';
+
+            const status = parseFloat(checkRate) >= 99 && parseFloat(bqlRate) >= 99 ? '✅' : '⚠️';
+
+            const body = `## ${status} Compatibility Test Results
+
+            | Metric | Result |
+            |--------|--------|
+            | **Check Compatibility** | ${checkRate}% |
+            | **BQL Compatibility** | ${bqlRate}% |
+            | **Files Passed** | ${passed}/${total} |
+
+            <details>
+            <summary>What's tested</summary>
+
+            - **Check**: Exit codes and error counts match \`bean-check\`
+            - **BQL**: Query results match \`bean-query\`
+            - **Files**: 93 curated test files covering parser, validation, plugins
+
+            </details>
+
+            <sub>Full results available in workflow artifacts</sub>`;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('Compatibility Test Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
+
       - name: Commit results to compatibility branch
+        if: github.event_name != 'pull_request'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
