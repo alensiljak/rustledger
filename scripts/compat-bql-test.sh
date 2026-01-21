@@ -18,6 +18,9 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/bql_results_$TIMESTAMP.jsonl"
 
+# Clean cache files to ensure fresh test results
+find "$FIXTURES_DIR" -name "*.cache" -delete 2>/dev/null || true
+
 # Parallel settings
 PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 [ "$PARALLEL_JOBS" -gt 16 ] && PARALLEL_JOBS=16

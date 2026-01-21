@@ -33,6 +33,8 @@ const KNOWN_OPTIONS: &[&str] = &[
     "long_string_maxlines",
     "documents",
     "insert_pythonpath",
+    "plugin_processing_mode",
+    "plugin", // Deprecated, but still known
 ];
 
 /// Options that can be specified multiple times.
@@ -142,6 +144,9 @@ pub struct Options {
     /// Directories to scan for document files.
     pub documents: Vec<String>,
 
+    /// Plugin processing mode: "default" or "raw".
+    pub plugin_processing_mode: String,
+
     /// Any other custom options.
     pub custom: HashMap<String, String>,
 
@@ -190,6 +195,7 @@ impl Options {
             allow_pipe_separator: false,
             long_string_maxlines: 64,
             documents: Vec::new(),
+            plugin_processing_mode: "default".to_string(),
             custom: HashMap::new(),
             set_options: HashSet::new(),
             warnings: Vec::new(),
@@ -245,11 +251,37 @@ impl Options {
             "name_equity" => self.name_equity = value.to_string(),
             "name_income" => self.name_income = value.to_string(),
             "name_expenses" => self.name_expenses = value.to_string(),
-            "account_rounding" => self.account_rounding = Some(value.to_string()),
+            "account_rounding" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.account_rounding = Some(value.to_string());
+            }
             "account_current_conversions" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
                 self.account_current_conversions = Some(value.to_string());
             }
             "account_unrealized_gains" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
                 self.account_unrealized_gains = Some(value.to_string());
             }
             "inferred_tolerance_multiplier" => {
@@ -322,10 +354,50 @@ impl Options {
                 self.render_commas = is_true;
             }
             "filename" => self.filename = Some(value.to_string()),
-            "account_previous_balances" => self.account_previous_balances = value.to_string(),
-            "account_previous_earnings" => self.account_previous_earnings = value.to_string(),
-            "account_previous_conversions" => self.account_previous_conversions = value.to_string(),
-            "account_current_earnings" => self.account_current_earnings = value.to_string(),
+            "account_previous_balances" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.account_previous_balances = value.to_string();
+            }
+            "account_previous_earnings" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.account_previous_earnings = value.to_string();
+            }
+            "account_previous_conversions" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.account_previous_conversions = value.to_string();
+            }
+            "account_current_earnings" => {
+                if !Self::is_valid_account(value) {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid leaf account name: '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.account_current_earnings = value.to_string();
+            }
             "conversion_currency" => self.conversion_currency = Some(value.to_string()),
             "inferred_tolerance_default" => {
                 // Parse "CURRENCY:TOLERANCE" or "*:TOLERANCE"
@@ -395,6 +467,28 @@ impl Options {
                 }
                 self.documents.push(value.to_string());
             }
+            "plugin_processing_mode" => {
+                // Valid values are "default" and "raw" (case-sensitive, like Python)
+                if value != "default" && value != "raw" {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!("Invalid value '{value}'"),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+                self.plugin_processing_mode = value.to_string();
+            }
+            "plugin" => {
+                // Deprecated: should use `plugin` directive instead of `option "plugin"`
+                self.warnings.push(OptionWarning {
+                    code: "E7004",
+                    message: "Option 'plugin' is deprecated; use the 'plugin' directive instead"
+                        .to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                });
+            }
             _ => {
                 // Unknown options go to custom map
                 self.custom.insert(key.to_string(), value.to_string());
@@ -418,6 +512,31 @@ impl Options {
             &self.name_income,
             &self.name_expenses,
         ]
+    }
+
+    /// Check if a value looks like a valid account name.
+    ///
+    /// Valid accounts have format "Type:Subaccount:..." where Type starts with
+    /// uppercase letter and subaccounts are colon-separated.
+    fn is_valid_account(value: &str) -> bool {
+        // Must contain at least one colon
+        if !value.contains(':') {
+            return false;
+        }
+
+        // Check each component
+        for part in value.split(':') {
+            if part.is_empty() {
+                return false;
+            }
+            // First char of each component should be uppercase letter
+            let first = part.chars().next().unwrap();
+            if !first.is_ascii_uppercase() {
+                return false;
+            }
+        }
+
+        true
     }
 }
 

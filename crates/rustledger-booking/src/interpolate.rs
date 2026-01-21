@@ -240,12 +240,11 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     for (currency, indices) in missing_by_currency {
         let idx = indices[0];
         let residual = residuals.get(&currency).copied().unwrap_or(Decimal::ZERO);
-        // Round to 2 decimal places to match Python beancount behavior
-        let rounded_residual = residual.round_dp(2);
+        // Keep full precision - Python beancount preserves precision during interpolation
+        // Rounding happens only at display time
 
         result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
-            -rounded_residual,
-            &currency,
+            -residual, &currency,
         )));
         filled_indices.push(idx);
 
@@ -270,11 +269,10 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             let original_posting = &transaction.postings[idx];
 
             // Fill the first currency into the original posting
+            // Keep full precision - rounding happens only at display time
             let (first_currency, first_residual) = &non_zero_residuals[0];
-            // Round to 2 decimal places to match Python beancount behavior
-            let rounded_first = first_residual.round_dp(2);
             result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
-                -rounded_first,
+                -first_residual,
                 first_currency,
             )));
             filled_indices.push(idx);
@@ -283,12 +281,9 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             // Add new postings for remaining currencies
             for (currency, residual) in non_zero_residuals.iter().skip(1) {
                 let mut new_posting = original_posting.clone();
-                // Round to 2 decimal places to match Python beancount behavior
-                let rounded_residual = residual.round_dp(2);
-                new_posting.units = Some(IncompleteAmount::Complete(Amount::new(
-                    -rounded_residual,
-                    currency,
-                )));
+                // Keep full precision - rounding happens only at display time
+                new_posting.units =
+                    Some(IncompleteAmount::Complete(Amount::new(-residual, currency)));
                 result.postings.push(new_posting);
                 filled_indices.push(result.postings.len() - 1);
                 residuals.insert(currency.clone(), Decimal::ZERO);
@@ -298,12 +293,9 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             for (i, idx) in unassigned_missing.iter().enumerate() {
                 if i < non_zero_residuals.len() {
                     let (currency, residual) = &non_zero_residuals[i];
-                    // Round to 2 decimal places to match Python beancount behavior
-                    let rounded_residual = residual.round_dp(2);
-                    result.postings[*idx].units = Some(IncompleteAmount::Complete(Amount::new(
-                        -rounded_residual,
-                        currency,
-                    )));
+                    // Keep full precision - rounding happens only at display time
+                    result.postings[*idx].units =
+                        Some(IncompleteAmount::Complete(Amount::new(-residual, currency)));
                     filled_indices.push(*idx);
                     residuals.insert(currency.clone(), Decimal::ZERO);
                 } else if !non_zero_residuals.is_empty() {
