@@ -148,14 +148,6 @@ impl fmt::Display for BookingError {
 
 impl std::error::Error for BookingError {}
 
-/// Tracks sign presence for positions with cost for a currency.
-/// Used to enable O(1) check for potential cancellations.
-#[derive(Debug, Clone, Copy, Default)]
-struct SignPresence {
-    has_positive: bool,
-    has_negative: bool,
-}
-
 /// An inventory is a collection of positions.
 ///
 /// It tracks all positions for an account and supports booking operations
@@ -191,12 +183,16 @@ pub struct Inventory {
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
     simple_index: HashMap<InternedStr, usize>,
-    /// Tracks sign presence for costed positions by currency.
-    /// Enables O(1) check for whether opposite-sign positions exist.
-    /// Not serialized - rebuilt on demand.
+    /// True if any positive costed position has been added.
+    /// Used for O(1) check to skip scanning when no cancellation is possible.
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
-    costed_signs: HashMap<InternedStr, SignPresence>,
+    has_positive_costed: bool,
+    /// True if any negative costed position has been added.
+    /// Used for O(1) check to skip scanning when no cancellation is possible.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
+    has_negative_costed: bool,
 }
 
 impl PartialEq for Inventory {
@@ -320,14 +316,14 @@ impl Inventory {
             let is_adding_positive = position.units.number.is_sign_positive();
             let currency = &position.units.currency;
 
-            // O(1) check: are there opposite-sign positions for this currency?
-            let has_opposite = self.costed_signs.get(currency).is_some_and(|signs| {
-                if is_adding_positive {
-                    signs.has_negative
-                } else {
-                    signs.has_positive
-                }
-            });
+            // O(1) check: could there be opposite-sign positions to cancel?
+            // This is a global check (not per-currency) for maximum performance.
+            // False positives are possible but rare in practice.
+            let has_opposite = if is_adding_positive {
+                self.has_negative_costed
+            } else {
+                self.has_positive_costed
+            };
 
             if has_opposite {
                 // Scan for exact cost match to cancel
@@ -363,12 +359,11 @@ impl Inventory {
                 }
             }
 
-            // Update sign tracking for the new position
-            let signs = self.costed_signs.entry(currency.clone()).or_default();
+            // Update sign tracking for the new position (simple boolean flags)
             if is_adding_positive {
-                signs.has_positive = true;
+                self.has_positive_costed = true;
             } else {
-                signs.has_negative = true;
+                self.has_negative_costed = true;
             }
         }
 
@@ -876,20 +871,21 @@ impl Inventory {
         self.rebuild_costed_signs();
     }
 
-    /// Rebuild the `costed_signs` tracking from positions.
+    /// Rebuild the costed sign tracking flags from positions.
     /// Called after operations that may invalidate the tracking.
     fn rebuild_costed_signs(&mut self) {
-        self.costed_signs.clear();
+        self.has_positive_costed = false;
+        self.has_negative_costed = false;
         for pos in &self.positions {
             if pos.cost.is_some() && !pos.is_empty() {
-                let signs = self
-                    .costed_signs
-                    .entry(pos.units.currency.clone())
-                    .or_default();
                 if pos.units.number.is_sign_positive() {
-                    signs.has_positive = true;
+                    self.has_positive_costed = true;
                 } else {
-                    signs.has_negative = true;
+                    self.has_negative_costed = true;
+                }
+                // Early exit if we've found both
+                if self.has_positive_costed && self.has_negative_costed {
+                    break;
                 }
             }
         }
