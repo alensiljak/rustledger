@@ -23,6 +23,9 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/results_$TIMESTAMP.jsonl"
 SUMMARY_FILE="$RESULTS_DIR/summary_$TIMESTAMP.md"
 
+# Clean cache files to ensure fresh test results
+find "$FIXTURES_DIR" -name "*.cache" -delete 2>/dev/null || true
+
 # Parallel settings
 PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 # Cap at 16 for stability
@@ -97,9 +100,10 @@ py_err=$(cat "$py_stderr" | head -c 500)
 rm -f "$py_stderr"
 
 # Run Rust rledger-check (capture both stdout and stderr since errors go to stdout)
+# Always use --no-cache for reproducible results during testing
 # Strip ANSI codes to avoid breaking JSON
 rs_output=$(mktemp)
-"$RLEDGER_CHECK" "$file" >"$rs_output" 2>&1 && rs_exit=0 || rs_exit=$?
+"$RLEDGER_CHECK" --no-cache "$file" >"$rs_output" 2>&1 && rs_exit=0 || rs_exit=$?
 rs_err=$(cat "$rs_output" | sed 's/\x1b\[[0-9;]*m//g' | head -c 500)
 rm -f "$rs_output"
 

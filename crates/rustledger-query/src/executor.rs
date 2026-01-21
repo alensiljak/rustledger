@@ -338,6 +338,16 @@ impl<'a> Executor<'a> {
         // Apply ORDER BY
         if let Some(order_by) = &query.order_by {
             self.sort_results(&mut result, order_by)?;
+        } else if query.group_by.is_some() && !result.rows.is_empty() && !result.columns.is_empty()
+        {
+            // When there's GROUP BY but no ORDER BY, sort by the first column
+            // for deterministic output (matches Python beancount behavior)
+            let first_col = result.columns[0].clone();
+            let default_order = vec![OrderSpec {
+                expr: Expr::Column(first_col),
+                direction: SortDirection::Asc,
+            }];
+            self.sort_results(&mut result, &default_order)?;
         }
 
         // Apply LIMIT
@@ -1048,12 +1058,10 @@ impl<'a> Executor<'a> {
                         if let (Some(number_per), Some(currency)) =
                             (&cost_spec.number_per, &cost_spec.currency)
                         {
-                            let cost = rustledger_core::Cost {
-                                number: *number_per,
-                                currency: currency.clone(),
-                                date: cost_spec.date,
-                                label: cost_spec.label.clone(),
-                            };
+                            // Use Cost::new() to auto-quantize the cost number
+                            let cost = rustledger_core::Cost::new(*number_per, currency.clone())
+                                .with_date_opt(cost_spec.date)
+                                .with_label_opt(cost_spec.label.clone());
                             return Ok(Value::Position(Position::with_cost(units.clone(), cost)));
                         }
                     }

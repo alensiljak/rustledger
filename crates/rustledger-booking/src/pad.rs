@@ -15,9 +15,9 @@
 //! 2024-01-02 balance Assets:Bank 1000.00 USD
 //! ```
 //!
-//! This generates a synthetic transaction:
+//! This generates a synthetic transaction (matching Python beancount's format):
 //! ```beancount
-//! 2024-01-01 P "(Padding inserted for balance assertion)"
+//! 2024-01-01 P "(Padding inserted for Balance of 1000.00 USD for difference 1000.00 USD)"
 //!   Assets:Bank             1000.00 USD
 //!   Equity:Opening-Balances -1000.00 USD
 //! ```
@@ -171,6 +171,7 @@ pub fn process_pads(directives: &[Directive]) -> PadResult {
                             &pending.pad.account,
                             &pending.pad.source_account,
                             Amount::new(difference, &bal.amount.currency),
+                            &bal.amount, // target balance for narration
                         );
 
                         // Apply to inventories
@@ -226,16 +227,24 @@ pub fn process_pads(directives: &[Directive]) -> PadResult {
 }
 
 /// Create a synthetic padding transaction.
+///
+/// The narration format matches Python beancount:
+/// `(Padding inserted for Balance of {balance} for difference {difference})`
 fn create_padding_transaction(
     date: NaiveDate,
     target_account: &str,
     source_account: &str,
-    amount: Amount,
+    difference: Amount,
+    balance: &Amount,
 ) -> Transaction {
-    Transaction::new(date, "(Padding inserted for balance assertion)")
+    let narration = format!(
+        "(Padding inserted for Balance of {} {} for difference {} {})",
+        balance.number, balance.currency, difference.number, difference.currency
+    );
+    Transaction::new(date, &narration)
         .with_flag('P')
-        .with_posting(Posting::new(target_account, amount.clone()))
-        .with_posting(Posting::new(source_account, amount.neg()))
+        .with_posting(Posting::new(target_account, difference.clone()))
+        .with_posting(Posting::new(source_account, difference.neg()))
 }
 
 /// Expand a ledger by replacing pad directives with synthetic transactions.

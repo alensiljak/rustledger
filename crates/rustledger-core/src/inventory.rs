@@ -183,16 +183,6 @@ pub struct Inventory {
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
     simple_index: HashMap<InternedStr, usize>,
-    /// True if any positive costed position has been added.
-    /// Used for O(1) check to skip scanning when no cancellation is possible.
-    #[serde(skip)]
-    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
-    has_positive_costed: bool,
-    /// True if any negative costed position has been added.
-    /// Used for O(1) check to skip scanning when no cancellation is possible.
-    #[serde(skip)]
-    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
-    has_negative_costed: bool,
 }
 
 impl PartialEq for Inventory {
@@ -218,7 +208,7 @@ impl Inventory {
     }
 
     /// Get mutable access to all positions.
-    pub fn positions_mut(&mut self) -> &mut Vec<Position> {
+    pub const fn positions_mut(&mut self) -> &mut Vec<Position> {
         &mut self.positions
     }
 
@@ -284,11 +274,12 @@ impl Inventory {
 
     /// Add a position to the inventory.
     ///
-    /// For positions with cost, if adding a negative amount that matches an
-    /// existing lot's cost basis exactly, reduces that lot instead of creating
-    /// a new one. This properly handles buy/sell pairs.
     /// For positions without cost, this merges with existing positions
     /// of the same currency using O(1) `HashMap` lookup.
+    ///
+    /// For positions with cost, this adds as a new lot (O(1)).
+    /// Lot aggregation for display purposes is handled separately at output time
+    /// (e.g., in the query result formatter).
     pub fn add(&mut self, position: Position) {
         if position.is_empty() {
             return;
@@ -310,64 +301,9 @@ impl Inventory {
             return;
         }
 
-        // For positions with cost, try to find a matching lot to cancel/reduce.
-        // For performance, use O(1) sign tracking to skip scan when no opposite-sign positions exist.
-        if let Some(pos_cost) = &position.cost {
-            let is_adding_positive = position.units.number.is_sign_positive();
-            let currency = &position.units.currency;
-
-            // O(1) check: could there be opposite-sign positions to cancel?
-            // This is a global check (not per-currency) for maximum performance.
-            // False positives are possible but rare in practice.
-            let has_opposite = if is_adding_positive {
-                self.has_negative_costed
-            } else {
-                self.has_positive_costed
-            };
-
-            if has_opposite {
-                // Scan for exact cost match to cancel
-                for i in 0..self.positions.len() {
-                    let existing = &self.positions[i];
-                    if existing.units.currency != *currency {
-                        continue;
-                    }
-                    let Some(existing_cost) = &existing.cost else {
-                        continue;
-                    };
-
-                    // Only merge opposite signs (reduction/cancellation)
-                    let is_opposite_sign =
-                        existing.units.number.is_sign_positive() != is_adding_positive;
-                    if !is_opposite_sign {
-                        continue;
-                    }
-
-                    let is_exact_cost = existing_cost.number == pos_cost.number
-                        && existing_cost.currency == pos_cost.currency
-                        && (pos_cost.date.is_none() || pos_cost.date == existing_cost.date);
-
-                    if is_exact_cost {
-                        self.positions[i].units.number += position.units.number;
-                        if self.positions[i].is_empty() {
-                            self.positions.remove(i);
-                            // Rebuild sign tracking since we removed a position
-                            self.rebuild_costed_signs();
-                        }
-                        return;
-                    }
-                }
-            }
-
-            // Update sign tracking for the new position (simple boolean flags)
-            if is_adding_positive {
-                self.has_positive_costed = true;
-            } else {
-                self.has_negative_costed = true;
-            }
-        }
-
-        // No matching lot found (or augmentation/no opposite positions) - add as new lot
+        // For positions with cost, just add as a new lot.
+        // This is O(1) and keeps all lots separate, matching Python beancount behavior.
+        // Lot aggregation for display purposes is handled separately in query output.
         self.positions.push(position);
     }
 
@@ -868,27 +804,6 @@ impl Inventory {
                 self.simple_index.insert(pos.units.currency.clone(), idx);
             }
         }
-        self.rebuild_costed_signs();
-    }
-
-    /// Rebuild the costed sign tracking flags from positions.
-    /// Called after operations that may invalidate the tracking.
-    fn rebuild_costed_signs(&mut self) {
-        self.has_positive_costed = false;
-        self.has_negative_costed = false;
-        for pos in &self.positions {
-            if pos.cost.is_some() && !pos.is_empty() {
-                if pos.units.number.is_sign_positive() {
-                    self.has_positive_costed = true;
-                } else {
-                    self.has_negative_costed = true;
-                }
-                // Early exit if we've found both
-                if self.has_positive_costed && self.has_negative_costed {
-                    break;
-                }
-            }
-        }
     }
 
     /// Merge this inventory with another.
@@ -1214,8 +1129,9 @@ mod tests {
     }
 
     #[test]
-    fn test_add_cancels_opposite_sign_with_matching_cost() {
-        // Test that buy/sell pairs with matching cost cancel each other
+    fn test_add_costed_positions_kept_separate() {
+        // Costed positions are kept as separate lots for O(1) add performance.
+        // Aggregation happens at display time (in query output).
         let mut inv = Inventory::new();
 
         let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
@@ -1228,15 +1144,15 @@ mod tests {
         assert_eq!(inv.len(), 1);
         assert_eq!(inv.units("AAPL"), dec!(10));
 
-        // Sell 10 shares with same cost - should cancel out
+        // Sell 10 shares - kept as separate lot for tracking
         inv.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
-        assert_eq!(inv.len(), 0); // Position removed when empty
-        assert_eq!(inv.units("AAPL"), dec!(0));
+        assert_eq!(inv.len(), 2); // Both lots kept
+        assert_eq!(inv.units("AAPL"), dec!(0)); // Net units still zero
     }
 
     #[test]
-    fn test_add_partial_cancellation() {
-        // Test partial buy/sell cancellation
+    fn test_add_costed_positions_net_units() {
+        // Verify that units() correctly sums across all lots
         let mut inv = Inventory::new();
 
         let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
@@ -1247,10 +1163,10 @@ mod tests {
             cost.clone(),
         ));
 
-        // Sell 3 shares with same cost - should partially cancel
+        // Sell 3 shares - kept as separate lot
         inv.add(Position::with_cost(Amount::new(dec!(-3), "AAPL"), cost));
-        assert_eq!(inv.len(), 1);
-        assert_eq!(inv.units("AAPL"), dec!(7));
+        assert_eq!(inv.len(), 2); // Both lots kept
+        assert_eq!(inv.units("AAPL"), dec!(7)); // Net units correct
     }
 
     #[test]
@@ -1294,8 +1210,8 @@ mod tests {
     }
 
     #[test]
-    fn test_merge_cancellation() {
-        // Test that merge properly handles cancellation
+    fn test_merge_keeps_lots_separate() {
+        // Test that merge keeps costed lots separate (aggregation at display time)
         let mut inv1 = Inventory::new();
         let mut inv2 = Inventory::new();
 
@@ -1310,9 +1226,9 @@ mod tests {
         // inv2: sell 10 shares
         inv2.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
 
-        // Merge should result in empty inventory
+        // Merge keeps both lots, net units is zero
         inv1.merge(&inv2);
-        assert!(inv1.is_empty());
-        assert_eq!(inv1.units("AAPL"), dec!(0));
+        assert_eq!(inv1.len(), 2); // Both lots preserved
+        assert_eq!(inv1.units("AAPL"), dec!(0)); // Net units correct
     }
 }

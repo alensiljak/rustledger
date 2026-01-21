@@ -18,6 +18,9 @@ fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/bql_results_$TIMESTAMP.jsonl"
 
+# Clean cache files to ensure fresh test results
+find "$FIXTURES_DIR" -name "*.cache" -delete 2>/dev/null || true
+
 # Parallel settings
 PARALLEL_JOBS="${PARALLEL_JOBS:-$(nproc 2>/dev/null || echo 4)}"
 [ "$PARALLEL_JOBS" -gt 16 ] && PARALLEL_JOBS=16
@@ -105,7 +108,8 @@ rs_exit=$?
 # - Skip separator lines (----)
 # - Skip row count lines (N row(s))
 # - Trim whitespace, normalize spaces
-# - Sort for comparison
+# - Normalize whitespace inside braces (lot costs): { 5.16 -> {5.16
+# - Sort for comparison (handles undefined ORDER BY)
 normalize_output() {
     echo "$1" | \
         grep -v "^-" | \
@@ -113,6 +117,8 @@ normalize_output() {
         grep -v "^$" | \
         tail -n +2 | \
         tr -s ' \t' ' ' | \
+        sed 's/{ /{/g' | \
+        sed 's/ }/}/g' | \
         sed 's/^ *//; s/ *$//' | \
         sort
 }
