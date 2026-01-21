@@ -2,6 +2,65 @@
 
 This document provides context for Claude Code when reviewing pull requests and assisting with development.
 
+## ⚠️ IMPORTANT: Always Use Worktrees
+
+**All development work in this repository MUST use git worktrees.** This enables parallel development sessions and clean branch isolation.
+
+### Quick Reference
+
+```bash
+# Check if you're in a worktree or main repo
+if [ "$(git rev-parse --git-dir)" != "$(git rev-parse --git-common-dir)" ]; then
+  echo "Already in a worktree - work here directly"
+else
+  echo "In main repo - create a worktree for your branch"
+fi
+```
+
+### Workflow Rules
+
+1. **Before starting any new work**, check if you're already in a worktree:
+   - If YES → Work directly in this worktree (don't create another)
+   - If NO → Create a worktree for your branch using `./scripts/worktree new <branch>`
+
+2. **Never use `git checkout -b` in the main repo** - always use worktrees instead
+
+3. **Each task/branch gets its own worktree** at `../<repo>-<branch-name>`
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `./scripts/worktree new <branch>` | Create worktree for new/existing branch |
+| `./scripts/worktree list` | List all active worktrees |
+| `./scripts/worktree remove <branch>` | Remove a worktree after PR merged |
+| `./scripts/worktree clean` | Remove all worktrees except main |
+| `./scripts/worktree cd <branch>` | Print path (use with `cd $(...)`) |
+
+### Example Session
+
+```bash
+# Starting new work from main repo
+./scripts/worktree new feature/add-csv-export
+cd $(./scripts/worktree cd feature/add-csv-export)
+
+# Now work in /home/user/.../rustledger-feature-add-csv-export
+# Make changes, commit, push, create PR
+
+# After PR is merged, clean up
+cd /path/to/main/rustledger
+./scripts/worktree remove feature/add-csv-export
+```
+
+### Why Worktrees?
+
+- **Parallel sessions**: Run multiple Claude Code instances on different branches
+- **No stashing**: Switch tasks without committing half-done work
+- **Clean state**: Each worktree is isolated, no cross-contamination
+- **Faster CI feedback**: Work on fixes while waiting for CI on another branch
+
+---
+
 ## Project Overview
 
 rustledger is a pure Rust implementation of Beancount, the double-entry bookkeeping language. It provides a 10-30x faster alternative to Python beancount with full syntax compatibility.
