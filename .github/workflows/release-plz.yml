@@ -54,6 +54,33 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
 
+      # Clean up old release-plz branches (from closed/superseded PRs)
+      - name: Cleanup old release-plz branches
+        if: steps.release-plz.outputs.pr_created == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_DATA: ${{ steps.release-plz.outputs.pr }}
+        run: |
+          CURRENT_BRANCH=$(echo "$PR_DATA" | jq -r '.head_branch // empty' 2>/dev/null || echo "")
+          echo "Current release branch: $CURRENT_BRANCH"
+
+          # Safety check: don't proceed if we couldn't determine the current branch
+          if [ -z "$CURRENT_BRANCH" ]; then
+            echo "Could not determine current release branch; skipping cleanup"
+            exit 0
+          fi
+
+          # Find and delete old release-plz branches (with validation)
+          git ls-remote --heads origin 'release-plz-*' \
+            | awk -F'/' '{print $NF}' \
+            | grep -E '^release-plz-[0-9T-]+Z$' \
+            | while IFS= read -r branch; do
+                if [ "$branch" != "$CURRENT_BRANCH" ]; then
+                  echo "Deleting old branch: $branch"
+                  git push origin --delete "$branch" || echo "Failed to delete $branch (may already be deleted)"
+                fi
+              done
+
       # Enable auto-merge for release PRs (will merge when checks pass and approved)
       - name: Enable auto-merge for release PR
         if: steps.release-plz.outputs.pr_created == 'true'
