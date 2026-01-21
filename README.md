@@ -166,6 +166,31 @@ rledger-format --in-place ledger.beancount
 
 <sub>Benchmarks run nightly on 10K transaction ledgers. [View workflow →](https://github.com/rustledger/rustledger/actions/workflows/bench.yml)</sub>
 
+<details>
+<summary><strong>Benchmark details</strong></summary>
+
+**What's measured:**
+- **Validation**: Parse ledger + validate (balance assertions, account opens, etc.)
+- **Balance Report**: Parse + compute all account balances
+
+**Memory efficiency:**
+rustledger typically uses 3-5x less memory than Python beancount thanks to Rust's zero-cost abstractions and efficient data structures.
+
+**Run locally:**
+```bash
+# Quick comparison (requires nix)
+nix develop .#bench
+./scripts/bench.sh
+
+# Criterion micro-benchmarks
+cargo bench -p rustledger-core
+cargo bench -p rustledger-parser
+```
+
+See [BENCHMARKING.md](docs/BENCHMARKING.md) for detailed benchmark documentation.
+
+</details>
+
 ## Contributing
 
 See [CLAUDE.md](CLAUDE.md) for architecture and development setup.
