@@ -10,6 +10,7 @@ Parse and validate your ledger faster than Python beancount.
 [![Compatibility](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/compatibility/.github/badges/compat-badge.json)](https://github.com/rustledger/rustledger/actions/workflows/compat.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/rustledger/rustledger)](https://github.com/rustledger/rustledger/releases)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![Liberapay](https://img.shields.io/liberapay/gives/rustledger.svg?logo=liberapay)](https://liberapay.com/rustledger)
 
 </div>
 
@@ -202,3 +203,9 @@ By submitting a pull request, you agree to the [Contributor License Agreement](C
 [GPL-3.0](LICENSE)
 
 **Commercial licensing available** - [contact us](https://rustledger.github.io/#contact) for proprietary license options.
+
+## Funding
+
+rustledger is free and open source. If you find it useful, consider supporting development:
+
+[![Support on Liberapay](https://img.shields.io/badge/Support%20on-Liberapay-F6C915?logo=liberapay)](https://liberapay.com/rustledger)
