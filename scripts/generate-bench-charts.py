@@ -53,34 +53,13 @@ def generate_vega_bar_spec(
             {
                 "name": "benchmarks",
                 "values": [
-                    {
-                        "tool": "rustledger",
-                        "label": "rustledger",
-                        "time_ms": rustledger_ms,
-                        "baseline_ms": beancount_ms,
-                        "color": "#00d4aa",
-                    },
-                    {
-                        "tool": "ledger",
-                        "label": "ledger (C++)",
-                        "time_ms": ledger_ms,
-                        "baseline_ms": beancount_ms,
-                        "color": "#9b59b6",
-                    },
-                    {
-                        "tool": "hledger",
-                        "label": "hledger (Haskell)",
-                        "time_ms": hledger_ms,
-                        "baseline_ms": beancount_ms,
-                        "color": "#e74c3c",
-                    },
-                    {
-                        "tool": "beancount",
-                        "label": "beancount (Python)",
-                        "time_ms": beancount_ms,
-                        "baseline_ms": beancount_ms,
-                        "color": "#f4b942",
-                    },
+                    {"tool": tool, "label": label, "time_ms": time_ms, "baseline_ms": beancount_ms, "color": color}
+                    for tool, label, time_ms, color in [
+                        ("rustledger", "rustledger", rustledger_ms, "#00d4aa"),
+                        ("ledger", "ledger (C++)", ledger_ms, "#9b59b6"),
+                        ("hledger", "hledger (Haskell)", hledger_ms, "#e74c3c"),
+                        ("beancount", "beancount (Python)", beancount_ms, "#f4b942"),
+                    ]
                 ],
                 "transform": [
                     {"type": "formula", "as": "slower_factor", "expr": "datum.time_ms / rustledger_ms"},

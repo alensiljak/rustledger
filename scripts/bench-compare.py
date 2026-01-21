@@ -52,6 +52,8 @@ def load_baseline_from_history(history_file: Path) -> Optional[float]:
         if history:
             return history[-1].get("rustledger_ms")
     except (json.JSONDecodeError, KeyError):
+        # History file may be malformed or missing expected fields - safe to ignore
+        # and fall through to return None (no baseline available)
         pass
 
     return None
