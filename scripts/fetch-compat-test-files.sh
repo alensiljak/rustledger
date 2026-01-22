@@ -9,7 +9,7 @@ set -e
 #
 # Target: ~800+ real beancount files from diverse sources
 
-DEST="tests/compat-full"
+DEST="tests/compat/files"
 TMPDIR="/tmp/beancount-fetch-$$"
 
 echo "=== Fetching Beancount Test Files ==="
@@ -86,12 +86,6 @@ fetch_repo "reds-importers" "https://github.com/redstreet/beancount_reds_importe
 
 # 10. Community examples
 fetch_repo "community-wileykestner" "https://github.com/wileykestner/beancount-example"
-
-# Copy existing curated files
-if [ -d "tests/compat/files" ]; then
-    echo "Copying existing curated files..."
-    cp -r tests/compat/files/* "$DEST/" 2>/dev/null || true
-fi
 
 # Summary
 echo ""

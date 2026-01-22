@@ -59,6 +59,25 @@ jobs:
         run: |
           pip install beancount beanquery matplotlib pyyaml
 
+      # Cache downloaded test files to avoid re-cloning repos every run
+      - name: Cache compatibility test files
+        id: cache-compat-files
+        uses: actions/cache@v4
+        with:
+          path: tests/compat/files
+          # Cache key includes date to refresh weekly
+          key: compat-files-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}-week-${{ github.run_number }}
+          restore-keys: |
+            compat-files-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}-
+            compat-files-
+
+      - name: Fetch compatibility test files
+        if: steps.cache-compat-files.outputs.cache-hit != 'true'
+        run: |
+          echo "Downloading compatibility test files..."
+          ./scripts/fetch-compat-test-files.sh
+          echo "Downloaded $(find tests/compat/files -name '*.beancount' | wc -l) test files"
+
       - name: Build rustledger
         run: |
           cargo build --release -p rustledger --no-default-features
@@ -802,7 +821,7 @@ jobs:
           | Queries tested | ${{ steps.bql_compat.outputs.bql_total }} |
           | Queries matching | ${{ steps.bql_compat.outputs.bql_match }} (${{ steps.bql_compat.outputs.bql_pct }}%) |
 
-          *Tested against curated compatibility test suite (93 files)*
+          *Tested against downloaded compatibility test suite (~800 files)*
           EOF
 
       - name: Post PR comment (release PRs only)
@@ -846,7 +865,7 @@ jobs:
 
             - **Check**: Exit codes and error counts match \`bean-check\`
             - **BQL**: Query results match \`bean-query\`
-            - **Files**: 93 curated test files covering parser, validation, plugins
+            - **Files**: ~800 test files downloaded from 10+ beancount repositories
 
             </details>
 
