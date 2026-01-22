@@ -178,7 +178,7 @@ def generate_vega_bar_spec(
                         "y": {"scale": "y", "field": "label", "band": 0.5},
                         "x": {"signal": "datum.is_small ? scale('x', datum.time_ms) + 10 : 8"},
                         "text": {
-                            "signal": "datum.is_small ? (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x vs beancount · ' + format(datum.time_ms, '.0f') + ' ms' : format(datum.slower_factor, '.1f') + 'x slower · ' + format(datum.time_ms, '.0f') + ' ms') : (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x vs beancount' : format(datum.slower_factor, '.1f') + 'x slower')"
+                            "signal": "datum.is_small ? (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x faster than beancount · ' + format(datum.time_ms, '.0f') + ' ms' : format(datum.slower_factor, '.1f') + 'x slower than rustledger · ' + format(datum.time_ms, '.0f') + ' ms') : (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x faster than beancount' : format(datum.slower_factor, '.1f') + 'x slower than rustledger')"
                         },
                         "fill": {
                             "signal": "datum.is_small ? (datum.tool == 'rustledger' ? '#f74c00' : '#e6edf3') : '#000000'"
