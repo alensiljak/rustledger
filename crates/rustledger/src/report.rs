@@ -1,13 +1,30 @@
 //! Error reporting with beautiful diagnostics.
 //!
 //! Uses ariadne for pretty-printed error messages with source context.
+//! Respects TTY detection and `NO_COLOR` environment variable.
 
 use ariadne::{ColorGenerator, Config, Label, Report, ReportKind, Source};
 use rustledger_parser::ParseError;
 use rustledger_validate::{ErrorCode, ValidationError};
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::Path;
+
+/// Determine if colors should be used for output.
+///
+/// Returns `true` if:
+/// - stdout is a TTY (terminal)
+/// - `NO_COLOR` environment variable is not set
+///
+/// See <https://no-color.org/> for the `NO_COLOR` standard.
+pub fn should_use_color() -> bool {
+    // Check NO_COLOR environment variable (any value disables color)
+    if std::env::var_os("NO_COLOR").is_some() {
+        return false;
+    }
+    // Check if stdout is a terminal
+    std::io::stdout().is_terminal()
+}
 
 /// A source cache for ariadne.
 pub struct SourceCache {
@@ -41,29 +58,35 @@ impl Default for SourceCache {
 }
 
 /// Report parse errors to the given writer.
+///
+/// If `use_color` is false, ANSI color codes are disabled.
 pub fn report_parse_errors<W: Write>(
     errors: &[ParseError],
     source_path: &Path,
     source: &str,
     writer: &mut W,
+    use_color: bool,
 ) -> std::io::Result<usize> {
     let path_str = source_path.display().to_string();
     let mut colors = ColorGenerator::new();
     let error_count = errors.len();
 
     for error in errors {
-        let color = colors.next();
         let (start, end) = error.span();
+
+        let label = Label::new((&path_str, start..end)).with_message(error.label());
+        // Only set label color when colors are enabled
+        let label = if use_color {
+            label.with_color(colors.next())
+        } else {
+            label
+        };
 
         let mut report = Report::build(ReportKind::Error, (&path_str, start..end))
             .with_code(format!("P{:04}", error.kind_code()))
             .with_message(error.message())
-            .with_label(
-                Label::new((&path_str, start..end))
-                    .with_message(error.label())
-                    .with_color(color),
-            )
-            .with_config(Config::default().with_compact(false));
+            .with_label(label)
+            .with_config(Config::default().with_compact(false).with_color(use_color));
 
         // Add hint if present
         if let Some(hint) = &error.hint {
@@ -79,10 +102,13 @@ pub fn report_parse_errors<W: Write>(
 }
 
 /// Report validation errors to the given writer.
+///
+/// If `use_color` is false, ANSI color codes are disabled.
 pub fn report_validation_errors<W: Write>(
     errors: &[ValidationError],
     _cache: &SourceCache,
     writer: &mut W,
+    _use_color: bool,
 ) -> std::io::Result<usize> {
     let error_count = errors.len();
 
@@ -110,13 +136,23 @@ fn format_error_code(code: ErrorCode) -> String {
 }
 
 /// Print a summary of errors and warnings.
+///
+/// If `use_color` is false, ANSI color codes are disabled.
 pub fn print_summary<W: Write>(
     errors: usize,
     warnings: usize,
     writer: &mut W,
+    use_color: bool,
 ) -> std::io::Result<()> {
+    // Color codes
+    let (green, red, yellow, reset) = if use_color {
+        ("\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[0m")
+    } else {
+        ("", "", "", "")
+    };
+
     if errors == 0 && warnings == 0 {
-        writeln!(writer, "\x1b[32m\u{2713}\x1b[0m No errors found")?;
+        writeln!(writer, "{green}\u{2713}{reset} No errors found")?;
     } else {
         let error_text = if errors == 1 { "error" } else { "errors" };
         let warning_text = if warnings == 1 { "warning" } else { "warnings" };
@@ -124,12 +160,12 @@ pub fn print_summary<W: Write>(
         if errors > 0 && warnings > 0 {
             writeln!(
                 writer,
-                "\x1b[31m\u{2717}\x1b[0m {errors} {error_text}, {warnings} {warning_text}"
+                "{red}\u{2717}{reset} {errors} {error_text}, {warnings} {warning_text}"
             )?;
         } else if errors > 0 {
-            writeln!(writer, "\x1b[31m\u{2717}\x1b[0m {errors} {error_text}")?;
+            writeln!(writer, "{red}\u{2717}{reset} {errors} {error_text}")?;
         } else {
-            writeln!(writer, "\x1b[33m\u{26A0}\x1b[0m {warnings} {warning_text}")?;
+            writeln!(writer, "{yellow}\u{26A0}{reset} {warnings} {warning_text}")?;
         }
     }
     Ok(())
