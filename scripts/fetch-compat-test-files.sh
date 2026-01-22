@@ -26,24 +26,22 @@ trap cleanup EXIT
 # Helper function to fetch and extract beancount files
 fetch_repo() {
     local name="$1"
-    local url="$2"
+    local repo="$2"  # GitHub repo in "owner/repo" format
     local branch="${3:-}"
     local subdir="$DEST/$name"
-    
+
     mkdir -p "$subdir"
     echo "Fetching $name..."
-    
+
+    local clone_args=(-- --depth=1)
     if [ -n "$branch" ]; then
-        git clone --depth=1 --branch="$branch" "$url" "$TMPDIR/$name" 2>/dev/null || {
-            echo "  Warning: Failed to clone $name (branch: $branch)"
-            return 0
-        }
-    else
-        git clone --depth=1 "$url" "$TMPDIR/$name" 2>/dev/null || {
-            echo "  Warning: Failed to clone $name"
-            return 0
-        }
+        clone_args+=(--branch="$branch")
     fi
+
+    gh repo clone "$repo" "$TMPDIR/$name" "${clone_args[@]}" 2>/dev/null || {
+        echo "  Warning: Failed to clone $name"
+        return 0
+    }
     
     # Find and copy all .beancount files, preserving some path info in filename
     find "$TMPDIR/$name" -name "*.beancount" -type f | while read -r f; do
@@ -58,34 +56,46 @@ fetch_repo() {
 }
 
 # 1. beancount v2 - most comprehensive test data
-fetch_repo "beancount-v2" "https://github.com/beancount/beancount" "v2"
+fetch_repo "beancount-v2" "beancount/beancount" "v2"
 
 # 2. beancount v3
-fetch_repo "beancount-v3" "https://github.com/beancount/beancount" "v3"
+fetch_repo "beancount-v3" "beancount/beancount" "v3"
 
 # 3. fava - web interface with test data
-fetch_repo "fava" "https://github.com/beancount/fava"
+fetch_repo "fava" "beancount/fava"
 
 # 4. beangulp - importer framework
-fetch_repo "beangulp" "https://github.com/beancount/beangulp"
+fetch_repo "beangulp" "beancount/beangulp"
 
 # 5. ledger2beancount - conversion tool tests
-fetch_repo "ledger2beancount" "https://github.com/beancount/ledger2beancount"
+fetch_repo "ledger2beancount" "beancount/ledger2beancount"
 
 # 6. beancount-import - import web UI
-fetch_repo "beancount-import" "https://github.com/jbms/beancount-import"
+fetch_repo "beancount-import" "jbms/beancount-import"
 
 # 7. LaunchPlatform parser - standalone parser tests
-fetch_repo "launchplatform" "https://github.com/LaunchPlatform/beancount-parser"
+fetch_repo "launchplatform" "LaunchPlatform/beancount-parser"
 
 # 8. smart_importer - ML importers
-fetch_repo "smart-importer" "https://github.com/beancount/smart_importer"
+fetch_repo "smart-importer" "beancount/smart_importer"
 
 # 9. beancount_reds_importers
-fetch_repo "reds-importers" "https://github.com/redstreet/beancount_reds_importers"
+fetch_repo "reds-importers" "redstreet/beancount_reds_importers"
 
 # 10. Community examples
-fetch_repo "community-wileykestner" "https://github.com/wileykestner/beancount-example"
+fetch_repo "community-wileykestner" "wileykestner/beancount-example"
+
+# 11. Parser Lima - comprehensive parser test suite (246 files)
+fetch_repo "parser-lima" "tesujimath/beancount-parser-lima"
+
+# 12. Fava Investor - investment tracking plugin
+fetch_repo "fava-investor" "redstreet/fava_investor"
+
+# 13. Fava Dashboards
+fetch_repo "fava-dashboards" "andreasgerstmayr/fava-dashboards"
+
+# 14. Beancern (tariochbctools)
+fetch_repo "beancern" "tarioch/beancern"
 
 # Summary
 echo ""
