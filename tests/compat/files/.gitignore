@@ -1,0 +1,8 @@
+# Compatibility test files - downloaded on demand
+# Use ./scripts/fetch-compat-test-files.sh to populate
+
+# Ignore all downloaded content
+*
+
+# But track this .gitignore
+!.gitignore

@@ -7,9 +7,9 @@ set -e
 # This script downloads .beancount files from various open source projects
 # to create a comprehensive compatibility test suite.
 #
-# Target: ~800+ real beancount files from diverse sources
+# Target: 800+ unique beancount files from 70+ diverse sources (after deduplication)
 
-DEST="tests/compat-full"
+DEST="tests/compat/files"
 TMPDIR="/tmp/beancount-fetch-$$"
 
 echo "=== Fetching Beancount Test Files ==="
@@ -26,24 +26,22 @@ trap cleanup EXIT
 # Helper function to fetch and extract beancount files
 fetch_repo() {
     local name="$1"
-    local url="$2"
+    local repo="$2"  # GitHub repo in "owner/repo" format
     local branch="${3:-}"
     local subdir="$DEST/$name"
-    
+
     mkdir -p "$subdir"
     echo "Fetching $name..."
-    
+
+    local clone_args=(-- --depth=1)
     if [ -n "$branch" ]; then
-        git clone --depth=1 --branch="$branch" "$url" "$TMPDIR/$name" 2>/dev/null || {
-            echo "  Warning: Failed to clone $name (branch: $branch)"
-            return 0
-        }
-    else
-        git clone --depth=1 "$url" "$TMPDIR/$name" 2>/dev/null || {
-            echo "  Warning: Failed to clone $name"
-            return 0
-        }
+        clone_args+=(--branch="$branch")
     fi
+
+    gh repo clone "$repo" "$TMPDIR/$name" "${clone_args[@]}" 2>/dev/null || {
+        echo "  Warning: Failed to clone $name"
+        return 0
+    }
     
     # Find and copy all .beancount files, preserving some path info in filename
     find "$TMPDIR/$name" -name "*.beancount" -type f | while read -r f; do
@@ -58,40 +56,235 @@ fetch_repo() {
 }
 
 # 1. beancount v2 - most comprehensive test data
-fetch_repo "beancount-v2" "https://github.com/beancount/beancount" "v2"
+fetch_repo "beancount-v2" "beancount/beancount" "v2"
 
 # 2. beancount v3
-fetch_repo "beancount-v3" "https://github.com/beancount/beancount" "v3"
+fetch_repo "beancount-v3" "beancount/beancount" "v3"
+
+# 2b. beancount v1 (legacy, may have different test cases)
+fetch_repo "beancount-v1" "beancount/beancount" "v1"
 
 # 3. fava - web interface with test data
-fetch_repo "fava" "https://github.com/beancount/fava"
+fetch_repo "fava" "beancount/fava"
 
 # 4. beangulp - importer framework
-fetch_repo "beangulp" "https://github.com/beancount/beangulp"
+fetch_repo "beangulp" "beancount/beangulp"
 
 # 5. ledger2beancount - conversion tool tests
-fetch_repo "ledger2beancount" "https://github.com/beancount/ledger2beancount"
+fetch_repo "ledger2beancount" "beancount/ledger2beancount"
 
 # 6. beancount-import - import web UI
-fetch_repo "beancount-import" "https://github.com/jbms/beancount-import"
+fetch_repo "beancount-import" "jbms/beancount-import"
 
 # 7. LaunchPlatform parser - standalone parser tests
-fetch_repo "launchplatform" "https://github.com/LaunchPlatform/beancount-parser"
+fetch_repo "launchplatform" "LaunchPlatform/beancount-parser"
 
 # 8. smart_importer - ML importers
-fetch_repo "smart-importer" "https://github.com/beancount/smart_importer"
+fetch_repo "smart-importer" "beancount/smart_importer"
 
 # 9. beancount_reds_importers
-fetch_repo "reds-importers" "https://github.com/redstreet/beancount_reds_importers"
+fetch_repo "reds-importers" "redstreet/beancount_reds_importers"
 
 # 10. Community examples
-fetch_repo "community-wileykestner" "https://github.com/wileykestner/beancount-example"
+fetch_repo "community-wileykestner" "wileykestner/beancount-example"
 
-# Copy existing curated files
-if [ -d "tests/compat/files" ]; then
-    echo "Copying existing curated files..."
-    cp -r tests/compat/files/* "$DEST/" 2>/dev/null || true
-fi
+# 11. Parser Lima - comprehensive parser test suite (246 files)
+fetch_repo "parser-lima" "tesujimath/beancount-parser-lima"
+
+# 12. Fava Investor - investment tracking plugin
+fetch_repo "fava-investor" "redstreet/fava_investor"
+
+# 13. Fava Dashboards
+fetch_repo "fava-dashboards" "andreasgerstmayr/fava-dashboards"
+
+# 14. Beancern (tariochbctools)
+fetch_repo "beancern" "tarioch/beancern"
+
+# 15. double-entry-generator - Chinese accounting tool
+fetch_repo "double-entry-generator" "deb-sig/double-entry-generator"
+
+# 16. beanahead - forward-looking beancount entries
+fetch_repo "beanahead" "maread99/beanahead"
+
+# 17. beancount-boilerplate-cn - Chinese beancount examples
+fetch_repo "beancount-boilerplate-cn" "mckelvin/beancount-boilerplate-cn"
+
+# 18. gnucash-to-beancount converter tests
+fetch_repo "gnucash-to-beancount" "andrewstein/gnucash-to-beancount"
+
+# === Official Beancount Org ===
+fetch_repo "beancount2ledger" "beancount/beancount2ledger"
+fetch_repo "beangrow" "beancount/beangrow"
+fetch_repo "fava-plugins" "beancount/fava-plugins"
+
+# === Plugins ===
+fetch_repo "autobean" "SEIAROTg/autobean"
+fetch_repo "beancount-lazy-plugins" "Evernight/beancount-lazy-plugins"
+fetch_repo "beancount-plugins-metadata" "seltzered/beancount-plugins-metadata-spray"
+fetch_repo "beancount-portfolio-alloc" "ghislainbourgeois/beancount_portfolio_allocation"
+fetch_repo "reds-plugins" "redstreet/beancount_reds_plugins"
+fetch_repo "michaelbull-plugins" "michaelbull/beancount-plugins"
+fetch_repo "davidastephens-plugins" "davidastephens/beancount-plugins"
+fetch_repo "fkarg-plugins" "fkarg/beancount-plugins"
+
+# === Fava Extensions ===
+fetch_repo "fava-envelope" "polarmutex/fava-envelope"
+fetch_repo "fava-portfolio-returns" "andreasgerstmayr/fava-portfolio-returns"
+fetch_repo "fava-portfolio-summary" "PhracturedBlue/fava-portfolio-summary"
+fetch_repo "fava-classy-portfolio" "seltzered/fava-classy-portfolio"
+fetch_repo "fava-tax-loss" "redstreet/fava_tax_loss_harvester"
+fetch_repo "fava-budget-freedom" "Leon2xiaowu/fava_budget_freedom"
+
+# === Importers - Germany ===
+fetch_repo "beancount-commerzbank" "siddhantgoel/beancount-commerzbank"
+fetch_repo "beancount-dkb" "siddhantgoel/beancount-dkb"
+fetch_repo "beancount-ing" "siddhantgoel/beancount-ing"
+fetch_repo "beancount-n26" "siddhantgoel/beancount-n26"
+fetch_repo "beancount-volksbank" "Fjanks/beancount-importer-volksbank"
+
+# === Importers - France ===
+fetch_repo "beancount-ce" "ArthurFDLR/beancount-ce"
+fetch_repo "beancount-mytools" "grostim/Beancount-myTools"
+fetch_repo "vrischmann-importers" "vrischmann/beancount-importers"
+
+# === Importers - India ===
+fetch_repo "beancount-india" "dumbPy/beancount-importers-india"
+fetch_repo "prabusw-india" "prabusw/beancount-importers-india"
+
+# === Importers - Netherlands ===
+fetch_repo "beancount-abnamro" "deepakg/beancount-abnamro"
+
+# === Importers - Switzerland ===
+fetch_repo "beancounttools" "tarioch/beancounttools"
+fetch_repo "drnuke-bean" "Dr-Nuke/drnuke-bean"
+
+# === Importers - UK ===
+fetch_repo "evernight-importers" "Evernight/beancount-importers"
+
+# === Importers - US ===
+fetch_repo "beancount-capitalone" "mtlynch/beancount-capitalone"
+fetch_repo "beancount-chase-bank" "mtlynch/beancount-chase-bank"
+fetch_repo "beancount-chase" "ArthurFDLR/beancount-chase"
+fetch_repo "beancount-mercury" "mtlynch/beancount-mercury"
+
+# === Converters ===
+fetch_repo "csv2beancount" "PaNaVTEC/csv2beancount"
+fetch_repo "henriquebastos-gnucash" "henriquebastos/gnucash-to-beancount"
+fetch_repo "dtrai2-gnucash" "dtrai2/gnucash-to-beancount"
+fetch_repo "glasserc-ledger" "glasserc/ledger-to-beancount"
+fetch_repo "quicken2beancount" "mortisj/quicken2beancount"
+
+# === Tools ===
+fetch_repo "beancount-black" "LaunchPlatform/beancount-black"
+fetch_repo "beancount-categorizer" "bratekarate/beancount-categorizer"
+fetch_repo "lazy-beancount" "Evernight/lazy-beancount"
+fetch_repo "beancount-ynab" "hoostus/beancount-ynab"
+
+# === Bots/UI ===
+fetch_repo "beancount-bot-tg" "LucaBernstein/beancount-bot-tg"
+fetch_repo "beancount-telegram-bot" "blinkstu/beancount-telegram-bot"
+fetch_repo "beancount-mobile" "xuhcc/beancount-mobile"
+
+# === Editor/Language Support ===
+fetch_repo "beancount-language-server" "polarmutex/beancount-language-server"
+fetch_repo "tree-sitter-beancount" "polarmutex/tree-sitter-beancount"
+fetch_repo "vscode-beancount" "Lencerf/vscode-beancount"
+fetch_repo "vim-beancount" "nathangrigg/vim-beancount"
+
+# === Examples/Tutorials ===
+fetch_repo "awesome-beancount-wzyboy" "wzyboy/awesome-beancount"
+fetch_repo "awesome-beancount-siddhant" "siddhantgoel/awesome-beancount"
+fetch_repo "donearm-ledger" "Donearm/ledger"
+
+# === Misc ===
+fetch_repo "jbeancount" "jbeancount/jbeancount"
+fetch_repo "beanpost" "gerdemb/beanpost"
+fetch_repo "portfolio-returns" "hoostus/portfolio-returns"
+
+# === Alternative Parsers/Implementations ===
+fetch_repo "twilco-beancount" "twilco/beancount"
+fetch_repo "jcornaz-parser" "jcornaz/beancount-parser"
+fetch_repo "intellij-beancount" "Ramblurr/intellij-beancount"
+fetch_repo "jord1e-jbeancount" "jord1e/jbeancount"
+
+# === More Official ===
+fetch_repo "beanprice" "beancount/beanprice"
+fetch_repo "finance-dl" "jbms/finance-dl"
+
+# === Chinese Tools ===
+fetch_repo "beancount-gs" "BaoXuebin/beancount-gs"
+fetch_repo "beancount-chinese-manual" "maonx/Beancount-Chinese-User-Manual"
+fetch_repo "homemade-importers" "heyeshuang/beancount-homemade-importers"
+
+# === More Community ===
+fetch_repo "beancount-mode" "beancount/beancount-mode"
+fetch_repo "sublime-beancount" "norseghost/sublime-beancount"
+fetch_repo "zed-beancount" "zed-extensions/beancount"
+fetch_repo "beancount-exporter" "LaunchPlatform/beancount-exporter"
+fetch_repo "beanhub-forms" "LaunchPlatform/beanhub-forms"
+fetch_repo "beanhub-web-react" "LaunchPlatform/beanhub-web-react"
+fetch_repo "beancount-extract" "LaunchPlatform/beancount-extract"
+fetch_repo "beancount-exchangerates" "xuhcc/beancount-exchangerates"
+fetch_repo "beancount-cryptoassets" "xuhcc/beancount-cryptoassets"
+
+# === Forks with Test Data ===
+fetch_repo "iocoop-beancount" "iocoop/beancount"
+fetch_repo "beancount-valuation" "Evernight/beancount-valuation"
+
+# === More Converters ===
+fetch_repo "ofxtools" "csingley/ofxtools"
+fetch_repo "beancount-bot" "StdioA/beancount-bot"
+fetch_repo "zhangzhishan-importer" "zhangzhishan/beancount_importer"
+
+# === More Regional Importers ===
+fetch_repo "jamatute-importer" "jamatute/beancount-importer"
+fetch_repo "balancechange" "daniel-wells/beancount_balancechange"
+fetch_repo "beancount-balexpr" "w1ndy/beancount_balexpr"
+fetch_repo "checkclosed" "daniel-wells/beancount_checkclosed"
+
+# === More LSP/Editor Tools ===
+fetch_repo "fengkx-lsp" "fengkx/beancount-lsp"
+fetch_repo "matze-ls" "matze/beancount-language-server"
+fetch_repo "vscode-beancount-langserver" "polarmutex/vscode-beancount-langserver"
+fetch_repo "beanquery-mcp" "vanto/beanquery-mcp"
+
+# === More from GitHub Topics ===
+fetch_repo "beancount-fava-gtk" "johannesjh/fava-gtk"
+fetch_repo "autobean-format" "SEIAROTg/autobean-format"
+fetch_repo "autobean-refactor" "SEIAROTg/autobean-refactor"
+
+# === From GitHub Code Search ===
+fetch_repo "beanbot" "dumbPy/beanbot"
+fetch_repo "pynomina" "WolfgangFahl/pynomina"
+fetch_repo "beancount-blog-examples" "LalitMaganti/beancount-blog-examples"
+fetch_repo "beancount-staging" "jakobhellermann/beancount-staging"
+fetch_repo "pinto-reports" "sjoblomj/pinto-reports"
+fetch_repo "portfolio-eidorb" "eidorb/portfolio"
+fetch_repo "apyb-financeiro" "apyb/financeiro"
+fetch_repo "cookbook-beancount-llm" "David-Barnes-Data-Imaginations/cookbook-beancount-llm"
+
+# === Deduplication ===
+# Remove duplicate files based on content hash to avoid testing the same content twice
+echo ""
+echo "=== Deduplicating files by content hash ==="
+
+# Build hash index: hash -> first file with that hash
+declare -A seen_hashes
+duplicates_removed=0
+
+# Process all .beancount files
+while IFS= read -r -d '' file; do
+    hash=$(sha256sum "$file" | cut -d' ' -f1)
+    if [[ -n "${seen_hashes[$hash]:-}" ]]; then
+        # Duplicate found - remove it
+        rm "$file"
+        duplicates_removed=$((duplicates_removed + 1))
+    else
+        seen_hashes[$hash]="$file"
+    fi
+done < <(find "$DEST" -name "*.beancount" -type f -print0 | sort -z)
+
+echo "  Removed $duplicates_removed duplicate files"
 
 # Summary
 echo ""

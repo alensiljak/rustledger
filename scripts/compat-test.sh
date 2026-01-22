@@ -6,18 +6,18 @@ set -e
 # Run inside: nix develop --command ./scripts/compat-test.sh [directory]
 #
 # Examples:
-#   ./scripts/compat-test.sh                    # Test full suite (tests/compat-full)
-#   ./scripts/compat-test.sh tests/compat/files # Test curated files only
+#   ./scripts/fetch-compat-test-files.sh       # Download test files first
+#   ./scripts/compat-test.sh                   # Run tests on downloaded files
 
-# Default to full test suite, but allow override via argument
-FIXTURES_DIR="${1:-tests/compat-full}"
+# Default to tests/compat/files/, allow override via argument
+FIXTURES_DIR="${1:-tests/compat/files}"
 RESULTS_DIR="tests/compat-results"
 
-# Fall back to curated files if full suite doesn't exist
+# Check if test files exist
 if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then
-    echo "Full test suite not found at $FIXTURES_DIR"
-    echo "Falling back to curated files..."
-    FIXTURES_DIR="tests/compat/files"
+    echo "Test files not found at $FIXTURES_DIR"
+    echo "Run ./scripts/fetch-compat-test-files.sh to download test files"
+    exit 1
 fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/results_$TIMESTAMP.jsonl"

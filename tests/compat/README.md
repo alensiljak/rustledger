@@ -1,6 +1,6 @@
 # Beancount Compatibility Tests
 
-This directory contains test files for verifying compatibility between rustledger and Python beancount.
+This directory contains test infrastructure for verifying compatibility between rustledger and Python beancount.
 
 ## Directory Structure
 
@@ -8,78 +8,66 @@ This directory contains test files for verifying compatibility between rustledge
 tests/compat/
 ├── README.md           # This file
 ├── sources.toml        # Documentation of file sources and licenses
-└── files/              # Curated test files (~100, committed)
-    ├── parser/         # Parser edge cases and syntax variations
-    ├── validation/     # Validation scenarios (balancing, accounts)
-    ├── plugins/        # Plugin usage and configuration
-    ├── real-world/     # Real-world ledger examples
-    └── edge-cases/     # Known compatibility differences
-
-tests/compat-full/      # Full test suite (~800 files, gitignored)
-                        # Downloaded on-demand via fetch script
+└── files/              # Downloaded test files (~800, gitignored)
+    ├── beancount-v2/   # Files from beancount v2
+    ├── beancount-v3/   # Files from beancount v3
+    ├── fava/           # Files from fava
+    ├── ledger2beancount/
+    └── ...             # Other sources
 ```
 
-## Curated vs Full Test Suite
+## Setup
 
-**Curated (`tests/compat/files/`)**: ~100 representative files committed to the repository. These are selected to:
-- Cover different beancount features
-- Represent each source repository
-- Include known edge cases
-- Be small enough to commit
-
-**Full (`tests/compat-full/`)**: ~800 files downloaded from 11+ repositories. Use this for comprehensive testing:
+Test files are **not committed** to the repository. Download them before running tests:
 
 ```bash
-# Download full test suite (inside nix develop)
+# Inside nix develop
 ./scripts/fetch-compat-test-files.sh
-
-# Run compatibility tests
-./scripts/compat-test.sh
 ```
+
+This downloads ~800 beancount files from 10+ open source repositories.
 
 ## Running Tests
 
-### Quick Test (Curated Files)
+### Check Compatibility (bean-check vs rledger-check)
 ```bash
-# Test only curated files
-./scripts/compat-test.sh tests/compat/files
-```
-
-### Full Test Suite
-```bash
-# Fetch all test files first
-./scripts/fetch-compat-test-files.sh
-
-# Run full compatibility tests
 ./scripts/compat-test.sh
 ```
 
-### BQL Query Tests
+### BQL Query Compatibility (bean-query vs rledger-query)
 ```bash
 ./scripts/compat-bql-test.sh
 ```
 
-## File Categories
+### AST Comparison
+```bash
+python3 ./scripts/compat-ast-test.py
+```
 
-| Category | Count | Description |
-|----------|-------|-------------|
-| parser | ~25 | Parser edge cases from beancount-parser-lima |
-| validation | ~20 | Balance assertions, account validation |
-| plugins | ~5 | Plugin declarations and configurations |
-| real-world | ~35 | Examples from fava, beangulp, community |
-| edge-cases | ~10 | Files with known compatibility differences |
+## Test Sources
 
-## Sources
+Files are fetched from:
 
-See `sources.toml` for detailed information about:
-- Source repositories and URLs
-- License information
-- File counts per source
-- Curation criteria
+| Source | Description |
+|--------|-------------|
+| beancount v2/v3 | Official beancount examples and test data |
+| fava | Web UI test files |
+| beangulp | Importer framework tests |
+| ledger2beancount | Conversion tool test cases |
+| beancount-import | Import web UI test data |
+| smart_importer | ML importer tests |
+| Community repos | Various community examples |
 
-## Adding New Test Files
+See `sources.toml` for detailed source information and licenses.
 
-1. Add the source to `sources.toml`
-2. Place curated files in appropriate `files/` subdirectory
-3. Update file counts in `sources.toml`
-4. Run compatibility tests to verify
+## CI Integration
+
+CI workflows automatically fetch test files before running compatibility tests.
+Files are cached to avoid re-downloading on every run.
+
+## Results
+
+Test results are written to `tests/compat-results/` (also gitignored):
+- `results_*.jsonl` - Check compatibility results
+- `bql_results_*.jsonl` - BQL query results
+- `summary_*.md` - Human-readable summary

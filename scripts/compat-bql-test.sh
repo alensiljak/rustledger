@@ -8,12 +8,14 @@ set -e
 # Environment variables:
 #   PARALLEL_JOBS: Number of parallel workers (default: CPU count, max 8)
 
-FIXTURES_DIR="${1:-tests/compat-full}"
+FIXTURES_DIR="${1:-tests/compat/files}"
 RESULTS_DIR="tests/compat-results"
 
-# Fall back to curated files if full suite doesn't exist
+# Check if test files exist
 if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then
-    FIXTURES_DIR="tests/compat/files"
+    echo "Test files not found at $FIXTURES_DIR"
+    echo "Run ./scripts/fetch-compat-test-files.sh to download test files"
+    exit 1
 fi
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/bql_results_$TIMESTAMP.jsonl"
