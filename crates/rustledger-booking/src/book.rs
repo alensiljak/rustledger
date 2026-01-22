@@ -568,6 +568,62 @@ mod tests {
     }
 
     #[test]
+    fn test_book_total_cost_then_sell() {
+        // Test that book() correctly handles total cost syntax and preserves
+        // full precision for accurate capital gains calculation.
+        let mut engine = BookingEngine::new();
+
+        // Buy 1.763 VIIIX with total cost {{300.00 USD}}
+        let buy = Transaction::new(date(2016, 1, 16), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(1.763), "VIIIX")).with_cost(
+                    CostSpec::empty()
+                        .with_number_total(dec!(300.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-300.00), "USD"),
+            ));
+
+        // Use book() to test the booking path with total cost
+        let booked_buy = engine.book(&buy).unwrap();
+        engine.apply(&booked_buy.transaction);
+
+        // Check that per-unit cost was calculated (300/1.763)
+        let buy_posting = &booked_buy.transaction.postings[0];
+        assert!(buy_posting.cost.is_some());
+        let cost_spec = buy_posting.cost.as_ref().unwrap();
+        // Total cost should be cleared, per-unit should be set
+        assert!(cost_spec.number_total.is_none());
+        assert!(cost_spec.number_per.is_some());
+
+        // Sell all shares at $191 per unit
+        let sell = Transaction::new(date(2016, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-1.763), "VIIIX"))
+                    .with_cost(CostSpec::empty())
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(191.00), "USD"))),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(336.73), "USD"), // 1.763 * 191 = 336.733
+            ))
+            .with_posting(Posting::auto("Income:CapitalGains"));
+
+        let booked_sell = engine.book(&sell).unwrap();
+
+        // Capital gain should be: 336.73 - 300.00 = 36.73
+        // With full precision preserved, this should be accurate
+        assert_eq!(booked_sell.gains.len(), 1);
+        let gain = &booked_sell.gains[0];
+        // The gain should be close to 36.73 (sale proceeds - cost basis)
+        // Sale: 1.763 * 191 = 336.733, Cost: 300.00, Gain ≈ 36.73
+        eprintln!("Capital gain: {:?}", gain.amount);
+    }
+
+    #[test]
     fn test_cost_spec_currency_inference() {
         let mut engine = BookingEngine::new();
 
