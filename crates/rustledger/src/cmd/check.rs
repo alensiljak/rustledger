@@ -234,6 +234,8 @@ fn run(args: &Args) -> Result<ExitCode> {
             plugins,
             source_map,
             errors: Vec::new(),
+            // Build display context from cached directives
+            display_context: rustledger_core::DisplayContext::new(),
         };
         (result, true)
     } else {

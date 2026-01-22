@@ -41,7 +41,7 @@ pub use cache::{
 pub use options::Options;
 pub use source_map::{SourceFile, SourceMap};
 
-use rustledger_core::Directive;
+use rustledger_core::{Directive, DisplayContext};
 use rustledger_parser::{ParseError, Span, Spanned};
 use std::collections::HashSet;
 use std::fs;
@@ -110,6 +110,8 @@ pub struct LoadResult {
     pub source_map: SourceMap,
     /// All errors encountered during loading.
     pub errors: Vec<LoadError>,
+    /// Display context for formatting numbers (tracks precision per currency).
+    pub display_context: DisplayContext,
 }
 
 /// A plugin directive.
@@ -266,12 +268,16 @@ impl Loader {
             &mut errors,
         )?;
 
+        // Build display context from directives and options
+        let display_context = build_display_context(&directives, &options);
+
         Ok(LoadResult {
             directives,
             options,
             plugins,
             source_map,
             errors,
+            display_context,
         })
     }
 
@@ -389,6 +395,73 @@ impl Loader {
 
         Ok(())
     }
+}
+
+/// Build a display context from loaded directives and options.
+///
+/// This scans all directives for amounts and tracks the maximum precision seen
+/// for each currency. Fixed precisions from `option "display_precision"` override
+/// the inferred values.
+fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -> DisplayContext {
+    let mut ctx = DisplayContext::new();
+
+    // Set render_commas from options
+    ctx.set_render_commas(options.render_commas);
+
+    // Scan directives for amounts to infer precision
+    for spanned in directives {
+        match &spanned.value {
+            Directive::Transaction(txn) => {
+                for posting in &txn.postings {
+                    // Units (IncompleteAmount)
+                    if let Some(ref units) = posting.units {
+                        if let (Some(number), Some(currency)) = (units.number(), units.currency()) {
+                            ctx.update(number, currency);
+                        }
+                    }
+                    // Cost (CostSpec)
+                    if let Some(ref cost) = posting.cost {
+                        if let (Some(number), Some(currency)) =
+                            (cost.number_per.or(cost.number_total), &cost.currency)
+                        {
+                            ctx.update(number, currency.as_str());
+                        }
+                    }
+                    // Price (PriceAnnotation)
+                    if let Some(ref price) = posting.price {
+                        if let Some(amount) = price.amount() {
+                            ctx.update(amount.number, amount.currency.as_str());
+                        }
+                    }
+                }
+            }
+            Directive::Balance(bal) => {
+                ctx.update(bal.amount.number, bal.amount.currency.as_str());
+                if let Some(tol) = bal.tolerance {
+                    ctx.update(tol, bal.amount.currency.as_str());
+                }
+            }
+            Directive::Price(price) => {
+                ctx.update(price.amount.number, price.amount.currency.as_str());
+            }
+            Directive::Pad(_)
+            | Directive::Open(_)
+            | Directive::Close(_)
+            | Directive::Commodity(_)
+            | Directive::Event(_)
+            | Directive::Query(_)
+            | Directive::Note(_)
+            | Directive::Document(_)
+            | Directive::Custom(_) => {}
+        }
+    }
+
+    // Apply fixed precisions from options (these override inferred values)
+    for (currency, precision) in &options.display_precision {
+        ctx.set_fixed_precision(currency, *precision);
+    }
+
+    ctx
 }
 
 /// Load a beancount file.
