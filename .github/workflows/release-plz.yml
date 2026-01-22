@@ -16,6 +16,13 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      debug_semver:
+        description: 'Enable verbose semver check debugging'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -44,6 +51,21 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
+      # Debug: Run cargo-semver-checks directly to diagnose issues
+      - name: Debug - Run cargo-semver-checks directly
+        if: inputs.debug_semver == true
+        run: |
+          echo "=== Installing cargo-semver-checks ==="
+          curl -sL https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.45.0/cargo-semver-checks-x86_64-unknown-linux-musl.tar.gz | tar xzf -
+          chmod +x cargo-semver-checks
+          ./cargo-semver-checks --version
+
+          echo ""
+          echo "=== Running cargo-semver-checks on rustledger-parser ==="
+          ./cargo-semver-checks semver-checks check-release \
+            --manifest-path crates/rustledger-parser/Cargo.toml \
+            2>&1 || echo "Exit code: $?"
+
       # Use PAT to create PR so it triggers CI workflows automatically
       # (GITHUB_TOKEN can't trigger other workflows)
       - name: Run release-plz
@@ -53,6 +75,7 @@ jobs:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          RUST_LOG: ${{ inputs.debug_semver == true && 'release_plz_core::semver_check=debug,release_plz_core=info' || '' }}
 
       # Clean up old release-plz branches (from closed/superseded PRs)
       - name: Cleanup old release-plz branches
