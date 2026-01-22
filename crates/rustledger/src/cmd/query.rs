@@ -15,8 +15,7 @@ use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustledger_booking::{BookingEngine, expand_pads};
-use rustledger_core::BookingMethod;
-use rustledger_core::Directive;
+use rustledger_core::{BookingMethod, Directive, DisplayContext};
 use rustledger_loader::Loader;
 use rustledger_query::{Executor, Value, parse as parse_query};
 use rustyline::error::ReadlineError;
@@ -168,6 +167,9 @@ fn run(args: &Args) -> Result<()> {
     // Now pad processing sees the interpolated amounts and calculates correct padding
     let directives = expand_pads(&booked_directives);
 
+    // Get the display context for formatting numbers
+    let display_context = load_result.display_context;
+
     if args.verbose {
         eprintln!("Loaded {} directives", directives.len());
     }
@@ -180,11 +182,11 @@ fn run(args: &Args) -> Result<()> {
             .with_context(|| format!("failed to read query file {}", query_file.display()))?
     } else {
         // Interactive mode
-        return run_interactive(file, &directives, args);
+        return run_interactive(file, &directives, &display_context, args);
     };
 
     // Execute the query
-    let settings = ShellSettings::from_args(args);
+    let settings = ShellSettings::from_args(args, display_context);
     execute_query(&query_str, &directives, &settings, &mut io::stdout())
 }
 
@@ -194,15 +196,17 @@ struct ShellSettings {
     numberify: bool,
     pager: bool,
     output_file: Option<PathBuf>,
+    display_context: DisplayContext,
 }
 
 impl ShellSettings {
-    fn from_args(args: &Args) -> Self {
+    fn from_args(args: &Args, display_context: DisplayContext) -> Self {
         Self {
             format: args.format,
             numberify: args.numberify,
             pager: true,
             output_file: args.output.clone(),
+            display_context,
         }
     }
 }
@@ -222,12 +226,13 @@ fn execute_query<W: Write>(
         .execute(&query)
         .with_context(|| "failed to execute query")?;
 
-    // Output results
+    // Output results using display context for consistent number formatting
+    let ctx = &settings.display_context;
     match settings.format {
-        OutputFormat::Text => write_text(&result, writer, settings.numberify)?,
-        OutputFormat::Csv => write_csv(&result, writer, settings.numberify)?,
+        OutputFormat::Text => write_text(&result, writer, settings.numberify, ctx)?,
+        OutputFormat::Csv => write_csv(&result, writer, settings.numberify, ctx)?,
         OutputFormat::Json => write_json(&result, writer)?,
-        OutputFormat::Beancount => write_beancount(&result, writer)?,
+        OutputFormat::Beancount => write_beancount(&result, writer, ctx)?,
     }
 
     Ok(())
@@ -237,6 +242,7 @@ fn write_text<W: Write>(
     result: &rustledger_query::QueryResult,
     writer: &mut W,
     numberify: bool,
+    ctx: &DisplayContext,
 ) -> Result<()> {
     if result.columns.is_empty() {
         return Ok(());
@@ -251,7 +257,7 @@ fn write_text<W: Write>(
 
     for row in &result.rows {
         for (i, value) in row.iter().enumerate() {
-            let len = format_value(value, numberify).len();
+            let len = format_value(value, numberify, ctx).len();
             if i < widths.len() && len > widths[i] {
                 widths[i] = len;
             }
@@ -296,7 +302,7 @@ fn write_text<W: Write>(
             if i > 0 {
                 write!(writer, "  ")?;
             }
-            let formatted = format_value(value, numberify);
+            let formatted = format_value(value, numberify, ctx);
             if i < widths.len() {
                 // Right-align numeric columns to match Python beancount
                 if i < is_numeric_col.len() && is_numeric_col[i] {
@@ -321,6 +327,7 @@ fn write_csv<W: Write>(
     result: &rustledger_query::QueryResult,
     writer: &mut W,
     numberify: bool,
+    ctx: &DisplayContext,
 ) -> Result<()> {
     // Print header
     writeln!(writer, "{}", result.columns.join(","))?;
@@ -329,7 +336,7 @@ fn write_csv<W: Write>(
     for row in &result.rows {
         let values: Vec<String> = row
             .iter()
-            .map(|v| escape_csv(&format_value(v, numberify)))
+            .map(|v| escape_csv(&format_value(v, numberify, ctx)))
             .collect();
         writeln!(writer, "{}", values.join(","))?;
     }
@@ -361,51 +368,47 @@ fn write_json<W: Write>(result: &rustledger_query::QueryResult, writer: &mut W) 
     Ok(())
 }
 
-fn write_beancount<W: Write>(result: &rustledger_query::QueryResult, writer: &mut W) -> Result<()> {
+fn write_beancount<W: Write>(
+    result: &rustledger_query::QueryResult,
+    writer: &mut W,
+    ctx: &DisplayContext,
+) -> Result<()> {
     // Beancount format outputs entries in beancount syntax
     // This is mainly useful for PRINT queries
     for row in &result.rows {
         for value in row {
-            writeln!(writer, "{}", format_value(value, false))?;
+            writeln!(writer, "{}", format_value(value, false, ctx))?;
         }
     }
     Ok(())
 }
 
-/// Format a decimal for display, preserving the original precision.
-/// Python beancount preserves user-specified precision for all values,
-/// including share quantities like "11.784 RGAGX".
-fn format_decimal_for_display(n: rust_decimal::Decimal) -> String {
-    // Preserve original precision - don't round
-    n.to_string()
-}
-
-fn format_value(value: &Value, numberify: bool) -> String {
+/// Format a value for display using the display context for precision.
+fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String {
     match value {
         Value::String(s) => s.clone(),
-        Value::Number(n) => format_decimal_for_display(*n),
+        Value::Number(n) => n.normalize().to_string(),
         Value::Integer(i) => i.to_string(),
         Value::Date(d) => d.to_string(),
         Value::Boolean(b) => b.to_string(),
         Value::Amount(a) => {
             if numberify {
-                format_decimal_for_display(a.number)
+                ctx.format(a.number, a.currency.as_str())
             } else {
-                format!("{} {}", format_decimal_for_display(a.number), a.currency)
+                ctx.format_amount(a.number, a.currency.as_str())
             }
         }
         Value::Position(p) => {
             if numberify {
-                format_decimal_for_display(p.units.number)
+                ctx.format(p.units.number, p.units.currency.as_str())
             } else {
-                let mut s = format!(
-                    "{} {}",
-                    format_decimal_for_display(p.units.number),
-                    p.units.currency
-                );
+                let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                 if let Some(ref cost) = p.cost {
-                    // Cost preserves its original precision (already stored properly)
-                    s.push_str(&format!(" {{{} {}}}", cost.number, cost.currency));
+                    // Cost uses its own currency's precision
+                    s.push_str(&format!(
+                        " {{{}}}",
+                        ctx.format_amount(cost.number, cost.currency.as_str())
+                    ));
                 }
                 s
             }
@@ -482,13 +485,16 @@ fn format_value(value: &Value, numberify: bool) -> String {
                 .filter(|p| !p.is_empty()) // Filter again in case aggregation resulted in zero
                 .map(|p| {
                     if numberify {
-                        format_decimal_for_display(p.units.number)
+                        ctx.format(p.units.number, p.units.currency.as_str())
                     } else {
-                        let mut s = format!("{} {}", format_decimal_for_display(p.units.number), p.units.currency);
+                        let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                         if let Some(ref cost) = p.cost {
-                            // Cost preserves its original precision (already stored properly)
+                            // Cost uses its own currency's precision
                             // Don't include date in display (matches Python beancount behavior)
-                            s.push_str(&format!(" {{{} {}}}", cost.number, cost.currency));
+                            s.push_str(&format!(
+                                " {{{}}}",
+                                ctx.format_amount(cost.number, cost.currency.as_str())
+                            ));
                         }
                         s
                     }
@@ -566,7 +572,12 @@ fn count_statistics(directives: &[Directive]) -> (usize, usize, usize) {
     (directives.len(), num_transactions, num_postings)
 }
 
-fn run_interactive(file: &PathBuf, directives: &[Directive], args: &Args) -> Result<()> {
+fn run_interactive(
+    file: &PathBuf,
+    directives: &[Directive],
+    display_context: &DisplayContext,
+    args: &Args,
+) -> Result<()> {
     // Create readline editor
     let mut rl: Editor<(), DefaultHistory> = DefaultEditor::new()?;
 
@@ -601,7 +612,7 @@ fn run_interactive(file: &PathBuf, directives: &[Directive], args: &Args) -> Res
     println!();
 
     // Shell settings
-    let mut settings = ShellSettings::from_args(args);
+    let mut settings = ShellSettings::from_args(args, display_context.clone());
 
     loop {
         let readline = rl.readline("beanquery> ");

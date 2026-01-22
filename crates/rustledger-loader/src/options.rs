@@ -29,6 +29,7 @@ const KNOWN_OPTIONS: &[&str] = &[
     "experiment_explicit_tolerances",
     "booking_method",
     "render_commas",
+    "display_precision",
     "allow_pipe_separator",
     "long_string_maxlines",
     "documents",
@@ -43,6 +44,7 @@ const REPEATABLE_OPTIONS: &[&str] = &[
     "insert_pythonpath",
     "documents",
     "inferred_tolerance_default",
+    "display_precision",
 ];
 
 /// Options that are read-only and cannot be set by users.
@@ -135,6 +137,10 @@ pub struct Options {
     /// Whether to render commas in numbers.
     pub render_commas: bool,
 
+    /// Display precision per currency (e.g., "USD:2" means format USD with 2 decimal places).
+    /// Format: CURRENCY:PRECISION where PRECISION is the number of decimal places.
+    pub display_precision: HashMap<String, u32>,
+
     /// Whether to allow pipe separator in numbers.
     pub allow_pipe_separator: bool,
 
@@ -191,7 +197,8 @@ impl Options {
             use_legacy_fixed_tolerances: false,
             experiment_explicit_tolerances: false,
             booking_method: "STRICT".to_string(),
-            render_commas: true,
+            render_commas: false, // Python beancount default is FALSE
+            display_precision: HashMap::new(),
             allow_pipe_separator: false,
             long_string_maxlines: 64,
             documents: Vec::new(),
@@ -352,6 +359,36 @@ impl Options {
                     });
                 }
                 self.render_commas = is_true;
+            }
+            "display_precision" => {
+                // Parse "CURRENCY:EXAMPLE" where EXAMPLE's decimal places define the precision.
+                // E.g., "CHF:0.01" means 2 decimal places for CHF.
+                // E.g., "USD:0.001" means 3 decimal places for USD.
+                if let Some((curr, example)) = value.split_once(':') {
+                    if let Ok(d) = Decimal::from_str(example) {
+                        // Get the precision from the example number's decimal places
+                        let precision = d.scale();
+                        self.display_precision.insert(curr.to_string(), precision);
+                    } else {
+                        self.warnings.push(OptionWarning {
+                            code: "E7002",
+                            message: format!(
+                                "Invalid precision value \"{example}\" in option \"{key}\""
+                            ),
+                            option: key.to_string(),
+                            value: value.to_string(),
+                        });
+                    }
+                } else {
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!(
+                            "Invalid format for option \"{key}\": expected CURRENCY:EXAMPLE (e.g., CHF:0.01)"
+                        ),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
             }
             "filename" => self.filename = Some(value.to_string()),
             "account_previous_balances" => {

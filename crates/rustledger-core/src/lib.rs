@@ -45,6 +45,7 @@
 pub mod amount;
 pub mod cost;
 pub mod directive;
+pub mod display_context;
 pub mod format;
 pub mod intern;
 pub mod inventory;
@@ -57,6 +58,7 @@ pub use directive::{
     Metadata, Note, Open, Pad, Posting, Price, PriceAnnotation, Query, Transaction,
     sort_directives,
 };
+pub use display_context::DisplayContext;
 pub use format::{FormatConfig, format_directive};
 pub use intern::{InternedStr, StringInterner};
 pub use inventory::{BookingError, BookingMethod, BookingResult, Inventory};
