@@ -1,18 +1,20 @@
 # Interactive Claude Code assistant for PRs and issues
+# Note: Workflow triggers on all comments but job is skipped for non-@claude mentions.
+# GitHub Actions doesn't support workflow-level filtering on comment content.
 name: Claude Interactive
 on:
   issue_comment:
     types: [created]
   pull_request_review_comment:
     types: [created]
+
 jobs:
   respond:
     name: Respond to @claude
     runs-on: ubuntu-latest
     # Only respond to @claude mentions from non-bot users
-    if: |
-      contains(github.event.comment.body, '@claude') &&
-      github.event.comment.user.type != 'Bot'
+    # Workflow will show as "skipped" for other comments - this is expected
+    if: contains(github.event.comment.body, '@claude') && github.event.comment.user.type != 'Bot'
     permissions:
       contents: read
       pull-requests: write
