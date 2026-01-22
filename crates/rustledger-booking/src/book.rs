@@ -7,7 +7,6 @@
 //! - Filling in cost specs for lot reductions
 
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
     Posting, Transaction,
@@ -17,28 +16,12 @@ use thiserror::Error;
 
 use crate::{InterpolationError, InterpolationResult, interpolate};
 
-/// Quantize a calculated decimal value to reasonable precision.
-/// This rounds to the minimum decimal places where error < 0.01.
-fn quantize_calculated(d: Decimal) -> Decimal {
-    let threshold = dec!(0.01);
-
-    // If already clean (few decimal places), preserve it
-    if d.scale() <= 2 {
-        return d;
-    }
-
-    // Try progressively more decimal places until error is acceptable
-    for precision in 2..=8 {
-        let quantized = d.round_dp(precision);
-        let error = (d - quantized).abs();
-        if error < threshold {
-            return quantized;
-        }
-    }
-
-    // Fallback: round to 8 decimal places
-    d.round_dp(8)
-}
+// Note: We no longer quantize calculated values during booking.
+// Python beancount preserves full precision during booking and only
+// rounds at display time. Premature rounding of per-unit costs (e.g.,
+// from total cost / units) causes cost basis errors when selling.
+// For example: 300.00 / 1.763 = 170.16505... should NOT be rounded
+// to 170.17, because 1.763 * 170.17 = 300.00971 ≠ 300.00.
 
 /// Errors that can occur during booking.
 #[derive(Debug, Clone, Error)]
@@ -260,14 +243,14 @@ impl BookingEngine {
 
                     if cost_spec.number_total.is_some() && cost_spec.number_per.is_none() {
                         // This is an augmentation with total cost - convert to per-unit
-                        // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.16 USD}`
+                        // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.165... USD}`
+                        // Preserve full precision to avoid cost basis errors when selling.
                         if let (Some(total), Some(currency)) =
                             (&cost_spec.number_total, &cost_spec.currency)
                         {
                             if !units.number.is_zero() {
-                                // Calculate per-unit cost and quantize since it's computed
-                                let per_unit_raw = *total / units.number.abs();
-                                let per_unit = quantize_calculated(per_unit_raw);
+                                // Calculate per-unit cost - preserve full precision
+                                let per_unit = *total / units.number.abs();
                                 result.postings[idx].cost = Some(CostSpec {
                                     number_per: Some(per_unit),
                                     number_total: None, // Clear total cost
@@ -377,11 +360,12 @@ impl BookingEngine {
                         let per_unit_cost = if let Some(per_unit) = &cost_spec.number_per {
                             Some(*per_unit)
                         } else if let Some(total) = &cost_spec.number_total {
-                            // Convert total cost to per-unit cost (quantize the calculated value)
+                            // Convert total cost to per-unit cost - preserve full precision
+                            // to avoid cost basis errors when selling
                             if units.number.is_zero() {
                                 None
                             } else {
-                                Some(quantize_calculated(*total / units.number.abs()))
+                                Some(*total / units.number.abs())
                             }
                         } else {
                             None
