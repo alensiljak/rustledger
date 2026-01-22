@@ -200,8 +200,6 @@ cargo fmt --all -- --check                 # Format check
 cargo deny check                           # Security audit
 ```
 
-## TODOs
+## Roadmap
 
-- [x] **Improve release notes**: Implemented [release-plz](https://release-plz.ieni.dev/) for automated changelog generation from conventional commits. See `RELEASING.md` for details.
-- [ ] **VS Code extension for LSP**: Bundle `rledger-lsp` binary in a VS Code extension for zero-config Beancount editing experience.
-- [ ] **mason.nvim registry**: Submit `rledger-lsp` to the [mason.nvim registry](https://github.com/mason-org/mason-registry) for easy Neovim installation.
+See [ROADMAP.md](ROADMAP.md) for the full project roadmap including near-term, medium-term, and long-term goals.
