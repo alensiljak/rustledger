@@ -190,6 +190,9 @@ fn run(args: &Args) -> Result<ExitCode> {
     let json_mode = matches!(args.format, OutputFormat::Json);
     let mut diagnostics: Vec<JsonDiagnostic> = Vec::new();
 
+    // Determine if colors should be used (TTY detection + NO_COLOR)
+    let use_color = !json_mode && report::should_use_color();
+
     // Try loading from cache first (unless --no-cache)
     let cache_entry = if args.no_cache {
         None
@@ -340,7 +343,8 @@ fn run(args: &Args) -> Result<ExitCode> {
                 } else if args.quiet {
                     error_count += errors.len();
                 } else {
-                    error_count += report::report_parse_errors(errors, path, &source, &mut stdout)?;
+                    error_count +=
+                        report::report_parse_errors(errors, path, &source, &mut stdout, use_color)?;
                 }
             }
             LoadError::Io { path, source } => {
@@ -832,7 +836,7 @@ fn run(args: &Args) -> Result<ExitCode> {
                 });
             }
         } else if !args.quiet {
-            report::report_validation_errors(&validation_errors, &cache, &mut stdout)?;
+            report::report_validation_errors(&validation_errors, &cache, &mut stdout, use_color)?;
         }
     }
 
@@ -857,7 +861,7 @@ fn run(args: &Args) -> Result<ExitCode> {
                 cache_note
             )?;
         }
-        report::print_summary(error_count, warning_count, &mut stdout)?;
+        report::print_summary(error_count, warning_count, &mut stdout, use_color)?;
     }
 
     if error_count > 0 {
