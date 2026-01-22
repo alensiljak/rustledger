@@ -572,6 +572,7 @@ fn run(args: &Args) -> Result<ExitCode> {
         directives: spanned_directives,
         options,
         plugins: file_plugins,
+        source_map,
         ..
     } = load_result;
 
@@ -836,7 +837,13 @@ fn run(args: &Args) -> Result<ExitCode> {
                 });
             }
         } else if !args.quiet {
-            report::report_validation_errors(&validation_errors, &cache, &mut stdout, use_color)?;
+            report::report_validation_errors(
+                &validation_errors,
+                &source_map,
+                &cache,
+                &mut stdout,
+                use_color,
+            )?;
         }
     }
 

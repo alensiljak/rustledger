@@ -52,6 +52,7 @@ use rustledger_core::{
     Amount, Balance, BookingMethod, Close, Directive, Document, InternedStr, Inventory, Note, Open,
     Pad, Position, Posting, Transaction,
 };
+use rustledger_parser::{Span, Spanned};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use thiserror::Error;
@@ -238,10 +239,15 @@ pub struct ValidationError {
     pub date: NaiveDate,
     /// Additional context.
     pub context: Option<String>,
+    /// Source span (byte offsets within the file).
+    pub span: Option<Span>,
+    /// Source file ID (index into [`SourceMap`]).
+    /// Uses `u16` to minimize struct size (max 65,535 files).
+    pub file_id: Option<u16>,
 }
 
 impl ValidationError {
-    /// Create a new validation error.
+    /// Create a new validation error without source location.
     #[must_use]
     pub fn new(code: ErrorCode, message: impl Into<String>, date: NaiveDate) -> Self {
         Self {
@@ -249,6 +255,26 @@ impl ValidationError {
             message: message.into(),
             date,
             context: None,
+            span: None,
+            file_id: None,
+        }
+    }
+
+    /// Create a new validation error with source location from a spanned directive.
+    #[must_use]
+    pub fn with_location<T>(
+        code: ErrorCode,
+        message: impl Into<String>,
+        date: NaiveDate,
+        spanned: &Spanned<T>,
+    ) -> Self {
+        Self {
+            code,
+            message: message.into(),
+            date,
+            context: None,
+            span: Some(spanned.span),
+            file_id: Some(spanned.file_id),
         }
     }
 
@@ -256,6 +282,14 @@ impl ValidationError {
     #[must_use]
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());
+        self
+    }
+
+    /// Set the source location for this error.
+    #[must_use]
+    pub const fn at_location<T>(mut self, spanned: &Spanned<T>) -> Self {
+        self.span = Some(spanned.span);
+        self.file_id = Some(spanned.file_id);
         self
     }
 }
