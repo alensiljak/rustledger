@@ -62,7 +62,7 @@ jobs:
 
           echo ""
           echo "=== Running cargo-semver-checks on rustledger-parser ==="
-          ./cargo-semver-checks semver-checks check-release \
+          ./cargo-semver-checks check-release \
             --manifest-path crates/rustledger-parser/Cargo.toml \
             2>&1 || echo "Exit code: $?"
 
