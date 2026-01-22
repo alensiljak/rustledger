@@ -42,6 +42,8 @@ traces/
 spec/fixtures/lima-tests/
 spec/fixtures/examples/
 spec/fixtures/python-tests/
+tests/compat-full/
+tests/compat-results/
 
 # Benchmark results
 target/criterion/
