@@ -200,6 +200,6 @@ cargo fmt --all -- --check                 # Format check
 cargo deny check                           # Security audit
 ```
 
-## TODOs
+## Roadmap
 
-- [x] **Improve release notes**: Implemented [release-plz](https://release-plz.ieni.dev/) for automated changelog generation from conventional commits. See `RELEASING.md` for details.
+See [ROADMAP.md](ROADMAP.md) for the full project roadmap including near-term, medium-term, and long-term goals.

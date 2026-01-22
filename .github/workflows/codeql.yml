@@ -1,9 +1,11 @@
 # CodeQL Analysis
-# Runs on push to main and weekly schedule (not on PRs for faster CI)
+# Runs on push to main, PRs, and weekly schedule
 name: CodeQL
 
 on:
   push:
+    branches: [main]
+  pull_request:
     branches: [main]
   schedule:
     # Weekly on Sundays at 00:00 UTC
@@ -14,6 +16,8 @@ on:
 permissions:
   contents: read
   security-events: write
+  # Required for uploading SARIF results on PRs
+  pull-requests: read
 
 jobs:
   analyze:
