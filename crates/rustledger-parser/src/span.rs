@@ -96,7 +96,7 @@ pub struct Spanned<T> {
     pub value: T,
     /// The source span (byte offsets within the file).
     pub span: Span,
-    /// The source file ID (index into [`SourceMap`]).
+    /// The source file ID (index into `SourceMap`).
     /// Uses `u16` to minimize struct size (max 65,535 files).
     pub file_id: u16,
 }

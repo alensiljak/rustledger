@@ -241,7 +241,7 @@ pub struct ValidationError {
     pub context: Option<String>,
     /// Source span (byte offsets within the file).
     pub span: Option<Span>,
-    /// Source file ID (index into [`SourceMap`]).
+    /// Source file ID (index into `SourceMap`).
     /// Uses `u16` to minimize struct size (max 65,535 files).
     pub file_id: Option<u16>,
 }
