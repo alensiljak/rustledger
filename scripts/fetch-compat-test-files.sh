@@ -7,7 +7,7 @@ set -e
 # This script downloads .beancount files from various open source projects
 # to create a comprehensive compatibility test suite.
 #
-# Target: ~800+ real beancount files from diverse sources
+# Target: ~500+ unique beancount files from diverse sources (after deduplication)
 
 DEST="tests/compat/files"
 TMPDIR="/tmp/beancount-fetch-$$"
@@ -96,6 +96,41 @@ fetch_repo "fava-dashboards" "andreasgerstmayr/fava-dashboards"
 
 # 14. Beancern (tariochbctools)
 fetch_repo "beancern" "tarioch/beancern"
+
+# 15. double-entry-generator - Chinese accounting tool
+fetch_repo "double-entry-generator" "deb-sig/double-entry-generator"
+
+# 16. beanahead - forward-looking beancount entries
+fetch_repo "beanahead" "maread99/beanahead"
+
+# 17. beancount-boilerplate-cn - Chinese beancount examples
+fetch_repo "beancount-boilerplate-cn" "mckelvin/beancount-boilerplate-cn"
+
+# 18. gnucash-to-beancount converter tests
+fetch_repo "gnucash-to-beancount" "andrewstein/gnucash-to-beancount"
+
+# === Deduplication ===
+# Remove duplicate files based on content hash to avoid testing the same content twice
+echo ""
+echo "=== Deduplicating files by content hash ==="
+
+# Build hash index: hash -> first file with that hash
+declare -A seen_hashes
+duplicates_removed=0
+
+# Process all .beancount files
+while IFS= read -r -d '' file; do
+    hash=$(sha256sum "$file" | cut -d' ' -f1)
+    if [[ -n "${seen_hashes[$hash]:-}" ]]; then
+        # Duplicate found - remove it
+        rm "$file"
+        duplicates_removed=$((duplicates_removed + 1))
+    else
+        seen_hashes[$hash]="$file"
+    fi
+done < <(find "$DEST" -name "*.beancount" -type f -print0 | sort -z)
+
+echo "  Removed $duplicates_removed duplicate files"
 
 # Summary
 echo ""
