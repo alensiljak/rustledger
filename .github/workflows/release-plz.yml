@@ -56,13 +56,15 @@ jobs:
         if: inputs.debug_semver == true
         run: |
           echo "=== Installing cargo-semver-checks ==="
+          cd /tmp
           curl -sL https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.45.0/cargo-semver-checks-x86_64-unknown-linux-musl.tar.gz | tar xzf -
           chmod +x cargo-semver-checks
           ./cargo-semver-checks --version
+          cd -
 
           echo ""
           echo "=== Running cargo-semver-checks on rustledger-parser ==="
-          ./cargo-semver-checks check-release \
+          /tmp/cargo-semver-checks check-release \
             --manifest-path crates/rustledger-parser/Cargo.toml \
             2>&1 || echo "Exit code: $?"
 
