@@ -116,9 +116,19 @@ impl<T> Spanned<T> {
 
     /// Set the file ID for this spanned value.
     ///
-    /// Accepts `usize` for API convenience but truncates to `u16` internally.
+    /// Accepts `usize` for API convenience but stores as `u16` internally.
+    ///
+    /// # Panics
+    ///
+    /// Debug builds will panic if `file_id` exceeds `u16::MAX` (65,535).
     #[must_use]
-    pub const fn with_file_id(mut self, file_id: usize) -> Self {
+    pub fn with_file_id(mut self, file_id: usize) -> Self {
+        debug_assert!(
+            u16::try_from(file_id).is_ok(),
+            "file_id {} exceeds u16::MAX; at most {} files are supported",
+            file_id,
+            u16::MAX
+        );
         self.file_id = file_id as u16;
         self
     }

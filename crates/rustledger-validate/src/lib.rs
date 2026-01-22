@@ -285,7 +285,10 @@ impl ValidationError {
         self
     }
 
-    /// Set the source location for this error.
+    /// Set the source location for this error (builder pattern).
+    ///
+    /// Use this to add location info to an existing error. For creating
+    /// new errors with location, prefer [`Self::with_location`] instead.
     #[must_use]
     pub const fn at_location<T>(mut self, spanned: &Spanned<T>) -> Self {
         self.span = Some(spanned.span);
