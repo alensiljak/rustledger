@@ -527,27 +527,30 @@ fn validate_account_name(account: &str, account_types: &[String]) -> Option<Stri
             return Some(format!("component {} is empty", i + 1));
         }
 
-        // First character must be uppercase letter, non-ASCII letter (like CJK), or digit
-        // CJK characters don't have case but are valid in account names.
+        // First character must be uppercase ASCII letter, ASCII digit, or any non-ASCII character.
+        // This matches beancount's lexer.l: `([A-Z]|UTF-8-ONLY)` for account type start,
+        // and `([A-Z0-9]|UTF-8-ONLY)` for sub-account start.
+        // Non-ASCII includes CJK, emojis, symbols, and any other Unicode character.
         // Safety: we just checked part.is_empty() above, so this is guaranteed to succeed
         let Some(first_char) = part.chars().next() else {
             // This branch is unreachable due to the is_empty check above,
             // but we handle it defensively to avoid unwrap
             return Some(format!("component {} is empty", i + 1));
         };
-        // Accept: uppercase letters, non-ASCII alphabetic (CJK, etc.), or digits
-        let is_valid_start = first_char.is_uppercase()
+        // Accept: uppercase ASCII letters, ASCII digits, or any non-ASCII character
+        let is_valid_start = first_char.is_ascii_uppercase()
             || first_char.is_ascii_digit()
-            || (first_char.is_alphabetic() && !first_char.is_ascii());
+            || !first_char.is_ascii();
         if !is_valid_start {
             return Some(format!(
                 "component '{part}' must start with uppercase letter or digit"
             ));
         }
 
-        // Remaining characters: letters (including Unicode), numbers, dashes
+        // Remaining characters: ASCII letters, ASCII digits, hyphens, or any non-ASCII character.
+        // This matches beancount's lexer.l: `([A-Za-z0-9-]|UTF-8-ONLY)*`
         for c in part.chars().skip(1) {
-            if !c.is_alphanumeric() && c != '-' {
+            if !c.is_ascii_alphanumeric() && c != '-' && c.is_ascii() {
                 return Some(format!(
                     "component '{part}' contains invalid character '{c}'"
                 ));
@@ -2041,7 +2044,13 @@ mod tests {
             "Equity:Opening-Balances",
             "Income:Salary2024",
             "Expenses:Food:Restaurant",
-            "Assets:401k", // Component starting with digit
+            "Assets:401k",          // Component starting with digit
+            "Assets:CORP✨",        // Emoji in component (beancount UTF-8-ONLY support)
+            "Assets:沪深300",       // CJK characters
+            "Assets:Café",          // Non-ASCII letter (é)
+            "Assets:日本銀行",      // Full non-ASCII component
+            "Assets:Test💰Account", // Emoji in middle
+            "Assets:€uro",          // Currency symbol at start of component
         ];
 
         for name in valid_names {

@@ -54,11 +54,12 @@ pub enum Token<'src> {
     /// An account name like Assets:Bank:Checking, Aktiva:Bank:Girokonto, or Ciste-jmeni:Stav.
     /// Must start with a capitalized word (account type prefix) and have at least one sub-account.
     /// Account type prefix can contain hyphens (e.g., Ciste-jmeni for Czech "Čisté jmění").
-    /// Sub-accounts must start with uppercase letter, digit, or CJK character (matching Python beancount).
-    /// Supports Unicode letters (e.g., Expenses:École-républicaine, Assets:沪深300).
-    /// `\p{Lo}` matches CJK characters and other scripts without case distinction.
+    /// Sub-accounts must start with uppercase letter, digit, or non-ASCII character (matching Python beancount).
+    /// Supports Unicode letters, symbols, and emojis (e.g., Expenses:École, Assets:沪深300, Assets:CORP✨).
+    /// Pattern matches beancount's lexer.l: `([A-Z]|UTF-8-ONLY)([A-Za-z0-9-]|UTF-8-ONLY)*`.
+    /// `[^\x00-\x7F]` matches any non-ASCII UTF-8 character (equivalent to beancount's UTF-8-ONLY).
     /// The account type prefix is validated later against options (`name_assets`, etc.).
-    #[regex(r"\p{Lu}\p{L}*(-\p{L}+)*(:[\p{Lu}\p{Lo}0-9][\p{L}0-9-]*)+")]
+    #[regex(r"([A-Z]|[^\x00-\x7F])([A-Za-z0-9-]|[^\x00-\x7F])*(:([A-Z0-9]|[^\x00-\x7F])([A-Za-z0-9-]|[^\x00-\x7F])*)+")]
     Account(&'src str),
 
     /// A currency/commodity code like USD, EUR, AAPL, BTC.
@@ -500,6 +501,45 @@ mod tests {
         assert!(matches!(
             tokens[0].0,
             Token::Account("Assets:Bank:Checking")
+        ));
+    }
+
+    #[test]
+    fn test_tokenize_account_unicode() {
+        // Test various Unicode characters in account names
+        // Matching beancount's UTF-8-ONLY support (any non-ASCII character)
+
+        // Emoji (Unicode Symbol category So)
+        let tokens = tokenize("Assets:CORP✨");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Account("Assets:CORP✨")));
+
+        // CJK characters (Unicode Letter category Lo)
+        let tokens = tokenize("Assets:沪深300");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Account("Assets:沪深300")));
+
+        // Full CJK component
+        let tokens = tokenize("Assets:日本銀行");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Account("Assets:日本銀行")));
+
+        // Non-ASCII letters (accented)
+        let tokens = tokenize("Assets:Café");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Account("Assets:Café")));
+
+        // Currency symbol (Unicode Symbol category Sc)
+        let tokens = tokenize("Assets:€uro");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Account("Assets:€uro")));
+
+        // Emoji in middle of component
+        let tokens = tokenize("Assets:Test💰Account");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(
+            tokens[0].0,
+            Token::Account("Assets:Test💰Account")
         ));
     }
 
