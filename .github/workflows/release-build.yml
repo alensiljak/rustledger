@@ -194,6 +194,9 @@ jobs:
 
           # Step 3: Build optimized binary using profile data
           cargo pgo optimize build -- --no-default-features --features bean-compat
+
+          # Build LSP separately (no PGO, no bean-compat)
+          cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
       - name: Build with PGO (Windows)
         if: matrix.pgo && runner.os == 'Windows'
         shell: pwsh
@@ -210,6 +213,9 @@ jobs:
 
           # Step 3: Build optimized binary using profile data
           cargo pgo optimize build -- --no-default-features --features bean-compat
+
+          # Build LSP separately (no PGO, no bean-compat)
+          cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
       - name: Build without PGO (cross-compiled targets)
         if: ${{ !matrix.pgo }}
         shell: bash
@@ -221,8 +227,12 @@ jobs:
 
           if [ "${{ matrix.cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }} --no-default-features --features bean-compat
+            # Build LSP separately (no bean-compat feature needed)
+            cross build --release --target ${{ matrix.target }} -p rustledger-lsp
           else
             cargo build --release --target ${{ matrix.target }} --no-default-features --features bean-compat
+            # Build LSP separately (no bean-compat feature needed)
+            cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
           fi
       - name: Package (Unix)
         if: runner.os != 'Windows'
@@ -236,7 +246,7 @@ jobs:
           # Create archive with all binaries
           ARCHIVE="rustledger-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -czvf "../../../${ARCHIVE}" \
-            rledger-check rledger-format rledger-query rledger-report rledger-doctor rledger-extract rledger-price \
+            rledger-check rledger-format rledger-query rledger-report rledger-doctor rledger-extract rledger-price rledger-lsp \
             bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price
 
           # Create checksum
@@ -254,7 +264,7 @@ jobs:
           # Create archive with all binaries
           $ARCHIVE = "rustledger-${VERSION}-${{ matrix.target }}.zip"
           $binaries = @(
-            "rledger-check.exe", "rledger-format.exe", "rledger-query.exe", "rledger-report.exe", "rledger-doctor.exe", "rledger-extract.exe", "rledger-price.exe",
+            "rledger-check.exe", "rledger-format.exe", "rledger-query.exe", "rledger-report.exe", "rledger-doctor.exe", "rledger-extract.exe", "rledger-price.exe", "rledger-lsp.exe",
             "bean-check.exe", "bean-format.exe", "bean-query.exe", "bean-report.exe", "bean-doctor.exe", "bean-extract.exe", "bean-price.exe"
           )
           Compress-Archive -Path $binaries -DestinationPath "../../../${ARCHIVE}"
@@ -363,46 +373,65 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - name: Authenticate with crates.io (trusted publishing)
+        id: crates-auth
         uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1
       - name: Publish crates (in dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: |
           # Publish in dependency order with delay between each
           # to allow crates.io to index the previous crate
-          # Use || true to continue if crate already exists
 
-          echo "Publishing rustledger-core..."
-          cargo publish -p rustledger-core --no-verify || true
+          publish_crate() {
+            local crate="$1"
+            echo "Publishing $crate..."
+            if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
+              echo "✓ $crate published successfully"
+              return 0
+            elif grep -q "already been uploaded" /tmp/publish.log; then
+              echo "✓ $crate already published (skipping)"
+              return 0
+            else
+              echo "✗ Failed to publish $crate"
+              cat /tmp/publish.log
+              return 1
+            fi
+          }
+
+          FAILED=0
+
+          publish_crate rustledger-core || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-parser..."
-          cargo publish -p rustledger-parser --no-verify || true
+          publish_crate rustledger-parser || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-booking..."
-          cargo publish -p rustledger-booking --no-verify || true
+          publish_crate rustledger-booking || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-loader..."
-          cargo publish -p rustledger-loader --no-verify || true
+          publish_crate rustledger-loader || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-validate..."
-          cargo publish -p rustledger-validate --no-verify || true
+          publish_crate rustledger-validate || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-query..."
-          cargo publish -p rustledger-query --no-verify || true
+          publish_crate rustledger-query || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-plugin..."
-          cargo publish -p rustledger-plugin --no-verify || true
+          publish_crate rustledger-plugin || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger-importer..."
-          cargo publish -p rustledger-importer --no-verify || true
+          publish_crate rustledger-importer || FAILED=1
           sleep 30
 
-          echo "Publishing rustledger (CLI)..."
-          cargo publish -p rustledger --no-verify || true
+          publish_crate rustledger-lsp || FAILED=1
+          sleep 30
 
-          echo "All crates published!"
+          publish_crate rustledger || FAILED=1
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "::error::One or more crates failed to publish"
+            exit 1
+          fi
+
+          echo "All crates published successfully!"
