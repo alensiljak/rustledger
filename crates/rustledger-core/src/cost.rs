@@ -8,58 +8,18 @@
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use crate::Amount;
 use crate::intern::InternedStr;
 
-/// Default threshold for auto-quantization (matches Python beancount).
-/// Numbers are quantized to the precision where rounding error < threshold.
-const AUTO_QUANTIZE_THRESHOLD: Decimal = dec!(0.01);
-
-/// Auto-quantize a decimal like Python beancount does.
-///
-/// This rounds calculated values to a reasonable precision while preserving
-/// trailing zeros from user input. For example:
-/// - 0.90 stays 0.90 (preserves user precision)
-/// - 1.23456789123 becomes 1.23 (rounds excessive precision)
-///
-/// Unlike Python which uses `normalize()`, we preserve trailing zeros to match
-/// how beancount displays costs (e.g., {0.90 GBP} not {0.9 GBP}).
-#[inline]
-fn auto_quantize(d: Decimal) -> Decimal {
-    let threshold = AUTO_QUANTIZE_THRESHOLD;
-
-    // If already a "clean" number (few decimal places), preserve it exactly
-    // This keeps trailing zeros like 0.90 as 0.90
-    if d.scale() <= 2 {
-        return d;
-    }
-
-    // For numbers with more precision, round to the minimum precision
-    // where the rounding error is acceptable (< 0.01)
-
-    // Prefer 2 decimal places for typical currency amounts
-    let two_dp = d.round_dp(2);
-    let error_2dp = (d - two_dp).abs();
-    if error_2dp < threshold {
-        return two_dp;
-    }
-
-    // Try progressively more decimal places until error is within threshold
-    for precision in 3..=8 {
-        let quantized = d.round_dp(precision);
-        let error = (d - quantized).abs();
-        if error < threshold {
-            return quantized;
-        }
-    }
-
-    // Fallback: round to 8 decimal places
-    d.round_dp(8)
-}
+// Note: We no longer auto-quantize calculated values during cost storage.
+// Python beancount preserves full precision during booking and only rounds
+// at display time. Premature rounding of per-unit costs (e.g., from
+// total cost / units) causes cost basis errors when selling.
+// For example: 300.00 / 1.763 = 170.16505... should NOT be rounded to 170.17,
+// because 1.763 * 170.17 = 300.00971 ≠ 300.00.
 #[cfg(feature = "rkyv")]
 use crate::intern::{AsDecimal, AsInternedStr, AsNaiveDate};
 
@@ -119,18 +79,13 @@ impl Cost {
         }
     }
 
-    /// Create a new cost with auto-quantized precision.
-    /// Use this for calculated values (e.g., total cost / units) where
-    /// excessive precision should be rounded to the minimum decimal places
-    /// where the rounding error is < 0.01.
+    /// Create a new cost for calculated values.
+    ///
+    /// Previously this auto-quantized, but we now preserve full precision
+    /// to avoid cost basis errors. Rounding should only happen at display time.
     #[must_use]
     pub fn new_calculated(number: Decimal, currency: impl Into<InternedStr>) -> Self {
-        Self {
-            number: auto_quantize(number),
-            currency: currency.into(),
-            date: None,
-            label: None,
-        }
+        Self::new(number, currency)
     }
 
     /// Add a date to this cost.
@@ -339,31 +294,26 @@ impl CostSpec {
     /// Resolve this cost spec to a concrete cost, given the number of units.
     ///
     /// If `number_total` is specified, the per-unit cost is calculated as
-    /// `number_total / units`.
+    /// `number_total / units`. Full precision is preserved to avoid cost basis
+    /// errors when the position is later sold.
     ///
     /// Returns `None` if required fields (currency) are missing.
     #[must_use]
     pub fn resolve(&self, units: Decimal, date: NaiveDate) -> Option<Cost> {
         let currency = self.currency.clone()?;
 
-        // Determine if we should quantize (only for calculated values)
-        let (number, should_quantize) = if let Some(per) = self.number_per {
-            // User-specified per-unit cost - preserve precision
-            (per, false)
+        let number = if let Some(per) = self.number_per {
+            // User-specified per-unit cost
+            per
         } else if let Some(total) = self.number_total {
-            // Calculated from total - may need quantization
-            (total / units.abs(), true)
+            // Calculated from total - preserve full precision
+            total / units.abs()
         } else {
             return None;
         };
 
         Some(Cost {
-            // Only quantize calculated values, not user-specified precision
-            number: if should_quantize {
-                auto_quantize(number)
-            } else {
-                number
-            },
+            number,
             currency,
             date: self.date.or(Some(date)),
             label: self.label.clone(),

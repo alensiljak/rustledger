@@ -7,7 +7,6 @@
 //! - Filling in cost specs for lot reductions
 
 use rust_decimal::Decimal;
-use rust_decimal_macros::dec;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
     Posting, Transaction,
@@ -17,28 +16,12 @@ use thiserror::Error;
 
 use crate::{InterpolationError, InterpolationResult, interpolate};
 
-/// Quantize a calculated decimal value to reasonable precision.
-/// This rounds to the minimum decimal places where error < 0.01.
-fn quantize_calculated(d: Decimal) -> Decimal {
-    let threshold = dec!(0.01);
-
-    // If already clean (few decimal places), preserve it
-    if d.scale() <= 2 {
-        return d;
-    }
-
-    // Try progressively more decimal places until error is acceptable
-    for precision in 2..=8 {
-        let quantized = d.round_dp(precision);
-        let error = (d - quantized).abs();
-        if error < threshold {
-            return quantized;
-        }
-    }
-
-    // Fallback: round to 8 decimal places
-    d.round_dp(8)
-}
+// Note: We no longer quantize calculated values during booking.
+// Python beancount preserves full precision during booking and only
+// rounds at display time. Premature rounding of per-unit costs (e.g.,
+// from total cost / units) causes cost basis errors when selling.
+// For example: 300.00 / 1.763 = 170.16505... should NOT be rounded
+// to 170.17, because 1.763 * 170.17 = 300.00971 ≠ 300.00.
 
 /// Errors that can occur during booking.
 #[derive(Debug, Clone, Error)]
@@ -260,14 +243,14 @@ impl BookingEngine {
 
                     if cost_spec.number_total.is_some() && cost_spec.number_per.is_none() {
                         // This is an augmentation with total cost - convert to per-unit
-                        // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.16 USD}`
+                        // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.165... USD}`
+                        // Preserve full precision to avoid cost basis errors when selling.
                         if let (Some(total), Some(currency)) =
                             (&cost_spec.number_total, &cost_spec.currency)
                         {
                             if !units.number.is_zero() {
-                                // Calculate per-unit cost and quantize since it's computed
-                                let per_unit_raw = *total / units.number.abs();
-                                let per_unit = quantize_calculated(per_unit_raw);
+                                // Calculate per-unit cost - preserve full precision
+                                let per_unit = *total / units.number.abs();
                                 result.postings[idx].cost = Some(CostSpec {
                                     number_per: Some(per_unit),
                                     number_total: None, // Clear total cost
@@ -377,11 +360,12 @@ impl BookingEngine {
                         let per_unit_cost = if let Some(per_unit) = &cost_spec.number_per {
                             Some(*per_unit)
                         } else if let Some(total) = &cost_spec.number_total {
-                            // Convert total cost to per-unit cost (quantize the calculated value)
+                            // Convert total cost to per-unit cost - preserve full precision
+                            // to avoid cost basis errors when selling
                             if units.number.is_zero() {
                                 None
                             } else {
-                                Some(quantize_calculated(*total / units.number.abs()))
+                                Some(*total / units.number.abs())
                             }
                         } else {
                             None
@@ -581,6 +565,62 @@ mod tests {
         let pos = inv.positions().first().unwrap();
         assert!(pos.cost.is_some(), "Expected cost on position");
         eprintln!("Position cost: {:?}", pos.cost);
+    }
+
+    #[test]
+    fn test_book_total_cost_then_sell() {
+        // Test that book() correctly handles total cost syntax and preserves
+        // full precision for accurate capital gains calculation.
+        let mut engine = BookingEngine::new();
+
+        // Buy 1.763 VIIIX with total cost {{300.00 USD}}
+        let buy = Transaction::new(date(2016, 1, 16), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(1.763), "VIIIX")).with_cost(
+                    CostSpec::empty()
+                        .with_number_total(dec!(300.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-300.00), "USD"),
+            ));
+
+        // Use book() to test the booking path with total cost
+        let booked_buy = engine.book(&buy).unwrap();
+        engine.apply(&booked_buy.transaction);
+
+        // Check that per-unit cost was calculated (300/1.763)
+        let buy_posting = &booked_buy.transaction.postings[0];
+        assert!(buy_posting.cost.is_some());
+        let cost_spec = buy_posting.cost.as_ref().unwrap();
+        // Total cost should be cleared, per-unit should be set
+        assert!(cost_spec.number_total.is_none());
+        assert!(cost_spec.number_per.is_some());
+
+        // Sell all shares at $191 per unit
+        let sell = Transaction::new(date(2016, 6, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(-1.763), "VIIIX"))
+                    .with_cost(CostSpec::empty())
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(191.00), "USD"))),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(336.73), "USD"), // 1.763 * 191 = 336.733
+            ))
+            .with_posting(Posting::auto("Income:CapitalGains"));
+
+        let booked_sell = engine.book(&sell).unwrap();
+
+        // Capital gain should be: 336.73 - 300.00 = 36.73
+        // With full precision preserved, this should be accurate
+        assert_eq!(booked_sell.gains.len(), 1);
+        let gain = &booked_sell.gains[0];
+        // The gain should be close to 36.73 (sale proceeds - cost basis)
+        // Sale: 1.763 * 191 = 336.733, Cost: 300.00, Gain ≈ 36.73
+        eprintln!("Capital gain: {:?}", gain.amount);
     }
 
     #[test]
