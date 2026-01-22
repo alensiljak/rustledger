@@ -375,62 +375,31 @@ jobs:
       - name: Authenticate with crates.io (trusted publishing)
         id: crates-auth
         uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1
-      - name: Publish crates (in dependency order)
+      - name: Publish crates to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: |
-          # Publish in dependency order with delay between each
-          # to allow crates.io to index the previous crate
+          # Use cargo's native workspace publishing (Rust 1.90+)
+          # This automatically handles dependency ordering and waits for
+          # each crate to be indexed before publishing dependents.
+          # See: https://github.com/rust-lang/cargo/issues/10297
+          #
+          # Exclude rustledger-lsp: trusted publishing can't create new crates,
+          # so it must be published manually first with `cargo publish -p rustledger-lsp`
+          cargo publish --workspace --no-verify --exclude rustledger-lsp
 
-          publish_crate() {
-            local crate="$1"
-            echo "Publishing $crate..."
-            if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
-              echo "✓ $crate published successfully"
-              return 0
-            elif grep -q "already been uploaded" /tmp/publish.log; then
-              echo "✓ $crate already published (skipping)"
-              return 0
-            else
-              echo "✗ Failed to publish $crate"
-              cat /tmp/publish.log
-              return 1
-            fi
-          }
-
-          FAILED=0
-
-          publish_crate rustledger-core || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-parser || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-booking || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-loader || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-validate || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-query || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-plugin || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-importer || FAILED=1
-          sleep 30
-
-          publish_crate rustledger-lsp || FAILED=1
-          sleep 30
-
-          publish_crate rustledger || FAILED=1
-
-          if [ "$FAILED" -eq 1 ]; then
-            echo "::error::One or more crates failed to publish"
+          # Try to publish rustledger-lsp (may fail if it's a new crate)
+          echo "Attempting to publish rustledger-lsp..."
+          if cargo publish -p rustledger-lsp --no-verify 2>&1 | tee /tmp/lsp-publish.log; then
+            echo "✓ rustledger-lsp published successfully"
+          elif grep -q "already been uploaded" /tmp/lsp-publish.log; then
+            echo "✓ rustledger-lsp already published (skipping)"
+          elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/lsp-publish.log; then
+            echo "⚠ rustledger-lsp is a new crate - must be published manually first"
+            echo "::warning::rustledger-lsp requires manual first publish: cargo publish -p rustledger-lsp"
+          else
+            echo "✗ Failed to publish rustledger-lsp"
+            cat /tmp/lsp-publish.log
             exit 1
           fi
 
