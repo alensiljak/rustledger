@@ -2221,8 +2221,7 @@ impl<'a> Executor<'a> {
         for indices in partitions.values() {
             // Sort indices within partition by order values
             let mut sorted_indices: Vec<usize> = indices.clone();
-            if spec.order_by.is_some() {
-                let order_specs = spec.order_by.as_ref().unwrap();
+            if let Some(order_specs) = &spec.order_by {
                 sorted_indices.sort_by(|&a, &b| {
                     let vals_a = &order_values[a];
                     let vals_b = &order_values[b];
