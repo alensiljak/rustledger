@@ -2615,6 +2615,18 @@ struct CostJson {
     label: Option<String>,
 }
 
+/// Check if an account is a balance sheet account (Assets, Liabilities, Equity).
+fn is_balance_sheet_account(account: &str) -> bool {
+    let account_type = account.split(':').next().unwrap_or("");
+    matches!(account_type, "Assets" | "Liabilities" | "Equity")
+}
+
+/// Check if an account is an income statement account (Income, Expenses).
+fn is_income_statement_account(account: &str) -> bool {
+    let account_type = account.split(':').next().unwrap_or("");
+    matches!(account_type, "Income" | "Expenses")
+}
+
 fn cmd_clamp(
     source: &str,
     filename: &str,
@@ -2633,13 +2645,17 @@ fn cmd_clamp(
     let mut account_balances: HashMap<String, rustledger_core::Inventory> = HashMap::new();
     let mut opening_balances: Vec<OpeningBalance> = Vec::new();
 
+    // Track most recent price per commodity before begin_date
+    // Key: (base_currency, quote_currency), Value: (date, price_directive, line)
+    let mut latest_prices: HashMap<(String, String), (NaiveDate, Directive, u32)> = HashMap::new();
+
     // Filter directives
     let mut filtered_directives: Vec<(Directive, u32)> = Vec::new();
 
     for (directive, &line) in load.directives.iter().zip(load.directive_lines.iter()) {
         let directive_date = directive.date();
 
-        // Check if directive is before begin date - accumulate balances
+        // Check if directive is before begin date - accumulate balances and track prices
         if let Some(begin) = begin {
             if directive_date < begin {
                 // Accumulate transaction postings for opening balances
@@ -2670,13 +2686,27 @@ fn cmd_clamp(
                         }
                     }
                 }
-                // Keep Open/Close directives that are before begin date
-                // (accounts need to be opened)
-                match directive {
-                    Directive::Open(_) | Directive::Commodity(_) => {
-                        filtered_directives.push((directive.clone(), line));
+
+                // Track most recent price per commodity before begin_date
+                if let Directive::Price(price) = directive {
+                    let key = (
+                        price.currency.to_string(),
+                        price.amount.currency.to_string(),
+                    );
+                    let should_update = latest_prices
+                        .get(&key)
+                        .map_or(true, |(existing_date, _, _)| {
+                            directive_date >= *existing_date
+                        });
+                    if should_update {
+                        latest_prices.insert(key, (directive_date, directive.clone(), line));
                     }
-                    _ => {}
+                }
+
+                // Keep Open directives that are before begin date (accounts need to be opened)
+                // Note: Commodity entries are NOT included (beancount's clamp_opt excludes them)
+                if let Directive::Open(_) = directive {
+                    filtered_directives.push((directive.clone(), line));
                 }
                 continue;
             }
@@ -2689,96 +2719,208 @@ fn cmd_clamp(
             }
         }
 
+        // Exclude Commodity entries from output (beancount's clamp_opt doesn't include them)
+        if let Directive::Commodity(_) = directive {
+            continue;
+        }
+
         // Include directive in filtered output
         filtered_directives.push((directive.clone(), line));
     }
 
+    // Add most recent prices before begin_date to filtered directives
+    let mut price_entries: Vec<(Directive, u32)> = latest_prices
+        .into_values()
+        .map(|(_, directive, line)| (directive, line))
+        .collect();
+    // Sort prices for deterministic ordering
+    price_entries.sort_by(|(a, _), (b, _)| a.date().cmp(&b.date()));
+
     // Generate opening balance summarization transactions for begin date
-    // This matches beancount's clamp_opt behavior
+    // This matches beancount's clamp_opt behavior:
+    // - Balance sheet accounts (Assets, Liabilities, Equity) get individual summarizations
+    // - Income/Expense accounts are aggregated into Equity:Earnings:Previous
     let mut summarization_entries: Vec<DirectiveJson> = Vec::new();
     if let Some(begin) = begin {
         // Summarization date is one day before begin date
         let summarize_date = begin.pred_opt().unwrap_or(begin);
         let summarize_date_str = summarize_date.to_string();
 
-        // Sort accounts for deterministic ordering
-        let mut sorted_accounts: Vec<_> = account_balances.iter().collect();
-        sorted_accounts.sort_by_key(|(account, _)| *account);
+        // Separate balance sheet accounts from income statement accounts
+        let mut balance_sheet_accounts: Vec<(&String, &rustledger_core::Inventory)> = Vec::new();
+        let mut retained_earnings: rustledger_core::Inventory = rustledger_core::Inventory::new();
 
-        for (index, (account, inventory)) in sorted_accounts.into_iter().enumerate() {
-            if !inventory.is_empty() {
-                // Build positions for opening_balances (backward compatibility)
-                let positions: Vec<PositionJson> = inventory
-                    .positions()
-                    .iter()
-                    .map(|p| PositionJson {
-                        units: Amount {
-                            number: p.units.number.to_string(),
-                            currency: p.units.currency.to_string(),
-                        },
-                        cost: p.cost.as_ref().map(|c| CostJson {
-                            number: c.number.to_string(),
-                            currency: c.currency.to_string(),
-                            date: c.date.map(|d| d.to_string()),
-                            label: c.label.clone(),
-                        }),
-                    })
-                    .collect();
-
-                opening_balances.push(OpeningBalance {
-                    account: account.clone(),
-                    date: begin.to_string(),
-                    balance: InventoryJson {
-                        positions: positions.clone(),
-                    },
-                });
-
-                // Create summarization transaction (matches beancount behavior)
-                // Each position becomes a posting in the transaction
-                let postings: Vec<Posting> = inventory
-                    .positions()
-                    .iter()
-                    .map(|p| Posting {
-                        account: account.clone(),
-                        units: Some(Amount {
-                            number: p.units.number.to_string(),
-                            currency: p.units.currency.to_string(),
-                        }),
-                        cost: p.cost.as_ref().map(|c| PostingCost {
-                            number: Some(c.number.to_string()),
-                            number_total: None,
-                            currency: Some(c.currency.to_string()),
-                            date: c.date.map(|d| d.to_string()),
-                            label: c.label.clone(),
-                        }),
-                        price: None,
-                        meta: HashMap::new(),
-                    })
-                    .collect();
-
-                // Create hash for the summarization transaction
-                let hash_input = format!(
-                    "S|{}|Opening balance for '{}' (Summarization)|{}",
-                    summarize_date_str, account, index
-                );
-                let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
-
-                summarization_entries.push(DirectiveJson::Transaction {
-                    date: summarize_date_str.clone(),
-                    flag: "S".to_string(),
-                    payee: None,
-                    narration: Some(format!("Opening balance for '{}' (Summarization)", account)),
-                    tags: vec![],
-                    links: vec![],
-                    postings,
-                    meta: Meta {
-                        filename: "<summarize>".to_string(),
-                        lineno: index as u32,
-                        hash,
-                        user: HashMap::new(),
-                    },
-                });
+        for (account, inventory) in &account_balances {
+            if inventory.is_empty() {
+                continue;
             }
+
+            if is_balance_sheet_account(account) {
+                balance_sheet_accounts.push((account, inventory));
+            } else if is_income_statement_account(account) {
+                // Aggregate Income/Expenses into retained earnings
+                for position in inventory.positions() {
+                    retained_earnings.add(position.clone());
+                }
+            }
+        }
+
+        // Sort balance sheet accounts for deterministic ordering
+        balance_sheet_accounts.sort_by_key(|(account, _)| *account);
+
+        // Create summarization transactions for balance sheet accounts
+        for (index, (account, inventory)) in balance_sheet_accounts.iter().enumerate() {
+            // Build positions for opening_balances (backward compatibility)
+            let positions: Vec<PositionJson> = inventory
+                .positions()
+                .iter()
+                .map(|p| PositionJson {
+                    units: Amount {
+                        number: p.units.number.to_string(),
+                        currency: p.units.currency.to_string(),
+                    },
+                    cost: p.cost.as_ref().map(|c| CostJson {
+                        number: c.number.to_string(),
+                        currency: c.currency.to_string(),
+                        date: c.date.map(|d| d.to_string()),
+                        label: c.label.clone(),
+                    }),
+                })
+                .collect();
+
+            opening_balances.push(OpeningBalance {
+                account: (*account).clone(),
+                date: begin.to_string(),
+                balance: InventoryJson {
+                    positions: positions.clone(),
+                },
+            });
+
+            // Create summarization transaction (matches beancount behavior)
+            // Each position becomes a posting in the transaction
+            let postings: Vec<Posting> = inventory
+                .positions()
+                .iter()
+                .map(|p| Posting {
+                    account: (*account).clone(),
+                    units: Some(Amount {
+                        number: p.units.number.to_string(),
+                        currency: p.units.currency.to_string(),
+                    }),
+                    cost: p.cost.as_ref().map(|c| PostingCost {
+                        number: Some(c.number.to_string()),
+                        number_total: None,
+                        currency: Some(c.currency.to_string()),
+                        date: c.date.map(|d| d.to_string()),
+                        label: c.label.clone(),
+                    }),
+                    price: None,
+                    meta: HashMap::new(),
+                })
+                .collect();
+
+            // Create hash for the summarization transaction
+            let hash_input = format!(
+                "S|{}|Opening balance for '{}' (Summarization)|{}",
+                summarize_date_str, account, index
+            );
+            let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+
+            summarization_entries.push(DirectiveJson::Transaction {
+                date: summarize_date_str.clone(),
+                flag: "S".to_string(),
+                payee: None,
+                narration: Some(format!("Opening balance for '{}' (Summarization)", account)),
+                tags: vec![],
+                links: vec![],
+                postings,
+                meta: Meta {
+                    filename: "<summarize>".to_string(),
+                    lineno: index as u32,
+                    hash,
+                    user: HashMap::new(),
+                },
+            });
+        }
+
+        // Create aggregated Equity:Earnings:Previous transaction for Income/Expenses
+        if !retained_earnings.is_empty() {
+            let earnings_account = "Equity:Earnings:Previous";
+            let index = balance_sheet_accounts.len();
+
+            // Build positions for opening_balances (backward compatibility)
+            let positions: Vec<PositionJson> = retained_earnings
+                .positions()
+                .iter()
+                .map(|p| PositionJson {
+                    units: Amount {
+                        number: p.units.number.to_string(),
+                        currency: p.units.currency.to_string(),
+                    },
+                    cost: p.cost.as_ref().map(|c| CostJson {
+                        number: c.number.to_string(),
+                        currency: c.currency.to_string(),
+                        date: c.date.map(|d| d.to_string()),
+                        label: c.label.clone(),
+                    }),
+                })
+                .collect();
+
+            opening_balances.push(OpeningBalance {
+                account: earnings_account.to_string(),
+                date: begin.to_string(),
+                balance: InventoryJson {
+                    positions: positions.clone(),
+                },
+            });
+
+            // Create summarization transaction for retained earnings
+            let postings: Vec<Posting> = retained_earnings
+                .positions()
+                .iter()
+                .map(|p| Posting {
+                    account: earnings_account.to_string(),
+                    units: Some(Amount {
+                        number: p.units.number.to_string(),
+                        currency: p.units.currency.to_string(),
+                    }),
+                    cost: p.cost.as_ref().map(|c| PostingCost {
+                        number: Some(c.number.to_string()),
+                        number_total: None,
+                        currency: Some(c.currency.to_string()),
+                        date: c.date.map(|d| d.to_string()),
+                        label: c.label.clone(),
+                    }),
+                    price: None,
+                    meta: HashMap::new(),
+                })
+                .collect();
+
+            // Create hash for the retained earnings transaction
+            let hash_input = format!(
+                "S|{}|Opening balance for '{}' (Summarization)|{}",
+                summarize_date_str, earnings_account, index
+            );
+            let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+
+            summarization_entries.push(DirectiveJson::Transaction {
+                date: summarize_date_str.clone(),
+                flag: "S".to_string(),
+                payee: None,
+                narration: Some(format!(
+                    "Opening balance for '{}' (Summarization)",
+                    earnings_account
+                )),
+                tags: vec![],
+                links: vec![],
+                postings,
+                meta: Meta {
+                    filename: "<summarize>".to_string(),
+                    lineno: index as u32,
+                    hash,
+                    user: HashMap::new(),
+                },
+            });
         }
     }
 
@@ -2788,8 +2930,16 @@ fn cmd_clamp(
         .map(|(d, line)| directive_to_json(d, *line, filename))
         .collect();
 
+    // Insert price entries at the beginning (before summarization entries)
+    let price_json: Vec<DirectiveJson> = price_entries
+        .iter()
+        .map(|(d, line)| directive_to_json(d, *line, filename))
+        .collect();
+
     // Insert summarization transactions before other entries (they have earlier date)
     entries.splice(0..0, summarization_entries);
+    // Insert price entries at the very beginning
+    entries.splice(0..0, price_json);
 
     let output = ClampOutput {
         api_version: API_VERSION,
