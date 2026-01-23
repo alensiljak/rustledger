@@ -208,6 +208,9 @@ pub struct BalanceData {
     pub amount: AmountData,
     /// Tolerance.
     pub tolerance: Option<String>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Open account data.
@@ -219,6 +222,9 @@ pub struct OpenData {
     pub currencies: Vec<String>,
     /// Booking method.
     pub booking: Option<String>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Close account data.
@@ -226,6 +232,9 @@ pub struct OpenData {
 pub struct CloseData {
     /// Account name.
     pub account: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Commodity declaration data.
@@ -245,6 +254,9 @@ pub struct PadData {
     pub account: String,
     /// Source account for padding.
     pub source_account: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Event data.
@@ -254,6 +266,9 @@ pub struct EventData {
     pub event_type: String,
     /// Event value.
     pub value: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Note data.
@@ -263,6 +278,9 @@ pub struct NoteData {
     pub account: String,
     /// Note comment.
     pub comment: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Document data.
@@ -272,6 +290,9 @@ pub struct DocumentData {
     pub account: String,
     /// Document path.
     pub path: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Price directive data.
@@ -281,6 +302,9 @@ pub struct PriceData {
     pub currency: String,
     /// Price amount.
     pub amount: AmountData,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Query directive data.
@@ -290,6 +314,9 @@ pub struct QueryData {
     pub name: String,
     /// Query string.
     pub query: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Custom directive data.
@@ -299,6 +326,9 @@ pub struct CustomData {
     pub custom_type: String,
     /// Values as strings.
     pub values: Vec<String>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Ledger options passed to plugins.

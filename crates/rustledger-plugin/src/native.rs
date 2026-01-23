@@ -148,6 +148,7 @@ impl NativePlugin for ImplicitPricesPlugin {
                                         crate::types::PriceData {
                                             currency: units.currency.clone(),
                                             amount: price_amount.clone(),
+                                            metadata: vec![],
                                         },
                                     ),
                                 };
@@ -172,6 +173,7 @@ impl NativePlugin for ImplicitPricesPlugin {
                                                 number: number.clone(),
                                                 currency: currency.clone(),
                                             },
+                                            metadata: vec![],
                                         },
                                     ),
                                 };
@@ -517,6 +519,7 @@ impl NativePlugin for AutoAccountsPlugin {
                         account: account.clone(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 });
             }
@@ -876,6 +879,7 @@ fn scan_documents(
                                         data: DirectiveData::Document(DocumentData {
                                             account,
                                             path: full_path,
+                                            metadata: vec![],
                                         }),
                                     });
                                 }
@@ -942,6 +946,7 @@ impl NativePlugin for CheckClosingPlugin {
                                         currency,
                                     },
                                     tolerance: None,
+                                    metadata: vec![],
                                 }),
                             });
                         }
@@ -1060,6 +1065,7 @@ impl NativePlugin for CloseTreePlugin {
                             lineno: None,
                             data: DirectiveData::Close(CloseData {
                                 account: account.clone(),
+                                metadata: vec![],
                             }),
                         });
                     }
@@ -1518,6 +1524,7 @@ mod nounused_tests {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1529,6 +1536,7 @@ mod nounused_tests {
                         account: "Assets:Unused".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1585,6 +1593,7 @@ mod nounused_tests {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1639,6 +1648,7 @@ mod nounused_tests {
                         account: "Assets:OldAccount".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1648,6 +1658,7 @@ mod nounused_tests {
                     lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:OldAccount".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1759,6 +1770,7 @@ impl NativePlugin for CheckDrainedPlugin {
                                         currency: currency.clone(),
                                     },
                                     tolerance: None,
+                                    metadata: vec![],
                                 }),
                             });
                         }
@@ -1797,6 +1809,7 @@ mod check_drained_tests {
                         account: "Assets:Bank".to_string(),
                         currencies: vec!["USD".to_string()],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1831,6 +1844,7 @@ mod check_drained_tests {
                     lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1879,6 +1893,7 @@ mod check_drained_tests {
                         account: "Income:Salary".to_string(),
                         currencies: vec!["USD".to_string()],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1888,6 +1903,7 @@ mod check_drained_tests {
                     lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Income:Salary".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1924,6 +1940,7 @@ mod check_drained_tests {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
@@ -1983,6 +2000,7 @@ mod check_drained_tests {
                     lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],

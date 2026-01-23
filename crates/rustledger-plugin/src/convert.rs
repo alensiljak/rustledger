@@ -229,6 +229,11 @@ fn balance_to_data(bal: &Balance) -> BalanceData {
         account: bal.account.to_string(),
         amount: amount_to_data(&bal.amount),
         tolerance: bal.tolerance.map(|t| t.to_string()),
+        metadata: bal
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -237,12 +242,22 @@ fn open_to_data(open: &Open) -> OpenData {
         account: open.account.to_string(),
         currencies: open.currencies.iter().map(ToString::to_string).collect(),
         booking: open.booking.clone(),
+        metadata: open
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
 fn close_to_data(close: &Close) -> CloseData {
     CloseData {
         account: close.account.to_string(),
+        metadata: close
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -261,6 +276,11 @@ fn pad_to_data(pad: &Pad) -> PadData {
     PadData {
         account: pad.account.to_string(),
         source_account: pad.source_account.to_string(),
+        metadata: pad
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -268,6 +288,11 @@ fn event_to_data(event: &Event) -> EventData {
     EventData {
         event_type: event.event_type.clone(),
         value: event.value.clone(),
+        metadata: event
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -275,6 +300,11 @@ fn note_to_data(note: &Note) -> NoteData {
     NoteData {
         account: note.account.to_string(),
         comment: note.comment.clone(),
+        metadata: note
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -282,6 +312,11 @@ fn document_to_data(doc: &Document) -> DocumentData {
     DocumentData {
         account: doc.account.to_string(),
         path: doc.path.clone(),
+        metadata: doc
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -289,6 +324,11 @@ fn price_to_data(price: &Price) -> PriceData {
     PriceData {
         currency: price.currency.to_string(),
         amount: amount_to_data(&price.amount),
+        metadata: price
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -296,6 +336,11 @@ fn query_to_data(query: &Query) -> QueryData {
     QueryData {
         name: query.name.clone(),
         query: query.query.clone(),
+        metadata: query
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -303,6 +348,11 @@ fn custom_to_data(custom: &Custom) -> CustomData {
     CustomData {
         custom_type: custom.custom_type.clone(),
         values: custom.values.iter().map(|v| format!("{v:?}")).collect(),
+        metadata: custom
+            .meta
+            .iter()
+            .map(|(k, v)| (k.clone(), meta_value_to_data(v)))
+            .collect(),
     }
 }
 
@@ -561,7 +611,11 @@ fn data_to_balance(data: &BalanceData, date: NaiveDate) -> Result<Balance, Conve
         account: data.account.clone().into(),
         amount,
         tolerance,
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     })
 }
 
@@ -571,7 +625,11 @@ fn data_to_open(data: &OpenData, date: NaiveDate) -> Open {
         account: data.account.clone().into(),
         currencies: data.currencies.iter().map(|c| c.clone().into()).collect(),
         booking: data.booking.clone(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -579,7 +637,11 @@ fn data_to_close(data: &CloseData, date: NaiveDate) -> Close {
     Close {
         date,
         account: data.account.clone().into(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -600,7 +662,11 @@ fn data_to_pad(data: &PadData, date: NaiveDate) -> Pad {
         date,
         account: data.account.clone().into(),
         source_account: data.source_account.clone().into(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -609,7 +675,11 @@ fn data_to_event(data: &EventData, date: NaiveDate) -> Event {
         date,
         event_type: data.event_type.clone(),
         value: data.value.clone(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -618,7 +688,11 @@ fn data_to_note(data: &NoteData, date: NaiveDate) -> Note {
         date,
         account: data.account.clone().into(),
         comment: data.comment.clone(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -629,7 +703,11 @@ fn data_to_document(data: &DocumentData, date: NaiveDate) -> Document {
         path: data.path.clone(),
         tags: Vec::new(),
         links: Vec::new(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -639,7 +717,11 @@ fn data_to_price(data: &PriceData, date: NaiveDate) -> Result<Price, ConversionE
         date,
         currency: data.currency.clone().into(),
         amount,
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     })
 }
 
@@ -648,7 +730,11 @@ fn data_to_query(data: &QueryData, date: NaiveDate) -> Query {
         date,
         name: data.name.clone(),
         query: data.query.clone(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 
@@ -661,7 +747,11 @@ fn data_to_custom(data: &CustomData, date: NaiveDate) -> Custom {
             .iter()
             .map(|s| MetaValue::String(s.clone()))
             .collect(),
-        meta: Default::default(),
+        meta: data
+            .metadata
+            .iter()
+            .map(|(k, v)| (k.clone(), data_to_meta_value(v)))
+            .collect(),
     }
 }
 

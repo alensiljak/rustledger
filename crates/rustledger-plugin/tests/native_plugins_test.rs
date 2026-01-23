@@ -33,6 +33,7 @@ fn make_open(date: &str, account: &str) -> DirectiveWrapper {
             account: account.to_string(),
             currencies: vec![],
             booking: None,
+            metadata: vec![],
         }),
     }
 }
@@ -136,6 +137,7 @@ fn make_price(date: &str, currency: &str, amount: &str, quote_currency: &str) ->
                 number: amount.to_string(),
                 currency: quote_currency.to_string(),
             },
+            metadata: vec![],
         }),
     }
 }
@@ -710,6 +712,7 @@ fn test_auto_accounts_same_date_ordering() {
                     account: "Liabilities:Credit-Card".to_string(),
                     currencies: vec![],
                     booking: None,
+                    metadata: vec![],
                 }),
             },
             DirectiveWrapper {
