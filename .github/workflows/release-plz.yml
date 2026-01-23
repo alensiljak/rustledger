@@ -64,8 +64,9 @@ jobs:
 
           echo ""
           echo "=== Running cargo-semver-checks on rustledger-parser ==="
-          /tmp/cargo-semver-checks check-release \
+          /tmp/cargo-semver-checks semver-checks check-release \
             --manifest-path crates/rustledger-parser/Cargo.toml \
+            --verbose \
             2>&1 || echo "Exit code: $?"
 
       # Use PAT to create PR so it triggers CI workflows automatically
