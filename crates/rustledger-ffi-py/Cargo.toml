@@ -19,9 +19,11 @@ path = "src/main.rs"
 [dependencies]
 rustledger-core.workspace = true
 rustledger-parser.workspace = true
+rustledger-loader.workspace = true
 rustledger-booking.workspace = true
 rustledger-validate.workspace = true
 rustledger-query.workspace = true
+rustledger-plugin.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

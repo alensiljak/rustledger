@@ -18,12 +18,17 @@
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{self, Read, Write};
+use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
 use rustledger_booking::interpolate;
 use rustledger_core::{Cost, Directive, MetaValue, Metadata, NaiveDate, format::FormatConfig};
+use rustledger_loader::Loader;
 use rustledger_parser::{Spanned, parse as parse_beancount};
+use rustledger_plugin::{
+    NativePluginRegistry, PluginInput, PluginOptions, directive_to_wrapper, wrapper_to_directive,
+};
 use rustledger_query::{Executor, parse as parse_query};
 use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 use serde::{Deserialize, Serialize};
@@ -1491,6 +1496,185 @@ fn cmd_load(source: &str, filename: &str) -> i32 {
     output_json(&output)
 }
 
+/// Output for load-full command - includes resolved includes and plugin list.
+#[derive(Serialize)]
+struct LoadFullOutput {
+    api_version: &'static str,
+    entries: Vec<DirectiveJson>,
+    errors: Vec<Error>,
+    options: LedgerOptions,
+    /// Resolved plugins (from file + `auto_accounts` if enabled).
+    plugins: Vec<Plugin>,
+    /// Files that were loaded (resolved includes).
+    loaded_files: Vec<String>,
+}
+
+/// Load a beancount file using the full loader pipeline.
+/// This handles:
+/// - Include resolution (with cycle detection)
+/// - Path security (prevents path traversal)
+/// - GPG decryption (for .gpg/.asc files)
+/// - Optional plugin execution (`auto_accounts` sorts entries)
+fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
+    let path = Path::new(path);
+
+    // Load using the full loader
+    let mut loader = Loader::new();
+    let load_result = match loader.load(path) {
+        Ok(result) => result,
+        Err(e) => {
+            let output = LoadFullOutput {
+                api_version: API_VERSION,
+                entries: vec![],
+                errors: vec![Error::new(format!("Failed to load file: {e}"))],
+                options: LedgerOptions::default(),
+                plugins: vec![],
+                loaded_files: vec![],
+            };
+            return output_json(&output);
+        }
+    };
+
+    // Collect errors from loader (these are non-fatal errors)
+    let mut errors: Vec<Error> = load_result
+        .errors
+        .iter()
+        .map(|e| Error::new(e.to_string()))
+        .collect();
+
+    // Convert directives and get line numbers/filenames
+    let mut directives: Vec<Directive> = Vec::new();
+    let mut directive_lines: Vec<u32> = Vec::new();
+    let mut directive_files: Vec<String> = Vec::new();
+
+    for spanned in &load_result.directives {
+        directives.push(spanned.value.clone());
+
+        // Get line number and filename from source map
+        let file_id = spanned.file_id as usize;
+        if let Some(source_file) = load_result.source_map.get(file_id) {
+            let (line, _col) = source_file.line_col(spanned.span.start);
+            directive_lines.push(line as u32);
+            directive_files.push(source_file.path.display().to_string());
+        } else {
+            directive_lines.push(0);
+            directive_files.push("<unknown>".to_string());
+        }
+    }
+
+    // Run interpolation on transactions
+    for (i, directive) in directives.iter_mut().enumerate() {
+        if let Directive::Transaction(txn) = directive {
+            match interpolate(txn) {
+                Ok(result) => {
+                    *txn = result.transaction;
+                }
+                Err(e) => {
+                    errors.push(Error::new(e.to_string()).with_line(directive_lines[i]));
+                }
+            }
+        }
+    }
+
+    // Run plugins if requested
+    if !run_plugins.is_empty() && errors.is_empty() {
+        let registry = NativePluginRegistry::new();
+
+        for plugin_name in run_plugins {
+            if let Some(plugin) = registry.find(plugin_name) {
+                // Convert directives to wrappers for plugin
+                let wrappers: Vec<_> = directives.iter().map(directive_to_wrapper).collect();
+
+                let input = PluginInput {
+                    directives: wrappers,
+                    options: PluginOptions {
+                        operating_currencies: load_result.options.operating_currency.clone(),
+                        title: load_result.options.title.clone(),
+                    },
+                    config: None,
+                };
+
+                let output = plugin.process(input);
+
+                // Convert errors
+                for err in output.errors {
+                    errors.push(Error::new(err.message));
+                }
+
+                // Convert wrappers back to directives
+                // After plugin execution, line numbers are reset (plugin may add/reorder entries)
+                directives = output
+                    .directives
+                    .iter()
+                    .filter_map(|w| wrapper_to_directive(w).ok())
+                    .collect();
+
+                // Reset line tracking since plugin may have changed order
+                directive_lines = vec![0; directives.len()];
+                directive_files = vec!["<plugin>".to_string(); directives.len()];
+            } else {
+                errors.push(Error::new(format!("Unknown plugin: {plugin_name}")));
+            }
+        }
+    }
+
+    // Convert options
+    let options = LedgerOptions {
+        title: load_result.options.title.clone(),
+        operating_currency: load_result.options.operating_currency.clone(),
+        name_assets: load_result.options.name_assets.clone(),
+        name_liabilities: load_result.options.name_liabilities.clone(),
+        name_equity: load_result.options.name_equity.clone(),
+        name_income: load_result.options.name_income.clone(),
+        name_expenses: load_result.options.name_expenses.clone(),
+        documents: Vec::new(), // TODO: could add from options if needed
+        commodities: Vec::new(),
+        booking_method: load_result.options.booking_method.clone(),
+        display_precision: HashMap::new(), // TODO: could add from display_context
+    };
+
+    // Convert plugins from loader result
+    let plugins: Vec<Plugin> = load_result
+        .plugins
+        .iter()
+        .map(|p| Plugin {
+            name: p.name.clone(),
+            config: p.config.clone(),
+        })
+        .collect();
+
+    // Get list of loaded files
+    let loaded_files: Vec<String> = load_result
+        .source_map
+        .files()
+        .iter()
+        .map(|sf| sf.path.display().to_string())
+        .collect();
+
+    // Build entries
+    let entries: Vec<DirectiveJson> = directives
+        .iter()
+        .enumerate()
+        .map(|(i, d)| {
+            directive_to_json(
+                d,
+                directive_lines.get(i).copied().unwrap_or(0),
+                directive_files.get(i).map_or("<unknown>", String::as_str),
+            )
+        })
+        .collect();
+
+    let output = LoadFullOutput {
+        api_version: API_VERSION,
+        entries,
+        errors,
+        options,
+        plugins,
+        loaded_files,
+    };
+    output_json(&output)
+}
+
 fn cmd_validate(source: &str) -> i32 {
     let load = load_source(source);
     let mut errors = load.errors;
@@ -2550,6 +2734,7 @@ fn cmd_help() {
     eprintln!();
     eprintln!("Commands (file-based, for WASI environments):");
     eprintln!("  load-file <path>          Load from file path");
+    eprintln!("  load-full <path> [plugins..]  Full load: resolves includes, runs plugins");
     eprintln!("  validate-file <path>      Validate from file path");
     eprintln!("  query-file <path> <bql>   Query from file path");
     eprintln!("  batch-file <path> <bql>.. Batch queries from file path");
@@ -2581,6 +2766,10 @@ fn cmd_help() {
     eprintln!();
     eprintln!("  # File-based (recommended for WASI/wasmtime):");
     eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm load-file ledger.beancount");
+    eprintln!(
+        "  wasmtime --dir=. rustledger-ffi-py.wasm load-full ledger.beancount  # with includes"
+    );
+    eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm load-full ledger.beancount auto_accounts");
     eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm query-file ledger.beancount \"JOURNAL\"");
     eprintln!(
         "  wasmtime --dir=. rustledger-ffi-py.wasm clamp-file ledger.beancount 2024-01-01 2024-12-31"
@@ -2641,6 +2830,17 @@ fn main() {
                         exit_codes::USER_ERROR
                     }
                 }
+            }
+        }
+        "load-full" => {
+            if args.len() < 3 {
+                eprintln!("Error: load-full command requires file path argument");
+                exit_codes::USER_ERROR
+            } else {
+                let path = &args[2];
+                // Remaining args are plugin names
+                let plugins: Vec<&str> = args[3..].iter().map(String::as_str).collect();
+                cmd_load_full(path, &plugins)
             }
         }
         "validate-file" => {

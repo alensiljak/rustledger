@@ -2967,7 +2967,9 @@ version = "0.6.0"
 dependencies = [
  "rustledger-booking",
  "rustledger-core",
+ "rustledger-loader",
  "rustledger-parser",
+ "rustledger-plugin",
  "rustledger-query",
  "rustledger-validate",
  "serde",
