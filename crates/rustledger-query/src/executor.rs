@@ -4580,22 +4580,31 @@ impl<'a> Executor<'a> {
                                 "expected 1 argument".to_string(),
                             ));
                         }
-                        let mut total = Inventory::new();
+                        // Track whether we're summing plain numbers or amounts/positions
+                        let mut total_inventory = Inventory::new();
+                        let mut total_number = Decimal::ZERO;
+                        let mut has_positions = false;
+                        let mut has_numbers = false;
+
                         for ctx in group {
                             let val = self.evaluate_expr(&func.args[0], ctx)?;
                             match val {
                                 Value::Amount(amt) => {
                                     let pos = Position::simple(amt);
-                                    total.add(pos);
+                                    total_inventory.add(pos);
+                                    has_positions = true;
                                 }
                                 Value::Position(pos) => {
-                                    total.add(pos);
+                                    total_inventory.add(pos);
+                                    has_positions = true;
                                 }
                                 Value::Number(n) => {
-                                    // Sum as raw number
-                                    let pos =
-                                        Position::simple(Amount::new(n, "__NUMBER__".to_string()));
-                                    total.add(pos);
+                                    total_number += n;
+                                    has_numbers = true;
+                                }
+                                Value::Integer(i) => {
+                                    total_number += Decimal::from(i);
+                                    has_numbers = true;
                                 }
                                 Value::Null => {}
                                 _ => {
@@ -4605,7 +4614,25 @@ impl<'a> Executor<'a> {
                                 }
                             }
                         }
-                        Ok(Value::Inventory(total))
+
+                        // Return appropriate type based on what was summed
+                        if has_positions {
+                            // If we have any amounts/positions, return as inventory
+                            // (also add any plain numbers as __NUMBER__ currency)
+                            if has_numbers && !total_number.is_zero() {
+                                total_inventory.add(Position::simple(Amount::new(
+                                    total_number,
+                                    "__NUMBER__".to_string(),
+                                )));
+                            }
+                            Ok(Value::Inventory(total_inventory))
+                        } else if has_numbers {
+                            // Pure number sum - return as Number
+                            Ok(Value::Number(total_number))
+                        } else {
+                            // No values summed (all nulls)
+                            Ok(Value::Null)
+                        }
                     }
                     "FIRST" => {
                         if func.args.len() != 1 {
