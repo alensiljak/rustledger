@@ -66,6 +66,26 @@ fn output_json<T: Serialize>(value: &T) -> i32 {
     }
 }
 
+/// Parse JSON with better error messages, extracting line/column info.
+fn parse_json_error(e: &serde_json::Error) -> Error {
+    let mut err = Error::new(format!("JSON parse error: {e}"));
+    // serde_json provides line/column for syntax errors
+    if e.line() > 0 {
+        err.line = Some(e.line() as u32);
+        err.column = Some(e.column() as u32);
+    }
+    // Try to extract field name from error message
+    let msg = e.to_string();
+    if msg.contains("missing field") || msg.contains("unknown field") {
+        if let Some(start) = msg.find('`') {
+            if let Some(end) = msg[start + 1..].find('`') {
+                err.field = Some(msg[start + 1..start + 1 + end].to_string());
+            }
+        }
+    }
+    err
+}
+
 // =============================================================================
 // Output Types (JSON-serializable)
 // =============================================================================
@@ -120,7 +140,48 @@ struct Error {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    column: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    field: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    entry_index: Option<usize>,
     severity: String,
+}
+
+impl Error {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            line: None,
+            column: None,
+            field: None,
+            entry_index: None,
+            severity: "error".to_string(),
+        }
+    }
+
+    const fn with_line(mut self, line: u32) -> Self {
+        self.line = Some(line);
+        self
+    }
+
+    #[allow(dead_code)]
+    fn with_field(mut self, field: impl Into<String>) -> Self {
+        self.field = Some(field.into());
+        self
+    }
+
+    const fn with_entry_index(mut self, index: usize) -> Self {
+        self.entry_index = Some(index);
+        self
+    }
+
+    #[allow(dead_code)]
+    fn warning(mut self) -> Self {
+        self.severity = "warning".to_string();
+        self
+    }
 }
 
 #[derive(Serialize)]
@@ -920,11 +981,7 @@ fn load_source(source: &str) -> LoadResult {
     let mut errors: Vec<Error> = parse_result
         .errors
         .iter()
-        .map(|e| Error {
-            message: e.to_string(),
-            line: Some(lookup.byte_to_line(e.span().0)),
-            severity: "error".to_string(),
-        })
+        .map(|e| Error::new(e.to_string()).with_line(lookup.byte_to_line(e.span().0)))
         .collect();
 
     // Extract options
@@ -1004,11 +1061,7 @@ fn load_source(source: &str) -> LoadResult {
                         *txn = result.transaction;
                     }
                     Err(e) => {
-                        errors.push(Error {
-                            message: e.to_string(),
-                            line: Some(directive_lines[i]),
-                            severity: "error".to_string(),
-                        });
+                        errors.push(Error::new(e.to_string()).with_line(directive_lines[i]));
                     }
                 }
             }
@@ -1448,12 +1501,11 @@ fn cmd_validate(source: &str) -> i32 {
             validate_spanned_with_options(&load.spanned_directives, ValidationOptions::default());
         for err in validation_errors {
             // Convert span to line number if available
-            let line = err.span.map(|s| load.line_lookup.byte_to_line(s.start));
-            errors.push(Error {
-                message: err.message,
-                line,
-                severity: "error".to_string(),
-            });
+            let mut e = Error::new(&err.message);
+            if let Some(span) = err.span {
+                e = e.with_line(load.line_lookup.byte_to_line(span.start));
+            }
+            errors.push(e);
         }
     }
 
@@ -1475,11 +1527,7 @@ fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
                 api_version: API_VERSION,
                 columns: vec![],
                 rows: vec![],
-                errors: vec![Error {
-                    message: format!("Query parse error: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![Error::new(format!("Query parse error: {e}"))],
             };
         }
     };
@@ -1527,11 +1575,7 @@ fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
             api_version: API_VERSION,
             columns: vec![],
             rows: vec![],
-            errors: vec![Error {
-                message: format!("Query error: {e}"),
-                line: None,
-                severity: "error".to_string(),
-            }],
+            errors: vec![Error::new(format!("Query error: {e}"))],
         },
     }
 }
@@ -1589,11 +1633,7 @@ fn cmd_batch(source: &str, filename: &str, queries: &[String]) -> i32 {
                 api_version: API_VERSION,
                 columns: vec![],
                 rows: vec![],
-                errors: vec![Error {
-                    message: "Cannot execute query: parse errors exist".to_string(),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![Error::new("Cannot execute query: parse errors exist")],
             })
             .collect()
     };
@@ -1627,11 +1667,7 @@ fn cmd_format(source: &str) -> i32 {
     let errors: Vec<Error> = parse_result
         .errors
         .iter()
-        .map(|e| Error {
-            message: e.to_string(),
-            line: Some(lookup.byte_to_line(e.span().0)),
-            severity: "error".to_string(),
-        })
+        .map(|e| Error::new(e.to_string()).with_line(lookup.byte_to_line(e.span().0)))
         .collect();
 
     // Format all directives
@@ -1816,6 +1852,325 @@ fn cmd_types() -> i32 {
 }
 
 // =============================================================================
+// Schema Command
+// =============================================================================
+
+/// Output for schema command - JSON Schema documentation for all types.
+fn cmd_schema() -> i32 {
+    let schema = serde_json::json!({
+        "api_version": API_VERSION,
+        "description": "JSON Schema documentation for rustledger-ffi-py commands",
+        "schemas": {
+            "Amount": {
+                "type": "object",
+                "required": ["number", "currency"],
+                "properties": {
+                    "number": {"type": "string", "description": "Decimal number as string (e.g., \"100.00\")"},
+                    "currency": {"type": "string", "description": "Currency code (e.g., \"USD\")"}
+                }
+            },
+            "Cost": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "string", "description": "Per-unit cost number"},
+                    "number_total": {"type": "string", "description": "Total cost number"},
+                    "currency": {"type": "string", "description": "Cost currency"},
+                    "date": {"type": "string", "format": "date", "description": "Lot date (YYYY-MM-DD)"},
+                    "label": {"type": "string", "description": "Lot label"}
+                }
+            },
+            "Posting": {
+                "type": "object",
+                "required": ["account"],
+                "properties": {
+                    "account": {"type": "string", "description": "Account name (e.g., \"Assets:Bank:Checking\")"},
+                    "units": {"$ref": "#/schemas/Amount", "description": "Posted amount (optional for auto-balance)"},
+                    "cost": {"$ref": "#/schemas/Cost", "description": "Cost basis"},
+                    "price": {"$ref": "#/schemas/Amount", "description": "Price annotation"},
+                    "meta": {"type": "object", "description": "Posting metadata"}
+                }
+            },
+            "InputEntry": {
+                "description": "Input format for create-entry and format-entry commands",
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "required": ["type", "date"],
+                        "properties": {
+                            "type": {"const": "transaction"},
+                            "date": {"type": "string", "format": "date"},
+                            "flag": {"type": "string", "default": "*", "enum": ["*", "!", "txn"]},
+                            "payee": {"type": "string"},
+                            "narration": {"type": "string"},
+                            "tags": {"type": "array", "items": {"type": "string"}},
+                            "links": {"type": "array", "items": {"type": "string"}},
+                            "postings": {"type": "array", "items": {"$ref": "#/schemas/Posting"}},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account"],
+                        "properties": {
+                            "type": {"const": "open"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "currencies": {"type": "array", "items": {"type": "string"}},
+                            "booking": {"type": "string", "enum": ["STRICT", "FIFO", "LIFO", "HIFO", "AVERAGE", "NONE"]},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account"],
+                        "properties": {
+                            "type": {"const": "close"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account", "amount"],
+                        "properties": {
+                            "type": {"const": "balance"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "amount": {"$ref": "#/schemas/Amount"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account", "source_account"],
+                        "properties": {
+                            "type": {"const": "pad"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "source_account": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "currency"],
+                        "properties": {
+                            "type": {"const": "commodity"},
+                            "date": {"type": "string", "format": "date"},
+                            "currency": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "currency", "amount"],
+                        "properties": {
+                            "type": {"const": "price"},
+                            "date": {"type": "string", "format": "date"},
+                            "currency": {"type": "string"},
+                            "amount": {"$ref": "#/schemas/Amount"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "event_type", "value"],
+                        "properties": {
+                            "type": {"const": "event"},
+                            "date": {"type": "string", "format": "date"},
+                            "event_type": {"type": "string"},
+                            "value": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account", "comment"],
+                        "properties": {
+                            "type": {"const": "note"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "comment": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "account", "path"],
+                        "properties": {
+                            "type": {"const": "document"},
+                            "date": {"type": "string", "format": "date"},
+                            "account": {"type": "string"},
+                            "path": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "name", "query_string"],
+                        "properties": {
+                            "type": {"const": "query"},
+                            "date": {"type": "string", "format": "date"},
+                            "name": {"type": "string"},
+                            "query_string": {"type": "string"},
+                            "meta": {"type": "object"}
+                        }
+                    },
+                    {
+                        "type": "object",
+                        "required": ["type", "date", "custom_type"],
+                        "properties": {
+                            "type": {"const": "custom"},
+                            "date": {"type": "string", "format": "date"},
+                            "custom_type": {"type": "string"},
+                            "values": {"type": "array"},
+                            "meta": {"type": "object"}
+                        }
+                    }
+                ]
+            },
+            "OutputEntry": {
+                "description": "Output format from load command (same as InputEntry but with meta.hash)",
+                "allOf": [
+                    {"$ref": "#/schemas/InputEntry"},
+                    {
+                        "properties": {
+                            "meta": {
+                                "type": "object",
+                                "required": ["filename", "lineno", "hash"],
+                                "properties": {
+                                    "filename": {"type": "string"},
+                                    "lineno": {"type": "integer"},
+                                    "hash": {"type": "string", "description": "SHA256 hash of entry"}
+                                }
+                            }
+                        }
+                    }
+                ]
+            },
+            "Error": {
+                "type": "object",
+                "required": ["message", "severity"],
+                "properties": {
+                    "message": {"type": "string"},
+                    "line": {"type": "integer", "description": "Line number (1-based)"},
+                    "column": {"type": "integer", "description": "Column number (1-based)"},
+                    "field": {"type": "string", "description": "Field that caused the error"},
+                    "entry_index": {"type": "integer", "description": "Index of entry in array (0-based)"},
+                    "severity": {"type": "string", "enum": ["error", "warning"]}
+                }
+            }
+        },
+        "commands": {
+            "load": {
+                "description": "Parse beancount source and return entries",
+                "input": "Beancount source text (stdin)",
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "entries": {"type": "array", "items": {"$ref": "#/schemas/OutputEntry"}},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}},
+                        "options": {"type": "object"},
+                        "plugins": {"type": "array"},
+                        "includes": {"type": "array"}
+                    }
+                }
+            },
+            "validate": {
+                "description": "Validate beancount source",
+                "input": "Beancount source text (stdin)",
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "valid": {"type": "boolean"},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "query": {
+                "description": "Run BQL query on beancount source",
+                "input": "Beancount source text (stdin) + BQL query (arg)",
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "columns": {"type": "array", "items": {"type": "object", "properties": {"name": {"type": "string"}, "datatype": {"type": "string"}}}},
+                        "rows": {"type": "array", "items": {"type": "array"}},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "format-entry": {
+                "description": "Format single entry JSON to beancount text",
+                "input": {"$ref": "#/schemas/InputEntry"},
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "formatted": {"type": "string", "description": "Formatted beancount text"},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "format-entries": {
+                "description": "Format array of entry JSON to beancount text",
+                "input": {"type": "array", "items": {"$ref": "#/schemas/InputEntry"}},
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "formatted": {"type": "string"},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "create-entry": {
+                "description": "Create full entry with hash from minimal JSON",
+                "input": {"$ref": "#/schemas/InputEntry"},
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "entry": {"$ref": "#/schemas/OutputEntry"},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "create-entries": {
+                "description": "Create multiple entries with hashes from JSON array",
+                "input": {"type": "array", "items": {"$ref": "#/schemas/InputEntry"}},
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "entries": {"type": "array", "items": {"$ref": "#/schemas/OutputEntry"}},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            },
+            "clamp": {
+                "description": "Filter entries by date range with opening balances",
+                "input": "Beancount source text (stdin) + begin/end dates (args)",
+                "output": {
+                    "type": "object",
+                    "properties": {
+                        "api_version": {"type": "string"},
+                        "entries": {"type": "array", "items": {"$ref": "#/schemas/OutputEntry"}},
+                        "opening_balances": {"type": "array"},
+                        "errors": {"type": "array", "items": {"$ref": "#/schemas/Error"}}
+                    }
+                }
+            }
+        }
+    });
+
+    output_json(&schema)
+}
+
+// =============================================================================
 // Format Entry Command
 // =============================================================================
 
@@ -1837,11 +2192,7 @@ fn cmd_format_entry(json_str: &str) -> i32 {
             let output = FormatEntryOutput {
                 api_version: API_VERSION,
                 formatted: String::new(),
-                errors: vec![Error {
-                    message: format!("Invalid entry JSON: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![parse_json_error(&e)],
             };
             return output_json(&output);
         }
@@ -1854,11 +2205,7 @@ fn cmd_format_entry(json_str: &str) -> i32 {
             let output = FormatEntryOutput {
                 api_version: API_VERSION,
                 formatted: String::new(),
-                errors: vec![Error {
-                    message: e,
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![Error::new(e)],
             };
             return output_json(&output);
         }
@@ -1885,11 +2232,7 @@ fn cmd_format_entries(json_str: &str) -> i32 {
             let output = FormatEntryOutput {
                 api_version: API_VERSION,
                 formatted: String::new(),
-                errors: vec![Error {
-                    message: format!("Invalid entries JSON: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![parse_json_error(&e)],
             };
             return output_json(&output);
         }
@@ -1907,11 +2250,7 @@ fn cmd_format_entries(json_str: &str) -> i32 {
                 ));
             }
             Err(e) => {
-                errors.push(Error {
-                    message: format!("Entry {i}: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                });
+                errors.push(Error::new(format!("Entry {i}: {e}")).with_entry_index(i));
             }
         }
     }
@@ -1947,11 +2286,7 @@ fn cmd_create_entry(json_str: &str) -> i32 {
             let output = CreateEntryOutput {
                 api_version: API_VERSION,
                 entry: None,
-                errors: vec![Error {
-                    message: format!("Invalid entry JSON: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![parse_json_error(&e)],
             };
             return output_json(&output);
         }
@@ -1964,11 +2299,7 @@ fn cmd_create_entry(json_str: &str) -> i32 {
             let output = CreateEntryOutput {
                 api_version: API_VERSION,
                 entry: None,
-                errors: vec![Error {
-                    message: e,
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![Error::new(e)],
             };
             return output_json(&output);
         }
@@ -2002,11 +2333,7 @@ fn cmd_create_entries(json_str: &str) -> i32 {
             let output = CreateEntriesOutput {
                 api_version: API_VERSION,
                 entries: vec![],
-                errors: vec![Error {
-                    message: format!("Invalid entries JSON: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                }],
+                errors: vec![parse_json_error(&e)],
             };
             return output_json(&output);
         }
@@ -2021,11 +2348,7 @@ fn cmd_create_entries(json_str: &str) -> i32 {
                 entries.push(directive_to_json(&directive, i as u32, "<created>"));
             }
             Err(e) => {
-                errors.push(Error {
-                    message: format!("Entry {i}: {e}"),
-                    line: None,
-                    severity: "error".to_string(),
-                });
+                errors.push(Error::new(format!("Entry {i}: {e}")).with_entry_index(i));
             }
         }
     }
@@ -2243,6 +2566,7 @@ fn cmd_help() {
     eprintln!("  is-encrypted <path>       Check if file is GPG-encrypted");
     eprintln!("  get-account-type <acct>   Extract account type from account name");
     eprintln!("  types                     Get type constants (ALL_DIRECTIVES, Booking, etc.)");
+    eprintln!("  schema                    Get JSON Schema documentation for all types/commands");
     eprintln!();
     eprintln!("Other:");
     eprintln!("  version              Show version");
@@ -2266,6 +2590,7 @@ fn cmd_help() {
     eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm is-encrypted ledger.beancount.gpg");
     eprintln!("  rustledger-ffi-py get-account-type \"Assets:Bank:Checking\"");
     eprintln!("  rustledger-ffi-py types");
+    eprintln!("  rustledger-ffi-py schema    # Get JSON Schema for all types");
 }
 
 // =============================================================================
@@ -2411,6 +2736,7 @@ fn main() {
             }
         }
         "types" => cmd_types(),
+        "schema" => cmd_schema(),
         // Entry manipulation commands (read JSON from stdin)
         "format-entry" | "format-entries" | "create-entry" | "create-entries" => {
             let json_str = match read_source(None) {
