@@ -2711,6 +2711,124 @@ fn cmd_clamp(
     output_json(&output)
 }
 
+// =============================================================================
+// Filter Entries Command (operates on already-parsed JSON entries)
+// =============================================================================
+
+/// Input for filter-entries command.
+#[derive(Deserialize)]
+struct FilterEntriesInput {
+    /// Array of entry objects (same format as load output).
+    entries: Vec<serde_json::Value>,
+    /// Begin date (inclusive) in ISO format (YYYY-MM-DD).
+    begin_date: String,
+    /// End date (exclusive) in ISO format (YYYY-MM-DD).
+    end_date: String,
+}
+
+/// Output for filter-entries command.
+#[derive(Serialize)]
+struct FilterEntriesOutput {
+    api_version: &'static str,
+    entries: Vec<serde_json::Value>,
+    errors: Vec<Error>,
+}
+
+/// Filter already-parsed entries by date range.
+///
+/// This avoids re-parsing source text when we already have parsed entries.
+///
+/// Filtering rules (matching beancount behavior):
+/// - Include entries where `begin_date <= entry.date < end_date`
+/// - Exclude Commodity directives
+/// - Include Open directives where `entry.date < end_date` (still active)
+/// - Include Close directives where `entry.date >= begin_date`
+fn cmd_filter_entries(json_str: &str) -> i32 {
+    // Parse input
+    let input: FilterEntriesInput = match serde_json::from_str(json_str) {
+        Ok(i) => i,
+        Err(e) => {
+            let output = FilterEntriesOutput {
+                api_version: API_VERSION,
+                entries: vec![],
+                errors: vec![parse_json_error(&e)],
+            };
+            return output_json(&output);
+        }
+    };
+
+    // Parse date boundaries
+    let Ok(begin) = NaiveDate::parse_from_str(&input.begin_date, "%Y-%m-%d") else {
+        let output = FilterEntriesOutput {
+            api_version: API_VERSION,
+            entries: vec![],
+            errors: vec![
+                Error::new(format!(
+                    "Invalid begin_date format: {}. Expected YYYY-MM-DD",
+                    input.begin_date
+                ))
+                .with_field("begin_date"),
+            ],
+        };
+        return output_json(&output);
+    };
+
+    let Ok(end) = NaiveDate::parse_from_str(&input.end_date, "%Y-%m-%d") else {
+        let output = FilterEntriesOutput {
+            api_version: API_VERSION,
+            entries: vec![],
+            errors: vec![
+                Error::new(format!(
+                    "Invalid end_date format: {}. Expected YYYY-MM-DD",
+                    input.end_date
+                ))
+                .with_field("end_date"),
+            ],
+        };
+        return output_json(&output);
+    };
+
+    // Filter entries
+    let mut filtered: Vec<serde_json::Value> = Vec::new();
+
+    for entry in input.entries {
+        // Extract entry type and date
+        let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let date_str = entry.get("date").and_then(|d| d.as_str()).unwrap_or("");
+
+        let entry_date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => continue, // Skip entries with invalid dates
+        };
+
+        // Apply filtering rules based on directive type
+        let include = match entry_type {
+            // Commodity directives are excluded (beancount behavior)
+            "commodity" => false,
+
+            // Open directives: include if date < end_date (still active)
+            "open" => entry_date < end,
+
+            // Close directives: include if date >= begin_date
+            "close" => entry_date >= begin,
+
+            // All other directives: include if begin_date <= date < end_date
+            _ => entry_date >= begin && entry_date < end,
+        };
+
+        if include {
+            filtered.push(entry);
+        }
+    }
+
+    let output = FilterEntriesOutput {
+        api_version: API_VERSION,
+        entries: filtered,
+        errors: vec![],
+    };
+    output_json(&output)
+}
+
 fn cmd_version() -> i32 {
     let output = VersionOutput {
         api_version: API_VERSION,
@@ -2746,6 +2864,7 @@ fn cmd_help() {
     eprintln!("  format-entries           Format array of entry JSON to beancount text");
     eprintln!("  create-entry             Create full entry with hash from minimal JSON");
     eprintln!("  create-entries           Create multiple entries from JSON array");
+    eprintln!("  filter-entries           Filter entries by date range (avoids re-parsing)");
     eprintln!();
     eprintln!("Utility commands:");
     eprintln!("  is-encrypted <path>       Check if file is GPG-encrypted");
@@ -2938,7 +3057,8 @@ fn main() {
         "types" => cmd_types(),
         "schema" => cmd_schema(),
         // Entry manipulation commands (read JSON from stdin)
-        "format-entry" | "format-entries" | "create-entry" | "create-entries" => {
+        "format-entry" | "format-entries" | "create-entry" | "create-entries"
+        | "filter-entries" => {
             let json_str = match read_source(None) {
                 Ok(s) => s,
                 Err(e) => {
@@ -2951,6 +3071,7 @@ fn main() {
                 "format-entries" => cmd_format_entries(&json_str),
                 "create-entry" => cmd_create_entry(&json_str),
                 "create-entries" => cmd_create_entries(&json_str),
+                "filter-entries" => cmd_filter_entries(&json_str),
                 _ => unreachable!(),
             }
         }
