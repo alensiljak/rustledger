@@ -22,7 +22,7 @@ use std::path::Path;
 
 use sha2::{Digest, Sha256};
 
-use rustledger_booking::interpolate;
+use rustledger_booking::BookingEngine;
 use rustledger_core::{Cost, Directive, MetaValue, Metadata, NaiveDate, format::FormatConfig};
 use rustledger_loader::Loader;
 use rustledger_parser::{Spanned, parse as parse_beancount};
@@ -1057,12 +1057,23 @@ fn load_source(source: &str) -> LoadResult {
         directives.push(spanned.value.clone());
     }
 
-    // Interpolate transactions
+    // Run booking and interpolation on transactions (sequential)
+    // This fills in empty cost specs via lot matching, normalizes total prices,
+    // and interpolates missing amounts. Must be sequential because lot matching
+    // depends on prior inventory state.
     if errors.is_empty() {
+        let booking_method = options
+            .booking_method
+            .parse()
+            .unwrap_or(rustledger_core::BookingMethod::Strict);
+        let mut booking_engine = BookingEngine::with_method(booking_method);
+
         for (i, directive) in directives.iter_mut().enumerate() {
             if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
+                match booking_engine.book_and_interpolate(txn) {
                     Ok(result) => {
+                        // Apply the booked transaction to update inventory for subsequent lot matching
+                        booking_engine.apply(&result.transaction);
                         *txn = result.transaction;
                     }
                     Err(e) => {
@@ -1562,11 +1573,23 @@ fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
         }
     }
 
-    // Run interpolation on transactions
+    // Run booking and interpolation on transactions (sequential)
+    // This fills in empty cost specs via lot matching, normalizes total prices,
+    // and interpolates missing amounts. Must be sequential because lot matching
+    // depends on prior inventory state.
+    let booking_method = load_result
+        .options
+        .booking_method
+        .parse()
+        .unwrap_or(rustledger_core::BookingMethod::Strict);
+    let mut booking_engine = BookingEngine::with_method(booking_method);
+
     for (i, directive) in directives.iter_mut().enumerate() {
         if let Directive::Transaction(txn) = directive {
-            match interpolate(txn) {
+            match booking_engine.book_and_interpolate(txn) {
                 Ok(result) => {
+                    // Apply the booked transaction to update inventory for subsequent lot matching
+                    booking_engine.apply(&result.transaction);
                     *txn = result.transaction;
                 }
                 Err(e) => {
