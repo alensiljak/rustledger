@@ -1654,7 +1654,7 @@ fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
         name_equity: load_result.options.name_equity.clone(),
         name_income: load_result.options.name_income.clone(),
         name_expenses: load_result.options.name_expenses.clone(),
-        documents: Vec::new(), // TODO: could add from options if needed
+        documents: load_result.options.documents.clone(),
         commodities: Vec::new(),
         booking_method: load_result.options.booking_method.clone(),
         display_precision: HashMap::new(), // TODO: could add from display_context
