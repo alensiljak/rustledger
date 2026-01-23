@@ -344,10 +344,26 @@ fn query_to_data(query: &Query) -> QueryData {
     }
 }
 
+/// Convert a `MetaValue` to a plain string representation (for custom directive values).
+fn meta_value_to_string(value: &MetaValue) -> String {
+    match value {
+        MetaValue::String(s) => s.clone(),
+        MetaValue::Number(n) => n.to_string(),
+        MetaValue::Date(d) => d.to_string(),
+        MetaValue::Account(a) => a.clone(),
+        MetaValue::Currency(c) => c.clone(),
+        MetaValue::Tag(t) => t.clone(),
+        MetaValue::Link(l) => l.clone(),
+        MetaValue::Amount(a) => format!("{} {}", a.number, a.currency),
+        MetaValue::Bool(b) => b.to_string(),
+        MetaValue::None => String::new(),
+    }
+}
+
 fn custom_to_data(custom: &Custom) -> CustomData {
     CustomData {
         custom_type: custom.custom_type.clone(),
-        values: custom.values.iter().map(|v| format!("{v:?}")).collect(),
+        values: custom.values.iter().map(meta_value_to_string).collect(),
         metadata: custom
             .meta
             .iter()
