@@ -29,6 +29,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
 jobs:
   compatibility-test:
@@ -65,16 +66,13 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tests/compat/files
-          # Cache key includes date to refresh weekly
-          key: compat-files-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}-week-${{ github.run_number }}
+          # Cache key includes hash of fetch script; v2 busts old broken caches
+          key: compat-files-v2-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}
           restore-keys: |
-            compat-files-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}-
-            compat-files-
+            compat-files-v2-
 
       - name: Fetch compatibility test files
         if: steps.cache-compat-files.outputs.cache-hit != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Downloading compatibility test files..."
           ./scripts/fetch-compat-test-files.sh
