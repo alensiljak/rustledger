@@ -2962,7 +2962,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "rustledger-ffi-py"
+name = "rustledger-ffi-wasi"
 version = "0.6.0"
 dependencies = [
  "rustledger-booking",

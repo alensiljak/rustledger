@@ -1,16 +1,16 @@
-//! Rustledger FFI for Python via WASI/wasmtime (Fava integration).
+//! Rustledger FFI via WASI - JSON API for embedding in any language.
 //!
-//! This is a simple CLI that can be run via wasmtime:
+//! This is a WASI module that can be run via wasmtime (or any WASI runtime):
 //!
 //! ```bash
 //! # Load (full directive output with metadata)
-//! cat ledger.beancount | wasmtime rustledger-ffi-py.wasm load
+//! cat ledger.beancount | wasmtime rustledger-ffi-wasi.wasm load
 //!
 //! # Validate
-//! cat ledger.beancount | wasmtime rustledger-ffi-py.wasm validate
+//! cat ledger.beancount | wasmtime rustledger-ffi-wasi.wasm validate
 //!
 //! # Query
-//! cat ledger.beancount | wasmtime rustledger-ffi-py.wasm query "SELECT account, sum(position) GROUP BY 1"
+//! cat ledger.beancount | wasmtime rustledger-ffi-wasi.wasm query "SELECT account, sum(position) GROUP BY 1"
 //! ```
 //!
 //! All output is JSON to stdout.
@@ -2070,7 +2070,7 @@ fn cmd_types() -> i32 {
 fn cmd_schema() -> i32 {
     let schema = serde_json::json!({
         "api_version": API_VERSION,
-        "description": "JSON Schema documentation for rustledger-ffi-py commands",
+        "description": "JSON Schema documentation for rustledger-ffi-wasi commands",
         "schemas": {
             "Amount": {
                 "type": "object",
@@ -2927,9 +2927,9 @@ fn cmd_version() -> i32 {
 }
 
 fn cmd_help() {
-    eprintln!("rustledger-ffi-py - Beancount FFI for Python/Fava via WASI");
+    eprintln!("rustledger-ffi-wasi - Rustledger FFI via WASI (JSON API for embedding)");
     eprintln!();
-    eprintln!("Usage: rustledger-ffi-py <command> [args...]");
+    eprintln!("Usage: rustledger-ffi-wasi <command> [args...]");
     eprintln!();
     eprintln!("Commands (stdin-based):");
     eprintln!("  load [filename]      Load source from stdin, output entries + options + errors");
@@ -2969,25 +2969,29 @@ fn cmd_help() {
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  # Stdin-based (if stdin works in your environment):");
-    eprintln!("  cat ledger.beancount | wasmtime rustledger-ffi-py.wasm load ledger.beancount");
-    eprintln!("  cat ledger.beancount | wasmtime rustledger-ffi-py.wasm query \"BALANCES\"");
+    eprintln!("  cat ledger.beancount | wasmtime rustledger-ffi-wasi.wasm load ledger.beancount");
+    eprintln!("  cat ledger.beancount | wasmtime rustledger-ffi-wasi.wasm query \"BALANCES\"");
     eprintln!();
     eprintln!("  # File-based (recommended for WASI/wasmtime):");
-    eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm load-file ledger.beancount");
+    eprintln!("  wasmtime --dir=. rustledger-ffi-wasi.wasm load-file ledger.beancount");
     eprintln!(
-        "  wasmtime --dir=. rustledger-ffi-py.wasm load-full ledger.beancount  # with includes"
+        "  wasmtime --dir=. rustledger-ffi-wasi.wasm load-full ledger.beancount  # with includes"
     );
-    eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm load-full ledger.beancount auto_accounts");
-    eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm query-file ledger.beancount \"JOURNAL\"");
     eprintln!(
-        "  wasmtime --dir=. rustledger-ffi-py.wasm clamp-file ledger.beancount 2024-01-01 2024-12-31"
+        "  wasmtime --dir=. rustledger-ffi-wasi.wasm load-full ledger.beancount auto_accounts"
+    );
+    eprintln!(
+        "  wasmtime --dir=. rustledger-ffi-wasi.wasm query-file ledger.beancount \"JOURNAL\""
+    );
+    eprintln!(
+        "  wasmtime --dir=. rustledger-ffi-wasi.wasm clamp-file ledger.beancount 2024-01-01 2024-12-31"
     );
     eprintln!();
     eprintln!("  # Utility commands:");
-    eprintln!("  wasmtime --dir=. rustledger-ffi-py.wasm is-encrypted ledger.beancount.gpg");
-    eprintln!("  rustledger-ffi-py get-account-type \"Assets:Bank:Checking\"");
-    eprintln!("  rustledger-ffi-py types");
-    eprintln!("  rustledger-ffi-py schema    # Get JSON Schema for all types");
+    eprintln!("  wasmtime --dir=. rustledger-ffi-wasi.wasm is-encrypted ledger.beancount.gpg");
+    eprintln!("  rustledger-ffi-wasi get-account-type \"Assets:Bank:Checking\"");
+    eprintln!("  rustledger-ffi-wasi types");
+    eprintln!("  rustledger-ffi-wasi schema    # Get JSON Schema for all types");
 }
 
 // =============================================================================

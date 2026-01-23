@@ -1,6 +1,6 @@
 [package]
-name = "rustledger-ffi-py"
-description = "Beancount FFI for Python via WASI/wasmtime (Fava integration)"
+name = "rustledger-ffi-wasi"
+description = "Rustledger FFI via WASI - JSON API for embedding in any language"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -13,7 +13,7 @@ authors.workspace = true
 readme = "../../README.md"
 
 [[bin]]
-name = "rustledger-ffi-py"
+name = "rustledger-ffi-wasi"
 path = "src/main.rs"
 
 [dependencies]
