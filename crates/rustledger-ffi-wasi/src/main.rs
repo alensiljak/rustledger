@@ -3068,6 +3068,372 @@ fn cmd_filter_entries(json_str: &str) -> i32 {
     output_json(&output)
 }
 
+// =============================================================================
+// Clamp Entries Command (operates on already-parsed JSON entries)
+// =============================================================================
+
+/// Input for clamp-entries command.
+#[derive(Deserialize)]
+struct ClampEntriesInput {
+    /// Array of entry objects (same format as load output).
+    entries: Vec<serde_json::Value>,
+    /// Begin date (inclusive) in ISO format (YYYY-MM-DD).
+    begin_date: String,
+    /// End date (exclusive) in ISO format (YYYY-MM-DD).
+    end_date: String,
+}
+
+/// Output for clamp-entries command.
+#[derive(Serialize)]
+struct ClampEntriesOutput {
+    api_version: &'static str,
+    entries: Vec<serde_json::Value>,
+    errors: Vec<Error>,
+}
+
+/// Clamp already-parsed entries by date range with summarization.
+///
+/// This is like `clamp` but operates on JSON entries instead of parsing source.
+/// It generates summarization transactions for opening balances, includes most
+/// recent prices before begin_date, and properly handles Income/Expense
+/// aggregation into Equity:Earnings:Previous.
+fn cmd_clamp_entries(json_str: &str) -> i32 {
+    // Parse input
+    let input: ClampEntriesInput = match serde_json::from_str(json_str) {
+        Ok(i) => i,
+        Err(e) => {
+            let output = ClampEntriesOutput {
+                api_version: API_VERSION,
+                entries: vec![],
+                errors: vec![parse_json_error(&e)],
+            };
+            return output_json(&output);
+        }
+    };
+
+    // Parse date boundaries
+    let Ok(begin) = NaiveDate::parse_from_str(&input.begin_date, "%Y-%m-%d") else {
+        let output = ClampEntriesOutput {
+            api_version: API_VERSION,
+            entries: vec![],
+            errors: vec![
+                Error::new(format!(
+                    "Invalid begin_date format: {}. Expected YYYY-MM-DD",
+                    input.begin_date
+                ))
+                .with_field("begin_date"),
+            ],
+        };
+        return output_json(&output);
+    };
+
+    let Ok(end) = NaiveDate::parse_from_str(&input.end_date, "%Y-%m-%d") else {
+        let output = ClampEntriesOutput {
+            api_version: API_VERSION,
+            entries: vec![],
+            errors: vec![
+                Error::new(format!(
+                    "Invalid end_date format: {}. Expected YYYY-MM-DD",
+                    input.end_date
+                ))
+                .with_field("end_date"),
+            ],
+        };
+        return output_json(&output);
+    };
+
+    // Track account balances for opening balances
+    let mut account_balances: HashMap<String, rustledger_core::Inventory> = HashMap::new();
+
+    // Track most recent price per commodity before begin_date
+    // Key: (base_currency, quote_currency), Value: (date, entry)
+    let mut latest_prices: HashMap<(String, String), (NaiveDate, serde_json::Value)> =
+        HashMap::new();
+
+    // Filter entries
+    let mut filtered_entries: Vec<serde_json::Value> = Vec::new();
+
+    for entry in input.entries {
+        // Extract entry type and date
+        let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        let date_str = entry.get("date").and_then(|d| d.as_str()).unwrap_or("");
+
+        let entry_date = match NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+            Ok(d) => d,
+            Err(_) => continue, // Skip entries with invalid dates
+        };
+
+        // Check if entry is before begin date - accumulate balances and track prices
+        if entry_date < begin {
+            // Accumulate transaction postings for opening balances
+            if entry_type == "transaction" {
+                if let Some(postings) = entry.get("postings").and_then(|p| p.as_array()) {
+                    for posting in postings {
+                        let account = posting
+                            .get("account")
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("");
+                        if account.is_empty() {
+                            continue;
+                        }
+
+                        // Parse units
+                        if let Some(units) = posting.get("units") {
+                            let number_str =
+                                units.get("number").and_then(|n| n.as_str()).unwrap_or("0");
+                            let currency =
+                                units.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+
+                            if let Ok(number) = rustledger_core::Decimal::from_str_exact(number_str)
+                            {
+                                let amount = rustledger_core::Amount::new(number, currency);
+                                let inv = account_balances.entry(account.to_string()).or_default();
+
+                                // Check for cost
+                                let position = if let Some(cost) = posting.get("cost") {
+                                    let cost_number_str =
+                                        cost.get("number").and_then(|n| n.as_str()).unwrap_or("0");
+                                    let cost_currency =
+                                        cost.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+                                    let cost_date_str = cost.get("date").and_then(|d| d.as_str());
+                                    let cost_label = cost
+                                        .get("label")
+                                        .and_then(|l| l.as_str())
+                                        .map(String::from);
+
+                                    if let Ok(cost_number) =
+                                        rustledger_core::Decimal::from_str_exact(cost_number_str)
+                                    {
+                                        let cost_date = cost_date_str.and_then(|s| {
+                                            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+                                        });
+                                        let cost = Cost {
+                                            number: cost_number,
+                                            currency: cost_currency.into(),
+                                            date: cost_date,
+                                            label: cost_label,
+                                        };
+                                        rustledger_core::Position::with_cost(amount, cost)
+                                    } else {
+                                        rustledger_core::Position::simple(amount)
+                                    }
+                                } else {
+                                    rustledger_core::Position::simple(amount)
+                                };
+
+                                inv.add(position);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Track most recent price per commodity before begin_date
+            if entry_type == "price" {
+                let currency = entry.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+                let quote_currency = entry
+                    .get("amount")
+                    .and_then(|a| a.get("currency"))
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+
+                if !currency.is_empty() && !quote_currency.is_empty() {
+                    let key = (currency.to_string(), quote_currency.to_string());
+                    let should_update = latest_prices
+                        .get(&key)
+                        .map_or(true, |(existing_date, _)| entry_date >= *existing_date);
+                    if should_update {
+                        latest_prices.insert(key, (entry_date, entry.clone()));
+                    }
+                }
+            }
+
+            // Keep Open directives that are before begin date (accounts need to be opened)
+            // Note: Commodity entries are NOT included (beancount's clamp_opt excludes them)
+            if entry_type == "open" {
+                filtered_entries.push(entry);
+            }
+            continue;
+        }
+
+        // Check if entry is after end date - skip
+        if entry_date >= end {
+            continue;
+        }
+
+        // Exclude Commodity entries from output (beancount's clamp_opt doesn't include them)
+        if entry_type == "commodity" {
+            continue;
+        }
+
+        // Include entry in filtered output
+        filtered_entries.push(entry);
+    }
+
+    // Collect most recent prices before begin_date
+    let mut price_entries: Vec<serde_json::Value> = latest_prices
+        .into_values()
+        .map(|(_, entry)| entry)
+        .collect();
+    // Sort prices by date for deterministic ordering
+    price_entries.sort_by(|a, b| {
+        let date_a = a.get("date").and_then(|d| d.as_str()).unwrap_or("");
+        let date_b = b.get("date").and_then(|d| d.as_str()).unwrap_or("");
+        date_a.cmp(date_b)
+    });
+
+    // Generate opening balance summarization transactions for begin date
+    let mut summarization_entries: Vec<serde_json::Value> = Vec::new();
+
+    // Summarization date is one day before begin date
+    let summarize_date = begin.pred_opt().unwrap_or(begin);
+    let summarize_date_str = summarize_date.to_string();
+
+    // Separate balance sheet accounts from income statement accounts
+    let mut balance_sheet_accounts: Vec<(&String, &rustledger_core::Inventory)> = Vec::new();
+    let mut retained_earnings: rustledger_core::Inventory = rustledger_core::Inventory::new();
+
+    for (account, inventory) in &account_balances {
+        if inventory.is_empty() {
+            continue;
+        }
+
+        if is_balance_sheet_account(account) {
+            balance_sheet_accounts.push((account, inventory));
+        } else if is_income_statement_account(account) {
+            // Aggregate Income/Expenses into retained earnings
+            for position in inventory.positions() {
+                retained_earnings.add(position.clone());
+            }
+        }
+    }
+
+    // Sort balance sheet accounts for deterministic ordering
+    balance_sheet_accounts.sort_by_key(|(account, _)| *account);
+
+    // Create summarization transactions for balance sheet accounts
+    for (index, (account, inventory)) in balance_sheet_accounts.iter().enumerate() {
+        // Create postings for each position
+        let postings: Vec<serde_json::Value> = inventory
+            .positions()
+            .iter()
+            .map(|p| {
+                let mut posting = serde_json::json!({
+                    "account": account,
+                    "units": {
+                        "number": p.units.number.to_string(),
+                        "currency": p.units.currency.to_string()
+                    }
+                });
+                if let Some(cost) = &p.cost {
+                    posting["cost"] = serde_json::json!({
+                        "number": cost.number.to_string(),
+                        "currency": cost.currency.to_string()
+                    });
+                    if let Some(date) = cost.date {
+                        posting["cost"]["date"] = serde_json::json!(date.to_string());
+                    }
+                    if let Some(label) = &cost.label {
+                        posting["cost"]["label"] = serde_json::json!(label);
+                    }
+                }
+                posting
+            })
+            .collect();
+
+        // Create hash for the summarization transaction
+        let hash_input = format!(
+            "S|{}|Opening balance for '{}' (Summarization)|{}",
+            summarize_date_str, account, index
+        );
+        let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+
+        summarization_entries.push(serde_json::json!({
+            "type": "transaction",
+            "date": summarize_date_str,
+            "flag": "S",
+            "narration": format!("Opening balance for '{}' (Summarization)", account),
+            "tags": [],
+            "links": [],
+            "postings": postings,
+            "meta": {
+                "filename": "<summarize>",
+                "lineno": index,
+                "hash": hash
+            }
+        }));
+    }
+
+    // Create aggregated Equity:Earnings:Previous transaction for Income/Expenses
+    if !retained_earnings.is_empty() {
+        let earnings_account = "Equity:Earnings:Previous";
+        let index = balance_sheet_accounts.len();
+
+        // Create postings for each position
+        let postings: Vec<serde_json::Value> = retained_earnings
+            .positions()
+            .iter()
+            .map(|p| {
+                let mut posting = serde_json::json!({
+                    "account": earnings_account,
+                    "units": {
+                        "number": p.units.number.to_string(),
+                        "currency": p.units.currency.to_string()
+                    }
+                });
+                if let Some(cost) = &p.cost {
+                    posting["cost"] = serde_json::json!({
+                        "number": cost.number.to_string(),
+                        "currency": cost.currency.to_string()
+                    });
+                    if let Some(date) = cost.date {
+                        posting["cost"]["date"] = serde_json::json!(date.to_string());
+                    }
+                    if let Some(label) = &cost.label {
+                        posting["cost"]["label"] = serde_json::json!(label);
+                    }
+                }
+                posting
+            })
+            .collect();
+
+        // Create hash for the retained earnings transaction
+        let hash_input = format!(
+            "S|{}|Opening balance for '{}' (Summarization)|{}",
+            summarize_date_str, earnings_account, index
+        );
+        let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+
+        summarization_entries.push(serde_json::json!({
+            "type": "transaction",
+            "date": summarize_date_str,
+            "flag": "S",
+            "narration": format!("Opening balance for '{}' (Summarization)", earnings_account),
+            "tags": [],
+            "links": [],
+            "postings": postings,
+            "meta": {
+                "filename": "<summarize>",
+                "lineno": index,
+                "hash": hash
+            }
+        }));
+    }
+
+    // Combine all entries: prices first, then summarizations, then filtered entries
+    let mut result_entries: Vec<serde_json::Value> = Vec::new();
+    result_entries.extend(price_entries);
+    result_entries.extend(summarization_entries);
+    result_entries.extend(filtered_entries);
+
+    let output = ClampEntriesOutput {
+        api_version: API_VERSION,
+        entries: result_entries,
+        errors: vec![],
+    };
+    output_json(&output)
+}
+
 fn cmd_version() -> i32 {
     let output = VersionOutput {
         api_version: API_VERSION,
@@ -3104,6 +3470,7 @@ fn cmd_help() {
     eprintln!("  create-entry             Create full entry with hash from minimal JSON");
     eprintln!("  create-entries           Create multiple entries from JSON array");
     eprintln!("  filter-entries           Filter entries by date range (avoids re-parsing)");
+    eprintln!("  clamp-entries            Clamp entries with summarizations (avoids re-parsing)");
     eprintln!();
     eprintln!("Utility commands:");
     eprintln!("  is-encrypted <path>       Check if file is GPG-encrypted");
@@ -3301,7 +3668,7 @@ fn main() {
         "schema" => cmd_schema(),
         // Entry manipulation commands (read JSON from stdin)
         "format-entry" | "format-entries" | "create-entry" | "create-entries"
-        | "filter-entries" => {
+        | "filter-entries" | "clamp-entries" => {
             let json_str = match read_source(None) {
                 Ok(s) => s,
                 Err(e) => {
@@ -3315,6 +3682,7 @@ fn main() {
                 "create-entry" => cmd_create_entry(&json_str),
                 "create-entries" => cmd_create_entries(&json_str),
                 "filter-entries" => cmd_filter_entries(&json_str),
+                "clamp-entries" => cmd_clamp_entries(&json_str),
                 _ => unreachable!(),
             }
         }
