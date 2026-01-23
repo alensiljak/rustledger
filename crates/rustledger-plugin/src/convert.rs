@@ -13,66 +13,93 @@ use crate::types::{
 };
 
 /// Convert a directive to its serializable wrapper.
+///
+/// Note: This does not set filename/lineno - those must be set by the caller
+/// if source location tracking is needed.
 pub fn directive_to_wrapper(directive: &Directive) -> DirectiveWrapper {
     match directive {
         Directive::Transaction(txn) => DirectiveWrapper {
             directive_type: "transaction".to_string(),
             date: txn.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Transaction(transaction_to_data(txn)),
         },
         Directive::Balance(bal) => DirectiveWrapper {
             directive_type: "balance".to_string(),
             date: bal.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Balance(balance_to_data(bal)),
         },
         Directive::Open(open) => DirectiveWrapper {
             directive_type: "open".to_string(),
             date: open.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Open(open_to_data(open)),
         },
         Directive::Close(close) => DirectiveWrapper {
             directive_type: "close".to_string(),
             date: close.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Close(close_to_data(close)),
         },
         Directive::Commodity(comm) => DirectiveWrapper {
             directive_type: "commodity".to_string(),
             date: comm.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Commodity(commodity_to_data(comm)),
         },
         Directive::Pad(pad) => DirectiveWrapper {
             directive_type: "pad".to_string(),
             date: pad.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Pad(pad_to_data(pad)),
         },
         Directive::Event(event) => DirectiveWrapper {
             directive_type: "event".to_string(),
             date: event.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Event(event_to_data(event)),
         },
         Directive::Note(note) => DirectiveWrapper {
             directive_type: "note".to_string(),
             date: note.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Note(note_to_data(note)),
         },
         Directive::Document(doc) => DirectiveWrapper {
             directive_type: "document".to_string(),
             date: doc.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Document(document_to_data(doc)),
         },
         Directive::Price(price) => DirectiveWrapper {
             directive_type: "price".to_string(),
             date: price.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Price(price_to_data(price)),
         },
         Directive::Query(query) => DirectiveWrapper {
             directive_type: "query".to_string(),
             date: query.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Query(query_to_data(query)),
         },
         Directive::Custom(custom) => DirectiveWrapper {
             directive_type: "custom".to_string(),
             date: custom.date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Custom(custom_to_data(custom)),
         },
     }

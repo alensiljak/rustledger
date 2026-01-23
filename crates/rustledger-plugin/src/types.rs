@@ -36,6 +36,14 @@ pub struct DirectiveWrapper {
     pub directive_type: String,
     /// The directive date (YYYY-MM-DD).
     pub date: String,
+    /// Source filename (for tracking through plugin processing).
+    /// If None, the directive was created by a plugin.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub filename: Option<String>,
+    /// Source line number (1-based).
+    /// If None, the directive was created by a plugin.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lineno: Option<u32>,
     /// Directive-specific data as a nested structure.
     #[serde(flatten)]
     pub data: DirectiveData,

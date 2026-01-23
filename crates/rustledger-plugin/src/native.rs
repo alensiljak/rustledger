@@ -142,6 +142,8 @@ impl NativePlugin for ImplicitPricesPlugin {
                                 let price_wrapper = DirectiveWrapper {
                                     directive_type: "price".to_string(),
                                     date: wrapper.date.clone(),
+                                    filename: None, // Plugin-generated
+                                    lineno: None,
                                     data: crate::types::DirectiveData::Price(
                                         crate::types::PriceData {
                                             currency: units.currency.clone(),
@@ -161,6 +163,8 @@ impl NativePlugin for ImplicitPricesPlugin {
                                 let price_wrapper = DirectiveWrapper {
                                     directive_type: "price".to_string(),
                                     date: wrapper.date.clone(),
+                                    filename: None, // Plugin-generated
+                                    lineno: None,
                                     data: crate::types::DirectiveData::Price(
                                         crate::types::PriceData {
                                             currency: units.currency.clone(),
@@ -373,6 +377,8 @@ mod auto_tag_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -505,6 +511,8 @@ impl NativePlugin for AutoAccountsPlugin {
                 new_directives.push(DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: date.clone(),
+                    filename: None, // Plugin-generated directive
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: account.clone(),
                         currencies: vec![],
@@ -863,6 +871,8 @@ fn scan_documents(
                                     directives.push(DirectiveWrapper {
                                         directive_type: "document".to_string(),
                                         date: date_str.to_string(),
+                                        filename: None, // Plugin-generated
+                                        lineno: None,
                                         data: DirectiveData::Document(DocumentData {
                                             account,
                                             path: full_path,
@@ -923,6 +933,8 @@ impl NativePlugin for CheckClosingPlugin {
                             new_directives.push(DirectiveWrapper {
                                 directive_type: "balance".to_string(),
                                 date: next_date,
+                                filename: None, // Plugin-generated
+                                lineno: None,
                                 data: DirectiveData::Balance(BalanceData {
                                     account: posting.account.clone(),
                                     amount: AmountData {
@@ -1044,6 +1056,8 @@ impl NativePlugin for CloseTreePlugin {
                         new_directives.push(DirectiveWrapper {
                             directive_type: "close".to_string(),
                             date: close_date.clone(),
+                            filename: None, // Plugin-generated
+                            lineno: None,
                             data: DirectiveData::Close(CloseData {
                                 account: account.clone(),
                             }),
@@ -1498,6 +1512,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
@@ -1507,6 +1523,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Unused".to_string(),
                         currencies: vec![],
@@ -1516,6 +1534,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1559,6 +1579,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
@@ -1568,6 +1590,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1609,6 +1633,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:OldAccount".to_string(),
                         currencies: vec![],
@@ -1618,6 +1644,8 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:OldAccount".to_string(),
                     }),
@@ -1722,6 +1750,8 @@ impl NativePlugin for CheckDrainedPlugin {
                             new_directives.push(DirectiveWrapper {
                                 directive_type: "balance".to_string(),
                                 date: next_date.clone(),
+                                filename: None, // Plugin-generated
+                                lineno: None,
                                 data: DirectiveData::Balance(BalanceData {
                                     account: data.account.clone(),
                                     amount: AmountData {
@@ -1761,6 +1791,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec!["USD".to_string()],
@@ -1770,6 +1802,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-06-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1793,6 +1827,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
                     }),
@@ -1837,6 +1873,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Income:Salary".to_string(),
                         currencies: vec!["USD".to_string()],
@@ -1846,6 +1884,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Income:Salary".to_string(),
                     }),
@@ -1878,6 +1918,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
@@ -1887,6 +1929,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-06-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1910,6 +1954,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-07-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1933,6 +1979,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
                     }),
@@ -2146,6 +2194,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![], // Missing 'name'
@@ -2172,6 +2222,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2199,6 +2251,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2228,6 +2282,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2419,6 +2475,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2449,6 +2507,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2497,6 +2557,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2527,6 +2589,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2577,6 +2641,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2607,6 +2673,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2637,6 +2705,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2772,6 +2842,8 @@ impl NativePlugin for CurrencyAccountsPlugin {
                     new_directives.push(DirectiveWrapper {
                         directive_type: wrapper.directive_type.clone(),
                         date: wrapper.date.clone(),
+                        filename: wrapper.filename.clone(), // Preserve original location
+                        lineno: wrapper.lineno,
                         data: DirectiveData::Transaction(modified_txn),
                     });
                 } else {
@@ -2803,6 +2875,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -2882,6 +2956,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -2939,6 +3015,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,

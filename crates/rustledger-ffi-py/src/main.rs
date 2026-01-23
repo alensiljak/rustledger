@@ -1582,8 +1582,23 @@ fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
 
         for plugin_name in run_plugins {
             if let Some(plugin) = registry.find(plugin_name) {
-                // Convert directives to wrappers for plugin
-                let wrappers: Vec<_> = directives.iter().map(directive_to_wrapper).collect();
+                // Convert directives to wrappers for plugin, preserving source locations
+                let wrappers: Vec<_> = directives
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| {
+                        let mut wrapper = directive_to_wrapper(d);
+                        // Preserve the source location through the plugin
+                        wrapper.filename = Some(
+                            directive_files
+                                .get(i)
+                                .cloned()
+                                .unwrap_or_else(|| "<unknown>".to_string()),
+                        );
+                        wrapper.lineno = Some(directive_lines.get(i).copied().unwrap_or(0));
+                        wrapper
+                    })
+                    .collect();
 
                 let input = PluginInput {
                     directives: wrappers,
@@ -1601,17 +1616,29 @@ fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
                     errors.push(Error::new(err.message));
                 }
 
-                // Convert wrappers back to directives
-                // After plugin execution, line numbers are reset (plugin may add/reorder entries)
-                directives = output
-                    .directives
-                    .iter()
-                    .filter_map(|w| wrapper_to_directive(w).ok())
-                    .collect();
+                // Convert wrappers back to directives, extracting source locations
+                // Directives created by plugins will have filename=None, lineno=None
+                let mut new_directives = Vec::new();
+                let mut new_lines = Vec::new();
+                let mut new_files = Vec::new();
 
-                // Reset line tracking since plugin may have changed order
-                directive_lines = vec![0; directives.len()];
-                directive_files = vec!["<plugin>".to_string(); directives.len()];
+                for wrapper in &output.directives {
+                    if let Ok(directive) = wrapper_to_directive(wrapper) {
+                        new_directives.push(directive);
+                        // Use preserved location, or "<plugin>" for plugin-generated entries
+                        new_lines.push(wrapper.lineno.unwrap_or(0));
+                        new_files.push(
+                            wrapper
+                                .filename
+                                .clone()
+                                .unwrap_or_else(|| "<plugin>".to_string()),
+                        );
+                    }
+                }
+
+                directives = new_directives;
+                directive_lines = new_lines;
+                directive_files = new_files;
             } else {
                 errors.push(Error::new(format!("Unknown plugin: {plugin_name}")));
             }
