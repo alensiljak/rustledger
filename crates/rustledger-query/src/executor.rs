@@ -1939,29 +1939,12 @@ impl<'a> Executor<'a> {
                 // Include transaction metadata
                 let mut meta_obj = BTreeMap::new();
                 for (k, v) in &txn.meta {
-                    meta_obj.insert(k.clone(), Self::meta_value_to_value(v));
+                    meta_obj.insert(k.clone(), Self::meta_value_to_value(Some(v)));
                 }
                 obj.insert("meta".to_string(), Value::Object(meta_obj));
                 Ok(Value::Object(obj))
             }
             _ => Err(QueryError::UnknownColumn(name.to_string())),
-        }
-    }
-
-    /// Convert a `MetaValue` to a `Value`.
-    fn meta_value_to_value(mv: &rustledger_core::MetaValue) -> Value {
-        use rustledger_core::MetaValue;
-        match mv {
-            MetaValue::String(s) => Value::String(s.clone()),
-            MetaValue::Number(n) => Value::Number(*n),
-            MetaValue::Bool(b) => Value::Boolean(*b),
-            MetaValue::Date(d) => Value::Date(*d),
-            MetaValue::Currency(c) => Value::String(c.clone()),
-            MetaValue::Amount(a) => Value::Amount(a.clone()),
-            MetaValue::Account(a) => Value::String(a.clone()),
-            MetaValue::Tag(t) => Value::String(t.clone()),
-            MetaValue::Link(l) => Value::String(l.clone()),
-            MetaValue::None => Value::Null,
         }
     }
 
@@ -2834,7 +2817,7 @@ impl<'a> Executor<'a> {
                 Value::String(s) => parts.push(s),
                 Value::StringSet(ss) => parts.extend(ss),
                 Value::Null => {} // Skip nulls
-                other => parts.push(self.value_to_string(&other)),
+                other => parts.push(Self::value_to_string(&other)),
             }
         }
 

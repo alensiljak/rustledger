@@ -1761,7 +1761,7 @@ fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
                 api_version: API_VERSION,
                 columns: vec![],
                 rows: vec![],
-                errors: vec![Error::new(format!("Query parse error: {e}"))],
+                errors: vec![Error::new(e.to_string())],
             };
         }
     };

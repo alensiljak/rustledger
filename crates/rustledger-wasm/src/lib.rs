@@ -578,7 +578,7 @@ pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
             let result = QueryResult {
                 columns: Vec::new(),
                 rows: Vec::new(),
-                errors: vec![Error::new(format!("Query parse error: {e}"))],
+                errors: vec![Error::new(e.to_string())],
             };
             return to_js(&result);
         }
@@ -949,7 +949,7 @@ impl ParsedLedger {
                 let result = QueryResult {
                     columns: Vec::new(),
                     rows: Vec::new(),
-                    errors: vec![Error::new(format!("Query parse error: {e}"))],
+                    errors: vec![Error::new(e.to_string())],
                 };
                 return to_js(&result);
             }
