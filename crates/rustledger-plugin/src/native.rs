@@ -507,22 +507,27 @@ impl NativePlugin for AutoAccountsPlugin {
         }
 
         // Generate open directives for accounts without explicit open
+        // Sort accounts for deterministic ordering (matches Python beancount behavior)
+        let mut accounts_to_open: Vec<_> = account_first_use
+            .iter()
+            .filter(|(account, _)| !opened_accounts.contains(*account))
+            .collect();
+        accounts_to_open.sort_by_key(|(account, _)| *account);
+
         let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
-        for (account, date) in &account_first_use {
-            if !opened_accounts.contains(account) {
-                new_directives.push(DirectiveWrapper {
-                    directive_type: "open".to_string(),
-                    date: date.clone(),
-                    filename: None, // Plugin-generated directive
-                    lineno: None,
-                    data: DirectiveData::Open(OpenData {
-                        account: account.clone(),
-                        currencies: vec![],
-                        booking: None,
-                        metadata: vec![],
-                    }),
-                });
-            }
+        for (index, (account, date)) in accounts_to_open.into_iter().enumerate() {
+            new_directives.push(DirectiveWrapper {
+                directive_type: "open".to_string(),
+                date: date.clone(),
+                filename: Some("<auto_accounts>".to_string()),
+                lineno: Some(index as u32), // Use index as lineno for deterministic sorting
+                data: DirectiveData::Open(OpenData {
+                    account: account.clone(),
+                    currencies: vec![],
+                    booking: None,
+                    metadata: vec![],
+                }),
+            });
         }
 
         // Add existing directives
