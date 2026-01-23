@@ -2,8 +2,8 @@
 """
 Generate Vega benchmark charts from history JSON files.
 
-This script reads benchmark history and generates Vega specs that can be
-rendered to SVG using the vega-cli tools.
+This script loads the Vega spec template from .github/badges/validation-spec.json
+and populates it with benchmark data.
 
 Usage:
     # Generate specs from history files
@@ -24,7 +24,15 @@ from datetime import datetime
 from pathlib import Path
 
 
-def generate_vega_bar_spec(
+def load_spec_template(template_path: Path) -> dict:
+    """Load a Vega spec template from file."""
+    if not template_path.exists():
+        raise FileNotFoundError(f"Template not found: {template_path}")
+    return json.loads(template_path.read_text())
+
+
+def populate_spec(
+    spec: dict,
     title: str,
     subtitle: str,
     rustledger_ms: float,
@@ -33,209 +41,36 @@ def generate_vega_bar_spec(
     beancount_ms: float,
     bench_date: str,
 ) -> dict:
-    """Generate a Vega bar chart spec for benchmark comparison."""
+    """Populate a Vega spec template with benchmark data."""
     max_ms = max(rustledger_ms, ledger_ms, hledger_ms, beancount_ms)
 
-    return {
-        "$schema": "https://vega.github.io/schema/vega/v5.json",
-        "width": 550,
-        "height": 150,
-        "padding": {"left": 10, "right": 10, "top": 10, "bottom": 10},
-        "background": "#0d1117",
-        "config": {"text": {"font": "JetBrains Mono, Fira Code, SF Mono, Menlo, monospace"}},
-        "signals": [
-            {"name": "rustledger_ms", "value": rustledger_ms},
-            {"name": "max_ms", "value": max_ms},
-            {"name": "bench_date", "value": bench_date},
-            {"name": "smallBarThreshold", "value": 200},
-        ],
-        "data": [
-            {
-                "name": "benchmarks",
-                "values": [
-                    {"tool": tool, "label": label, "time_ms": time_ms, "baseline_ms": beancount_ms, "color": color}
-                    for tool, label, time_ms, color in [
-                        ("rustledger", "rustledger", rustledger_ms, "#00d4aa"),
-                        ("ledger", "ledger (C++)", ledger_ms, "#9b59b6"),
-                        ("hledger", "hledger (Haskell)", hledger_ms, "#e74c3c"),
-                        ("beancount", "beancount (Python)", beancount_ms, "#f4b942"),
-                    ]
-                ],
-                "transform": [
-                    {"type": "formula", "as": "slower_factor", "expr": "datum.time_ms / rustledger_ms"},
-                    {"type": "formula", "as": "faster_factor", "expr": "datum.baseline_ms / datum.time_ms"},
-                    {"type": "formula", "as": "bar_px", "expr": "datum.time_ms / max_ms * width"},
-                    {"type": "formula", "as": "is_small", "expr": "datum.bar_px < smallBarThreshold"},
-                ],
-            }
-        ],
-        "scales": [
-            {
-                "name": "y",
-                "type": "band",
-                "domain": {"data": "benchmarks", "field": "label"},
-                "range": "height",
-                "padding": 0.3,
-            },
-            {
-                "name": "x",
-                "type": "linear",
-                "domain": [0, {"signal": "max_ms"}],
-                "range": [0, {"signal": "width"}],
-            },
-        ],
-        "marks": [
-            # Main bars
-            {
-                "type": "rect",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label"},
-                        "height": {"scale": "y", "band": 1},
-                        "x": {"value": 0},
-                        "x2": {"scale": "x", "field": "time_ms"},
-                        "cornerRadiusTopRight": {"value": 5},
-                        "cornerRadiusBottomRight": {"value": 5},
-                        "fill": {"field": "color"},
-                        "fillOpacity": {"signal": "datum.tool == 'rustledger' ? 1 : 0.85"},
-                    }
-                },
-            },
-            # Highlight glow for rustledger
-            {
-                "type": "rect",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "offset": -2},
-                        "height": {"scale": "y", "band": 1, "offset": 4},
-                        "x": {"value": -2},
-                        "x2": {"scale": "x", "field": "time_ms", "offset": 2},
-                        "cornerRadius": {"value": 6},
-                        "fill": {"signal": "datum.tool == 'rustledger' ? datum.color : 'transparent'"},
-                        "fillOpacity": {"value": 0.12},
-                    }
-                },
-            },
-            # Labels for non-rustledger tools
-            {
-                "type": "text",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "band": 0.5},
-                        "x": {"value": -14},
-                        "text": {"signal": "datum.tool == 'rustledger' ? '' : datum.label"},
-                        "fill": {"value": "#e6edf3"},
-                        "fontSize": {"value": 14},
-                        "fontWeight": {"value": 600},
-                        "baseline": {"value": "middle"},
-                        "align": {"value": "right"},
-                    }
-                },
-            },
-            # "ledger" part of rustledger label
-            {
-                "type": "text",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "band": 0.5},
-                        "x": {"value": -18},
-                        "text": {"signal": "datum.tool == 'rustledger' ? 'ledger' : ''"},
-                        "fill": {"value": "#e6edf3"},
-                        "fontSize": {"value": 14},
-                        "fontWeight": {"value": 600},
-                        "baseline": {"value": "middle"},
-                        "align": {"value": "right"},
-                    }
-                },
-            },
-            # "rust" part of rustledger label (orange)
-            {
-                "type": "text",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "band": 0.5},
-                        "x": {"value": -72},
-                        "text": {"signal": "datum.tool == 'rustledger' ? 'rust' : ''"},
-                        "fill": {"value": "#f74c00"},
-                        "fontSize": {"value": 14},
-                        "fontWeight": {"value": 600},
-                        "baseline": {"value": "middle"},
-                        "align": {"value": "right"},
-                    }
-                },
-            },
-            # Comparison text (inside or outside bar depending on size)
-            {
-                "type": "text",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "band": 0.5},
-                        "x": {"signal": "datum.is_small ? scale('x', datum.time_ms) + 10 : 8"},
-                        "text": {
-                            "signal": "datum.is_small ? (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x faster than beancount · ' + format(datum.time_ms, '.0f') + ' ms' : format(datum.slower_factor, '.1f') + 'x slower than rustledger · ' + format(datum.time_ms, '.0f') + ' ms') : (datum.tool == 'rustledger' ? format(datum.faster_factor, '.0f') + 'x faster than beancount' : format(datum.slower_factor, '.1f') + 'x slower than rustledger')"
-                        },
-                        "fill": {
-                            "signal": "datum.is_small ? (datum.tool == 'rustledger' ? '#f74c00' : '#e6edf3') : '#000000'"
-                        },
-                        "fontSize": {"value": 18},
-                        "fontWeight": {"value": 700},
-                        "baseline": {"value": "middle"},
-                        "align": {"value": "left"},
-                    }
-                },
-            },
-            # Time label inside large bars
-            {
-                "type": "text",
-                "from": {"data": "benchmarks"},
-                "encode": {
-                    "enter": {
-                        "y": {"scale": "y", "field": "label", "band": 0.5},
-                        "x": {"signal": "scale('x', datum.time_ms) - 8"},
-                        "text": {"signal": "datum.is_small ? '' : format(datum.time_ms, '.0f') + ' ms'"},
-                        "fill": {"value": "#000000"},
-                        "fontSize": {"value": 18},
-                        "fontWeight": {"value": 700},
-                        "baseline": {"value": "middle"},
-                        "align": {"value": "right"},
-                    }
-                },
-            },
-            # Footer with date
-            {
-                "type": "text",
-                "encode": {
-                    "enter": {
-                        "x": {"signal": "width"},
-                        "y": {"signal": "height + 2"},
-                        "text": {"signal": "'measured ' + bench_date + ' · hyperfine'"},
-                        "fill": {"value": "#6e7681"},
-                        "fontSize": {"value": 12},
-                        "baseline": {"value": "top"},
-                        "align": {"value": "right"},
-                    }
-                },
-            },
-        ],
-        "title": {
-            "text": title,
-            "subtitle": subtitle,
-            "font": "JetBrains Mono, Fira Code, SF Mono, Menlo, monospace",
-            "color": "#e6edf3",
-            "subtitleColor": "#6e7681",
-            "fontSize": 16,
-            "subtitleFontSize": 16,
-            "fontWeight": 600,
-            "subtitleFontWeight": "normal",
-            "subtitlePadding": 4,
-        },
+    # Update signals
+    signal_updates = {
+        "rustledger_ms": rustledger_ms,
+        "max_ms": max_ms,
+        "bench_date": bench_date,
     }
+    for signal in spec.get("signals", []):
+        if signal["name"] in signal_updates:
+            signal["value"] = signal_updates[signal["name"]]
+
+    # Update data values
+    benchmark_values = [
+        {"tool": "rustledger", "label": "rustledger", "time_ms": rustledger_ms, "baseline_ms": beancount_ms, "color": "#00d4aa"},
+        {"tool": "ledger", "label": "ledger (C++)", "time_ms": ledger_ms, "baseline_ms": beancount_ms, "color": "#9b59b6"},
+        {"tool": "hledger", "label": "hledger (Haskell)", "time_ms": hledger_ms, "baseline_ms": beancount_ms, "color": "#e74c3c"},
+        {"tool": "beancount", "label": "beancount (Python)", "time_ms": beancount_ms, "baseline_ms": beancount_ms, "color": "#f4b942"},
+    ]
+    for data_item in spec.get("data", []):
+        if data_item.get("name") == "benchmarks":
+            data_item["values"] = benchmark_values
+
+    # Update title
+    if "title" in spec:
+        spec["title"]["text"] = title
+        spec["title"]["subtitle"] = subtitle
+
+    return spec
 
 
 def main():
@@ -248,6 +83,11 @@ def main():
     parser.add_argument("--render", action="store_true", help="Render to SVG using vg2svg")
 
     args = parser.parse_args()
+
+    # Determine script location to find templates
+    script_dir = Path(__file__).parent
+    repo_root = script_dir.parent
+    template_dir = repo_root / ".github" / "badges"
 
     # Use provided values or load from history
     if all([args.rustledger, args.ledger, args.hledger, args.beancount]):
@@ -280,8 +120,18 @@ def main():
         bal_data = bal_history[-1] if bal_history else val_data
         bench_date = val_data.get("date", datetime.now().strftime("%Y-%m-%d"))
 
+    # Load spec template
+    template_path = template_dir / "validation-spec.json"
+    try:
+        spec_template = load_spec_template(template_path)
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
     # Generate validation chart
-    val_spec = generate_vega_bar_spec(
+    import copy
+    val_spec = populate_spec(
+        copy.deepcopy(spec_template),
         title="Validation: Parse + Check (10K transactions)",
         subtitle="rustledger vs other plain-text accounting tools",
         rustledger_ms=val_data["rustledger_ms"],
@@ -297,7 +147,8 @@ def main():
     print(f"Generated: {val_spec_path}")
 
     # Generate balance chart
-    bal_spec = generate_vega_bar_spec(
+    bal_spec = populate_spec(
+        copy.deepcopy(spec_template),
         title="Balance Report: Parse + Compute (10K transactions)",
         subtitle="rustledger vs other plain-text accounting tools",
         rustledger_ms=bal_data.get("rustledger_ms", val_data["rustledger_ms"]),
