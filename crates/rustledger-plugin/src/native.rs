@@ -4,8 +4,8 @@
 //! They implement the same interface as WASM plugins.
 
 use crate::types::{
-    DirectiveData, DirectiveWrapper, DocumentData, OpenData, PluginError, PluginInput,
-    PluginOutput, TransactionData,
+    DirectiveData, DirectiveWrapper, DocumentData, MetaValueData, OpenData, PluginError,
+    PluginInput, PluginOutput, TransactionData,
 };
 
 /// Trait for native plugins.
@@ -1467,15 +1467,9 @@ impl NativePlugin for NoUnusedPlugin {
                 }
                 DirectiveData::Custom(data) => {
                     // Check custom directive values for account references
-                    // Account names start with standard prefixes
                     for value in &data.values {
-                        if value.starts_with("Assets:")
-                            || value.starts_with("Liabilities:")
-                            || value.starts_with("Equity:")
-                            || value.starts_with("Income:")
-                            || value.starts_with("Expenses:")
-                        {
-                            used_accounts.insert(value.clone());
+                        if let MetaValueData::Account(account) = value {
+                            used_accounts.insert(account.clone());
                         }
                     }
                 }

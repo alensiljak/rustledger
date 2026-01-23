@@ -324,8 +324,8 @@ pub struct QueryData {
 pub struct CustomData {
     /// Custom type.
     pub custom_type: String,
-    /// Values as strings.
-    pub values: Vec<String>,
+    /// Values preserving their types (Account, Amount, String, etc.).
+    pub values: Vec<MetaValueData>,
     /// Metadata key-value pairs.
     #[serde(default)]
     pub metadata: Vec<(String, MetaValueData)>,
