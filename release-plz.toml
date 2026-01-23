@@ -10,7 +10,11 @@
 [workspace]
 # Use conventional commits to determine version bumps
 # feat: -> minor, fix: -> patch, BREAKING CHANGE: -> major
-semver_check = true
+#
+# TEMPORARILY DISABLED: cargo-semver-checks 0.45.0 doesn't support rustdoc v57
+# produced by Rust 1.93.0+. Re-enable when cargo-semver-checks is updated.
+# See: https://github.com/obi1kenobi/cargo-semver-checks/issues/1553
+semver_check = false
 
 # Create changelog entries from conventional commits
 changelog_update = true

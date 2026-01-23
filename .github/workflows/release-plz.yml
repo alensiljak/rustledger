@@ -48,12 +48,8 @@ jobs:
           # Use PAT for checkout so PR triggers CI workflows
           token: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
 
-      # Pin to 1.92.0 because cargo-semver-checks 0.45.0 doesn't support rustdoc format v57
-      # which is produced by Rust 1.93.0+. Remove this pin once cargo-semver-checks is updated.
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
-        with:
-          toolchain: 1.92.0
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
       # Debug: Run cargo-semver-checks directly to diagnose issues
       - name: Debug - Run cargo-semver-checks directly
@@ -193,11 +189,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Pin to 1.92.0 for consistency with release-plz job (see comment above)
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7
-        with:
-          toolchain: 1.92.0
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
       - name: Run release-plz release
         uses: release-plz/action@99b33d83e322fcd1b1fa126f8c4a74744aae3c8d # v0.5
