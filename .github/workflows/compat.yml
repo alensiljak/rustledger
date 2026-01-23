@@ -73,6 +73,8 @@ jobs:
 
       - name: Fetch compatibility test files
         if: steps.cache-compat-files.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           echo "Downloading compatibility test files..."
           ./scripts/fetch-compat-test-files.sh
