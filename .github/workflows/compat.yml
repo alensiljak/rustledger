@@ -839,16 +839,16 @@ jobs:
               resultsYaml = 'Results file not found';
             }
 
-            // Parse key metrics from the summary
-            const checkMatch = resultsYaml.match(/check_match_rate:\s*([\d.]+)/);
-            const bqlMatch = resultsYaml.match(/bql_match_rate:\s*([\d.]+)/);
+            // Parse key metrics from the summary section
+            const checkMatch = resultsYaml.match(/check_exit_match_pct:\s*([\d.]+)/);
+            const bqlMatch = resultsYaml.match(/bql_match_pct:\s*([\d.]+)/);
             const totalFiles = resultsYaml.match(/total_files:\s*(\d+)/);
-            const passedFiles = resultsYaml.match(/passed_files:\s*(\d+)/);
+            const fullMatch = resultsYaml.match(/full_match_pct:\s*([\d.]+)/);
 
             const checkRate = checkMatch ? checkMatch[1] : 'N/A';
             const bqlRate = bqlMatch ? bqlMatch[1] : 'N/A';
             const total = totalFiles ? totalFiles[1] : '?';
-            const passed = passedFiles ? passedFiles[1] : '?';
+            const fullRate = fullMatch ? fullMatch[1] : 'N/A';
 
             const status = parseFloat(checkRate) >= 99 && parseFloat(bqlRate) >= 99 ? '✅' : '⚠️';
 
@@ -858,7 +858,8 @@ jobs:
             |--------|--------|
             | **Check Compatibility** | ${checkRate}% |
             | **BQL Compatibility** | ${bqlRate}% |
-            | **Files Passed** | ${passed}/${total} |
+            | **Full AST Match** | ${fullRate}% |
+            | **Total Files** | ${total} |
 
             <details>
             <summary>What's tested</summary>
