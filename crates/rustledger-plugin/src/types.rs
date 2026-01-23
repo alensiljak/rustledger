@@ -402,3 +402,45 @@ impl PluginOutput {
         }
     }
 }
+
+impl DirectiveWrapper {
+    /// Returns the sort order for directive types, matching Python beancount's `SORT_ORDER`.
+    ///
+    /// Order ensures logical processing:
+    /// - Open (-2): Accounts must be opened first
+    /// - Balance (-1): Balance assertions checked before transactions
+    /// - Default (0): Transactions, Commodity, Pad, Event, Note, Price, Query, Custom
+    /// - Document (1): Documents recorded after transactions
+    /// - Close (2): Accounts closed last
+    pub const fn type_sort_order(&self) -> i8 {
+        match &self.data {
+            DirectiveData::Open(_) => -2,
+            DirectiveData::Balance(_) => -1,
+            DirectiveData::Document(_) => 1,
+            DirectiveData::Close(_) => 2,
+            _ => 0, // Transaction, Commodity, Pad, Event, Note, Price, Query, Custom
+        }
+    }
+
+    /// Returns a sort key tuple matching Python beancount's `entry_sortkey()`.
+    ///
+    /// Sorts by: (date, `type_order`, lineno)
+    /// This ensures deterministic ordering for entries on the same date.
+    pub fn sort_key(&self) -> (&str, i8, u32) {
+        (
+            &self.date,
+            self.type_sort_order(),
+            self.lineno.unwrap_or(u32::MAX), // Plugin-generated entries sort last
+        )
+    }
+}
+
+/// Sort directives using beancount's standard ordering.
+///
+/// This matches Python beancount's `entry_sortkey()`:
+/// 1. Primary: date
+/// 2. Secondary: directive type (Open, Balance, default, Document, Close)
+/// 3. Tertiary: line number (preserves file order for same-date, same-type entries)
+pub fn sort_directives(directives: &mut [DirectiveWrapper]) {
+    directives.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
+}

@@ -5,7 +5,7 @@
 
 use crate::types::{
     DirectiveData, DirectiveWrapper, DocumentData, MetaValueData, OpenData, PluginError,
-    PluginInput, PluginOutput, TransactionData,
+    PluginInput, PluginOutput, TransactionData, sort_directives,
 };
 
 /// Trait for native plugins.
@@ -528,19 +528,8 @@ impl NativePlugin for AutoAccountsPlugin {
         // Add existing directives
         new_directives.extend(input.directives);
 
-        // Sort by date, with Open directives before other types on the same date.
-        // This ensures accounts are opened before they're used.
-        new_directives.sort_by(|a, b| {
-            match a.date.cmp(&b.date) {
-                std::cmp::Ordering::Equal => {
-                    // On same date, Open comes first
-                    let a_is_open = a.directive_type == "open";
-                    let b_is_open = b.directive_type == "open";
-                    b_is_open.cmp(&a_is_open) // true > false, so opens come first
-                }
-                other => other,
-            }
-        });
+        // Sort using beancount's standard ordering: date, type order, line number
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -814,8 +803,8 @@ impl NativePlugin for DocumentDiscoveryPlugin {
         let mut all_directives = input.directives;
         all_directives.extend(new_directives);
 
-        // Sort by date
-        all_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut all_directives);
 
         PluginOutput {
             directives: all_directives,
@@ -955,8 +944,8 @@ impl NativePlugin for CheckClosingPlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -1073,8 +1062,8 @@ impl NativePlugin for CloseTreePlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -1773,8 +1762,8 @@ impl NativePlugin for CheckDrainedPlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
