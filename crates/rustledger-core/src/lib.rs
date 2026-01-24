@@ -50,6 +50,7 @@ pub mod format;
 pub mod intern;
 pub mod inventory;
 pub mod position;
+pub mod synthetic;
 
 pub use amount::{Amount, IncompleteAmount};
 pub use cost::{Cost, CostSpec};

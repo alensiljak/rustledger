@@ -78,15 +78,25 @@ jobs:
           ./scripts/fetch-compat-test-files.sh
           echo "Downloaded $(find tests/compat/files -name '*.beancount' | wc -l) test files"
 
-      - name: Generate synthetic test files
-        run: |
-          echo "Generating synthetic test files..."
-          NUM_FILES=50 ./scripts/generate-proptest-fixtures.sh
-          echo "Generated $(find tests/compat/synthetic -name '*.beancount' 2>/dev/null | wc -l) synthetic files"
-
       - name: Build rustledger
         run: |
           cargo build --release -p rustledger --no-default-features
+
+      - name: Generate synthetic test files
+        run: |
+          echo "Generating synthetic test files..."
+          # Use rledger-doctor to generate synthetic files with manifest
+          ./target/release/rledger-doctor generate-synthetic \
+            --output tests/compat/synthetic \
+            --count 50 \
+            --seed 12345 \
+            --manifest \
+            --skip-validation
+          echo "Generated $(find tests/compat/synthetic -name '*.beancount' 2>/dev/null | wc -l) synthetic files"
+          # Also run bean-example if available (fallback to shell script)
+          if command -v bean-example &> /dev/null; then
+            ./scripts/generate-proptest-fixtures.sh || true
+          fi
 
       - name: Verify tool installations
         run: |
@@ -139,6 +149,18 @@ jobs:
           def get_category(file_path: Path) -> str:
               parts = file_path.parts
               for part in parts:
+                  # Synthetic test files (edge cases, proptest, bean-example)
+                  if part == "synthetic":
+                      # Further categorize by filename prefix
+                      filename = file_path.name
+                      if filename.startswith("edge_case_"):
+                          return "synthetic-edge-cases"
+                      elif filename.startswith("synthetic_"):
+                          return "synthetic-proptest"
+                      elif filename.startswith("example_"):
+                          return "synthetic-bean-example"
+                      return "synthetic-other"
+                  # Real-world test categories
                   if part in ("parser", "validation", "plugins", "real-world", "edge-cases"):
                       return part
               return "other"
@@ -349,6 +371,18 @@ jobs:
                       if prev_match and not r.check_match:
                           regressions.append(r.file)
 
+          # === Calculate synthetic vs real-world stats ===
+          synthetic_results = [r for r in results if r.category.startswith("synthetic")]
+          realworld_results = [r for r in results if not r.category.startswith("synthetic")]
+
+          synthetic_total = len(synthetic_results)
+          synthetic_check = sum(1 for r in synthetic_results if r.check_match)
+          synthetic_pct = synthetic_check * 100 // synthetic_total if synthetic_total > 0 else 0
+
+          realworld_total = len(realworld_results)
+          realworld_check = sum(1 for r in realworld_results if r.check_match)
+          realworld_pct = realworld_check * 100 // realworld_total if realworld_total > 0 else 0
+
           # === Print results ===
           print(f"Total files: {total}")
           print(f"Check exit match: {check_match}/{total} ({check_pct}%)")
@@ -359,6 +393,9 @@ jobs:
           print(f"Rust only pass: {rust_only_pass}")
           print(f"Python only pass: {python_only_pass}")
           print(f"Regressions: {len(regressions)}")
+          print(f"\n=== Synthetic vs Real-World ===")
+          print(f"  Real-world: {realworld_check}/{realworld_total} ({realworld_pct}%)")
+          print(f"  Synthetic:  {synthetic_check}/{synthetic_total} ({synthetic_pct}%)")
 
           print("\n=== Per-Category Results ===")
           for cat, stats in sorted(category_stats.items()):
@@ -392,6 +429,13 @@ jobs:
               f.write(f"rust_only_pass={rust_only_pass}\n")
               f.write(f"python_only_pass={python_only_pass}\n")
               f.write(f"regression_count={len(regressions)}\n")
+              # Synthetic vs real-world breakdown
+              f.write(f"realworld_total={realworld_total}\n")
+              f.write(f"realworld_match={realworld_check}\n")
+              f.write(f"realworld_pct={realworld_pct}\n")
+              f.write(f"synthetic_total={synthetic_total}\n")
+              f.write(f"synthetic_match={synthetic_check}\n")
+              f.write(f"synthetic_pct={synthetic_pct}\n")
               # Category percentages
               for cat, stats in category_stats.items():
                   cat_pct = stats["check_match"] * 100 // stats["total"] if stats["total"] > 0 else 0
@@ -835,7 +879,13 @@ jobs:
           | Queries tested | ${{ steps.bql_compat.outputs.bql_total }} |
           | Queries matching | ${{ steps.bql_compat.outputs.bql_match }} (${{ steps.bql_compat.outputs.bql_pct }}%) |
 
-          *Tested against downloaded compatibility test suite (~800 files) + synthetic tests (~60 files)*
+          ### Source Breakdown
+          | Source | Check Match |
+          |--------|-------------|
+          | **Real-world files** | ${{ steps.compat_test.outputs.realworld_pct }}% (${{ steps.compat_test.outputs.realworld_match }}/${{ steps.compat_test.outputs.realworld_total }}) |
+          | **Synthetic files** | ${{ steps.compat_test.outputs.synthetic_pct }}% (${{ steps.compat_test.outputs.synthetic_match }}/${{ steps.compat_test.outputs.synthetic_total }}) |
+
+          *Real-world: Downloaded from 10+ beancount repositories. Synthetic: Generated edge cases and proptest fixtures.*
           EOF
 
       - name: Post PR comment (release PRs only)

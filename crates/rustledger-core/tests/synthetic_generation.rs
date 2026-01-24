@@ -585,4 +585,128 @@ mod tests {
             println!("{}: {}", directive.type_name(), display);
         }
     }
+
+    // ============================================================================
+    // Bean-check Validation Tests
+    // ============================================================================
+
+    /// Test that generated ledgers can be validated by Python beancount's bean-check.
+    ///
+    /// Run with: cargo test -p rustledger-core --test synthetic_generation -- --ignored
+    /// Requires: bean-check to be installed (pip install beancount)
+    #[test]
+    #[ignore]
+    fn test_beancheck_validates_generated_ledger() {
+        use std::io::Write;
+        use std::process::Command;
+
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        // Create a valid ledger
+        let directives = vec![
+            Directive::Open(Open::new(date, "Assets:Bank:Checking")),
+            Directive::Open(Open::new(date, "Assets:Cash")),
+            Directive::Open(Open::new(date, "Expenses:Food")),
+            Directive::Open(Open::new(date, "Income:Salary")),
+            Directive::Transaction(
+                Transaction::new(date, "Paycheck")
+                    .with_flag('*')
+                    .with_payee("Employer Inc")
+                    .with_posting(Posting::new(
+                        "Assets:Bank:Checking",
+                        Amount::new(Decimal::new(100000, 2), "USD"),
+                    ))
+                    .with_posting(Posting::auto("Income:Salary")),
+            ),
+            Directive::Transaction(
+                Transaction::new(
+                    NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+                    "Groceries",
+                )
+                .with_flag('*')
+                .with_posting(Posting::new(
+                    "Expenses:Food",
+                    Amount::new(Decimal::new(5000, 2), "USD"),
+                ))
+                .with_posting(Posting::auto("Assets:Bank:Checking")),
+            ),
+        ];
+
+        let ledger = SyntheticLedger { directives };
+        let text = ledger.to_beancount();
+
+        // Write to temp file
+        let mut temp = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+        temp.write_all(text.as_bytes())
+            .expect("Failed to write temp file");
+
+        // Run bean-check
+        let output = Command::new("bean-check")
+            .arg(temp.path())
+            .output();
+
+        match output {
+            Ok(result) => {
+                if !result.status.success() {
+                    let stderr = String::from_utf8_lossy(&result.stderr);
+                    panic!(
+                        "bean-check failed on generated file:\n{}\n\nErrors:\n{}",
+                        text, stderr
+                    );
+                }
+                println!("bean-check validated successfully!");
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                eprintln!("bean-check not found, skipping test");
+            }
+            Err(e) => {
+                panic!("Failed to run bean-check: {}", e);
+            }
+        }
+    }
+
+    /// Property test: generated ledgers should validate with bean-check.
+    ///
+    /// Run with: cargo test -p rustledger-core --test synthetic_generation -- --ignored prop_beancheck
+    /// Requires: bean-check to be installed (pip install beancount)
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(5))]
+
+        #[test]
+        #[ignore]
+        fn prop_beancheck_validates_random_ledger(ledger in arb_synthetic_ledger()) {
+            use std::io::Write;
+            use std::process::Command;
+
+            let text = ledger.to_beancount();
+
+            // Write to temp file
+            let mut temp = tempfile::NamedTempFile::new().expect("Failed to create temp file");
+            temp.write_all(text.as_bytes())
+                .expect("Failed to write temp file");
+
+            // Run bean-check
+            let output = Command::new("bean-check")
+                .arg(temp.path())
+                .output();
+
+            match output {
+                Ok(result) => {
+                    prop_assert!(
+                        result.status.success(),
+                        "bean-check failed on generated file:\n{}\n\nErrors:\n{}",
+                        text,
+                        String::from_utf8_lossy(&result.stderr)
+                    );
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    // bean-check not installed, skip
+                    eprintln!("bean-check not found, skipping test");
+                }
+                Err(e) => {
+                    prop_assert!(false, "Failed to run bean-check: {}", e);
+                }
+            }
+        }
+    }
 }
