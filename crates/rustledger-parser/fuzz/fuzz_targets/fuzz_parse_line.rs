@@ -16,6 +16,11 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 use rustledger_parser::parse;
 
+/// Maximum cents value for generating amounts (10000 cents = $100.00 max)
+const MAX_AMOUNT_CENTS: i64 = 10000;
+/// Divisor to convert cents to decimal (100 cents = $1.00)
+const CENTS_DIVISOR: f64 = 100.0;
+
 /// Transaction flag types
 #[derive(Arbitrary, Debug, Clone, Copy)]
 enum TxnFlag {
@@ -154,6 +159,11 @@ impl FuzzInput {
         )
     }
 
+    /// Format a price amount with 2 decimal places in range 0.00-99.99
+    fn format_price_amount(&self) -> f64 {
+        (self.price_amount.abs() % MAX_AMOUNT_CENTS) as f64 / CENTS_DIVISOR
+    }
+
     fn format_account(&self, account_type: u8, sub: &str) -> String {
         let prefix = match account_type % 5 {
             0 => "Assets",
@@ -244,12 +254,12 @@ impl FuzzInput {
             PriceType::None => String::new(),
             PriceType::Unit => format!(
                 " @ {} {}",
-                (self.price_amount.abs() % 10000) as f64 / 100.0,
+                self.format_price_amount(),
                 self.format_currency()
             ),
             PriceType::Total => format!(
                 " @@ {} {}",
-                (self.price_amount.abs() % 10000) as f64 / 100.0,
+                self.format_price_amount(),
                 self.format_currency()
             ),
         }
@@ -346,7 +356,7 @@ impl FuzzInput {
                         // Last posting auto-balanced
                         s.push_str(&format!("\n  {}", acc));
                     } else {
-                        let amt = (self.amount_integer.abs() as i64 / (num as i64)) % 10000;
+                        let amt = (self.amount_integer.abs() as i64 / (num as i64)) % MAX_AMOUNT_CENTS;
                         s.push_str(&format!("\n  {}  {}.00 {}", acc, amt, currency));
                     }
                 }

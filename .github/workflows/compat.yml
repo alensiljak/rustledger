@@ -93,9 +93,18 @@ jobs:
             --manifest \
             --skip-validation
           echo "Generated $(find tests/compat/synthetic -name '*.beancount' 2>/dev/null | wc -l) synthetic files"
-          # Also run bean-example if available (fallback to shell script)
+
+          # Also generate bean-example files if available
           if command -v bean-example &> /dev/null; then
-            ./scripts/generate-proptest-fixtures.sh || true
+            echo "Generating bean-example files..."
+            mkdir -p tests/compat/synthetic/bean-example
+            for seed in 1 42 123; do
+              end_date=$(date +%Y-%m-%d)
+              start_date=$(date -d "$end_date - 1 year" +%Y-%m-%d 2>/dev/null || date -v-1y +%Y-%m-%d)
+              output="tests/compat/synthetic/bean-example/example_seed${seed}.beancount"
+              bean-example --seed "$seed" --date-begin "$start_date" --date-end "$end_date" --output "$output" 2>/dev/null || true
+            done
+            echo "Generated $(find tests/compat/synthetic/bean-example -name '*.beancount' 2>/dev/null | wc -l) bean-example files"
           fi
 
       - name: Verify tool installations
