@@ -11,9 +11,9 @@
 //! - Special characters
 
 use crate::{
-    format::{format_directive, FormatConfig},
     Amount, Balance, Close, Commodity, Directive, Event, NaiveDate, Note, Open, Pad, Posting,
     Price, Transaction,
+    format::{FormatConfig, format_directive},
 };
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -310,10 +310,14 @@ pub fn generate_large_transaction_edge_cases() -> EdgeCaseCollection {
         .map(|i| Directive::Open(Open::new(open_date, format!("Expenses:Category{i}"))))
         .collect();
 
-    directives.push(Directive::Open(Open::new(open_date, "Assets:Bank:Checking")));
+    directives.push(Directive::Open(Open::new(
+        open_date,
+        "Assets:Bank:Checking",
+    )));
 
     // Create a transaction with 20 postings
-    let mut txn = Transaction::new(base_date, "Expense allocation with 20 categories").with_flag('*');
+    let mut txn =
+        Transaction::new(base_date, "Expense allocation with 20 categories").with_flag('*');
 
     for i in 0..20 {
         txn = txn.with_posting(Posting::new(
@@ -503,12 +507,11 @@ pub fn generate_minimal_edge_cases() -> EdgeCaseCollection {
         // Minimal open
         Directive::Open(Open::new(base_date, "Assets:Minimal")),
         // Open with currencies
-        Directive::Open(Open::new(base_date, "Assets:WithCurrency").with_currencies(vec!["USD".into()])),
+        Directive::Open(
+            Open::new(base_date, "Assets:WithCurrency").with_currencies(vec!["USD".into()]),
+        ),
         // Close
-        Directive::Close(Close::new(
-            base_date.succ_opt().unwrap(),
-            "Assets:Minimal",
-        )),
+        Directive::Close(Close::new(base_date.succ_opt().unwrap(), "Assets:Minimal")),
         // Minimal commodity
         Directive::Commodity(Commodity::new(base_date, "MINI")),
         // Minimal price
@@ -522,14 +525,9 @@ pub fn generate_minimal_edge_cases() -> EdgeCaseCollection {
         // Minimal event
         Directive::Event(Event::new(base_date, "type", "value")),
         // Transaction with empty narration
-        Directive::Transaction(
-            Transaction::new(base_date, "")
-                .with_flag('*')
-                .with_posting(Posting::new(
-                    "Assets:WithCurrency",
-                    Amount::new(dec("0.00"), "USD"),
-                )),
-        ),
+        Directive::Transaction(Transaction::new(base_date, "").with_flag('*').with_posting(
+            Posting::new("Assets:WithCurrency", Amount::new(dec("0.00"), "USD")),
+        )),
         // Transaction with only auto-balanced postings
         Directive::Transaction(
             Transaction::new(base_date, "Auto-balanced")

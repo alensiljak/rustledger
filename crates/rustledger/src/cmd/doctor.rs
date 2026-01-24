@@ -1146,9 +1146,7 @@ fn cmd_generate_synthetic<W: Write>(
     edge_cases_only: bool,
     writer: &mut W,
 ) -> Result<()> {
-    use rustledger_core::synthetic::{
-        generate_all_edge_cases, ManifestEntry, SyntheticManifest,
-    };
+    use rustledger_core::synthetic::{ManifestEntry, SyntheticManifest, generate_all_edge_cases};
     use sha2::{Digest, Sha256};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1167,7 +1165,15 @@ fn cmd_generate_synthetic<W: Write>(
 
     writeln!(writer, "Output directory: {}", output.display())?;
     writeln!(writer, "Seed: {seed}")?;
-    writeln!(writer, "Validation: {}", if skip_validation { "disabled" } else { "enabled" })?;
+    writeln!(
+        writer,
+        "Validation: {}",
+        if skip_validation {
+            "disabled"
+        } else {
+            "enabled"
+        }
+    )?;
     writeln!(writer)?;
 
     // Create output directory
@@ -1197,13 +1203,21 @@ fn cmd_generate_synthetic<W: Write>(
         } else if let Ok(output) = Command::new("bean-check").arg(&filepath).output() {
             output.status.success()
         } else {
-            writeln!(writer, "  Warning: bean-check not found, skipping validation")?;
+            writeln!(
+                writer,
+                "  Warning: bean-check not found, skipping validation"
+            )?;
             true
         };
 
         if is_valid {
             valid += 1;
-            writeln!(writer, "  Created: {} ({} directives)", filename, collection.directives.len())?;
+            writeln!(
+                writer,
+                "  Created: {} ({} directives)",
+                filename,
+                collection.directives.len()
+            )?;
 
             if write_manifest {
                 let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
@@ -1233,7 +1247,9 @@ fn cmd_generate_synthetic<W: Write>(
 
         for i in 0..count {
             // Simple LCG for deterministic generation
-            rng_state = rng_state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            rng_state = rng_state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
 
             let year = 2020 + (rng_state % 5) as i32;
             let start_date = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
@@ -1257,15 +1273,16 @@ fn cmd_generate_synthetic<W: Write>(
             // Generate transactions
             let num_txns = 10 + (rng_state % 20) as usize;
             for j in 0..num_txns {
-                rng_state = rng_state.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                rng_state = rng_state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1);
 
                 let month = 1 + (rng_state % 12) as u32;
                 let day = 1 + (rng_state % 28) as u32;
                 let amount = 10 + (rng_state % 990);
                 let amount_str = format!("{}.{:02}", amount / 100, amount % 100);
 
-                let txn_date = NaiveDate::from_ymd_opt(year, month, day)
-                    .unwrap_or(start_date);
+                let txn_date = NaiveDate::from_ymd_opt(year, month, day).unwrap_or(start_date);
 
                 match j % 3 {
                     0 => {
@@ -1328,7 +1345,8 @@ fn cmd_generate_synthetic<W: Write>(
     // Write manifest
     if write_manifest {
         let manifest_path = output.join("manifest.json");
-        manifest.save(&manifest_path)
+        manifest
+            .save(&manifest_path)
             .with_context(|| format!("failed to write manifest: {}", manifest_path.display()))?;
         writeln!(writer)?;
         writeln!(writer, "Manifest written to: {}", manifest_path.display())?;

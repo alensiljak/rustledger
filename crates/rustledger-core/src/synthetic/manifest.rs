@@ -52,11 +52,7 @@ impl SyntheticManifest {
 
     /// Get all unique categories.
     pub fn categories(&self) -> Vec<String> {
-        let mut cats: Vec<_> = self
-            .files
-            .iter()
-            .map(|e| e.category.clone())
-            .collect();
+        let mut cats: Vec<_> = self.files.iter().map(|e| e.category.clone()).collect();
         cats.sort();
         cats.dedup();
         cats
@@ -83,8 +79,7 @@ impl SyntheticManifest {
     /// Load manifest from a file.
     pub fn load(path: &Path) -> std::io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        Self::from_json(&json)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        Self::from_json(&json).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 
     /// Generate a summary report.
@@ -260,12 +255,8 @@ mod tests {
     #[test]
     fn test_manifest_summary() {
         let mut manifest = SyntheticManifest::new(42);
-        manifest.add_entry(
-            ManifestEntry::new("a.beancount", "proptest").with_directive_count(10),
-        );
-        manifest.add_entry(
-            ManifestEntry::new("b.beancount", "edge-case").with_directive_count(20),
-        );
+        manifest.add_entry(ManifestEntry::new("a.beancount", "proptest").with_directive_count(10));
+        manifest.add_entry(ManifestEntry::new("b.beancount", "edge-case").with_directive_count(20));
 
         let summary = manifest.summary();
         assert!(summary.contains("Seed: 42"));

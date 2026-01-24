@@ -9,8 +9,8 @@ use chrono::NaiveDate;
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rustledger_core::{
-    format_directive, Amount, Balance, Close, Commodity, Custom, Directive, Document, Event,
-    FormatConfig, MetaValue, Note, Open, Pad, Posting, Price, Query, Transaction,
+    Amount, Balance, Close, Commodity, Custom, Directive, Document, Event, FormatConfig, MetaValue,
+    Note, Open, Pad, Posting, Price, Query, Transaction, format_directive,
 };
 
 // ============================================================================
@@ -537,8 +537,14 @@ mod tests {
 
         println!("Generated ledger:\n{}", text);
 
-        assert!(text.contains("2024-01-01 open Assets:Bank"), "Missing open Assets:Bank");
-        assert!(text.contains("2024-01-01 open Expenses:Food"), "Missing open Expenses:Food");
+        assert!(
+            text.contains("2024-01-01 open Assets:Bank"),
+            "Missing open Assets:Bank"
+        );
+        assert!(
+            text.contains("2024-01-01 open Expenses:Food"),
+            "Missing open Expenses:Food"
+        );
         assert!(text.contains("Test transaction"), "Missing narration");
         assert!(text.contains("50.00 USD"), "Missing amount");
     }
@@ -576,12 +582,18 @@ mod tests {
                 "AAPL",
                 Amount::new(Decimal::new(15000, 2), "USD"),
             )),
-            Directive::Custom(Custom::new(date, "budget").with_value(MetaValue::String("Food".to_string()))),
+            Directive::Custom(
+                Custom::new(date, "budget").with_value(MetaValue::String("Food".to_string())),
+            ),
         ];
 
         for directive in &directives {
             let display = format_directive(directive, &config);
-            assert!(!display.is_empty(), "Format for {:?} should not be empty", directive.type_name());
+            assert!(
+                !display.is_empty(),
+                "Format for {:?} should not be empty",
+                directive.type_name()
+            );
             println!("{}: {}", directive.type_name(), display);
         }
     }
@@ -619,16 +631,13 @@ mod tests {
                     .with_posting(Posting::auto("Income:Salary")),
             ),
             Directive::Transaction(
-                Transaction::new(
-                    NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-                    "Groceries",
-                )
-                .with_flag('*')
-                .with_posting(Posting::new(
-                    "Expenses:Food",
-                    Amount::new(Decimal::new(5000, 2), "USD"),
-                ))
-                .with_posting(Posting::auto("Assets:Bank:Checking")),
+                Transaction::new(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), "Groceries")
+                    .with_flag('*')
+                    .with_posting(Posting::new(
+                        "Expenses:Food",
+                        Amount::new(Decimal::new(5000, 2), "USD"),
+                    ))
+                    .with_posting(Posting::auto("Assets:Bank:Checking")),
             ),
         ];
 
@@ -641,9 +650,7 @@ mod tests {
             .expect("Failed to write temp file");
 
         // Run bean-check
-        let output = Command::new("bean-check")
-            .arg(temp.path())
-            .output();
+        let output = Command::new("bean-check").arg(temp.path()).output();
 
         match output {
             Ok(result) => {
