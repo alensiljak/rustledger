@@ -2932,6 +2932,7 @@ dependencies = [
  "rustyline",
  "serde",
  "serde_json",
+ "sha2",
  "tracing",
  "tracing-subscriber",
  "ureq",
@@ -2958,6 +2959,8 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "serde",
+ "serde_json",
+ "tempfile",
  "thiserror 2.0.17",
 ]
 

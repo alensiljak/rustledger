@@ -112,6 +112,7 @@ rust_decimal.workspace = true
 chrono.workspace = true
 ureq.workspace = true
 rayon.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 rust_decimal_macros.workspace = true
