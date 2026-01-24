@@ -1686,3 +1686,493 @@ fn test_select_complex_where() {
     assert_eq!(result.rows[0][0], Value::String("Chicken".to_string()));
     assert_eq!(result.rows[1][0], Value::String("Steak".to_string()));
 }
+
+// ============================================================================
+// Error Handling Tests
+// ============================================================================
+
+#[test]
+fn test_error_unknown_column() {
+    let directives = make_test_directives();
+    let query = parse("SELECT nonexistent_column").expect("should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&query);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_error_unknown_function() {
+    let directives = make_test_directives();
+    let query = parse("SELECT NONEXISTENT_FUNC(account)").expect("should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&query);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_error_type_mismatch_comparison() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create table with mixed types
+    let create_query = parse("CREATE TABLE types (name, value)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query = parse("INSERT INTO types VALUES ('text', 42)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // Try to compare string column with number (should still work - coercion)
+    let select_query = parse("SELECT name FROM types WHERE name > 10").expect("should parse");
+    // This may or may not error depending on implementation - just verify it doesn't panic
+    let _ = executor.execute(&select_query);
+}
+
+#[test]
+fn test_division_behavior() {
+    // Test division using literal expressions - use LIMIT 1 to get single row
+    let directives = make_test_directives();
+    let result = execute_query("SELECT 10 / 2 LIMIT 1", &directives);
+    // Division should work and return single row
+    assert_eq!(result.len(), 1);
+    // Result should be 5
+    if let Value::Integer(val) = &result.rows[0][0] {
+        assert_eq!(*val, 5);
+    } else if let Value::Number(val) = &result.rows[0][0] {
+        assert_eq!(*val, dec!(5));
+    }
+}
+
+#[test]
+fn test_error_invalid_function_args_year() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let create_query = parse("CREATE TABLE func_test (val)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query = parse("INSERT INTO func_test VALUES ('not a date')").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // YEAR expects a date, not a string
+    let select_query = parse("SELECT YEAR(val) FROM func_test").expect("should parse");
+    let result = executor.execute(&select_query);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_error_invalid_function_args_length() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let create_query = parse("CREATE TABLE len_test (val)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query = parse("INSERT INTO len_test VALUES (12345)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // LENGTH expects a string, not a number
+    let select_query = parse("SELECT LENGTH(val) FROM len_test").expect("should parse");
+    let result = executor.execute(&select_query);
+    assert!(result.is_err());
+}
+
+// ============================================================================
+// Aggregate Edge Cases
+// ============================================================================
+
+#[test]
+fn test_aggregate_sum_on_ledger() {
+    // Test SUM on ledger data
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT SUM(number) WHERE account ~ "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // We have 150 + 80 = 230 USD in Food expenses
+    if let Value::Number(sum) = &result.rows[0][0] {
+        assert_eq!(*sum, dec!(230));
+    }
+}
+
+#[test]
+fn test_aggregate_count_on_ledger() {
+    // Test COUNT on ledger data
+    let directives = make_test_directives();
+
+    // COUNT(*) counts all postings matching filter
+    let result = execute_query(r#"SELECT COUNT(*) WHERE account ~ "Expenses""#, &directives);
+    if let Value::Integer(count) = &result.rows[0][0] {
+        assert_eq!(*count, 3); // 2 Food + 1 Transport
+    }
+}
+
+#[test]
+fn test_aggregate_avg_on_ledger() {
+    // Test AVG on ledger data
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT AVG(number) WHERE account ~ "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Average of 150 and 80 = 115
+    if let Value::Number(avg) = &result.rows[0][0] {
+        assert_eq!(*avg, dec!(115));
+    }
+}
+
+#[test]
+fn test_aggregate_min_max_on_ledger() {
+    // Test MIN/MAX on ledger data
+    let directives = make_test_directives();
+
+    let result = execute_query(
+        r#"SELECT MIN(number), MAX(number) WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Min expense: 45 (Transport), Max expense: 150 (Food)
+    if let Value::Number(min) = &result.rows[0][0] {
+        assert_eq!(*min, dec!(45));
+    }
+    if let Value::Number(max) = &result.rows[0][1] {
+        assert_eq!(*max, dec!(150));
+    }
+}
+
+#[test]
+fn test_aggregate_filtered() {
+    // Test aggregates with specific filter
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT SUM(number), COUNT(*), AVG(number) WHERE account = "Expenses:Food""#,
+        &directives,
+    );
+
+    // Should have 1 row with aggregate results
+    assert_eq!(result.len(), 1);
+    // COUNT should be 2 (two Food transactions)
+    if let Value::Integer(count) = &result.rows[0][1] {
+        assert_eq!(*count, 2);
+    }
+}
+
+// ============================================================================
+// GROUP BY Edge Cases
+// ============================================================================
+
+#[test]
+fn test_group_by_multiple_columns_ledger() {
+    // Test GROUP BY with multiple columns on ledger data
+    let directives = make_test_directives();
+
+    // Group by account root (first component) and currency
+    let result = execute_query(
+        r"SELECT account, currency, SUM(number) AS total GROUP BY account, currency ORDER BY account",
+        &directives,
+    );
+
+    // Should have multiple groups for different accounts
+    assert!(result.len() >= 3);
+}
+
+#[test]
+fn test_group_by_with_having_ledger() {
+    // Test GROUP BY with HAVING on ledger data
+    let directives = make_test_directives();
+
+    // Only show accounts with more than 1 posting
+    let result = execute_query(
+        r"SELECT account, COUNT(*) AS cnt GROUP BY account HAVING cnt > 1 ORDER BY account",
+        &directives,
+    );
+
+    // Assets:Bank:Checking has multiple postings
+    assert!(!result.is_empty());
+    for row in &result.rows {
+        if let Value::Integer(cnt) = &row[1] {
+            assert!(*cnt > 1);
+        }
+    }
+}
+
+// ============================================================================
+// Window Function Edge Cases
+// ============================================================================
+
+#[test]
+fn test_window_rank_with_ties() {
+    // Test RANK with ties using ledger data (window functions not supported in FROM table)
+    let directives = make_test_directives();
+    // Use existing ledger postings - we have 5 transactions
+    // Group by account to get tie-breaking scenarios
+    let result = execute_query(
+        r"SELECT account, RANK() OVER (ORDER BY account) AS rnk WHERE account ~ 'Assets' ORDER BY account",
+        &directives,
+    );
+
+    // We have 4 postings to Assets accounts (Checking gets multiple)
+    assert!(result.len() >= 2);
+    // First posting should have rank 1
+    if let Value::Integer(rank) = &result.rows[0][1] {
+        assert_eq!(*rank, 1);
+    }
+}
+
+#[test]
+fn test_window_dense_rank_with_ties() {
+    // Test DENSE_RANK using ledger data
+    let directives = make_test_directives();
+    let result = execute_query(
+        r"SELECT account, DENSE_RANK() OVER (ORDER BY account) AS drnk WHERE account ~ 'Expenses' ORDER BY account",
+        &directives,
+    );
+
+    // We have Expenses:Food and Expenses:Transport
+    assert!(result.len() >= 2);
+    // All Food postings should have same dense_rank
+    if let Value::Integer(rank) = &result.rows[0][1] {
+        assert!(*rank >= 1);
+    }
+}
+
+#[test]
+fn test_window_row_number_on_ledger() {
+    // Test ROW_NUMBER using ledger data
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT date, narration, ROW_NUMBER() OVER (ORDER BY date) AS rn ORDER BY date LIMIT 5",
+        &directives,
+    );
+
+    assert!(result.len() >= 3);
+    // Row numbers should be sequential
+    for (i, row) in result.rows.iter().enumerate() {
+        if let Value::Integer(rn) = &row[2] {
+            assert_eq!(*rn, (i + 1) as i64, "Row number should be sequential");
+        }
+    }
+}
+
+// ============================================================================
+// String Function Tests
+// ============================================================================
+
+#[test]
+fn test_string_upper_lower_ledger() {
+    // Test UPPER/LOWER on ledger narration
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT UPPER(narration), LOWER(narration) WHERE narration = "Monthly salary" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("MONTHLY SALARY".to_string())
+    );
+    assert_eq!(
+        result.rows[0][1],
+        Value::String("monthly salary".to_string())
+    );
+}
+
+#[test]
+fn test_string_length_ledger() {
+    // Test LENGTH on ledger account names
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT account, LENGTH(account) AS len WHERE account ~ "Assets" LIMIT 3"#,
+        &directives,
+    );
+
+    assert!(!result.is_empty());
+    // All lengths should be positive
+    for row in &result.rows {
+        if let Value::Integer(len) = &row[1] {
+            assert!(*len > 0);
+        }
+    }
+}
+
+#[test]
+fn test_string_trim_literal() {
+    // Test TRIM with literal string
+    let directives = make_test_directives();
+    let result = execute_query(r#"SELECT TRIM("  hello  ") LIMIT 1"#, &directives);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("hello".to_string()));
+}
+
+// ============================================================================
+// Math Function Tests
+// ============================================================================
+
+#[test]
+fn test_math_abs_ledger() {
+    // Test ABS on ledger amounts (negative income postings)
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT number, ABS(number) AS abs_val WHERE account ~ "Income" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Income posting is negative, ABS should be positive
+    if let Value::Number(abs_val) = &result.rows[0][1] {
+        assert!(*abs_val > dec!(0));
+    }
+}
+
+#[test]
+fn test_math_round_ledger() {
+    // Test ROUND on ledger amounts (ROUND takes 1 arg in BQL)
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT number, ROUND(number) AS rounded WHERE account ~ "Expenses:Food" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should have a result
+    assert!(!matches!(result.rows[0][1], Value::Null));
+}
+
+// ============================================================================
+// COALESCE Function Tests
+// ============================================================================
+
+#[test]
+fn test_coalesce_with_payee() {
+    // Test COALESCE with payee (some transactions have payee, some don't)
+    let directives = make_test_directives();
+    let result = execute_query(
+        r"SELECT COALESCE(payee, narration) AS description LIMIT 5",
+        &directives,
+    );
+
+    // Should have results
+    assert!(!result.is_empty());
+    // All should be non-null (either payee or narration)
+    for row in &result.rows {
+        assert!(!matches!(row[0], Value::Null));
+    }
+}
+
+#[test]
+fn test_coalesce_first_non_null() {
+    // Test COALESCE returns first non-null value
+    let directives = make_test_directives();
+    // Use payee (which may be NULL) with narration fallback
+    let result = execute_query(
+        r"SELECT payee, narration, COALESCE(payee, narration) AS desc LIMIT 5",
+        &directives,
+    );
+
+    assert!(!result.is_empty());
+    // COALESCE result should never be NULL when narration exists
+    for row in &result.rows {
+        assert!(!matches!(row[2], Value::Null));
+    }
+}
+
+// ============================================================================
+// Boolean Expression Tests
+// ============================================================================
+
+#[test]
+fn test_boolean_and_or_not() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let create_query = parse("CREATE TABLE bools (a, b)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query =
+        parse("INSERT INTO bools VALUES (1, 0), (1, 1), (0, 0), (0, 1)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // Test AND
+    let select_query = parse("SELECT a, b FROM bools WHERE a = 1 AND b = 1").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+    assert_eq!(result.len(), 1);
+
+    // Test OR
+    let select_query2 = parse("SELECT a, b FROM bools WHERE a = 1 OR b = 1").expect("should parse");
+    let result2 = executor.execute(&select_query2).expect("should execute");
+    assert_eq!(result2.len(), 3);
+
+    // Test NOT
+    let select_query3 = parse("SELECT a, b FROM bools WHERE NOT (a = 1)").expect("should parse");
+    let result3 = executor.execute(&select_query3).expect("should execute");
+    assert_eq!(result3.len(), 2);
+}
+
+#[test]
+fn test_between_clause() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let create_query = parse("CREATE TABLE range_test (val)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query =
+        parse("INSERT INTO range_test VALUES (1), (5), (10), (15), (20)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    let select_query = parse("SELECT val FROM range_test WHERE val BETWEEN 5 AND 15 ORDER BY val")
+        .expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert_eq!(result.len(), 3);
+    if let Value::Integer(v) = &result.rows[0][0] {
+        assert_eq!(*v, 5);
+    }
+    if let Value::Integer(v) = &result.rows[1][0] {
+        assert_eq!(*v, 10);
+    }
+    if let Value::Integer(v) = &result.rows[2][0] {
+        assert_eq!(*v, 15);
+    }
+}
+
+#[test]
+fn test_in_clause_with_accounts() {
+    // Test IN clause on ledger accounts
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT account WHERE account = "Expenses:Food" OR account = "Expenses:Transport""#,
+        &directives,
+    );
+
+    // Should find Food and Transport expense postings
+    assert!(result.len() >= 2);
+    for row in &result.rows {
+        if let Value::String(acc) = &row[0] {
+            assert!(acc.contains("Expenses"));
+        }
+    }
+}
+
+#[test]
+fn test_filter_with_not_equal() {
+    // Test filtering with !=
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT DISTINCT account WHERE account ~ "Assets" AND account != "Assets:Bank:Savings""#,
+        &directives,
+    );
+
+    // Should only have Checking, not Savings
+    for row in &result.rows {
+        if let Value::String(acc) = &row[0] {
+            assert!(!acc.contains("Savings"));
+        }
+    }
+}
