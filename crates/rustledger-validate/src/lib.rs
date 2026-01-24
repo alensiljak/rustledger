@@ -419,7 +419,7 @@ mod tests {
     use super::*;
     use rust_decimal_macros::dec;
     use rustledger_core::{
-        Amount, Balance, Close, Document, NaiveDate, Note, Open, Pad, Posting, Transaction,
+        Amount, Balance, Close, Document, NaiveDate, Open, Pad, Posting, Transaction,
     };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {

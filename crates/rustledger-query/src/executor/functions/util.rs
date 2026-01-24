@@ -11,7 +11,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate metadata functions: `META`, `ENTRY_META`, `ANY_META`.
     ///
     /// - `META(key)` - Get metadata value from the posting

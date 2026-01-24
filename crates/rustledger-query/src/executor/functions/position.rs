@@ -9,7 +9,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate position/amount functions: `NUMBER`, `CURRENCY`, `GETITEM`, `UNITS`, `COST`, `WEIGHT`, `VALUE`.
     pub(crate) fn eval_position_function(
         &self,

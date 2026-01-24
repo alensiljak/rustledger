@@ -8,7 +8,7 @@ use crate::error::{ErrorCode, ValidationError};
 use crate::{AccountState, LedgerState, ValidationOptions};
 
 /// Validate a Transaction directive.
-pub(crate) fn validate_transaction(
+pub fn validate_transaction(
     state: &mut LedgerState,
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
@@ -33,7 +33,7 @@ pub(crate) fn validate_transaction(
 ///
 /// Note: Python beancount allows transactions with zero postings (metadata-only transactions).
 /// Single-posting transactions are allowed structurally but will fail balance checking.
-pub(crate) fn validate_transaction_structure(
+pub fn validate_transaction_structure(
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
 ) -> bool {
@@ -56,7 +56,7 @@ pub(crate) fn validate_transaction_structure(
 }
 
 /// Validate account lifecycle and currency constraints for each posting.
-pub(crate) fn validate_posting_accounts(
+pub fn validate_posting_accounts(
     state: &LedgerState,
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
@@ -79,7 +79,7 @@ pub(crate) fn validate_posting_accounts(
 }
 
 /// Validate that an account is open at transaction time and not closed.
-pub(crate) fn validate_account_lifecycle(
+pub fn validate_account_lifecycle(
     txn: &Transaction,
     posting: &Posting,
     account_state: &AccountState,
@@ -111,7 +111,7 @@ pub(crate) fn validate_account_lifecycle(
 }
 
 /// Validate currency constraints and commodity declarations for a posting.
-pub(crate) fn validate_posting_currency(
+pub fn validate_posting_currency(
     state: &LedgerState,
     txn: &Transaction,
     posting: &Posting,
@@ -150,7 +150,7 @@ pub(crate) fn validate_posting_currency(
 /// 1. The quantum (precision) of amounts in postings
 /// 2. Cost-based tolerance when `infer_tolerance_from_cost` is enabled:
 ///    `tolerance = units_quantum * cost_per_unit * tolerance_multiplier`
-pub(crate) fn validate_transaction_balance(
+pub fn validate_transaction_balance(
     txn: &Transaction,
     options: &ValidationOptions,
     errors: &mut Vec<ValidationError>,
@@ -195,7 +195,7 @@ pub(crate) fn validate_transaction_balance(
 
 /// Calculate the quantum (smallest unit) of a decimal number based on its precision.
 /// For example: 10.436 has quantum 0.001, 100.00 has quantum 0.01
-pub(crate) fn decimal_quantum(value: Decimal) -> Decimal {
+pub fn decimal_quantum(value: Decimal) -> Decimal {
     let scale = value.scale();
     if scale == 0 {
         Decimal::ONE
@@ -211,7 +211,7 @@ pub(crate) fn decimal_quantum(value: Decimal) -> Decimal {
 ///
 /// The tolerance for each cost currency is the maximum of all such values
 /// computed from postings with costs in that currency.
-pub(crate) fn calculate_tolerances(
+pub fn calculate_tolerances(
     txn: &Transaction,
     options: &ValidationOptions,
 ) -> HashMap<String, Decimal> {
@@ -259,7 +259,7 @@ pub(crate) fn calculate_tolerances(
 }
 
 /// Update inventories with booking validation for each posting.
-pub(crate) fn update_inventories(
+pub fn update_inventories(
     state: &mut LedgerState,
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
@@ -289,7 +289,7 @@ pub(crate) fn update_inventories(
 }
 
 /// Process an inventory reduction (selling/removing units).
-pub(crate) fn process_inventory_reduction(
+pub fn process_inventory_reduction(
     inv: &mut Inventory,
     posting: &Posting,
     units: &Amount,
@@ -400,7 +400,7 @@ pub(crate) fn process_inventory_reduction(
 }
 
 /// Process an inventory addition (buying/adding units).
-pub(crate) fn process_inventory_addition(
+pub fn process_inventory_addition(
     inv: &mut Inventory,
     posting: &Posting,
     units: &Amount,

@@ -8,7 +8,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate math functions: `ABS`, `NEG`, `ROUND`, `SAFEDIV`.
     pub(crate) fn eval_math_function(
         &self,

@@ -9,7 +9,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{Interval, IntervalUnit, PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate date functions: `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, `QUARTER`, `YMONTH`, `TODAY`.
     pub(crate) fn eval_date_function(
         &self,

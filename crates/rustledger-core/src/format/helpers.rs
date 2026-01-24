@@ -4,7 +4,7 @@ use super::format_amount;
 use crate::MetaValue;
 
 /// Format a metadata value.
-pub(crate) fn format_meta_value(value: &MetaValue) -> String {
+pub fn format_meta_value(value: &MetaValue) -> String {
     match value {
         MetaValue::String(s) => format!("\"{}\"", escape_string(s)),
         MetaValue::Account(a) => a.clone(),
@@ -20,7 +20,7 @@ pub(crate) fn format_meta_value(value: &MetaValue) -> String {
 }
 
 /// Escape a string for output (handle quotes and backslashes).
-pub(crate) fn escape_string(s: &str) -> String {
+pub fn escape_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

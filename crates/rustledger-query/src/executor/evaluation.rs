@@ -11,7 +11,7 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{PostingContext, Row, Value, WindowContext};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate a FROM filter on a transaction.
     pub(super) fn evaluate_from_filter(
         &self,

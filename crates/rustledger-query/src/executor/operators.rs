@@ -8,7 +8,7 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{Interval, PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate a binary operation.
     pub(super) fn evaluate_binary_op(
         &self,

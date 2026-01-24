@@ -5,7 +5,7 @@ use crate::{Balance, Close, Commodity, Custom, Document, Event, Note, Open, Pad,
 use std::fmt::Write;
 
 /// Format a balance directive.
-pub(crate) fn format_balance(bal: &Balance) -> String {
+pub fn format_balance(bal: &Balance) -> String {
     let mut out = format!(
         "{} balance {} {}",
         bal.date,
@@ -20,7 +20,7 @@ pub(crate) fn format_balance(bal: &Balance) -> String {
 }
 
 /// Format an open directive.
-pub(crate) fn format_open(open: &Open) -> String {
+pub fn format_open(open: &Open) -> String {
     let mut out = format!("{} open {}", open.date, open.account);
     if !open.currencies.is_empty() {
         write!(out, " {}", open.currencies.join(",")).unwrap();
@@ -33,22 +33,22 @@ pub(crate) fn format_open(open: &Open) -> String {
 }
 
 /// Format a close directive.
-pub(crate) fn format_close(close: &Close) -> String {
+pub fn format_close(close: &Close) -> String {
     format!("{} close {}\n", close.date, close.account)
 }
 
 /// Format a commodity directive.
-pub(crate) fn format_commodity(comm: &Commodity) -> String {
+pub fn format_commodity(comm: &Commodity) -> String {
     format!("{} commodity {}\n", comm.date, comm.currency)
 }
 
 /// Format a pad directive.
-pub(crate) fn format_pad(pad: &Pad) -> String {
+pub fn format_pad(pad: &Pad) -> String {
     format!("{} pad {} {}\n", pad.date, pad.account, pad.source_account)
 }
 
 /// Format an event directive.
-pub(crate) fn format_event(event: &Event) -> String {
+pub fn format_event(event: &Event) -> String {
     format!(
         "{} event \"{}\" \"{}\"\n",
         event.date,
@@ -58,7 +58,7 @@ pub(crate) fn format_event(event: &Event) -> String {
 }
 
 /// Format a query directive.
-pub(crate) fn format_query(query: &Query) -> String {
+pub fn format_query(query: &Query) -> String {
     format!(
         "{} query \"{}\" \"{}\"\n",
         query.date,
@@ -68,7 +68,7 @@ pub(crate) fn format_query(query: &Query) -> String {
 }
 
 /// Format a note directive.
-pub(crate) fn format_note(note: &Note) -> String {
+pub fn format_note(note: &Note) -> String {
     format!(
         "{} note {} \"{}\"\n",
         note.date,
@@ -78,7 +78,7 @@ pub(crate) fn format_note(note: &Note) -> String {
 }
 
 /// Format a document directive.
-pub(crate) fn format_document(doc: &Document) -> String {
+pub fn format_document(doc: &Document) -> String {
     format!(
         "{} document {} \"{}\"\n",
         doc.date,
@@ -88,7 +88,7 @@ pub(crate) fn format_document(doc: &Document) -> String {
 }
 
 /// Format a price directive.
-pub(crate) fn format_price(price: &Price) -> String {
+pub fn format_price(price: &Price) -> String {
     format!(
         "{} price {} {}\n",
         price.date,
@@ -98,7 +98,7 @@ pub(crate) fn format_price(price: &Price) -> String {
 }
 
 /// Format a custom directive.
-pub(crate) fn format_custom(custom: &Custom) -> String {
+pub fn format_custom(custom: &Custom) -> String {
     format!(
         "{} custom \"{}\"\n",
         custom.date,

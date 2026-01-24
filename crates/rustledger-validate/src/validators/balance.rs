@@ -7,7 +7,7 @@ use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
 
 /// Validate a Pad directive.
-pub(crate) fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<ValidationError>) {
+pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<ValidationError>) {
     // Check that the target account exists
     if !state.accounts.contains_key(&pad.account) {
         errors.push(ValidationError::new(
@@ -42,11 +42,7 @@ pub(crate) fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<
 }
 
 /// Validate a Balance directive.
-pub(crate) fn validate_balance(
-    state: &mut LedgerState,
-    bal: &Balance,
-    errors: &mut Vec<ValidationError>,
-) {
+pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec<ValidationError>) {
     // Check account exists
     if !state.accounts.contains_key(&bal.account) {
         errors.push(ValidationError::new(

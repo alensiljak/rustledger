@@ -8,7 +8,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate string functions: `LENGTH`, `UPPER`, `LOWER`, `SUBSTR`, `TRIM`, `STARTSWITH`, `ENDSWITH`.
     pub(crate) fn eval_string_function(
         &self,

@@ -4,12 +4,12 @@ use super::{escape_string, format_incomplete_amount};
 use crate::{Amount, CostSpec, PriceAnnotation};
 
 /// Format an amount.
-pub(crate) fn format_amount(amount: &Amount) -> String {
+pub fn format_amount(amount: &Amount) -> String {
     format!("{} {}", amount.number, amount.currency)
 }
 
 /// Format a cost specification.
-pub(crate) fn format_cost_spec(spec: &CostSpec) -> String {
+pub fn format_cost_spec(spec: &CostSpec) -> String {
     let mut parts = Vec::new();
 
     // Amount (per-unit or total)
@@ -39,7 +39,7 @@ pub(crate) fn format_cost_spec(spec: &CostSpec) -> String {
 }
 
 /// Format a price annotation.
-pub(crate) fn format_price_annotation(price: &PriceAnnotation) -> String {
+pub fn format_price_annotation(price: &PriceAnnotation) -> String {
     match price {
         PriceAnnotation::Unit(amount) => format!("@ {}", format_amount(amount)),
         PriceAnnotation::Total(amount) => format!("@@ {}", format_amount(amount)),

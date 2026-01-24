@@ -9,7 +9,7 @@ use crate::error::{ErrorCode, ValidationError};
 /// Validate a Note directive.
 ///
 /// Checks that the referenced account has been opened.
-pub(crate) fn validate_note(state: &LedgerState, note: &Note, errors: &mut Vec<ValidationError>) {
+pub fn validate_note(state: &LedgerState, note: &Note, errors: &mut Vec<ValidationError>) {
     // Check account exists
     if !state.accounts.contains_key(&note.account) {
         errors.push(ValidationError::new(
@@ -21,11 +21,7 @@ pub(crate) fn validate_note(state: &LedgerState, note: &Note, errors: &mut Vec<V
 }
 
 /// Validate a Document directive.
-pub(crate) fn validate_document(
-    state: &LedgerState,
-    doc: &Document,
-    errors: &mut Vec<ValidationError>,
-) {
+pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<ValidationError>) {
     // Check account exists
     if !state.accounts.contains_key(&doc.account) {
         errors.push(ValidationError::new(

@@ -8,7 +8,7 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{QueryResult, Row, Value, hash_single_value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     pub(super) fn sort_results(
         &self,
         result: &mut QueryResult,

@@ -7,7 +7,7 @@ use crate::{Amount, CostSpec, IncompleteAmount, Posting, PriceAnnotation, Transa
 use std::fmt::Write;
 
 /// Format a transaction.
-pub(crate) fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
+pub fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
     let mut out = String::new();
 
     // Date and flag
@@ -53,7 +53,7 @@ pub(crate) fn format_transaction(txn: &Transaction, config: &FormatConfig) -> St
 }
 
 /// Format a posting with amount alignment.
-pub(crate) fn format_posting(posting: &Posting, config: &FormatConfig) -> String {
+pub fn format_posting(posting: &Posting, config: &FormatConfig) -> String {
     let mut line = String::new();
     line.push_str(&config.indent);
 
@@ -91,7 +91,7 @@ pub(crate) fn format_posting(posting: &Posting, config: &FormatConfig) -> String
 }
 
 /// Format an incomplete amount.
-pub(crate) fn format_incomplete_amount(amount: &IncompleteAmount) -> String {
+pub fn format_incomplete_amount(amount: &IncompleteAmount) -> String {
     match amount {
         IncompleteAmount::Complete(a) => format!("{} {}", a.number, a.currency),
         IncompleteAmount::NumberOnly(n) => n.to_string(),
@@ -100,7 +100,7 @@ pub(crate) fn format_incomplete_amount(amount: &IncompleteAmount) -> String {
 }
 
 /// Format the amount part of a posting with incomplete amount support.
-pub(crate) fn format_posting_incomplete_amount(
+pub fn format_posting_incomplete_amount(
     units: &IncompleteAmount,
     cost: &Option<CostSpec>,
     price: &Option<PriceAnnotation>,
@@ -124,7 +124,7 @@ pub(crate) fn format_posting_incomplete_amount(
 
 /// Format the amount part of a posting (units + cost + price).
 #[allow(dead_code)]
-pub(crate) fn format_posting_amount(
+pub fn format_posting_amount(
     units: &Amount,
     cost: &Option<CostSpec>,
     price: &Option<PriceAnnotation>,

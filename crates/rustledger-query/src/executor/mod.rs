@@ -17,7 +17,7 @@ use std::collections::HashMap;
 use chrono::Datelike;
 use regex::Regex;
 #[cfg(test)]
-use rustledger_core::MetaValue;
+use rustledger_core::{Amount, MetaValue, NaiveDate, Transaction};
 use rustledger_core::{Directive, InternedStr, Inventory, Metadata, Position};
 use rustledger_loader::SourceMap;
 use rustledger_parser::Spanned;
@@ -557,6 +557,7 @@ impl<'a> Executor<'a> {
 }
 #[cfg(test)]
 mod tests {
+    use super::types::{hash_row, hash_single_value};
     use super::*;
     use crate::parse;
     use rust_decimal_macros::dec;

@@ -6,7 +6,7 @@
 /// The `account_types` parameter specifies valid account type prefixes (from options
 /// like `name_assets`, `name_liabilities`, etc.). Defaults are: Assets, Liabilities,
 /// Equity, Income, Expenses.
-pub(crate) fn validate_account_name(account: &str, account_types: &[String]) -> Option<String> {
+pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<String> {
     if account.is_empty() {
         return Some("account name is empty".to_string());
     }

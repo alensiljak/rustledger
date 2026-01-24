@@ -8,8 +8,16 @@ use rustledger_core::{Directive, NaiveDate};
 use crate::types::{DirectiveData, DirectiveWrapper};
 
 // Re-export conversion functions
-use from_wrapper::*;
-use to_wrapper::*;
+use from_wrapper::{
+    data_to_balance, data_to_close, data_to_commodity, data_to_custom, data_to_document,
+    data_to_event, data_to_note, data_to_open, data_to_pad, data_to_price, data_to_query,
+    data_to_transaction,
+};
+use to_wrapper::{
+    balance_to_data, close_to_data, commodity_to_data, custom_to_data, document_to_data,
+    event_to_data, note_to_data, open_to_data, pad_to_data, price_to_data, query_to_data,
+    transaction_to_data,
+};
 
 /// Error returned when converting a wrapper back to a directive fails.
 #[derive(Debug, Clone, thiserror::Error)]

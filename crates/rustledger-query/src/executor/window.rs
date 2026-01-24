@@ -8,7 +8,7 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{PostingContext, Value, WindowContext};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     pub(super) fn has_window_functions(targets: &[Target]) -> bool {
         targets.iter().any(|t| Self::is_window_expr(&t.expr))
     }

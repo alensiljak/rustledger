@@ -13,7 +13,7 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{QueryResult, Row, Table, Value, hash_row};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Execute a SELECT query.
     pub(super) fn execute_select(&self, query: &SelectQuery) -> Result<QueryResult, QueryError> {
         // Check if we have a subquery

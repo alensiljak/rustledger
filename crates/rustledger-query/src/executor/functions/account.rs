@@ -6,7 +6,7 @@ use crate::error::QueryError;
 use super::super::Executor;
 use super::super::types::{PostingContext, Value};
 
-impl<'a> Executor<'a> {
+impl Executor<'_> {
     /// Evaluate account functions: `PARENT`, `LEAF`, `ROOT`, `ACCOUNT_DEPTH`, `ACCOUNT_SORTKEY`.
     pub(crate) fn eval_account_function(
         &self,

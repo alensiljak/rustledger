@@ -217,7 +217,7 @@ impl Value {
 pub type Row = Vec<Value>;
 
 /// Compute a hash for a row (for DISTINCT deduplication).
-pub(crate) fn hash_row(row: &Row) -> u64 {
+pub fn hash_row(row: &Row) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
     for value in row {
@@ -227,7 +227,7 @@ pub(crate) fn hash_row(row: &Row) -> u64 {
 }
 
 /// Compute a hash for a single value (for PIVOT lookups).
-pub(crate) fn hash_single_value(value: &Value) -> u64 {
+pub fn hash_single_value(value: &Value) -> u64 {
     use std::collections::hash_map::DefaultHasher;
     let mut hasher = DefaultHasher::new();
     value.hash_value(&mut hasher);
@@ -294,7 +294,7 @@ pub struct WindowContext {
 
 /// Account information cached from Open/Close directives.
 #[derive(Debug, Clone)]
-pub(crate) struct AccountInfo {
+pub struct AccountInfo {
     /// Date the account was opened.
     pub open_date: Option<NaiveDate>,
     /// Date the account was closed (if any).

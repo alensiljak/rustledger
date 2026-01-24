@@ -8,11 +8,7 @@ use crate::{AccountState, LedgerState};
 use super::helpers::validate_account_name;
 
 /// Validate an Open directive.
-pub(crate) fn validate_open(
-    state: &mut LedgerState,
-    open: &Open,
-    errors: &mut Vec<ValidationError>,
-) {
+pub fn validate_open(state: &mut LedgerState, open: &Open, errors: &mut Vec<ValidationError>) {
     // Validate account name format
     if let Some(reason) = validate_account_name(&open.account, &state.options.account_types) {
         errors.push(
@@ -61,11 +57,7 @@ pub(crate) fn validate_open(
 }
 
 /// Validate a Close directive.
-pub(crate) fn validate_close(
-    state: &mut LedgerState,
-    close: &Close,
-    errors: &mut Vec<ValidationError>,
-) {
+pub fn validate_close(state: &mut LedgerState, close: &Close, errors: &mut Vec<ValidationError>) {
     match state.accounts.get_mut(&close.account) {
         Some(account_state) => {
             if account_state.closed.is_some() {
