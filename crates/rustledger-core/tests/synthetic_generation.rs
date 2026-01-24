@@ -3,7 +3,7 @@
 //! This module provides proptest strategies for generating arbitrary directives
 //! that can be serialized to valid beancount text and validated with bean-check.
 //!
-//! Run with: cargo test -p rustledger-core --test synthetic_generation
+//! Run with: cargo test -p rustledger-core --test `synthetic_generation`
 
 use chrono::NaiveDate;
 use proptest::prelude::*;
@@ -420,7 +420,7 @@ fn arb_synthetic_ledger() -> impl Strategy<Value = SyntheticLedger> {
                 let to_account = &accounts[to_idx % accounts.len()];
 
                 if from_account != to_account {
-                    let txn_date = start_date + chrono::Duration::days(day_offset as i64);
+                    let txn_date = start_date + chrono::Duration::days(i64::from(day_offset));
                     let amt = Amount::new(amount, &currency);
 
                     let txn = Transaction::new(txn_date, &narration)
@@ -537,7 +537,7 @@ mod tests {
         let ledger = SyntheticLedger { directives };
         let text = ledger.to_beancount();
 
-        println!("Generated ledger:\n{}", text);
+        println!("Generated ledger:\n{text}");
 
         assert!(
             text.contains("2024-01-01 open Assets:Bank"),
@@ -606,10 +606,10 @@ mod tests {
 
     /// Test that generated ledgers can be validated by Python beancount's bean-check.
     ///
-    /// Run with: cargo test -p rustledger-core --test synthetic_generation -- --ignored
+    /// Run with: cargo test -p rustledger-core --test `synthetic_generation` -- --ignored
     /// Requires: bean-check to be installed (pip install beancount)
     #[test]
-    #[ignore]
+    #[ignore = "requires bean-check to be installed"]
     fn test_beancheck_validates_generated_ledger() {
         use std::io::Write;
         use std::process::Command;
@@ -628,7 +628,7 @@ mod tests {
                     .with_payee("Employer Inc")
                     .with_posting(Posting::new(
                         "Assets:Bank:Checking",
-                        Amount::new(Decimal::new(100000, 2), "USD"),
+                        Amount::new(Decimal::new(100_000, 2), "USD"),
                     ))
                     .with_posting(Posting::auto("Income:Salary")),
             ),
@@ -658,10 +658,7 @@ mod tests {
             Ok(result) => {
                 if !result.status.success() {
                     let stderr = String::from_utf8_lossy(&result.stderr);
-                    panic!(
-                        "bean-check failed on generated file:\n{}\n\nErrors:\n{}",
-                        text, stderr
-                    );
+                    panic!("bean-check failed on generated file:\n{text}\n\nErrors:\n{stderr}");
                 }
                 println!("bean-check validated successfully!");
             }
@@ -669,7 +666,7 @@ mod tests {
                 eprintln!("bean-check not found, skipping test");
             }
             Err(e) => {
-                panic!("Failed to run bean-check: {}", e);
+                panic!("Failed to run bean-check: {e}");
             }
         }
     }
@@ -682,7 +679,7 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(5))]
 
         #[test]
-        #[ignore]
+        #[ignore = "requires bean-check to be installed"]
         fn prop_beancheck_validates_random_ledger(ledger in arb_synthetic_ledger()) {
             use std::io::Write;
             use std::process::Command;
