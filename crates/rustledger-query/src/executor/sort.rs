@@ -1,8 +1,7 @@
 //! Sorting and pivoting functions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use rust_decimal::Decimal;
 
 use crate::ast::{Expr, Literal, OrderSpec, SortDirection, Target};
 use crate::error::QueryError;

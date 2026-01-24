@@ -2,15 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use rustledger_core::{Amount, Directive, Inventory, NaiveDate, Position, Transaction};
+use rustledger_core::{Amount, Directive, NaiveDate, Position};
 
 use crate::ast::{
-    CreateTableStmt, Expr, InsertSource, InsertStmt, Literal, OrderSpec, SelectQuery,
+    CreateTableStmt, Expr, InsertSource, InsertStmt, OrderSpec, SelectQuery,
     SortDirection, Target, UnaryOperator,
 };
 use crate::error::QueryError;
 
-use super::types::{hash_row, PostingContext, QueryResult, Row, Table, Value};
+use super::types::{hash_row, QueryResult, Row, Table, Value};
 use super::Executor;
 
 impl<'a> Executor<'a> {

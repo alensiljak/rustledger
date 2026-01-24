@@ -9,16 +9,15 @@ pub use types::{
     Interval, IntervalUnit, PostingContext, QueryResult, Row, SourceLocation, Table, Value,
     WindowContext,
 };
-use types::{hash_row, hash_single_value, AccountInfo};
+use types::AccountInfo;
 
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 
 use chrono::Datelike;
 use regex::Regex;
-use rust_decimal::Decimal;
 use rustledger_core::{
-    Amount, Directive, InternedStr, Inventory, Metadata, NaiveDate, Position, Transaction,
+    Directive, InternedStr, Inventory, Metadata, Position,
 };
 #[cfg(test)]
 use rustledger_core::MetaValue;
@@ -26,9 +25,7 @@ use rustledger_loader::SourceMap;
 use rustledger_parser::Spanned;
 
 use crate::ast::{
-    BalancesQuery, BinaryOp, BinaryOperator, CreateTableStmt, Expr, FromClause, FunctionCall,
-    InsertSource, InsertStmt, JournalQuery, Literal, OrderSpec, PrintQuery, Query, SelectQuery,
-    SortDirection, Target, UnaryOp, UnaryOperator, WindowFunction,
+    Expr, FromClause, FunctionCall, Query, Target,
 };
 use crate::error::QueryError;
 

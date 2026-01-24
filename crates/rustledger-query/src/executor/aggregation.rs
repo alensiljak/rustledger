@@ -1,6 +1,6 @@
 //! Aggregation and grouping functions.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 use rust_decimal::Decimal;
 use rustledger_core::{Amount, Inventory, Position};
@@ -8,7 +8,7 @@ use rustledger_core::{Amount, Inventory, Position};
 use crate::ast::{Expr, Target, UnaryOperator};
 use crate::error::QueryError;
 
-use super::types::{hash_single_value, PostingContext, Row, Value};
+use super::types::{PostingContext, Row, Value};
 use super::Executor;
 
 impl<'a> Executor<'a> {
