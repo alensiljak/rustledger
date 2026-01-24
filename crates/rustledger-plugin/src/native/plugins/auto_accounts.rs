@@ -1,0 +1,113 @@
+//! Auto-generate Open directives for accounts used without explicit open.
+
+use crate::types::{
+    DirectiveData, DirectiveWrapper, OpenData, PluginInput, PluginOutput, sort_directives,
+};
+
+use super::super::NativePlugin;
+
+/// Plugin that auto-generates Open directives for accounts used without explicit open.
+pub struct AutoAccountsPlugin;
+
+impl NativePlugin for AutoAccountsPlugin {
+    fn name(&self) -> &'static str {
+        "auto_accounts"
+    }
+
+    fn description(&self) -> &'static str {
+        "Auto-generate Open directives for used accounts"
+    }
+
+    fn process(&self, input: PluginInput) -> PluginOutput {
+        use std::collections::{HashMap, HashSet};
+
+        let mut opened_accounts: HashSet<String> = HashSet::new();
+        let mut account_first_use: HashMap<String, String> = HashMap::new(); // account -> earliest date
+
+        // First pass: find all open directives and EARLIEST use of each account
+        // (directives may not be in date order in the input)
+        for wrapper in &input.directives {
+            match &wrapper.data {
+                DirectiveData::Open(data) => {
+                    opened_accounts.insert(data.account.clone());
+                }
+                DirectiveData::Transaction(txn) => {
+                    for posting in &txn.postings {
+                        account_first_use
+                            .entry(posting.account.clone())
+                            .and_modify(|existing| {
+                                if wrapper.date < *existing {
+                                    existing.clone_from(&wrapper.date);
+                                }
+                            })
+                            .or_insert_with(|| wrapper.date.clone());
+                    }
+                }
+                DirectiveData::Balance(data) => {
+                    account_first_use
+                        .entry(data.account.clone())
+                        .and_modify(|existing| {
+                            if wrapper.date < *existing {
+                                existing.clone_from(&wrapper.date);
+                            }
+                        })
+                        .or_insert_with(|| wrapper.date.clone());
+                }
+                DirectiveData::Pad(data) => {
+                    account_first_use
+                        .entry(data.account.clone())
+                        .and_modify(|existing| {
+                            if wrapper.date < *existing {
+                                existing.clone_from(&wrapper.date);
+                            }
+                        })
+                        .or_insert_with(|| wrapper.date.clone());
+                    account_first_use
+                        .entry(data.source_account.clone())
+                        .and_modify(|existing| {
+                            if wrapper.date < *existing {
+                                existing.clone_from(&wrapper.date);
+                            }
+                        })
+                        .or_insert_with(|| wrapper.date.clone());
+                }
+                _ => {}
+            }
+        }
+
+        // Generate open directives for accounts without explicit open
+        // Sort accounts for deterministic ordering (matches Python beancount behavior)
+        let mut accounts_to_open: Vec<_> = account_first_use
+            .iter()
+            .filter(|(account, _)| !opened_accounts.contains(*account))
+            .collect();
+        accounts_to_open.sort_by_key(|(account, _)| *account);
+
+        let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
+        for (index, (account, date)) in accounts_to_open.into_iter().enumerate() {
+            new_directives.push(DirectiveWrapper {
+                directive_type: "open".to_string(),
+                date: date.clone(),
+                filename: Some("<auto_accounts>".to_string()),
+                lineno: Some(index as u32), // Use index as lineno for deterministic sorting
+                data: DirectiveData::Open(OpenData {
+                    account: account.clone(),
+                    currencies: vec![],
+                    booking: None,
+                    metadata: vec![],
+                }),
+            });
+        }
+
+        // Add existing directives
+        new_directives.extend(input.directives);
+
+        // Sort using beancount's standard ordering: date, type order, line number
+        sort_directives(&mut new_directives);
+
+        PluginOutput {
+            directives: new_directives,
+            errors: Vec::new(),
+        }
+    }
+}

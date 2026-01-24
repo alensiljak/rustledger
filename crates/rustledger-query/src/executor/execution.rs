@@ -1,0 +1,910 @@
+//! Query execution functions for different query types.
+
+use std::collections::{HashMap, HashSet};
+
+use rustledger_core::{Amount, Directive, NaiveDate, Position};
+
+use crate::ast::{
+    CreateTableStmt, Expr, InsertSource, InsertStmt, OrderSpec, SelectQuery, SortDirection, Target,
+    UnaryOperator,
+};
+use crate::error::QueryError;
+
+use super::Executor;
+use super::types::{QueryResult, Row, Table, Value, hash_row};
+
+impl Executor<'_> {
+    /// Execute a SELECT query.
+    pub(super) fn execute_select(&self, query: &SelectQuery) -> Result<QueryResult, QueryError> {
+        // Check if we have a subquery
+        if let Some(from) = &query.from {
+            if let Some(subquery) = &from.subquery {
+                return self.execute_select_from_subquery(query, subquery);
+            }
+            // Check if we're selecting from a user-created table
+            if let Some(table_name) = &from.table_name {
+                return self.execute_select_from_table(query, table_name);
+            }
+        }
+
+        // Determine column names
+        let column_names = self.resolve_column_names(&query.targets)?;
+        let mut result = QueryResult::new(column_names.clone());
+
+        // Collect matching postings
+        let postings = self.collect_postings(query.from.as_ref(), query.where_clause.as_ref())?;
+
+        // Check if this is an aggregate query
+        let is_aggregate = query
+            .targets
+            .iter()
+            .any(|t| Self::is_aggregate_expr(&t.expr));
+
+        if is_aggregate {
+            // Group and aggregate
+            let grouped = self.group_postings(&postings, query.group_by.as_ref())?;
+            for (_, group) in grouped {
+                let row = self.evaluate_aggregate_row(&query.targets, &group)?;
+
+                // Apply HAVING filter on aggregated row
+                if let Some(having_expr) = &query.having {
+                    if !self.evaluate_having_filter(
+                        having_expr,
+                        &row,
+                        &column_names,
+                        &query.targets,
+                        &group,
+                    )? {
+                        continue;
+                    }
+                }
+
+                result.add_row(row);
+            }
+        } else {
+            // Check if query has window functions
+            let has_windows = Self::has_window_functions(&query.targets);
+            let window_contexts = if has_windows {
+                if let Some(wf) = Self::find_window_function(&query.targets) {
+                    Some(self.compute_window_contexts(&postings, wf)?)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Simple query - one row per posting
+            // Use HashSet for O(1) DISTINCT deduplication instead of O(n) contains()
+            let mut seen_hashes: HashSet<u64> = if query.distinct {
+                HashSet::with_capacity(postings.len())
+            } else {
+                HashSet::new()
+            };
+
+            for (i, ctx) in postings.iter().enumerate() {
+                let row = if let Some(ref wctxs) = window_contexts {
+                    self.evaluate_row_with_window(&query.targets, ctx, Some(&wctxs[i]))?
+                } else {
+                    self.evaluate_row(&query.targets, ctx)?
+                };
+                if query.distinct {
+                    // O(1) hash-based deduplication
+                    let row_hash = hash_row(&row);
+                    if seen_hashes.insert(row_hash) {
+                        result.add_row(row);
+                    }
+                } else {
+                    result.add_row(row);
+                }
+            }
+        }
+
+        // Apply PIVOT BY transformation
+        if let Some(pivot_exprs) = &query.pivot_by {
+            result = self.apply_pivot(&result, pivot_exprs, &query.targets)?;
+        }
+
+        // Apply ORDER BY
+        if let Some(order_by) = &query.order_by {
+            self.sort_results(&mut result, order_by)?;
+        } else if query.group_by.is_some() && !result.rows.is_empty() && !result.columns.is_empty()
+        {
+            // When there's GROUP BY but no ORDER BY, sort by the first column
+            // for deterministic output (matches Python beancount behavior)
+            let first_col = result.columns[0].clone();
+            let default_order = vec![OrderSpec {
+                expr: Expr::Column(first_col),
+                direction: SortDirection::Asc,
+            }];
+            self.sort_results(&mut result, &default_order)?;
+        }
+
+        // Apply LIMIT
+        if let Some(limit) = query.limit {
+            result.rows.truncate(limit as usize);
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a SELECT query that sources from a subquery.
+    pub(super) fn execute_select_from_subquery(
+        &self,
+        outer_query: &SelectQuery,
+        inner_query: &SelectQuery,
+    ) -> Result<QueryResult, QueryError> {
+        // Execute the inner query first
+        let inner_result = self.execute_select(inner_query)?;
+
+        // Build a column name -> index mapping for the inner result
+        let inner_column_map: HashMap<String, usize> = inner_result
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.to_lowercase(), i))
+            .collect();
+
+        // Determine outer column names
+        let outer_column_names =
+            self.resolve_subquery_column_names(&outer_query.targets, &inner_result.columns)?;
+        let mut result = QueryResult::new(outer_column_names);
+
+        // Use HashSet for O(1) DISTINCT deduplication
+        let mut seen_hashes: HashSet<u64> = if outer_query.distinct {
+            HashSet::with_capacity(inner_result.rows.len())
+        } else {
+            HashSet::new()
+        };
+
+        // Process each row from the inner result
+        for inner_row in &inner_result.rows {
+            // Apply outer WHERE clause if present
+            if let Some(where_expr) = &outer_query.where_clause {
+                if !self.evaluate_subquery_filter(where_expr, inner_row, &inner_column_map)? {
+                    continue;
+                }
+            }
+
+            // Evaluate outer targets
+            let outer_row =
+                self.evaluate_subquery_row(&outer_query.targets, inner_row, &inner_column_map)?;
+
+            if outer_query.distinct {
+                // O(1) hash-based deduplication
+                let row_hash = hash_row(&outer_row);
+                if seen_hashes.insert(row_hash) {
+                    result.add_row(outer_row);
+                }
+            } else {
+                result.add_row(outer_row);
+            }
+        }
+
+        // Apply ORDER BY
+        if let Some(order_by) = &outer_query.order_by {
+            self.sort_results(&mut result, order_by)?;
+        }
+
+        // Apply LIMIT
+        if let Some(limit) = outer_query.limit {
+            result.rows.truncate(limit as usize);
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a SELECT query that sources from a user-created table.
+    pub(super) fn execute_select_from_table(
+        &self,
+        query: &SelectQuery,
+        table_name: &str,
+    ) -> Result<QueryResult, QueryError> {
+        let table_name_upper = table_name.to_uppercase();
+
+        // Look up the table
+        let table = self.tables.get(&table_name_upper).ok_or_else(|| {
+            QueryError::Evaluation(format!("table '{table_name}' does not exist"))
+        })?;
+
+        // Build a column name -> index mapping for the table
+        let column_map: HashMap<String, usize> = table
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.to_lowercase(), i))
+            .collect();
+
+        // Determine column names for the result
+        let column_names = self.resolve_subquery_column_names(&query.targets, &table.columns)?;
+        let mut result = QueryResult::new(column_names);
+
+        // Use HashSet for O(1) DISTINCT deduplication
+        let mut seen_hashes: HashSet<u64> = if query.distinct {
+            HashSet::with_capacity(table.rows.len())
+        } else {
+            HashSet::new()
+        };
+
+        // Process each row from the table
+        for row in &table.rows {
+            // Apply WHERE clause if present
+            if let Some(where_expr) = &query.where_clause {
+                if !self.evaluate_subquery_filter(where_expr, row, &column_map)? {
+                    continue;
+                }
+            }
+
+            // Evaluate targets
+            let result_row = self.evaluate_subquery_row(&query.targets, row, &column_map)?;
+
+            if query.distinct {
+                // O(1) hash-based deduplication
+                let row_hash = hash_row(&result_row);
+                if seen_hashes.insert(row_hash) {
+                    result.add_row(result_row);
+                }
+            } else {
+                result.add_row(result_row);
+            }
+        }
+
+        // Apply ORDER BY
+        if let Some(order_by) = &query.order_by {
+            self.sort_results(&mut result, order_by)?;
+        }
+
+        // Apply LIMIT
+        if let Some(limit) = query.limit {
+            result.rows.truncate(limit as usize);
+        }
+
+        Ok(result)
+    }
+
+    /// Resolve column names for a query from a subquery.
+    pub(super) fn resolve_subquery_column_names(
+        &self,
+        targets: &[Target],
+        inner_columns: &[String],
+    ) -> Result<Vec<String>, QueryError> {
+        let mut names = Vec::new();
+        for (i, target) in targets.iter().enumerate() {
+            if let Some(alias) = &target.alias {
+                names.push(alias.clone());
+            } else if matches!(target.expr, Expr::Wildcard) {
+                // Expand wildcard to all inner columns
+                names.extend(inner_columns.iter().cloned());
+            } else {
+                names.push(self.expr_to_name(&target.expr, i));
+            }
+        }
+        Ok(names)
+    }
+
+    /// Evaluate a filter expression against a subquery row.
+    pub(super) fn evaluate_subquery_filter(
+        &self,
+        expr: &Expr,
+        row: &[Value],
+        column_map: &HashMap<String, usize>,
+    ) -> Result<bool, QueryError> {
+        let val = self.evaluate_subquery_expr(expr, row, column_map)?;
+        self.to_bool(&val)
+    }
+
+    /// Evaluate an expression against a subquery row.
+    pub(super) fn evaluate_subquery_expr(
+        &self,
+        expr: &Expr,
+        row: &[Value],
+        column_map: &HashMap<String, usize>,
+    ) -> Result<Value, QueryError> {
+        match expr {
+            Expr::Wildcard => Err(QueryError::Evaluation(
+                "Wildcard not allowed in expression context".to_string(),
+            )),
+            Expr::Column(name) => {
+                let lower = name.to_lowercase();
+                if let Some(&idx) = column_map.get(&lower) {
+                    Ok(row.get(idx).cloned().unwrap_or(Value::Null))
+                } else {
+                    Err(QueryError::Evaluation(format!(
+                        "Unknown column '{name}' in subquery result"
+                    )))
+                }
+            }
+            Expr::Literal(lit) => self.evaluate_literal(lit),
+            Expr::Function(func) => {
+                // Evaluate function arguments
+                let args: Vec<Value> = func
+                    .args
+                    .iter()
+                    .map(|a| self.evaluate_subquery_expr(a, row, column_map))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.evaluate_function_on_values(&func.name, &args)
+            }
+            Expr::BinaryOp(op) => {
+                let left = self.evaluate_subquery_expr(&op.left, row, column_map)?;
+                let right = self.evaluate_subquery_expr(&op.right, row, column_map)?;
+                self.binary_op_on_values(op.op, &left, &right)
+            }
+            Expr::UnaryOp(op) => {
+                let val = self.evaluate_subquery_expr(&op.operand, row, column_map)?;
+                self.unary_op_on_value(op.op, &val)
+            }
+            Expr::Paren(inner) => self.evaluate_subquery_expr(inner, row, column_map),
+            Expr::Window(_) => Err(QueryError::Evaluation(
+                "Window functions not supported in subquery expressions".to_string(),
+            )),
+            Expr::Between { value, low, high } => {
+                let val = self.evaluate_subquery_expr(value, row, column_map)?;
+                let low_val = self.evaluate_subquery_expr(low, row, column_map)?;
+                let high_val = self.evaluate_subquery_expr(high, row, column_map)?;
+
+                let ge = self.compare_values(&val, &low_val, std::cmp::Ordering::is_ge)?;
+                let le = self.compare_values(&val, &high_val, std::cmp::Ordering::is_le)?;
+
+                match (ge, le) {
+                    (Value::Boolean(g), Value::Boolean(l)) => Ok(Value::Boolean(g && l)),
+                    _ => Err(QueryError::Type(
+                        "BETWEEN requires comparable values".to_string(),
+                    )),
+                }
+            }
+        }
+    }
+
+    /// Evaluate a row of targets against a subquery row.
+    pub(super) fn evaluate_subquery_row(
+        &self,
+        targets: &[Target],
+        inner_row: &[Value],
+        column_map: &HashMap<String, usize>,
+    ) -> Result<Row, QueryError> {
+        let mut row = Vec::new();
+        for target in targets {
+            if matches!(target.expr, Expr::Wildcard) {
+                // Expand wildcard to all values from inner row
+                row.extend(inner_row.iter().cloned());
+            } else {
+                row.push(self.evaluate_subquery_expr(&target.expr, inner_row, column_map)?);
+            }
+        }
+        Ok(row)
+    }
+
+    /// Execute a JOURNAL query.
+    pub(super) fn execute_journal(
+        &mut self,
+        query: &crate::ast::JournalQuery,
+    ) -> Result<QueryResult, QueryError> {
+        // JOURNAL is a shorthand for SELECT with specific columns
+        let account_pattern = &query.account_pattern;
+
+        // Try to compile as regex (using cache)
+        let account_regex = self.get_or_compile_regex(account_pattern);
+
+        let columns = vec![
+            "date".to_string(),
+            "flag".to_string(),
+            "payee".to_string(),
+            "narration".to_string(),
+            "account".to_string(),
+            "position".to_string(),
+            "balance".to_string(),
+        ];
+        let mut result = QueryResult::new(columns);
+
+        // Filter transactions that touch the account
+        for directive in self.directives {
+            if let Directive::Transaction(txn) = directive {
+                // Apply FROM clause filter if present
+                if let Some(from) = &query.from {
+                    if let Some(filter) = &from.filter {
+                        if !self.evaluate_from_filter(filter, txn)? {
+                            continue;
+                        }
+                    }
+                }
+
+                for posting in &txn.postings {
+                    // Match account using regex or substring
+                    let matches = if let Some(ref regex) = account_regex {
+                        regex.is_match(&posting.account)
+                    } else {
+                        posting.account.contains(account_pattern)
+                    };
+
+                    if matches {
+                        // Build the row
+                        let balance = self.balances.entry(posting.account.clone()).or_default();
+
+                        // Only process complete amounts
+                        if let Some(units) = posting.amount() {
+                            let pos = if let Some(cost_spec) = &posting.cost {
+                                if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
+                                    Position::with_cost(units.clone(), cost)
+                                } else {
+                                    Position::simple(units.clone())
+                                }
+                            } else {
+                                Position::simple(units.clone())
+                            };
+                            balance.add(pos.clone());
+                        }
+
+                        // Apply AT function if specified
+                        let position_value = if let Some(at_func) = &query.at_function {
+                            match at_func.to_uppercase().as_str() {
+                                "COST" => {
+                                    if let Some(units) = posting.amount() {
+                                        if let Some(cost_spec) = &posting.cost {
+                                            if let Some(cost) =
+                                                cost_spec.resolve(units.number, txn.date)
+                                            {
+                                                let total = units.number * cost.number;
+                                                Value::Amount(Amount::new(total, &cost.currency))
+                                            } else {
+                                                Value::Amount(units.clone())
+                                            }
+                                        } else {
+                                            Value::Amount(units.clone())
+                                        }
+                                    } else {
+                                        Value::Null
+                                    }
+                                }
+                                "UNITS" => posting
+                                    .amount()
+                                    .map_or(Value::Null, |u| Value::Amount(u.clone())),
+                                _ => posting
+                                    .amount()
+                                    .map_or(Value::Null, |u| Value::Amount(u.clone())),
+                            }
+                        } else {
+                            posting
+                                .amount()
+                                .map_or(Value::Null, |u| Value::Amount(u.clone()))
+                        };
+
+                        let row = vec![
+                            Value::Date(txn.date),
+                            Value::String(txn.flag.to_string()),
+                            Value::String(
+                                txn.payee
+                                    .as_ref()
+                                    .map_or_else(String::new, ToString::to_string),
+                            ),
+                            Value::String(txn.narration.to_string()),
+                            Value::String(posting.account.to_string()),
+                            position_value,
+                            Value::Inventory(balance.clone()),
+                        ];
+                        result.add_row(row);
+                    }
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a BALANCES query.
+    pub(super) fn execute_balances(
+        &mut self,
+        query: &crate::ast::BalancesQuery,
+    ) -> Result<QueryResult, QueryError> {
+        // Build up balances by processing all transactions (with FROM filtering)
+        self.build_balances_with_filter(query.from.as_ref())?;
+
+        let columns = vec!["account".to_string(), "balance".to_string()];
+        let mut result = QueryResult::new(columns);
+
+        // Sort accounts for consistent output
+        let mut accounts: Vec<_> = self.balances.keys().collect();
+        accounts.sort();
+
+        for account in accounts {
+            // Safety: account comes from self.balances.keys(), so it's guaranteed to exist
+            let Some(balance) = self.balances.get(account) else {
+                continue; // Defensive: skip if somehow the key disappeared
+            };
+
+            // Apply AT function if specified
+            let balance_value = if let Some(at_func) = &query.at_function {
+                match at_func.to_uppercase().as_str() {
+                    "COST" => {
+                        // Sum up cost basis
+                        let cost_inventory = balance.at_cost();
+                        Value::Inventory(cost_inventory)
+                    }
+                    "UNITS" => {
+                        // Just the units (remove cost info)
+                        let units_inventory = balance.at_units();
+                        Value::Inventory(units_inventory)
+                    }
+                    _ => Value::Inventory(balance.clone()),
+                }
+            } else {
+                Value::Inventory(balance.clone())
+            };
+
+            let row = vec![Value::String(account.to_string()), balance_value];
+            result.add_row(row);
+        }
+
+        Ok(result)
+    }
+
+    /// Execute a PRINT query.
+    pub(super) fn execute_print(
+        &self,
+        query: &crate::ast::PrintQuery,
+    ) -> Result<QueryResult, QueryError> {
+        // PRINT outputs directives in Beancount format
+        let columns = vec!["directive".to_string()];
+        let mut result = QueryResult::new(columns);
+
+        for directive in self.directives {
+            // Apply FROM clause filter if present
+            if let Some(from) = &query.from {
+                if let Some(filter) = &from.filter {
+                    // PRINT filters at transaction level
+                    if let Directive::Transaction(txn) = directive {
+                        if !self.evaluate_from_filter(filter, txn)? {
+                            continue;
+                        }
+                    }
+                }
+            }
+
+            // Format the directive as a string
+            let formatted = self.format_directive(directive);
+            result.add_row(vec![Value::String(formatted)]);
+        }
+
+        Ok(result)
+    }
+
+    /// Format a directive for PRINT output.
+    pub(super) fn format_directive(&self, directive: &Directive) -> String {
+        match directive {
+            Directive::Transaction(txn) => {
+                let mut out = format!("{} {} ", txn.date, txn.flag);
+                if let Some(payee) = &txn.payee {
+                    out.push_str(&format!("\"{payee}\" "));
+                }
+                out.push_str(&format!("\"{}\"", txn.narration));
+
+                for tag in &txn.tags {
+                    out.push_str(&format!(" #{tag}"));
+                }
+                for link in &txn.links {
+                    out.push_str(&format!(" ^{link}"));
+                }
+                out.push('\n');
+
+                for posting in &txn.postings {
+                    out.push_str(&format!("  {}", posting.account));
+                    if let Some(units) = posting.amount() {
+                        out.push_str(&format!("  {} {}", units.number, units.currency));
+                    }
+                    out.push('\n');
+                }
+                out
+            }
+            Directive::Balance(bal) => {
+                format!(
+                    "{} balance {} {} {}\n",
+                    bal.date, bal.account, bal.amount.number, bal.amount.currency
+                )
+            }
+            Directive::Open(open) => {
+                let mut out = format!("{} open {}", open.date, open.account);
+                if !open.currencies.is_empty() {
+                    out.push_str(&format!(" {}", open.currencies.join(",")));
+                }
+                out.push('\n');
+                out
+            }
+            Directive::Close(close) => {
+                format!("{} close {}\n", close.date, close.account)
+            }
+            Directive::Commodity(comm) => {
+                format!("{} commodity {}\n", comm.date, comm.currency)
+            }
+            Directive::Pad(pad) => {
+                format!("{} pad {} {}\n", pad.date, pad.account, pad.source_account)
+            }
+            Directive::Event(event) => {
+                format!(
+                    "{} event \"{}\" \"{}\"\n",
+                    event.date, event.event_type, event.value
+                )
+            }
+            Directive::Query(query) => {
+                format!(
+                    "{} query \"{}\" \"{}\"\n",
+                    query.date, query.name, query.query
+                )
+            }
+            Directive::Note(note) => {
+                format!("{} note {} \"{}\"\n", note.date, note.account, note.comment)
+            }
+            Directive::Document(doc) => {
+                format!("{} document {} \"{}\"\n", doc.date, doc.account, doc.path)
+            }
+            Directive::Price(price) => {
+                format!(
+                    "{} price {} {} {}\n",
+                    price.date, price.currency, price.amount.number, price.amount.currency
+                )
+            }
+            Directive::Custom(custom) => {
+                format!("{} custom \"{}\"\n", custom.date, custom.custom_type)
+            }
+        }
+    }
+
+    /// Execute a CREATE TABLE statement.
+    pub(super) fn execute_create_table(
+        &mut self,
+        create: &CreateTableStmt,
+    ) -> Result<QueryResult, QueryError> {
+        let table_name = create.table_name.to_uppercase();
+
+        // Check if table already exists
+        if self.tables.contains_key(&table_name) {
+            return Err(QueryError::Evaluation(format!(
+                "table '{}' already exists",
+                create.table_name
+            )));
+        }
+
+        let table = if let Some(select) = &create.as_select {
+            // CREATE TABLE ... AS SELECT ...
+            let result = self.execute_select(select)?;
+            Table {
+                columns: result.columns,
+                rows: result.rows,
+            }
+        } else {
+            // CREATE TABLE ... (col1, col2, ...)
+            let columns = create.columns.iter().map(|c| c.name.clone()).collect();
+            Table::new(columns)
+        };
+
+        self.tables.insert(table_name, table);
+
+        // Return empty result with a message
+        let mut result = QueryResult::new(vec!["result".to_string()]);
+        result.add_row(vec![Value::String(format!(
+            "Created table '{}'",
+            create.table_name
+        ))]);
+        Ok(result)
+    }
+
+    /// Execute an INSERT statement.
+    pub(super) fn execute_insert(
+        &mut self,
+        insert: &InsertStmt,
+    ) -> Result<QueryResult, QueryError> {
+        let table_name = insert.table_name.to_uppercase();
+
+        // Check if table exists
+        if !self.tables.contains_key(&table_name) {
+            return Err(QueryError::Evaluation(format!(
+                "table '{}' does not exist",
+                insert.table_name
+            )));
+        }
+
+        // Get the table's column count for validation
+        let table_column_count = self
+            .tables
+            .get(&table_name)
+            .expect("table existence verified above")
+            .columns
+            .len();
+
+        let rows_to_insert: Vec<Vec<Value>> = match &insert.source {
+            InsertSource::Values(value_rows) => {
+                // Evaluate each row of expressions
+                let mut rows = Vec::with_capacity(value_rows.len());
+                for value_row in value_rows {
+                    // Validate column count
+                    if let Some(ref cols) = insert.columns {
+                        if value_row.len() != cols.len() {
+                            return Err(QueryError::Evaluation(format!(
+                                "INSERT has {} columns but VALUES has {} values",
+                                cols.len(),
+                                value_row.len()
+                            )));
+                        }
+                    } else if value_row.len() != table_column_count {
+                        return Err(QueryError::Evaluation(format!(
+                            "table has {} columns but VALUES has {} values",
+                            table_column_count,
+                            value_row.len()
+                        )));
+                    }
+
+                    // Evaluate each expression in the row
+                    let mut row = Vec::with_capacity(value_row.len());
+                    for expr in value_row {
+                        let value = self.evaluate_literal_expr(expr)?;
+                        row.push(value);
+                    }
+                    rows.push(row);
+                }
+                rows
+            }
+            InsertSource::Select(select) => {
+                // Execute the SELECT and use its results
+                let result = self.execute_select(select)?;
+
+                // Validate column count
+                if let Some(ref cols) = insert.columns {
+                    if result.columns.len() != cols.len() {
+                        return Err(QueryError::Evaluation(format!(
+                            "INSERT has {} columns but SELECT returns {} columns",
+                            cols.len(),
+                            result.columns.len()
+                        )));
+                    }
+                } else if result.columns.len() != table_column_count {
+                    return Err(QueryError::Evaluation(format!(
+                        "table has {} columns but SELECT returns {} columns",
+                        table_column_count,
+                        result.columns.len()
+                    )));
+                }
+
+                result.rows
+            }
+        };
+
+        let rows_inserted = rows_to_insert.len();
+
+        // Insert rows into the table
+        if let Some(ref cols) = insert.columns {
+            // Insert with specific columns - need to map to table column positions
+            let table = self
+                .tables
+                .get(&table_name)
+                .expect("table existence verified above");
+            let col_indices: Vec<Option<usize>> = cols
+                .iter()
+                .map(|c| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|tc| tc.eq_ignore_ascii_case(c))
+                })
+                .collect();
+
+            // Validate all column names exist
+            for (i, idx) in col_indices.iter().enumerate() {
+                if idx.is_none() {
+                    return Err(QueryError::Evaluation(format!(
+                        "column '{}' does not exist in table '{}'",
+                        cols[i], insert.table_name
+                    )));
+                }
+            }
+
+            // Build full rows with NULLs for missing columns
+            let table = self
+                .tables
+                .get_mut(&table_name)
+                .expect("table existence verified above");
+            for value_row in rows_to_insert {
+                let mut full_row = vec![Value::Null; table_column_count];
+                for (i, value) in value_row.into_iter().enumerate() {
+                    // Use .get() for defensive bounds checking even though validation
+                    // should guarantee lengths match
+                    if let Some(idx) = col_indices.get(i).copied().flatten() {
+                        full_row[idx] = value;
+                    }
+                }
+                table.add_row(full_row);
+            }
+        } else {
+            // Insert all columns in order
+            let table = self
+                .tables
+                .get_mut(&table_name)
+                .expect("table existence verified above");
+            for row in rows_to_insert {
+                table.add_row(row);
+            }
+        }
+
+        // Return result with row count
+        let mut result = QueryResult::new(vec!["result".to_string()]);
+        result.add_row(vec![Value::String(format!(
+            "Inserted {} row(s) into '{}'",
+            rows_inserted, insert.table_name
+        ))]);
+        Ok(result)
+    }
+
+    /// Evaluate a literal expression (for INSERT VALUES).
+    pub(super) fn evaluate_literal_expr(&self, expr: &Expr) -> Result<Value, QueryError> {
+        match expr {
+            Expr::Literal(lit) => self.evaluate_literal(lit),
+            Expr::UnaryOp(unary) => {
+                let value = self.evaluate_literal_expr(&unary.operand)?;
+                match unary.op {
+                    UnaryOperator::Neg => match value {
+                        Value::Number(n) => Ok(Value::Number(-n)),
+                        Value::Integer(i) => Ok(Value::Integer(-i)),
+                        _ => Err(QueryError::Type(
+                            "cannot negate non-numeric value".to_string(),
+                        )),
+                    },
+                    UnaryOperator::Not => match value {
+                        Value::Boolean(b) => Ok(Value::Boolean(!b)),
+                        _ => Err(QueryError::Type(
+                            "cannot negate non-boolean value".to_string(),
+                        )),
+                    },
+                    _ => Err(QueryError::Evaluation(
+                        "unsupported operator in INSERT VALUES".to_string(),
+                    )),
+                }
+            }
+            Expr::Paren(inner) => self.evaluate_literal_expr(inner),
+            Expr::Function(func) => {
+                // Allow some simple functions in VALUES
+                let name = func.name.to_uppercase();
+                match name.as_str() {
+                    "DATE" => {
+                        // DATE(year, month, day) or DATE('YYYY-MM-DD')
+                        if func.args.len() == 1 {
+                            let arg = self.evaluate_literal_expr(&func.args[0])?;
+                            if let Value::String(s) = arg {
+                                if let Ok(date) = NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
+                                    return Ok(Value::Date(date));
+                                }
+                            }
+                            Err(QueryError::Type("invalid date string".to_string()))
+                        } else if func.args.len() == 3 {
+                            let year = self.evaluate_literal_expr(&func.args[0])?;
+                            let month = self.evaluate_literal_expr(&func.args[1])?;
+                            let day = self.evaluate_literal_expr(&func.args[2])?;
+                            match (year, month, day) {
+                                (Value::Integer(y), Value::Integer(m), Value::Integer(d)) => {
+                                    if let Some(date) =
+                                        NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32)
+                                    {
+                                        Ok(Value::Date(date))
+                                    } else {
+                                        Err(QueryError::Type("invalid date components".to_string()))
+                                    }
+                                }
+                                _ => Err(QueryError::Type(
+                                    "DATE() requires integer arguments".to_string(),
+                                )),
+                            }
+                        } else {
+                            Err(QueryError::Evaluation(
+                                "DATE() requires 1 or 3 arguments".to_string(),
+                            ))
+                        }
+                    }
+                    _ => Err(QueryError::Evaluation(format!(
+                        "function '{}' not supported in INSERT VALUES",
+                        func.name
+                    ))),
+                }
+            }
+            _ => Err(QueryError::Evaluation(
+                "only literals, unary operators, and DATE() function supported in INSERT VALUES"
+                    .to_string(),
+            )),
+        }
+    }
+}
