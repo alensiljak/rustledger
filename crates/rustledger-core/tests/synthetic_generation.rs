@@ -251,6 +251,7 @@ fn arb_pad() -> impl Strategy<Value = Pad> {
 }
 
 /// Generate a Posting
+#[allow(dead_code)]
 fn arb_posting() -> impl Strategy<Value = Posting> {
     (arb_account(), arb_amount()).prop_map(|(account, amount)| Posting::new(account, amount))
 }
@@ -354,6 +355,7 @@ fn arb_directive() -> impl Strategy<Value = Directive> {
 /// A complete synthetic ledger with proper account setup
 #[derive(Debug)]
 pub struct SyntheticLedger {
+    /// All directives in the ledger
     pub directives: Vec<Directive>,
 }
 
@@ -672,10 +674,10 @@ mod tests {
         }
     }
 
-    /// Property test: generated ledgers should validate with bean-check.
-    ///
-    /// Run with: cargo test -p rustledger-core --test synthetic_generation -- --ignored prop_beancheck
-    /// Requires: bean-check to be installed (pip install beancount)
+    // Property test: generated ledgers should validate with bean-check.
+    //
+    // Run with: cargo test -p rustledger-core --test synthetic_generation -- --ignored prop_beancheck
+    // Requires: bean-check to be installed (pip install beancount)
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(5))]
 
