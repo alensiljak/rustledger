@@ -35,6 +35,6 @@ pub mod price;
 
 pub use ast::*;
 pub use error::{ParseError, QueryError};
-pub use executor::{Executor, QueryResult, Value};
+pub use executor::{Executor, Interval, IntervalUnit, QueryResult, Value};
 pub use parser::parse;
 pub use price::PriceDatabase;

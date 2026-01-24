@@ -503,6 +503,24 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
             positions.join("   ")
         }
         Value::StringSet(set) => set.join(", "),
+        Value::Metadata(meta) => {
+            // Format metadata as key=value pairs
+            meta.iter()
+                .map(|(k, v)| format!("{k}: {v:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        }
+        Value::Interval(interval) => {
+            let unit_str = match interval.unit {
+                rustledger_query::IntervalUnit::Day => "day",
+                rustledger_query::IntervalUnit::Week => "week",
+                rustledger_query::IntervalUnit::Month => "month",
+                rustledger_query::IntervalUnit::Quarter => "quarter",
+                rustledger_query::IntervalUnit::Year => "year",
+            };
+            let plural = if interval.count.abs() == 1 { "" } else { "s" };
+            format!("{} {}{}", interval.count, unit_str, plural)
+        }
         Value::Null => String::new(),
     }
 }
@@ -535,6 +553,23 @@ fn value_to_json(value: &Value) -> serde_json::Value {
             })).collect::<Vec<_>>(),
         }),
         Value::StringSet(set) => serde_json::json!(set),
+        Value::Metadata(meta) => {
+            let obj: serde_json::Map<String, serde_json::Value> = meta
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::json!(format!("{v:?}"))))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Interval(interval) => serde_json::json!({
+            "count": interval.count,
+            "unit": match interval.unit {
+                rustledger_query::IntervalUnit::Day => "day",
+                rustledger_query::IntervalUnit::Week => "week",
+                rustledger_query::IntervalUnit::Month => "month",
+                rustledger_query::IntervalUnit::Quarter => "quarter",
+                rustledger_query::IntervalUnit::Year => "year",
+            },
+        }),
         Value::Null => serde_json::Value::Null,
     }
 }

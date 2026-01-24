@@ -150,6 +150,26 @@ pub fn value_to_cell(value: &rustledger_query::Value) -> CellValue {
             }
         }
         Value::StringSet(set) => CellValue::StringSet(set.clone()),
+        Value::Metadata(meta) => {
+            // Convert metadata to a string representation
+            let repr = meta
+                .iter()
+                .map(|(k, v)| format!("{k}: {v:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            CellValue::String(repr)
+        }
+        Value::Interval(interval) => {
+            let unit_str = match interval.unit {
+                rustledger_query::IntervalUnit::Day => "day",
+                rustledger_query::IntervalUnit::Week => "week",
+                rustledger_query::IntervalUnit::Month => "month",
+                rustledger_query::IntervalUnit::Quarter => "quarter",
+                rustledger_query::IntervalUnit::Year => "year",
+            };
+            let plural = if interval.count.abs() == 1 { "" } else { "s" };
+            CellValue::String(format!("{} {}{}", interval.count, unit_str, plural))
+        }
         Value::Null => CellValue::Null,
     }
 }
