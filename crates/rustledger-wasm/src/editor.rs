@@ -1646,6 +1646,431 @@ mod tests {
         assert_eq!(symbols[1].children.as_ref().unwrap().len(), 2);
     }
 
+    // ====================================================================
+    // Phase 4: Additional Coverage Tests for Editor Features
+    // ====================================================================
+
+    #[test]
+    fn test_line_index_empty_source() {
+        let index = LineIndex::new("");
+        let (line, col) = index.offset_to_position(0);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+    }
+
+    #[test]
+    fn test_line_index_single_line() {
+        let source = "hello world";
+        let index = LineIndex::new(source);
+
+        let (line, col) = index.offset_to_position(0);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        let (line, col) = index.offset_to_position(6);
+        assert_eq!(line, 0);
+        assert_eq!(col, 6);
+    }
+
+    #[test]
+    fn test_line_index_multiple_lines() {
+        let source = "line1\nline2\nline3";
+        let index = LineIndex::new(source);
+
+        // Start of line 0
+        let (line, col) = index.offset_to_position(0);
+        assert_eq!(line, 0);
+        assert_eq!(col, 0);
+
+        // Start of line 1 (after first newline)
+        let (line, col) = index.offset_to_position(6);
+        assert_eq!(line, 1);
+        assert_eq!(col, 0);
+
+        // Start of line 2
+        let (line, col) = index.offset_to_position(12);
+        assert_eq!(line, 2);
+        assert_eq!(col, 0);
+
+        // Middle of line 2
+        let (line, col) = index.offset_to_position(15);
+        assert_eq!(line, 2);
+        assert_eq!(col, 3);
+    }
+
+    #[test]
+    fn test_line_index_beyond_length() {
+        let source = "hello";
+        let index = LineIndex::new(source);
+
+        // Beyond source length should clamp
+        let (line, col) = index.offset_to_position(1000);
+        assert_eq!(line, 0);
+        assert_eq!(col, 5);
+    }
+
+    #[test]
+    fn test_detect_context_inside_string() {
+        // Test with odd number of quotes before cursor (inside string)
+        let source = "text \"inside";
+        let ctx = detect_context(source, 0, 10);
+        assert_eq!(ctx, CompletionContext::InsideString);
+    }
+
+    #[test]
+    fn test_detect_context_expecting_currency() {
+        let source = "  Assets:Bank  100.00 ";
+        let ctx = detect_context(source, 0, 22);
+        assert_eq!(ctx, CompletionContext::ExpectingCurrency);
+    }
+
+    #[test]
+    fn test_detect_context_unknown() {
+        let source = "some random text";
+        let ctx = detect_context(source, 0, 8);
+        assert_eq!(ctx, CompletionContext::Unknown);
+    }
+
+    #[test]
+    fn test_detect_context_after_directive_keyword() {
+        let source = "2024-01-15 open ";
+        let ctx = detect_context(source, 0, 16);
+        assert_eq!(ctx, CompletionContext::ExpectingAccount);
+    }
+
+    #[test]
+    fn test_completion_context_display() {
+        assert_eq!(format!("{}", CompletionContext::LineStart), "line_start");
+        assert_eq!(format!("{}", CompletionContext::AfterDate), "after_date");
+        assert_eq!(
+            format!("{}", CompletionContext::ExpectingAccount),
+            "expecting_account"
+        );
+        assert_eq!(
+            format!(
+                "{}",
+                CompletionContext::AccountSegment {
+                    prefix: "Assets:".to_string()
+                }
+            ),
+            "account_segment:Assets:"
+        );
+        assert_eq!(
+            format!("{}", CompletionContext::ExpectingCurrency),
+            "expecting_currency"
+        );
+        assert_eq!(
+            format!("{}", CompletionContext::InsideString),
+            "inside_string"
+        );
+        assert_eq!(format!("{}", CompletionContext::Unknown), "unknown");
+    }
+
+    #[test]
+    fn test_get_hover_info_account() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+
+2024-01-15 * "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+"#;
+        let result = parse(source);
+        let hover = get_hover_info(source, 0, 20, &result);
+        assert!(hover.is_some());
+        let contents = hover.unwrap().contents;
+        assert!(contents.contains("Account"));
+        assert!(contents.contains("Assets:Bank"));
+    }
+
+    #[test]
+    fn test_get_hover_info_currency() {
+        let source = "2024-01-01 commodity USD";
+        let result = parse(source);
+        let hover = get_hover_info(source, 0, 21, &result);
+        assert!(hover.is_some());
+        let contents = hover.unwrap().contents;
+        assert!(contents.contains("Currency"));
+        assert!(contents.contains("USD"));
+    }
+
+    #[test]
+    fn test_get_hover_info_all_directives() {
+        // Test a subset of directives with their expected content
+        let tests = [
+            ("open", "open"),
+            ("close", "close"),
+            ("commodity", "commodity"),
+            ("balance", "balance"),
+            ("pad", "pad"),
+            ("event", "event"),
+            ("note", "note"),
+            ("document", "document"),
+            ("query", "query"),
+            ("custom", "custom"),
+            ("price", "price"),
+            ("*", "Transaction"),
+            ("!", "Transaction"),
+        ];
+
+        for (keyword, expected_content) in tests {
+            let info = get_directive_hover_info(keyword);
+            assert!(info.is_some(), "should have hover for {keyword}");
+            let content = info.as_ref().unwrap().to_lowercase();
+            assert!(
+                content.contains(&expected_content.to_lowercase()),
+                "{keyword} hover should contain '{expected_content}', got: {}",
+                info.unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn test_get_word_at_position_out_of_bounds() {
+        let source = "hello";
+        let word = get_word_at_position(source, 0, 100);
+        assert!(word.is_none());
+    }
+
+    #[test]
+    fn test_get_word_at_position_at_space() {
+        let source = "hello world";
+        let word = get_word_at_position(source, 0, 5);
+        // Position 5 is 'o' in "hello", still part of word
+        // Test that we get the word anyway since we're on a word char
+        assert_eq!(word, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_is_date_like() {
+        assert!(is_date_like("2024-01-15"));
+        assert!(is_date_like("1999-12-31"));
+        assert!(!is_date_like("2024-1-15")); // Wrong format (too short)
+        assert!(!is_date_like("not-a-date"));
+        // Note: is_date_like only checks format (YYYY-MM-DD pattern), not validity
+        // so 2024-13-99 would pass the pattern check
+        assert!(is_date_like("2024-13-99")); // Pattern matches, validity checked elsewhere
+    }
+
+    #[test]
+    fn test_is_currency_like() {
+        assert!(is_currency_like("USD"));
+        assert!(is_currency_like("EUR"));
+        assert!(is_currency_like("BTC"));
+        assert!(is_currency_like("AAPL"));
+        assert!(!is_currency_like("U")); // Too short
+        assert!(!is_currency_like("VERYLONGCURRENCY")); // Too long
+        assert!(!is_currency_like("usd")); // Lowercase
+    }
+
+    #[test]
+    fn test_is_account_type() {
+        assert!(is_account_type("Assets"));
+        assert!(is_account_type("Liabilities"));
+        assert!(is_account_type("Equity"));
+        assert!(is_account_type("Income"));
+        assert!(is_account_type("Expenses"));
+        assert!(!is_account_type("Other"));
+        assert!(!is_account_type("assets")); // Case-sensitive
+    }
+
+    #[test]
+    fn test_extract_accounts() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+2024-01-15 * "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food  5.00 USD
+"#;
+        let result = parse(source);
+        let accounts = extract_accounts(&result);
+
+        assert!(accounts.contains(&"Assets:Bank".to_string()));
+        assert!(accounts.contains(&"Expenses:Food".to_string()));
+    }
+
+    #[test]
+    fn test_extract_currencies() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 commodity EUR
+2024-01-15 balance Assets:Bank 100.00 GBP
+"#;
+        let result = parse(source);
+        let currencies = extract_currencies(&result);
+
+        assert!(currencies.contains(&"USD".to_string()));
+        assert!(currencies.contains(&"EUR".to_string()));
+        assert!(currencies.contains(&"GBP".to_string()));
+    }
+
+    #[test]
+    fn test_extract_payees() {
+        let source = r#"2024-01-15 * "Coffee Shop" "Morning coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+2024-01-16 * "Restaurant" "Lunch"
+  Assets:Bank  -20.00 USD
+  Expenses:Food
+"#;
+        let result = parse(source);
+        let payees = extract_payees(&result);
+
+        assert!(payees.contains(&"Coffee Shop".to_string()));
+        assert!(payees.contains(&"Restaurant".to_string()));
+    }
+
+    #[test]
+    fn test_editor_cache_new() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-15 * "Coffee Shop" "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+"#;
+        let result = parse(source);
+        let cache = EditorCache::new(source, &result);
+
+        assert!(!cache.accounts.is_empty());
+        assert!(!cache.currencies.is_empty());
+        assert!(!cache.payees.is_empty());
+    }
+
+    #[test]
+    fn test_get_references_account() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-15 balance Assets:Bank 100.00 USD
+2024-01-20 * "Transfer"
+  Assets:Bank  50.00 USD
+  Income:Salary
+"#;
+        let result = parse(source);
+        let cache = EditorCache::new(source, &result);
+
+        let refs = get_references_cached(source, 0, 20, &result, &cache);
+        assert!(refs.is_some());
+
+        let refs = refs.unwrap();
+        assert_eq!(refs.symbol, "Assets:Bank");
+        assert_eq!(refs.kind, ReferenceKind::Account);
+        assert!(refs.references.len() >= 3); // open, balance, posting
+    }
+
+    #[test]
+    fn test_get_references_currency() {
+        let source = r#"2024-01-01 commodity USD
+2024-01-01 open Assets:Bank USD
+2024-01-15 balance Assets:Bank 100.00 USD
+"#;
+        let result = parse(source);
+        let cache = EditorCache::new(source, &result);
+
+        let refs = get_references_cached(source, 0, 21, &result, &cache);
+        assert!(refs.is_some());
+
+        let refs = refs.unwrap();
+        assert_eq!(refs.symbol, "USD");
+        assert_eq!(refs.kind, ReferenceKind::Currency);
+        assert!(refs.references.len() >= 3); // commodity, open, balance
+    }
+
+    #[test]
+    fn test_find_word_in_line() {
+        let line = "2024-01-01 open Assets:Bank USD";
+        let range = find_word_in_line(line, "open", 5);
+        assert!(range.is_some());
+        let r = range.unwrap();
+        assert_eq!(r.start_line, 5);
+        assert_eq!(r.start_character, 11);
+        assert_eq!(r.end_character, 15);
+    }
+
+    #[test]
+    fn test_find_nth_word_in_line() {
+        let line = "USD EUR USD GBP";
+        let first = find_nth_word_in_line(line, "USD", 0, 0);
+        assert!(first.is_some());
+        assert_eq!(first.unwrap().start_character, 0);
+
+        let second = find_nth_word_in_line(line, "USD", 0, 1);
+        assert!(second.is_some());
+        assert_eq!(second.unwrap().start_character, 8);
+    }
+
+    #[test]
+    fn test_find_quoted_string_in_line() {
+        let line = r#"2024-01-15 * "Coffee Shop" "Morning coffee""#;
+        let range = find_quoted_string_in_line(line, "Coffee Shop", 0);
+        assert!(range.is_some());
+        let r = range.unwrap();
+        assert_eq!(r.start_character, 13);
+        assert_eq!(r.end_character, 26);
+    }
+
+    #[test]
+    fn test_document_symbols_all_directive_types() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 close Assets:OldBank
+2024-01-01 commodity BTC
+2024-01-01 balance Assets:Bank 100.00 USD
+2024-01-01 pad Assets:Bank Equity:Opening
+2024-01-01 event "location" "New York"
+2024-01-01 note Assets:Bank "Test note"
+2024-01-01 document Assets:Bank "/path/to/doc.pdf"
+2024-01-01 price BTC 50000.00 USD
+2024-01-01 query "test_query" "SELECT *"
+2024-01-01 custom "budget" Expenses 500.00 USD
+2024-01-15 * "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+"#;
+        let result = parse(source);
+        let symbols = get_document_symbols(source, &result);
+
+        // Should have symbols for all directive types
+        assert!(symbols.len() >= 12);
+
+        // Verify different symbol kinds
+        let kinds: Vec<_> = symbols.iter().map(|s| &s.kind).collect();
+        assert!(kinds.contains(&&SymbolKind::Account)); // open/close
+        assert!(kinds.contains(&&SymbolKind::Commodity));
+        assert!(kinds.contains(&&SymbolKind::Balance));
+        assert!(kinds.contains(&&SymbolKind::Pad));
+        assert!(kinds.contains(&&SymbolKind::Event));
+        assert!(kinds.contains(&&SymbolKind::Note));
+        assert!(kinds.contains(&&SymbolKind::Document));
+        assert!(kinds.contains(&&SymbolKind::Price));
+        assert!(kinds.contains(&&SymbolKind::Query));
+        assert!(kinds.contains(&&SymbolKind::Custom));
+        assert!(kinds.contains(&&SymbolKind::Transaction));
+    }
+
+    #[test]
+    fn test_complete_after_date_returns_all_directives() {
+        let completions = complete_after_date();
+        assert!(!completions.is_empty());
+
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"open"));
+        assert!(labels.contains(&"close"));
+        assert!(labels.contains(&"balance"));
+        assert!(labels.contains(&"*"));
+        assert!(labels.contains(&"!"));
+    }
+
+    #[test]
+    fn test_complete_account_segment_filters_by_prefix() {
+        let accounts = vec![
+            "Assets:Bank:Checking".to_string(),
+            "Assets:Bank:Savings".to_string(),
+            "Assets:Crypto".to_string(),
+            "Expenses:Food".to_string(),
+        ];
+
+        let completions = complete_account_segment_cached("Assets:Bank:", &accounts);
+        assert_eq!(completions.len(), 2);
+        let labels: Vec<_> = completions.iter().map(|c| c.label.as_str()).collect();
+        assert!(labels.contains(&"Checking"));
+        assert!(labels.contains(&"Savings"));
+    }
+
     #[test]
     #[ignore = "Manual benchmark - run with: cargo test -p rustledger-wasm --release -- --ignored --nocapture"]
     fn bench_editor_cache_performance() {
