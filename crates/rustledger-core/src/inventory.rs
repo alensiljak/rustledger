@@ -1231,4 +1231,570 @@ mod tests {
         assert_eq!(inv1.len(), 2); // Both lots preserved
         assert_eq!(inv1.units("AAPL"), dec!(0)); // Net units correct
     }
+
+    // ====================================================================
+    // Phase 2: Additional Coverage Tests for Booking Methods
+    // ====================================================================
+
+    #[test]
+    fn test_hifo_with_tie_breaking() {
+        // When multiple lots have the same cost, HIFO should use insertion order
+        let mut inv = Inventory::new();
+
+        // Three lots with same cost but different dates
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+        let cost3 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost3));
+
+        // HIFO with tied costs should reduce in some deterministic order
+        let result = inv
+            .reduce(&Amount::new(dec!(-15), "AAPL"), None, BookingMethod::Hifo)
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(15));
+        // All at same cost, so 15 * 100 = 1500
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1500.00));
+    }
+
+    #[test]
+    fn test_hifo_with_different_costs() {
+        // HIFO should reduce highest cost lots first
+        let mut inv = Inventory::new();
+
+        let cost_low = Cost::new(dec!(50.00), "USD").with_date(date(2024, 1, 1));
+        let cost_mid = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+        let cost_high = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_low));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_mid));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost_high,
+        ));
+
+        // Reduce 15 shares - should take from highest cost (200) first
+        let result = inv
+            .reduce(&Amount::new(dec!(-15), "AAPL"), None, BookingMethod::Hifo)
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(15));
+        // 10 * 200 + 5 * 100 = 2000 + 500 = 2500
+        assert_eq!(result.cost_basis.unwrap().number, dec!(2500.00));
+    }
+
+    #[test]
+    fn test_average_booking_with_pre_existing_positions() {
+        let mut inv = Inventory::new();
+
+        // Add two lots with different costs
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // Total: 20 shares, total cost = 10*100 + 10*200 = 3000, avg = 150/share
+        // Reduce 5 shares using AVERAGE
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Average)
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(15));
+        // Cost basis for 5 shares at average 150 = 750
+        assert_eq!(result.cost_basis.unwrap().number, dec!(750.00));
+    }
+
+    #[test]
+    fn test_average_booking_reduces_all() {
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        // Reduce all shares
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-10), "AAPL"),
+                None,
+                BookingMethod::Average,
+            )
+            .unwrap();
+
+        assert!(inv.is_empty() || inv.units("AAPL").is_zero());
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00));
+    }
+
+    #[test]
+    fn test_none_booking_augmentation() {
+        // NONE booking with same-sign amounts should augment, not reduce
+        let mut inv = Inventory::new();
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+
+        // Adding more (same sign) - this is an augmentation
+        let result = inv
+            .reduce(&Amount::new(dec!(50), "USD"), None, BookingMethod::None)
+            .unwrap();
+
+        assert_eq!(inv.units("USD"), dec!(150));
+        assert!(result.matched.is_empty()); // No lots matched for augmentation
+        assert!(result.cost_basis.is_none());
+    }
+
+    #[test]
+    fn test_none_booking_reduction() {
+        // NONE booking with opposite-sign should reduce
+        let mut inv = Inventory::new();
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+
+        let result = inv
+            .reduce(&Amount::new(dec!(-30), "USD"), None, BookingMethod::None)
+            .unwrap();
+
+        assert_eq!(inv.units("USD"), dec!(70));
+        assert!(!result.matched.is_empty());
+    }
+
+    #[test]
+    fn test_none_booking_insufficient() {
+        let mut inv = Inventory::new();
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+
+        let result = inv.reduce(&Amount::new(dec!(-150), "USD"), None, BookingMethod::None);
+
+        assert!(matches!(
+            result,
+            Err(BookingError::InsufficientUnits { .. })
+        ));
+    }
+
+    #[test]
+    fn test_booking_error_no_matching_lot() {
+        let mut inv = Inventory::new();
+
+        // Add a lot with specific cost
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        // Try to reduce with a cost spec that doesn't match
+        let wrong_spec = CostSpec::empty().with_date(date(2024, 12, 31));
+        let result = inv.reduce(
+            &Amount::new(dec!(-5), "AAPL"),
+            Some(&wrong_spec),
+            BookingMethod::Strict,
+        );
+
+        assert!(matches!(result, Err(BookingError::NoMatchingLot { .. })));
+    }
+
+    #[test]
+    fn test_booking_error_insufficient_units() {
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        // Try to reduce more than available
+        let result = inv.reduce(&Amount::new(dec!(-20), "AAPL"), None, BookingMethod::Fifo);
+
+        match result {
+            Err(BookingError::InsufficientUnits {
+                requested,
+                available,
+                ..
+            }) => {
+                assert_eq!(requested, dec!(20));
+                assert_eq!(available, dec!(10));
+            }
+            _ => panic!("Expected InsufficientUnits error"),
+        }
+    }
+
+    #[test]
+    fn test_strict_with_size_exact_match() {
+        let mut inv = Inventory::new();
+
+        // Add two lots with same cost but different sizes
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+
+        // Reduce exactly 5 - should match the 5-share lot
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-5), "AAPL"),
+                None,
+                BookingMethod::StrictWithSize,
+            )
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(10));
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00));
+    }
+
+    #[test]
+    fn test_strict_with_size_total_match() {
+        let mut inv = Inventory::new();
+
+        // Add two lots
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+
+        // Reduce exactly 15 (total) - should succeed via total match exception
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-15), "AAPL"),
+                None,
+                BookingMethod::StrictWithSize,
+            )
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(0));
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1500.00));
+    }
+
+    #[test]
+    fn test_strict_with_size_ambiguous() {
+        let mut inv = Inventory::new();
+
+        // Add two lots of same size and cost
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // Reduce 7 shares - doesn't match either lot exactly, not total
+        let result = inv.reduce(
+            &Amount::new(dec!(-7), "AAPL"),
+            None,
+            BookingMethod::StrictWithSize,
+        );
+
+        assert!(matches!(result, Err(BookingError::AmbiguousMatch { .. })));
+    }
+
+    #[test]
+    fn test_short_position() {
+        // Test short selling (negative positions)
+        let mut inv = Inventory::new();
+
+        // Short 10 shares
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(-10), "AAPL"), cost));
+
+        assert_eq!(inv.units("AAPL"), dec!(-10));
+        assert!(!inv.is_empty());
+    }
+
+    #[test]
+    fn test_at_cost() {
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+
+        let at_cost = inv.at_cost();
+
+        // AAPL converted: 10*100 + 5*150 = 1000 + 750 = 1750 USD
+        // Plus 100 USD simple position = 1850 USD total
+        assert_eq!(at_cost.units("USD"), dec!(1850));
+        assert_eq!(at_cost.units("AAPL"), dec!(0)); // No AAPL in cost view
+    }
+
+    #[test]
+    fn test_at_units() {
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+
+        let at_units = inv.at_units();
+
+        // All AAPL lots merged
+        assert_eq!(at_units.units("AAPL"), dec!(15));
+        // Should only have one position after aggregation
+        assert_eq!(at_units.len(), 1);
+    }
+
+    #[test]
+    fn test_add_empty_position() {
+        let mut inv = Inventory::new();
+        inv.add(Position::simple(Amount::new(dec!(0), "USD")));
+
+        assert!(inv.is_empty());
+        assert_eq!(inv.len(), 0);
+    }
+
+    #[test]
+    fn test_compact() {
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        // Reduce all
+        inv.reduce(&Amount::new(dec!(-10), "AAPL"), None, BookingMethod::Fifo)
+            .unwrap();
+
+        // Compact to remove empty positions
+        inv.compact();
+        assert!(inv.is_empty());
+        assert_eq!(inv.len(), 0);
+    }
+
+    #[test]
+    fn test_booking_method_from_str() {
+        assert_eq!(
+            BookingMethod::from_str("STRICT").unwrap(),
+            BookingMethod::Strict
+        );
+        assert_eq!(
+            BookingMethod::from_str("fifo").unwrap(),
+            BookingMethod::Fifo
+        );
+        assert_eq!(
+            BookingMethod::from_str("LIFO").unwrap(),
+            BookingMethod::Lifo
+        );
+        assert_eq!(
+            BookingMethod::from_str("Hifo").unwrap(),
+            BookingMethod::Hifo
+        );
+        assert_eq!(
+            BookingMethod::from_str("AVERAGE").unwrap(),
+            BookingMethod::Average
+        );
+        assert_eq!(
+            BookingMethod::from_str("NONE").unwrap(),
+            BookingMethod::None
+        );
+        assert_eq!(
+            BookingMethod::from_str("strict_with_size").unwrap(),
+            BookingMethod::StrictWithSize
+        );
+        assert!(BookingMethod::from_str("INVALID").is_err());
+    }
+
+    #[test]
+    fn test_booking_method_display() {
+        assert_eq!(format!("{}", BookingMethod::Strict), "STRICT");
+        assert_eq!(format!("{}", BookingMethod::Fifo), "FIFO");
+        assert_eq!(format!("{}", BookingMethod::Lifo), "LIFO");
+        assert_eq!(format!("{}", BookingMethod::Hifo), "HIFO");
+        assert_eq!(format!("{}", BookingMethod::Average), "AVERAGE");
+        assert_eq!(format!("{}", BookingMethod::None), "NONE");
+        assert_eq!(
+            format!("{}", BookingMethod::StrictWithSize),
+            "STRICT_WITH_SIZE"
+        );
+    }
+
+    #[test]
+    fn test_booking_error_display() {
+        let err = BookingError::AmbiguousMatch {
+            num_matches: 3,
+            currency: "AAPL".into(),
+        };
+        assert!(format!("{err}").contains("3 lots match"));
+
+        let err = BookingError::NoMatchingLot {
+            currency: "AAPL".into(),
+            cost_spec: CostSpec::empty(),
+        };
+        assert!(format!("{err}").contains("No matching lot"));
+
+        let err = BookingError::InsufficientUnits {
+            currency: "AAPL".into(),
+            requested: dec!(100),
+            available: dec!(50),
+        };
+        assert!(format!("{err}").contains("requested 100"));
+        assert!(format!("{err}").contains("available 50"));
+
+        let err = BookingError::CurrencyMismatch {
+            expected: "USD".into(),
+            got: "EUR".into(),
+        };
+        assert!(format!("{err}").contains("expected USD"));
+        assert!(format!("{err}").contains("got EUR"));
+    }
+
+    #[test]
+    fn test_book_value_multiple_currencies() {
+        let mut inv = Inventory::new();
+
+        // Cost in USD
+        let cost_usd = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_usd));
+
+        // Cost in EUR
+        let cost_eur = Cost::new(dec!(90.00), "EUR").with_date(date(2024, 2, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost_eur));
+
+        let book = inv.book_value("AAPL");
+        assert_eq!(book.get("USD"), Some(&dec!(1000.00)));
+        assert_eq!(book.get("EUR"), Some(&dec!(450.00)));
+    }
+
+    #[test]
+    fn test_reduce_hifo_insufficient_units() {
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        let result = inv.reduce(&Amount::new(dec!(-20), "AAPL"), None, BookingMethod::Hifo);
+
+        assert!(matches!(
+            result,
+            Err(BookingError::InsufficientUnits { .. })
+        ));
+    }
+
+    #[test]
+    fn test_reduce_average_insufficient_units() {
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        let result = inv.reduce(
+            &Amount::new(dec!(-20), "AAPL"),
+            None,
+            BookingMethod::Average,
+        );
+
+        assert!(matches!(
+            result,
+            Err(BookingError::InsufficientUnits { .. })
+        ));
+    }
+
+    #[test]
+    fn test_reduce_average_empty_inventory() {
+        let mut inv = Inventory::new();
+
+        let result = inv.reduce(
+            &Amount::new(dec!(-10), "AAPL"),
+            None,
+            BookingMethod::Average,
+        );
+
+        assert!(matches!(
+            result,
+            Err(BookingError::InsufficientUnits { .. })
+        ));
+    }
+
+    #[test]
+    fn test_inventory_display_sorted() {
+        let mut inv = Inventory::new();
+
+        // Add in non-alphabetical order
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+        inv.add(Position::simple(Amount::new(dec!(50), "EUR")));
+        inv.add(Position::simple(Amount::new(dec!(10), "AAPL")));
+
+        let display = format!("{inv}");
+
+        // Should be sorted alphabetically: AAPL, EUR, USD
+        let aapl_pos = display.find("AAPL").unwrap();
+        let eur_pos = display.find("EUR").unwrap();
+        let usd_pos = display.find("USD").unwrap();
+
+        assert!(aapl_pos < eur_pos);
+        assert!(eur_pos < usd_pos);
+    }
+
+    #[test]
+    fn test_inventory_with_cost_display_sorted() {
+        let mut inv = Inventory::new();
+
+        // Add same currency with different costs
+        let cost_high = Cost::new(dec!(200.00), "USD").with_date(date(2024, 1, 1));
+        let cost_low = Cost::new(dec!(100.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost_high,
+        ));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost_low));
+
+        let display = format!("{inv}");
+
+        // Both positions should be in the output
+        assert!(display.contains("AAPL"));
+        assert!(display.contains("100"));
+        assert!(display.contains("200"));
+    }
+
+    #[test]
+    fn test_reduce_hifo_no_matching_lot() {
+        let mut inv = Inventory::new();
+
+        // No AAPL positions
+        inv.add(Position::simple(Amount::new(dec!(100), "USD")));
+
+        let result = inv.reduce(&Amount::new(dec!(-10), "AAPL"), None, BookingMethod::Hifo);
+
+        assert!(matches!(result, Err(BookingError::NoMatchingLot { .. })));
+    }
+
+    #[test]
+    fn test_fifo_respects_dates() {
+        // Ensure FIFO uses acquisition date, not insertion order
+        let mut inv = Inventory::new();
+
+        // Add newer lot first (out of order)
+        let cost_new = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+        let cost_old = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_new));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_old));
+
+        // FIFO should reduce from oldest (cost 100) first
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Fifo)
+            .unwrap();
+
+        // Should use cost from oldest lot (100)
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00));
+    }
+
+    #[test]
+    fn test_lifo_respects_dates() {
+        // Ensure LIFO uses acquisition date, not insertion order
+        let mut inv = Inventory::new();
+
+        // Add older lot first
+        let cost_old = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_new = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_old));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_new));
+
+        // LIFO should reduce from newest (cost 200) first
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Lifo)
+            .unwrap();
+
+        // Should use cost from newest lot (200)
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00));
+    }
 }

@@ -27,10 +27,13 @@ fn make_open(date: &str, account: &str) -> DirectiveWrapper {
     DirectiveWrapper {
         directive_type: "open".to_string(),
         date: date.to_string(),
+        filename: None,
+        lineno: None,
         data: DirectiveData::Open(OpenData {
             account: account.to_string(),
             currencies: vec![],
             booking: None,
+            metadata: vec![],
         }),
     }
 }
@@ -43,6 +46,8 @@ fn make_transaction(
     DirectiveWrapper {
         directive_type: "transaction".to_string(),
         date: date.to_string(),
+        filename: None,
+        lineno: None,
         data: DirectiveData::Transaction(TransactionData {
             flag: "*".to_string(),
             payee: None,
@@ -79,6 +84,8 @@ fn make_transaction_with_cost(
     DirectiveWrapper {
         directive_type: "transaction".to_string(),
         date: date.to_string(),
+        filename: None,
+        lineno: None,
         data: DirectiveData::Transaction(TransactionData {
             flag: "*".to_string(),
             payee: None,
@@ -122,12 +129,15 @@ fn make_price(date: &str, currency: &str, amount: &str, quote_currency: &str) ->
     DirectiveWrapper {
         directive_type: "price".to_string(),
         date: date.to_string(),
+        filename: None,
+        lineno: None,
         data: DirectiveData::Price(PriceData {
             currency: currency.to_string(),
             amount: AmountData {
                 number: amount.to_string(),
                 currency: quote_currency.to_string(),
             },
+            metadata: vec![],
         }),
     }
 }
@@ -136,6 +146,8 @@ fn make_commodity(date: &str, currency: &str) -> DirectiveWrapper {
     DirectiveWrapper {
         directive_type: "commodity".to_string(),
         date: date.to_string(),
+        filename: None,
+        lineno: None,
         data: DirectiveData::Commodity(CommodityData {
             currency: currency.to_string(),
             metadata: vec![],
@@ -595,6 +607,8 @@ fn test_auto_accounts_generates_opens() {
         directives: vec![DirectiveWrapper {
             directive_type: "transaction".to_string(),
             date: "2020-01-01".to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Transaction(TransactionData {
                 flag: "*".to_string(),
                 payee: None,
@@ -692,15 +706,20 @@ fn test_auto_accounts_same_date_ordering() {
             DirectiveWrapper {
                 directive_type: "open".to_string(),
                 date: "1900-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Open(OpenData {
                     account: "Liabilities:Credit-Card".to_string(),
                     currencies: vec![],
                     booking: None,
+                    metadata: vec![],
                 }),
             },
             DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2016-08-30".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: Some("Amazon".to_string()),

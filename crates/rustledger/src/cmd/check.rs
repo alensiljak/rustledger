@@ -5,9 +5,8 @@ use crate::report::{self, SourceCache};
 use anyhow::{Context, Result};
 use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
-use rayon::prelude::*;
-use rustledger_booking::{InterpolationError, interpolate};
-use rustledger_core::Directive;
+use rustledger_booking::{BookingEngine, InterpolationError};
+use rustledger_core::{BookingMethod, Directive};
 use rustledger_loader::{
     CacheEntry, CachedOptions, CachedPlugin, LoadError, LoadResult, Loader, load_cache_entry,
     reintern_directives, save_cache_entry,
@@ -731,45 +730,47 @@ fn run(args: &Args) -> Result<ExitCode> {
         }
     }
 
-    // Run interpolation on transactions (parallel)
+    // Run booking and interpolation on transactions (sequential)
+    // Booking must be sequential because lot matching depends on prior inventory.
+    // This matches Python beancount behavior where booking runs before interpolation
+    // to fill in empty cost specs (e.g., `-5 AAPL {}` -> `-5 AAPL {100 USD, 2020-01-01}`).
     if args.verbose && !args.quiet {
-        eprintln!("Interpolating {} directives...", directives.len());
+        eprintln!(
+            "Booking and interpolating {} directives...",
+            directives.len()
+        );
     }
 
-    let interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = directives
-        .par_iter_mut()
-        .filter_map(|directive| {
-            if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
-                    Ok(result) => {
-                        *txn = result.transaction;
-                        None
-                    }
-                    Err(e) => {
-                        // Skip CannotInferCurrency errors when transaction has empty cost specs
-                        // because the cost will be filled by lot matching during validation.
-                        // This matches Python beancount behavior where booking runs before interpolation.
-                        let has_empty_cost_spec = txn.postings.iter().any(|p| {
-                            if let Some(cost) = &p.cost {
-                                cost.number_per.is_none() && cost.number_total.is_none()
-                            } else {
-                                false
-                            }
-                        });
-                        if has_empty_cost_spec
-                            && matches!(e, InterpolationError::CannotInferCurrency { .. })
-                        {
-                            None // Skip error - lot matching will handle this
-                        } else {
-                            Some((txn.date, txn.narration.to_string(), e))
-                        }
-                    }
+    let booking_method: BookingMethod = options
+        .booking_method
+        .parse()
+        .unwrap_or(BookingMethod::Strict);
+    let mut booking_engine = BookingEngine::with_method(booking_method);
+    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
+
+    for directive in &mut directives {
+        if let Directive::Transaction(txn) = directive {
+            match booking_engine.book_and_interpolate(txn) {
+                Ok(result) => {
+                    // Apply the booked transaction to update inventory for subsequent lot matching
+                    booking_engine.apply(&result.transaction);
+                    *txn = result.transaction;
                 }
-            } else {
-                None
+                Err(e) => {
+                    // Convert BookingError to InterpolationError for consistent error reporting
+                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
+                        interpolation_errors.push((
+                            txn.date,
+                            txn.narration.to_string(),
+                            interp_err,
+                        ));
+                    }
+                    // Other booking errors (NoMatchingLot, InsufficientUnits) are
+                    // reported as validation errors, not interpolation errors
+                }
             }
-        })
-        .collect();
+        }
+    }
 
     if !interpolation_errors.is_empty() {
         if json_mode {

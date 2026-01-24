@@ -200,6 +200,21 @@ cargo fmt --all -- --check                 # Format check
 cargo deny check                           # Security audit
 ```
 
+## Known Limitations & TODOs
+
+### Decimal Precision (1 compat test failure)
+
+**Issue**: `rust_decimal` has a maximum precision of 28 digits, while Python's `decimal.Decimal` has arbitrary precision. This causes 1 compatibility test failure out of 694 (99.86% pass rate).
+
+**Affected file**: `beancount-lazy-plugins/tests_data_output_some_fund_output.beancount`
+- Contains amounts with 28 decimal places (e.g., `0.7142857142857142857142857143`)
+- Python detects a `2×10⁻²⁵ USD` residual imbalance
+- Rust considers it balanced due to precision limits
+
+**TODO**: Replace `rust_decimal` with an arbitrary-precision decimal library (e.g., `bigdecimal`) to achieve 100% compatibility with Python beancount's balance checking. This is a significant refactor affecting `rustledger-core` and all downstream crates.
+
+**Practical impact**: None for real-world usage. No legitimate ledger has 28-decimal-place amounts.
+
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for the full project roadmap including near-term, medium-term, and long-term goals.

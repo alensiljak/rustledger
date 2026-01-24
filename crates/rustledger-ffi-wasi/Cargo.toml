@@ -1,0 +1,32 @@
+[package]
+name = "rustledger-ffi-wasi"
+description = "Rustledger FFI via WASI - JSON API for embedding in any language"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords.workspace = true
+categories.workspace = true
+authors.workspace = true
+readme = "../../README.md"
+
+[[bin]]
+name = "rustledger-ffi-wasi"
+path = "src/main.rs"
+
+[dependencies]
+rustledger-core.workspace = true
+rustledger-parser.workspace = true
+rustledger-loader.workspace = true
+rustledger-booking.workspace = true
+rustledger-validate.workspace = true
+rustledger-query.workspace = true
+rustledger-plugin.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

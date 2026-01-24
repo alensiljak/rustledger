@@ -9,7 +9,7 @@
 use rust_decimal::Decimal;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
-    Posting, Transaction,
+    Posting, PriceAnnotation, Transaction,
 };
 use std::collections::HashMap;
 use thiserror::Error;
@@ -325,6 +325,42 @@ impl BookingEngine {
             result.postings.remove(orig_idx);
             for (i, posting) in expanded.into_iter().enumerate() {
                 result.postings.insert(orig_idx + i, posting);
+            }
+        }
+
+        // Normalize total prices (@@) to per-unit prices (@)
+        // This matches Python beancount behavior where @@ is converted to @
+        for posting in &mut result.postings {
+            if let (Some(IncompleteAmount::Complete(units)), Some(price)) =
+                (&posting.units, &posting.price)
+            {
+                let normalized = match price {
+                    PriceAnnotation::Total(total_amount) if !units.number.is_zero() => {
+                        // Convert total price to per-unit: @@ 15000 USD for 100 units -> @ 150 USD
+                        let per_unit = total_amount.number / units.number.abs();
+                        Some(PriceAnnotation::Unit(Amount::new(
+                            per_unit,
+                            &total_amount.currency,
+                        )))
+                    }
+                    PriceAnnotation::TotalIncomplete(inc) if !units.number.is_zero() => {
+                        // Convert incomplete total to incomplete unit
+                        if let Some(total_amount) = inc.as_amount() {
+                            let per_unit = total_amount.number / units.number.abs();
+                            Some(PriceAnnotation::Unit(Amount::new(
+                                per_unit,
+                                &total_amount.currency,
+                            )))
+                        } else {
+                            None
+                        }
+                    }
+                    PriceAnnotation::TotalEmpty => Some(PriceAnnotation::UnitEmpty),
+                    _ => None, // Already per-unit or can't normalize
+                };
+                if let Some(normalized_price) = normalized {
+                    posting.price = Some(normalized_price);
+                }
             }
         }
 

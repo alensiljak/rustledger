@@ -36,6 +36,14 @@ pub struct DirectiveWrapper {
     pub directive_type: String,
     /// The directive date (YYYY-MM-DD).
     pub date: String,
+    /// Source filename (for tracking through plugin processing).
+    /// If None, the directive was created by a plugin.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub filename: Option<String>,
+    /// Source line number (1-based).
+    /// If None, the directive was created by a plugin.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub lineno: Option<u32>,
     /// Directive-specific data as a nested structure.
     #[serde(flatten)]
     pub data: DirectiveData,
@@ -200,6 +208,9 @@ pub struct BalanceData {
     pub amount: AmountData,
     /// Tolerance.
     pub tolerance: Option<String>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Open account data.
@@ -211,6 +222,9 @@ pub struct OpenData {
     pub currencies: Vec<String>,
     /// Booking method.
     pub booking: Option<String>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Close account data.
@@ -218,6 +232,9 @@ pub struct OpenData {
 pub struct CloseData {
     /// Account name.
     pub account: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Commodity declaration data.
@@ -237,6 +254,9 @@ pub struct PadData {
     pub account: String,
     /// Source account for padding.
     pub source_account: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Event data.
@@ -246,6 +266,9 @@ pub struct EventData {
     pub event_type: String,
     /// Event value.
     pub value: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Note data.
@@ -255,6 +278,9 @@ pub struct NoteData {
     pub account: String,
     /// Note comment.
     pub comment: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Document data.
@@ -264,6 +290,9 @@ pub struct DocumentData {
     pub account: String,
     /// Document path.
     pub path: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Price directive data.
@@ -273,6 +302,9 @@ pub struct PriceData {
     pub currency: String,
     /// Price amount.
     pub amount: AmountData,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Query directive data.
@@ -282,6 +314,9 @@ pub struct QueryData {
     pub name: String,
     /// Query string.
     pub query: String,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Custom directive data.
@@ -289,8 +324,11 @@ pub struct QueryData {
 pub struct CustomData {
     /// Custom type.
     pub custom_type: String,
-    /// Values as strings.
-    pub values: Vec<String>,
+    /// Values preserving their types (Account, Amount, String, etc.).
+    pub values: Vec<MetaValueData>,
+    /// Metadata key-value pairs.
+    #[serde(default)]
+    pub metadata: Vec<(String, MetaValueData)>,
 }
 
 /// Ledger options passed to plugins.
@@ -363,4 +401,46 @@ impl PluginOutput {
             errors: Vec::new(),
         }
     }
+}
+
+impl DirectiveWrapper {
+    /// Returns the sort order for directive types, matching Python beancount's `SORT_ORDER`.
+    ///
+    /// Order ensures logical processing:
+    /// - Open (-2): Accounts must be opened first
+    /// - Balance (-1): Balance assertions checked before transactions
+    /// - Default (0): Transactions, Commodity, Pad, Event, Note, Price, Query, Custom
+    /// - Document (1): Documents recorded after transactions
+    /// - Close (2): Accounts closed last
+    pub const fn type_sort_order(&self) -> i8 {
+        match &self.data {
+            DirectiveData::Open(_) => -2,
+            DirectiveData::Balance(_) => -1,
+            DirectiveData::Document(_) => 1,
+            DirectiveData::Close(_) => 2,
+            _ => 0, // Transaction, Commodity, Pad, Event, Note, Price, Query, Custom
+        }
+    }
+
+    /// Returns a sort key tuple matching Python beancount's `entry_sortkey()`.
+    ///
+    /// Sorts by: (date, `type_order`, lineno)
+    /// This ensures deterministic ordering for entries on the same date.
+    pub fn sort_key(&self) -> (&str, i8, u32) {
+        (
+            &self.date,
+            self.type_sort_order(),
+            self.lineno.unwrap_or(u32::MAX), // Plugin-generated entries sort last
+        )
+    }
+}
+
+/// Sort directives using beancount's standard ordering.
+///
+/// This matches Python beancount's `entry_sortkey()`:
+/// 1. Primary: date
+/// 2. Secondary: directive type (Open, Balance, default, Document, Close)
+/// 3. Tertiary: line number (preserves file order for same-date, same-type entries)
+pub fn sort_directives(directives: &mut [DirectiveWrapper]) {
+    directives.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
 }

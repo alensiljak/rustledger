@@ -4,8 +4,8 @@
 //! They implement the same interface as WASM plugins.
 
 use crate::types::{
-    DirectiveData, DirectiveWrapper, DocumentData, OpenData, PluginError, PluginInput,
-    PluginOutput, TransactionData,
+    DirectiveData, DirectiveWrapper, DocumentData, MetaValueData, OpenData, PluginError,
+    PluginInput, PluginOutput, TransactionData, sort_directives,
 };
 
 /// Trait for native plugins.
@@ -142,10 +142,13 @@ impl NativePlugin for ImplicitPricesPlugin {
                                 let price_wrapper = DirectiveWrapper {
                                     directive_type: "price".to_string(),
                                     date: wrapper.date.clone(),
+                                    filename: None, // Plugin-generated
+                                    lineno: None,
                                     data: crate::types::DirectiveData::Price(
                                         crate::types::PriceData {
                                             currency: units.currency.clone(),
                                             amount: price_amount.clone(),
+                                            metadata: vec![],
                                         },
                                     ),
                                 };
@@ -161,6 +164,8 @@ impl NativePlugin for ImplicitPricesPlugin {
                                 let price_wrapper = DirectiveWrapper {
                                     directive_type: "price".to_string(),
                                     date: wrapper.date.clone(),
+                                    filename: None, // Plugin-generated
+                                    lineno: None,
                                     data: crate::types::DirectiveData::Price(
                                         crate::types::PriceData {
                                             currency: units.currency.clone(),
@@ -168,6 +173,7 @@ impl NativePlugin for ImplicitPricesPlugin {
                                                 number: number.clone(),
                                                 currency: currency.clone(),
                                             },
+                                            metadata: vec![],
                                         },
                                     ),
                                 };
@@ -373,6 +379,8 @@ mod auto_tag_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -499,37 +507,34 @@ impl NativePlugin for AutoAccountsPlugin {
         }
 
         // Generate open directives for accounts without explicit open
+        // Sort accounts for deterministic ordering (matches Python beancount behavior)
+        let mut accounts_to_open: Vec<_> = account_first_use
+            .iter()
+            .filter(|(account, _)| !opened_accounts.contains(*account))
+            .collect();
+        accounts_to_open.sort_by_key(|(account, _)| *account);
+
         let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
-        for (account, date) in &account_first_use {
-            if !opened_accounts.contains(account) {
-                new_directives.push(DirectiveWrapper {
-                    directive_type: "open".to_string(),
-                    date: date.clone(),
-                    data: DirectiveData::Open(OpenData {
-                        account: account.clone(),
-                        currencies: vec![],
-                        booking: None,
-                    }),
-                });
-            }
+        for (index, (account, date)) in accounts_to_open.into_iter().enumerate() {
+            new_directives.push(DirectiveWrapper {
+                directive_type: "open".to_string(),
+                date: date.clone(),
+                filename: Some("<auto_accounts>".to_string()),
+                lineno: Some(index as u32), // Use index as lineno for deterministic sorting
+                data: DirectiveData::Open(OpenData {
+                    account: account.clone(),
+                    currencies: vec![],
+                    booking: None,
+                    metadata: vec![],
+                }),
+            });
         }
 
         // Add existing directives
         new_directives.extend(input.directives);
 
-        // Sort by date, with Open directives before other types on the same date.
-        // This ensures accounts are opened before they're used.
-        new_directives.sort_by(|a, b| {
-            match a.date.cmp(&b.date) {
-                std::cmp::Ordering::Equal => {
-                    // On same date, Open comes first
-                    let a_is_open = a.directive_type == "open";
-                    let b_is_open = b.directive_type == "open";
-                    b_is_open.cmp(&a_is_open) // true > false, so opens come first
-                }
-                other => other,
-            }
-        });
+        // Sort using beancount's standard ordering: date, type order, line number
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -803,8 +808,8 @@ impl NativePlugin for DocumentDiscoveryPlugin {
         let mut all_directives = input.directives;
         all_directives.extend(new_directives);
 
-        // Sort by date
-        all_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut all_directives);
 
         PluginOutput {
             directives: all_directives,
@@ -863,9 +868,12 @@ fn scan_documents(
                                     directives.push(DirectiveWrapper {
                                         directive_type: "document".to_string(),
                                         date: date_str.to_string(),
+                                        filename: None, // Plugin-generated
+                                        lineno: None,
                                         data: DirectiveData::Document(DocumentData {
                                             account,
                                             path: full_path,
+                                            metadata: vec![],
                                         }),
                                     });
                                 }
@@ -923,6 +931,8 @@ impl NativePlugin for CheckClosingPlugin {
                             new_directives.push(DirectiveWrapper {
                                 directive_type: "balance".to_string(),
                                 date: next_date,
+                                filename: None, // Plugin-generated
+                                lineno: None,
                                 data: DirectiveData::Balance(BalanceData {
                                     account: posting.account.clone(),
                                     amount: AmountData {
@@ -930,6 +940,7 @@ impl NativePlugin for CheckClosingPlugin {
                                         currency,
                                     },
                                     tolerance: None,
+                                    metadata: vec![],
                                 }),
                             });
                         }
@@ -938,8 +949,8 @@ impl NativePlugin for CheckClosingPlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -1044,8 +1055,11 @@ impl NativePlugin for CloseTreePlugin {
                         new_directives.push(DirectiveWrapper {
                             directive_type: "close".to_string(),
                             date: close_date.clone(),
+                            filename: None, // Plugin-generated
+                            lineno: None,
                             data: DirectiveData::Close(CloseData {
                                 account: account.clone(),
+                                metadata: vec![],
                             }),
                         });
                     }
@@ -1053,8 +1067,8 @@ impl NativePlugin for CloseTreePlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -1447,15 +1461,9 @@ impl NativePlugin for NoUnusedPlugin {
                 }
                 DirectiveData::Custom(data) => {
                     // Check custom directive values for account references
-                    // Account names start with standard prefixes
                     for value in &data.values {
-                        if value.starts_with("Assets:")
-                            || value.starts_with("Liabilities:")
-                            || value.starts_with("Equity:")
-                            || value.starts_with("Income:")
-                            || value.starts_with("Expenses:")
-                        {
-                            used_accounts.insert(value.clone());
+                        if let MetaValueData::Account(account) = value {
+                            used_accounts.insert(account.clone());
                         }
                     }
                 }
@@ -1498,24 +1506,32 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Unused".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1559,15 +1575,20 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1609,17 +1630,23 @@ mod nounused_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:OldAccount".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:OldAccount".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1722,6 +1749,8 @@ impl NativePlugin for CheckDrainedPlugin {
                             new_directives.push(DirectiveWrapper {
                                 directive_type: "balance".to_string(),
                                 date: next_date.clone(),
+                                filename: None, // Plugin-generated
+                                lineno: None,
                                 data: DirectiveData::Balance(BalanceData {
                                     account: data.account.clone(),
                                     amount: AmountData {
@@ -1729,6 +1758,7 @@ impl NativePlugin for CheckDrainedPlugin {
                                         currency: currency.clone(),
                                     },
                                     tolerance: None,
+                                    metadata: vec![],
                                 }),
                             });
                         }
@@ -1737,8 +1767,8 @@ impl NativePlugin for CheckDrainedPlugin {
             }
         }
 
-        // Sort by date
-        new_directives.sort_by(|a, b| a.date.cmp(&b.date));
+        // Sort using beancount's standard ordering
+        sort_directives(&mut new_directives);
 
         PluginOutput {
             directives: new_directives,
@@ -1761,15 +1791,20 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec!["USD".to_string()],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-06-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1793,8 +1828,11 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1837,17 +1875,23 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Income:Salary".to_string(),
                         currencies: vec!["USD".to_string()],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Income:Salary".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -1878,15 +1922,20 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Open(OpenData {
                         account: "Assets:Bank".to_string(),
                         currencies: vec![],
                         booking: None,
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-06-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1910,6 +1959,8 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-07-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -1933,8 +1984,11 @@ mod check_drained_tests {
                 DirectiveWrapper {
                     directive_type: "close".to_string(),
                     date: "2024-12-31".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Close(CloseData {
                         account: "Assets:Bank".to_string(),
+                        metadata: vec![],
                     }),
                 },
             ],
@@ -2146,6 +2200,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![], // Missing 'name'
@@ -2172,6 +2228,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2199,6 +2257,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2228,6 +2288,8 @@ mod commodity_attr_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "commodity".to_string(),
                 date: "2024-01-01".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Commodity(CommodityData {
                     currency: "AAPL".to_string(),
                     metadata: vec![(
@@ -2419,6 +2481,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2449,6 +2513,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2497,6 +2563,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2527,6 +2595,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2577,6 +2647,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2607,6 +2679,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2637,6 +2711,8 @@ mod check_average_cost_tests {
                 DirectiveWrapper {
                     directive_type: "transaction".to_string(),
                     date: "2024-02-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
@@ -2772,6 +2848,8 @@ impl NativePlugin for CurrencyAccountsPlugin {
                     new_directives.push(DirectiveWrapper {
                         directive_type: wrapper.directive_type.clone(),
                         date: wrapper.date.clone(),
+                        filename: wrapper.filename.clone(), // Preserve original location
+                        lineno: wrapper.lineno,
                         data: DirectiveData::Transaction(modified_txn),
                     });
                 } else {
@@ -2803,6 +2881,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -2882,6 +2962,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,
@@ -2939,6 +3021,8 @@ mod currency_accounts_tests {
             directives: vec![DirectiveWrapper {
                 directive_type: "transaction".to_string(),
                 date: "2024-01-15".to_string(),
+                filename: None,
+                lineno: None,
                 data: DirectiveData::Transaction(TransactionData {
                     flag: "*".to_string(),
                     payee: None,

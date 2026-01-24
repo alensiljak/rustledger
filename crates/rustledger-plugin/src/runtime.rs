@@ -692,4 +692,244 @@ mod tests {
         assert_eq!(config.max_memory, 512 * 1024 * 1024);
         assert_eq!(config.max_time_secs, 60);
     }
+
+    // ====================================================================
+    // Phase 3: Additional Coverage Tests for Plugin Managers
+    // ====================================================================
+
+    #[test]
+    fn test_plugin_manager_new() {
+        let manager = PluginManager::new();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+    }
+
+    #[test]
+    fn test_plugin_manager_with_config() {
+        let config = RuntimeConfig {
+            max_memory: 128 * 1024 * 1024,
+            max_time_secs: 10,
+        };
+        let manager = PluginManager::with_config(config);
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manager_default() {
+        let manager = PluginManager::default();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_new() {
+        let manager = WatchingPluginManager::new();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+        assert!(manager.plugin_info().is_empty());
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_with_config() {
+        let config = RuntimeConfig {
+            max_memory: 64 * 1024 * 1024,
+            max_time_secs: 5,
+        };
+        let manager = WatchingPluginManager::with_config(config);
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_default() {
+        let manager = WatchingPluginManager::default();
+        assert!(manager.is_empty());
+        assert_eq!(manager.len(), 0);
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_get_unknown() {
+        let manager = WatchingPluginManager::new();
+        assert!(manager.get("nonexistent").is_none());
+    }
+
+    #[test]
+    fn test_plugin_manager_execute_out_of_bounds() {
+        let manager = PluginManager::new();
+        let input = crate::types::PluginInput {
+            directives: vec![],
+            options: crate::types::PluginOptions::default(),
+            config: None,
+        };
+        let result = manager.execute(0, &input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out of bounds"));
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_execute_out_of_bounds() {
+        let manager = WatchingPluginManager::new();
+        let input = crate::types::PluginInput {
+            directives: vec![],
+            options: crate::types::PluginOptions::default(),
+            config: None,
+        };
+        let result = manager.execute(0, &input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("out of bounds"));
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_execute_by_name_unknown() {
+        let manager = WatchingPluginManager::new();
+        let input = crate::types::PluginInput {
+            directives: vec![],
+            options: crate::types::PluginOptions::default(),
+            config: None,
+        };
+        let result = manager.execute_by_name("unknown", &input);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn test_plugin_manager_execute_all_empty() {
+        let manager = PluginManager::new();
+        let input = crate::types::PluginInput {
+            directives: vec![],
+            options: crate::types::PluginOptions::default(),
+            config: None,
+        };
+        let result = manager.execute_all(input);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.directives.is_empty());
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_execute_all_empty() {
+        let manager = WatchingPluginManager::new();
+        let input = crate::types::PluginInput {
+            directives: vec![],
+            options: crate::types::PluginOptions::default(),
+            config: None,
+        };
+        let result = manager.execute_all(input);
+        assert!(result.is_ok());
+        let output = result.unwrap();
+        assert!(output.directives.is_empty());
+        assert!(output.errors.is_empty());
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_check_reload_empty() {
+        let mut manager = WatchingPluginManager::new();
+        let result = manager.check_and_reload();
+        assert!(result.is_ok());
+        assert!(!result.unwrap()); // No plugins reloaded
+    }
+
+    #[test]
+    fn test_watching_plugin_manager_reload_all_empty() {
+        let mut manager = WatchingPluginManager::new();
+        let result = manager.reload_all();
+        assert!(result.is_ok()); // Should succeed with empty manager
+    }
+
+    #[test]
+    fn test_plugin_load_bytes() {
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "alloc") (param i32) (result i32)
+                    i32.const 0
+                )
+                (func (export "process") (param i32 i32) (result i64)
+                    i64.const 0
+                )
+            )
+            "#,
+        )
+        .expect("valid wat");
+
+        let config = RuntimeConfig::default();
+        let result = Plugin::load_bytes("test_plugin", &wasm, &config);
+        assert!(result.is_ok());
+
+        let plugin = result.unwrap();
+        assert_eq!(plugin.name(), "test_plugin");
+    }
+
+    #[test]
+    fn test_plugin_manager_load_bytes() {
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "alloc") (param i32) (result i32)
+                    i32.const 0
+                )
+                (func (export "process") (param i32 i32) (result i64)
+                    i64.const 0
+                )
+            )
+            "#,
+        )
+        .expect("valid wat");
+
+        let mut manager = PluginManager::new();
+        let result = manager.load_bytes("my_plugin", &wasm);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 0); // First plugin index
+        assert_eq!(manager.len(), 1);
+        assert!(!manager.is_empty());
+    }
+
+    #[test]
+    fn test_plugin_manager_multiple_plugins() {
+        let wasm = wat::parse_str(
+            r#"
+            (module
+                (memory (export "memory") 1)
+                (func (export "alloc") (param i32) (result i32)
+                    i32.const 0
+                )
+                (func (export "process") (param i32 i32) (result i64)
+                    i64.const 0
+                )
+            )
+            "#,
+        )
+        .expect("valid wat");
+
+        let mut manager = PluginManager::new();
+        manager.load_bytes("plugin1", &wasm).unwrap();
+        manager.load_bytes("plugin2", &wasm).unwrap();
+        manager.load_bytes("plugin3", &wasm).unwrap();
+
+        assert_eq!(manager.len(), 3);
+    }
+
+    #[test]
+    fn test_validate_truncated_wasm() {
+        // Start of valid WASM but truncated
+        let truncated = &[0x00, 0x61, 0x73, 0x6d]; // Just the magic bytes
+        let result = validate_plugin_module(truncated);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_wrong_magic() {
+        let wrong_magic = &[0xFF, 0xFF, 0xFF, 0xFF];
+        let result = validate_plugin_module(wrong_magic);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_empty_wasm() {
+        let empty: &[u8] = &[];
+        let result = validate_plugin_module(empty);
+        assert!(result.is_err());
+    }
 }

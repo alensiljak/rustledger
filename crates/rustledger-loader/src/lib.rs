@@ -49,6 +49,49 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
 
+/// Try to canonicalize a path, falling back to making it absolute if canonicalize
+/// is not supported (e.g., on WASI).
+///
+/// This function:
+/// 1. First tries `fs::canonicalize()` which resolves symlinks and returns absolute path
+/// 2. If that fails (e.g., WASI doesn't support it), tries to make an absolute path manually
+/// 3. As a last resort, returns the original path
+fn normalize_path(path: &Path) -> PathBuf {
+    // Try canonicalize first (works on most platforms, resolves symlinks)
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+
+    // Fallback: make absolute without resolving symlinks (WASI-compatible)
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        // Join with current directory and clean up the path
+        let mut result = cwd;
+        for component in path.components() {
+            match component {
+                std::path::Component::ParentDir => {
+                    result.pop();
+                }
+                std::path::Component::Normal(s) => {
+                    result.push(s);
+                }
+                std::path::Component::CurDir => {}
+                std::path::Component::RootDir => {
+                    result = PathBuf::from("/");
+                }
+                std::path::Component::Prefix(p) => {
+                    result = PathBuf::from(p.as_os_str());
+                }
+            }
+        }
+        result
+    } else {
+        // Last resort: just return the path as-is
+        path.to_path_buf()
+    }
+}
+
 /// Errors that can occur during loading.
 #[derive(Debug, Error)]
 pub enum LoadError {
@@ -248,11 +291,8 @@ impl Loader {
         let mut source_map = SourceMap::new();
         let mut errors = Vec::new();
 
-        // Get canonical path
-        let canonical = path.canonicalize().map_err(|e| LoadError::Io {
-            path: path.to_path_buf(),
-            source: e,
-        })?;
+        // Get normalized absolute path (WASI-compatible, doesn't require canonicalize)
+        let canonical = normalize_path(path);
 
         // Set root directory for path security if enabled but not explicitly set
         if self.enforce_path_security && self.root_dir.is_none() {
@@ -356,16 +396,8 @@ impl Loader {
         let base_dir = path.parent().unwrap_or(Path::new("."));
         for (include_path, _span) in &result.includes {
             let full_path = base_dir.join(include_path);
-            let canonical = match full_path.canonicalize() {
-                Ok(p) => p,
-                Err(e) => {
-                    errors.push(LoadError::Io {
-                        path: full_path,
-                        source: e,
-                    });
-                    continue;
-                }
-            };
+            // Use normalize_path for WASI compatibility (canonicalize not supported)
+            let canonical = normalize_path(&full_path);
 
             // Path traversal protection: ensure include stays within root directory
             if self.enforce_path_security {

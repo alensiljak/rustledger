@@ -170,6 +170,13 @@ pub fn value_to_cell(value: &rustledger_query::Value) -> CellValue {
             let plural = if interval.count.abs() == 1 { "" } else { "s" };
             CellValue::String(format!("{} {}{}", interval.count, unit_str, plural))
         }
+        Value::Object(map) => {
+            let converted: std::collections::HashMap<String, Box<CellValue>> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), Box::new(value_to_cell(v))))
+                .collect();
+            CellValue::Object(converted)
+        }
         Value::Null => CellValue::Null,
     }
 }
