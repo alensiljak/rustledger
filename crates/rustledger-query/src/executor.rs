@@ -1166,8 +1166,11 @@ impl<'a> Executor<'a> {
             "NUMBER" | "CURRENCY" | "GETITEM" | "GET" | "UNITS" | "COST" | "WEIGHT" | "VALUE" => {
                 self.eval_position_function(&name, func, ctx)
             }
+            // Price functions
+            "GETPRICE" => self.eval_getprice(func, ctx),
             // Utility functions
             "COALESCE" => self.eval_coalesce(func, ctx),
+            "ONLY" => self.eval_only(func, ctx),
             // Aggregate functions return Null when evaluated on a single row
             // They're handled specially in aggregate evaluation
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
@@ -1742,6 +1745,63 @@ impl<'a> Executor<'a> {
         }
     }
 
+    /// Evaluate GETPRICE function.
+    ///
+    /// `GETPRICE(base_currency, quote_currency)` - Get price using context date
+    /// `GETPRICE(base_currency, quote_currency, date)` - Get price at specific date
+    fn eval_getprice(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        if func.args.len() < 2 || func.args.len() > 3 {
+            return Err(QueryError::InvalidArguments(
+                "GETPRICE".to_string(),
+                "expected 2 or 3 arguments: (base_currency, quote_currency[, date])".to_string(),
+            ));
+        }
+
+        // Get base currency
+        let base = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GETPRICE: first argument must be a currency string".to_string(),
+                ));
+            }
+        };
+
+        // Get quote currency
+        let quote = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GETPRICE: second argument must be a currency string".to_string(),
+                ));
+            }
+        };
+
+        // Get date (optional, defaults to context date)
+        let date = if func.args.len() == 3 {
+            match self.evaluate_expr(&func.args[2], ctx)? {
+                Value::Date(d) => d,
+                _ => {
+                    return Err(QueryError::Type(
+                        "GETPRICE: third argument must be a date".to_string(),
+                    ));
+                }
+            }
+        } else {
+            ctx.transaction.date
+        };
+
+        // Look up the price
+        match self.price_db.get_price(&base, &quote, date) {
+            Some(price) => Ok(Value::Number(price)),
+            None => Ok(Value::Null),
+        }
+    }
+
     /// Evaluate COALESCE function.
     fn eval_coalesce(
         &self,
@@ -1755,6 +1815,62 @@ impl<'a> Executor<'a> {
             }
         }
         Ok(Value::Null)
+    }
+
+    /// Evaluate ONLY function.
+    ///
+    /// `ONLY(key, inventory)` - Extract amount with given currency from inventory.
+    /// Returns the amount if exactly one position matches, NULL otherwise.
+    fn eval_only(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("ONLY", func, 2)?;
+
+        // Get the currency key
+        let key = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "ONLY: first argument must be a currency string".to_string(),
+                ));
+            }
+        };
+
+        // Get the inventory
+        let inv = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Inventory(inv) => inv,
+            Value::Position(pos) => {
+                // If it's a single position, check if it matches
+                if pos.units.currency == key {
+                    return Ok(Value::Amount(pos.units));
+                }
+                return Ok(Value::Null);
+            }
+            Value::Amount(amt) => {
+                // If it's a single amount, check if it matches
+                if amt.currency == key {
+                    return Ok(Value::Amount(amt));
+                }
+                return Ok(Value::Null);
+            }
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(QueryError::Type(
+                    "ONLY: second argument must be an inventory, position, or amount".to_string(),
+                ));
+            }
+        };
+
+        // Find positions matching the currency
+        let matching: Vec<_> = inv
+            .positions()
+            .iter()
+            .filter(|p| p.units.currency == key)
+            .collect();
+
+        match matching.len() {
+            0 => Ok(Value::Null),
+            1 => Ok(Value::Amount(matching[0].units.clone())),
+            _ => Ok(Value::Null), // Multiple matches, return NULL
+        }
     }
 
     /// Evaluate a function with pre-evaluated arguments (for subquery context).
@@ -1922,8 +2038,9 @@ impl<'a> Executor<'a> {
                         ));
                     }
                 };
-                // Simple contains check (full regex would need regex crate)
-                Ok(Value::Boolean(s.contains(&pattern)))
+                // Use cached regex matching
+                let re = self.require_regex(&pattern)?;
+                Ok(Value::Boolean(re.is_match(&s)))
             }
             BinaryOperator::In => {
                 // Check if left value is in right set
@@ -2616,7 +2733,7 @@ impl<'a> Executor<'a> {
                 Ok(Value::Boolean(l || r))
             }
             BinaryOperator::Regex => {
-                // ~ operator: string matches regex pattern (simple contains check)
+                // ~ operator: string matches regex pattern
                 let s = match left {
                     Value::String(s) => s,
                     _ => {
@@ -2633,14 +2750,9 @@ impl<'a> Executor<'a> {
                         ));
                     }
                 };
-                // Use regex cache for pattern matching
-                let regex_result = self.get_or_compile_regex(pattern);
-                let matches = if let Some(regex) = regex_result {
-                    regex.is_match(s)
-                } else {
-                    s.contains(pattern)
-                };
-                Ok(Value::Boolean(matches))
+                // Use cached regex matching
+                let re = self.require_regex(pattern)?;
+                Ok(Value::Boolean(re.is_match(s)))
             }
             BinaryOperator::In => {
                 // Check if left value is in right set

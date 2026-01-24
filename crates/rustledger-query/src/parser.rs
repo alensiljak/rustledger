@@ -466,12 +466,13 @@ fn primary_expr<'a>(
         // Parenthesized expression
         just('(')
             .ignore_then(ws())
-            .ignore_then(expr)
+            .ignore_then(expr.clone())
             .then_ignore(ws())
             .then_ignore(just(')'))
             .map(|e| Expr::Paren(Box::new(e))),
         // Function call or column reference (must come before wildcard check)
-        function_call_or_column(),
+        // Pass expr to allow nested function calls like units(sum(position))
+        function_call_or_column(expr),
         // Literals
         literal().map(Expr::Literal),
         // Wildcard (fallback if nothing else matched)
@@ -480,13 +481,14 @@ fn primary_expr<'a>(
 }
 
 /// Parse function call, window function, or column reference.
-fn function_call_or_column<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
-{
+fn function_call_or_column<'a>(
+    expr: impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone + 'a,
+) -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone {
     identifier()
         .then(
             ws().ignore_then(just('('))
                 .ignore_then(ws())
-                .ignore_then(function_args())
+                .ignore_then(function_args(expr))
                 .then_ignore(ws())
                 .then_ignore(just(')'))
                 .or_not(),
@@ -574,12 +576,12 @@ fn window_order_spec<'a>() -> impl Parser<'a, ParserInput<'a>, OrderSpec, Parser
 }
 
 /// Parse function arguments.
-fn function_args<'a>() -> impl Parser<'a, ParserInput<'a>, Vec<Expr>, ParserExtra<'a>> + Clone {
-    // Allow empty args or comma-separated expressions
-    // Simple version: only allow columns and wildcards as function args (not full expressions)
-    simple_arg()
-        .separated_by(ws().then(just(',')).then(ws()))
-        .collect()
+fn function_args<'a>(
+    expr: impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone + 'a,
+) -> impl Parser<'a, ParserInput<'a>, Vec<Expr>, ParserExtra<'a>> + Clone {
+    // Allow empty args or comma-separated full expressions
+    // This enables nested function calls like units(sum(position))
+    expr.separated_by(ws().then(just(',')).then(ws())).collect()
 }
 
 /// Parse a simple function argument (column, wildcard, or literal).
@@ -942,6 +944,82 @@ mod tests {
                 let from2 = subquery1.from.unwrap();
                 assert!(from2.subquery.is_some());
             }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_nested_function_calls() {
+        // Test units(sum(position)) pattern
+        let query = parse("SELECT units(sum(position))").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert_eq!(sel.targets.len(), 1);
+                match &sel.targets[0].expr {
+                    Expr::Function(outer) => {
+                        assert_eq!(outer.name, "units");
+                        assert_eq!(outer.args.len(), 1);
+                        match &outer.args[0] {
+                            Expr::Function(inner) => {
+                                assert_eq!(inner.name, "sum");
+                                assert_eq!(inner.args.len(), 1);
+                                assert!(
+                                    matches!(&inner.args[0], Expr::Column(c) if c == "position")
+                                );
+                            }
+                            _ => panic!("Expected inner function call"),
+                        }
+                    }
+                    _ => panic!("Expected outer function call"),
+                }
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_deeply_nested_function_calls() {
+        // Test three levels of nesting
+        let query = parse("SELECT foo(bar(baz(x)))").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert_eq!(sel.targets.len(), 1);
+                match &sel.targets[0].expr {
+                    Expr::Function(f1) => {
+                        assert_eq!(f1.name, "foo");
+                        match &f1.args[0] {
+                            Expr::Function(f2) => {
+                                assert_eq!(f2.name, "bar");
+                                match &f2.args[0] {
+                                    Expr::Function(f3) => {
+                                        assert_eq!(f3.name, "baz");
+                                        assert!(matches!(&f3.args[0], Expr::Column(c) if c == "x"));
+                                    }
+                                    _ => panic!("Expected f3"),
+                                }
+                            }
+                            _ => panic!("Expected f2"),
+                        }
+                    }
+                    _ => panic!("Expected f1"),
+                }
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_function_with_arithmetic() {
+        // Test function with arithmetic expression as argument
+        let query = parse("SELECT sum(amount * 2)").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name, "sum");
+                    assert!(matches!(&f.args[0], Expr::BinaryOp(_)));
+                }
+                _ => panic!("Expected function"),
+            },
             _ => panic!("Expected SELECT query"),
         }
     }
