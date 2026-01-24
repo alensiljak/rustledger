@@ -170,7 +170,6 @@ impl NativePlugin for CheckCommodityPlugin {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::NativePluginRegistry;
 
     #[test]
