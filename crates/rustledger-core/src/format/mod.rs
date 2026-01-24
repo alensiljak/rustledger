@@ -14,7 +14,7 @@ pub(crate) use directives::{
     format_note, format_open, format_pad, format_price, format_query,
 };
 pub(crate) use helpers::{escape_string, format_meta_value};
-pub(crate) use transaction::{format_incomplete_amount, format_posting, format_transaction};
+pub(crate) use transaction::{format_incomplete_amount, format_transaction};
 
 use crate::Directive;
 
@@ -94,6 +94,7 @@ pub fn format_directive(directive: &Directive, config: &FormatConfig) -> String 
 
 #[cfg(test)]
 mod tests {
+    use super::transaction::format_posting;
     use super::*;
     use crate::{
         Amount, Balance, Close, Commodity, CostSpec, Custom, Directive, Document, Event,
