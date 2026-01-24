@@ -48,6 +48,14 @@ rustledger-query/src/
 
 ## Phase 2: FFI-WASI (main.rs - 3,779 lines)
 
+**Status:** Deferred - requires careful extraction due to tight coupling between types, conversion functions, and commands. The impl blocks (Meta::new, TypedValue::from_meta_value) depend on conversion functions, and commands depend on both.
+
+**Recommended approach:** Extract incrementally:
+1. First extract just `types.rs` with struct definitions (no impl blocks)
+2. Keep conversion functions in main.rs initially
+3. Then extract conversion functions to `convert.rs` once types are stable
+4. Finally extract commands one at a time
+
 **Current structure:** Single main.rs with all WASI FFI logic.
 
 **Proposed structure:**
