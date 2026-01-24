@@ -1,6 +1,6 @@
 //! Balances report - Show account balances.
 
-use super::{csv_escape, json_escape, OutputFormat};
+use super::{OutputFormat, csv_escape, json_escape};
 use anyhow::Result;
 use rust_decimal::Decimal;
 use rustledger_core::{Directive, InternedStr, Inventory};

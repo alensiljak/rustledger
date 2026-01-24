@@ -4,7 +4,7 @@ use rustledger_parser::ParseResult;
 
 use crate::types::{CompletionKind, EditorCompletion, EditorCompletionResult};
 
-use super::helpers::{get_line, is_date_like, ACCOUNT_TYPES, DIRECTIVES};
+use super::helpers::{ACCOUNT_TYPES, DIRECTIVES, get_line, is_date_like};
 use super::line_index::EditorCache;
 
 /// Completion context detected from cursor position.

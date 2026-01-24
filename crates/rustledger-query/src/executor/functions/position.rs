@@ -6,8 +6,8 @@ use rustledger_core::{Amount, InternedStr, Inventory, Position};
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
 
-use super::super::types::{PostingContext, Value};
 use super::super::Executor;
+use super::super::types::{PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate position/amount functions: `NUMBER`, `CURRENCY`, `GETITEM`, `UNITS`, `COST`, `WEIGHT`, `VALUE`.

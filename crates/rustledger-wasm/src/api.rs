@@ -5,13 +5,15 @@
 use wasm_bindgen::prelude::*;
 
 use rustledger_core::Directive;
-use rustledger_parser::{parse as parse_beancount};
+use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
 use crate::helpers::{extract_options, load_and_interpolate, run_validation, to_js};
-use crate::types::{Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, ValidationResult};
 #[cfg(feature = "completions")]
 use crate::types::{CompletionJson, CompletionResultJson};
+use crate::types::{
+    Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, ValidationResult,
+};
 #[cfg(feature = "plugins")]
 use crate::types::{PluginInfo, PluginResult};
 use crate::utils::LineLookup;

@@ -12,9 +12,9 @@ use rustledger_query::{Executor, parse as parse_query};
 use crate::convert::{directive_to_json, value_to_cell};
 use crate::editor;
 use crate::helpers::{load_and_interpolate, run_validation, to_js};
-use crate::types::{Error, FormatResult, LedgerOptions, PadResult, QueryResult};
 #[cfg(feature = "plugins")]
 use crate::types::PluginResult;
+use crate::types::{Error, FormatResult, LedgerOptions, PadResult, QueryResult};
 
 /// A parsed and validated ledger that caches the parse result.
 ///

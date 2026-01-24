@@ -243,7 +243,12 @@ pub fn find_word_in_line(line: &str, word: &str, line_num: u32) -> Option<Editor
 }
 
 /// Find the nth occurrence of a word in a line and return its range.
-pub fn find_nth_word_in_line(line: &str, word: &str, line_num: u32, n: usize) -> Option<EditorRange> {
+pub fn find_nth_word_in_line(
+    line: &str,
+    word: &str,
+    line_num: u32,
+    n: usize,
+) -> Option<EditorRange> {
     let mut count = 0;
     let mut start = 0;
 

@@ -8,8 +8,8 @@ use rustledger_core::{Amount, Cost, Position, Transaction};
 use crate::ast::{Expr, Literal, Target};
 use crate::error::QueryError;
 
-use super::types::{PostingContext, Row, Value, WindowContext};
 use super::Executor;
+use super::types::{PostingContext, Row, Value, WindowContext};
 
 impl<'a> Executor<'a> {
     /// Evaluate a FROM filter on a transaction.

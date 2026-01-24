@@ -47,9 +47,7 @@ mod api;
 mod parsed_ledger;
 
 // Re-export public API
-pub use api::{
-    balances, format, parse, query, validate_source, version,
-};
+pub use api::{balances, format, parse, query, validate_source, version};
 
 #[cfg(feature = "completions")]
 pub use api::bql_completions;

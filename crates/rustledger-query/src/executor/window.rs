@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use crate::ast::{Expr, SortDirection, Target, WindowFunction};
 use crate::error::QueryError;
 
-use super::types::{PostingContext, Value, WindowContext};
 use super::Executor;
+use super::types::{PostingContext, Value, WindowContext};
 
 impl<'a> Executor<'a> {
     pub(super) fn has_window_functions(targets: &[Target]) -> bool {

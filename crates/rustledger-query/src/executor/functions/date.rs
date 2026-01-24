@@ -6,8 +6,8 @@ use rustledger_core::NaiveDate;
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
 
-use super::super::types::{Interval, IntervalUnit, PostingContext, Value};
 use super::super::Executor;
+use super::super::types::{Interval, IntervalUnit, PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate date functions: `YEAR`, `MONTH`, `DAY`, `WEEKDAY`, `QUARTER`, `YMONTH`, `TODAY`.

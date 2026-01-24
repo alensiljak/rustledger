@@ -5,20 +5,17 @@ use std::collections::{HashMap, HashSet};
 use rustledger_core::{Amount, Directive, NaiveDate, Position};
 
 use crate::ast::{
-    CreateTableStmt, Expr, InsertSource, InsertStmt, OrderSpec, SelectQuery,
-    SortDirection, Target, UnaryOperator,
+    CreateTableStmt, Expr, InsertSource, InsertStmt, OrderSpec, SelectQuery, SortDirection, Target,
+    UnaryOperator,
 };
 use crate::error::QueryError;
 
-use super::types::{hash_row, QueryResult, Row, Table, Value};
 use super::Executor;
+use super::types::{QueryResult, Row, Table, Value, hash_row};
 
 impl<'a> Executor<'a> {
     /// Execute a SELECT query.
-    pub(super) fn execute_select(
-        &self,
-        query: &SelectQuery,
-    ) -> Result<QueryResult, QueryError> {
+    pub(super) fn execute_select(&self, query: &SelectQuery) -> Result<QueryResult, QueryError> {
         // Check if we have a subquery
         if let Some(from) = &query.from {
             if let Some(subquery) = &from.subquery {

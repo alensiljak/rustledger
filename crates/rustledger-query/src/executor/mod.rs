@@ -5,28 +5,24 @@
 mod functions;
 mod types;
 
+use types::AccountInfo;
 pub use types::{
     Interval, IntervalUnit, PostingContext, QueryResult, Row, SourceLocation, Table, Value,
     WindowContext,
 };
-use types::AccountInfo;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
 use chrono::Datelike;
 use regex::Regex;
-use rustledger_core::{
-    Directive, InternedStr, Inventory, Metadata, Position,
-};
 #[cfg(test)]
 use rustledger_core::MetaValue;
+use rustledger_core::{Directive, InternedStr, Inventory, Metadata, Position};
 use rustledger_loader::SourceMap;
 use rustledger_parser::Spanned;
 
-use crate::ast::{
-    Expr, FromClause, FunctionCall, Query, Target,
-};
+use crate::ast::{Expr, FromClause, FunctionCall, Query, Target};
 use crate::error::QueryError;
 
 /// Query executor.
@@ -50,7 +46,6 @@ pub struct Executor<'a> {
     /// In-memory tables created by CREATE TABLE.
     tables: HashMap<String, Table>,
 }
-
 
 // Sub-modules for focused functionality
 mod aggregation;
@@ -406,7 +401,6 @@ impl<'a> Executor<'a> {
             _ => Err(QueryError::UnknownFunction(func.name.clone())),
         }
     }
-
 
     /// Evaluate a function with pre-evaluated arguments (for subquery context).
     fn evaluate_function_on_values(&self, name: &str, args: &[Value]) -> Result<Value, QueryError> {

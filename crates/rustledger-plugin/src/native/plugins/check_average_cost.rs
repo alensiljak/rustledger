@@ -434,4 +434,3 @@ mod check_average_cost_tests {
         assert_eq!(output.errors.len(), 0);
     }
 }
-

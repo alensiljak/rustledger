@@ -8,8 +8,8 @@ use rustledger_core::{Amount, MetaValue};
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
 
-use super::super::types::{PostingContext, Value};
 use super::super::Executor;
+use super::super::types::{PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate metadata functions: `META`, `ENTRY_META`, `ANY_META`.

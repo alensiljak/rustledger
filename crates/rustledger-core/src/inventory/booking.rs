@@ -6,8 +6,8 @@
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Signed;
 
-use crate::{Amount, CostSpec, Position};
 use super::{BookingError, BookingResult, Inventory};
+use crate::{Amount, CostSpec, Position};
 
 impl Inventory {
     /// STRICT booking: require exactly one matching lot.

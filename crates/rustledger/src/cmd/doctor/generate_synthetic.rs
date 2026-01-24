@@ -13,7 +13,7 @@ pub(super) fn cmd_generate_synthetic<W: Write>(
     edge_cases_only: bool,
     writer: &mut W,
 ) -> Result<()> {
-    use rustledger_core::synthetic::{generate_all_edge_cases, ManifestEntry, SyntheticManifest};
+    use rustledger_core::synthetic::{ManifestEntry, SyntheticManifest, generate_all_edge_cases};
     use sha2::{Digest, Sha256};
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};

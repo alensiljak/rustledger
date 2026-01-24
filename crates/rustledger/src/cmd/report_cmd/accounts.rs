@@ -1,6 +1,6 @@
 //! Accounts report - List all accounts.
 
-use super::{csv_escape, json_escape, OutputFormat};
+use super::{OutputFormat, csv_escape, json_escape};
 use anyhow::Result;
 use rustledger_core::Directive;
 use std::collections::BTreeSet;

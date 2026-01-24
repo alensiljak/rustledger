@@ -5,8 +5,8 @@ use rust_decimal::Decimal;
 use crate::ast::{BinaryOp, BinaryOperator, UnaryOp, UnaryOperator};
 use crate::error::QueryError;
 
-use super::types::{Interval, PostingContext, Value};
 use super::Executor;
+use super::types::{Interval, PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate a binary operation.

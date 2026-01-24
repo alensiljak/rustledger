@@ -214,7 +214,9 @@ fn main() {
                 let begin_date = args.get(3).map(String::as_str);
                 let end_date = args.get(4).map(String::as_str);
                 match read_source(Some(filename)) {
-                    Ok(source) => commands::clamp::cmd_clamp(&source, filename, begin_date, end_date),
+                    Ok(source) => {
+                        commands::clamp::cmd_clamp(&source, filename, begin_date, end_date)
+                    }
                     Err(e) => {
                         eprintln!("{e}");
                         exit_codes::USER_ERROR

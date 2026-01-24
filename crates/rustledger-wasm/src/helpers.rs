@@ -110,7 +110,9 @@ pub(crate) fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsError> 
 }
 
 /// Extract [`LedgerOptions`] from parsed option directives.
-pub(crate) fn extract_options(options: &[(String, String, rustledger_parser::Span)]) -> LedgerOptions {
+pub(crate) fn extract_options(
+    options: &[(String, String, rustledger_parser::Span)],
+) -> LedgerOptions {
     let mut ledger_options = LedgerOptions::default();
 
     for (key, value, _span) in options {

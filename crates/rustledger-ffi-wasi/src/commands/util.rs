@@ -145,7 +145,10 @@ pub fn cmd_is_encrypted(path: &str) -> i32 {
                         (true, Some("ASCII armor header".to_string()))
                     } else if !bytes.is_empty() {
                         let first_byte = bytes[0];
-                        if first_byte == 0x85 || first_byte == 0x84 || (0xC0..=0xCF).contains(&first_byte) {
+                        if first_byte == 0x85
+                            || first_byte == 0x84
+                            || (0xC0..=0xCF).contains(&first_byte)
+                        {
                             (true, Some("binary GPG header".to_string()))
                         } else {
                             (false, None)

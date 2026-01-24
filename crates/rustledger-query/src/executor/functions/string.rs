@@ -5,8 +5,8 @@ use regex::Regex;
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
 
-use super::super::types::{PostingContext, Value};
 use super::super::Executor;
+use super::super::types::{PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate string functions: `LENGTH`, `UPPER`, `LOWER`, `SUBSTR`, `TRIM`, `STARTSWITH`, `ENDSWITH`.

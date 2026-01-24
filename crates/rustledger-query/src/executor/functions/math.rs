@@ -5,8 +5,8 @@ use rust_decimal::Decimal;
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
 
-use super::super::types::{PostingContext, Value};
 use super::super::Executor;
+use super::super::types::{PostingContext, Value};
 
 impl<'a> Executor<'a> {
     /// Evaluate math functions: `ABS`, `NEG`, `ROUND`, `SAFEDIV`.

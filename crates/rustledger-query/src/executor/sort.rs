@@ -2,12 +2,11 @@
 
 use std::collections::HashMap;
 
-
 use crate::ast::{Expr, Literal, OrderSpec, SortDirection, Target};
 use crate::error::QueryError;
 
-use super::types::{hash_single_value, QueryResult, Row, Value};
 use super::Executor;
+use super::types::{QueryResult, Row, Value, hash_single_value};
 
 impl<'a> Executor<'a> {
     pub(super) fn sort_results(

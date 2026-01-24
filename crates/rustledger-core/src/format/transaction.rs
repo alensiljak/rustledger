@@ -1,7 +1,7 @@
 //! Transaction and posting formatting.
 
 use super::{
-    format_amount, format_cost_spec, format_meta_value, format_price_annotation, FormatConfig,
+    FormatConfig, format_amount, format_cost_spec, format_meta_value, format_price_annotation,
 };
 use crate::{Amount, CostSpec, IncompleteAmount, Posting, PriceAnnotation, Transaction};
 use std::fmt::Write;

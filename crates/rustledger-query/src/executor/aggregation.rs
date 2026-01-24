@@ -8,8 +8,8 @@ use rustledger_core::{Amount, Inventory, Position};
 use crate::ast::{Expr, Target, UnaryOperator};
 use crate::error::QueryError;
 
-use super::types::{PostingContext, Row, Value};
 use super::Executor;
+use super::types::{PostingContext, Row, Value};
 
 impl<'a> Executor<'a> {
     pub(super) fn is_aggregate_expr(expr: &Expr) -> bool {

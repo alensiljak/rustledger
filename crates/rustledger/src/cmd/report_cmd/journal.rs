@@ -1,6 +1,6 @@
 //! Journal report - Transaction journal/register.
 
-use super::{csv_escape, json_escape, OutputFormat};
+use super::{OutputFormat, csv_escape, json_escape};
 use anyhow::Result;
 use rustledger_core::Directive;
 use std::io::Write;

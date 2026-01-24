@@ -50,7 +50,10 @@ mod validators;
 
 pub use error::{ErrorCode, Severity, ValidationError};
 
-use validators::{validate_balance, validate_close, validate_document, validate_note, validate_open, validate_pad, validate_transaction};
+use validators::{
+    validate_balance, validate_close, validate_document, validate_note, validate_open,
+    validate_pad, validate_transaction,
+};
 
 use chrono::{Local, NaiveDate};
 use rayon::prelude::*;
@@ -58,7 +61,6 @@ use rust_decimal::Decimal;
 use rustledger_core::{BookingMethod, Directive, InternedStr, Inventory};
 use rustledger_parser::Spanned;
 use std::collections::{HashMap, HashSet};
-
 
 /// Account state for tracking lifecycle.
 #[derive(Debug, Clone)]
@@ -416,7 +418,9 @@ pub fn validate_spanned_with_options(
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-    use rustledger_core::{Amount, Balance, Close, Document, NaiveDate, Note, Open, Pad, Posting, Transaction};
+    use rustledger_core::{
+        Amount, Balance, Close, Document, NaiveDate, Note, Open, Pad, Posting, Transaction,
+    };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
         NaiveDate::from_ymd_opt(year, month, day).unwrap()
