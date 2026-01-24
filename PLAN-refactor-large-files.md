@@ -21,12 +21,21 @@ This refactoring plan addresses the largest source files in the rustledger codeb
 **Final structure:**
 ```
 rustledger-query/src/executor/
-├── mod.rs           # Main Executor struct (5,952 lines)
-└── types.rs         # Value, Row, QueryResult types (329 lines)
+├── mod.rs           # Main Executor struct (4,159 lines)
+├── types.rs         # Value, Row, QueryResult types (329 lines)
+└── functions/
+    ├── mod.rs       # Module declarations (10 lines)
+    ├── date.rs      # Date functions (544 lines)
+    ├── string.rs    # String functions (385 lines)
+    ├── account.rs   # Account functions (184 lines)
+    ├── math.rs      # Math functions (106 lines)
+    ├── position.rs  # Position/inventory functions (387 lines)
+    └── util.rs      # Utility/meta/cast functions (335 lines)
 ```
 
 **Results:**
 - Extracted core types to separate module
+- Split eval functions into 6 category modules (~1,950 lines)
 - All 112 query tests pass
 - Public API unchanged
 
@@ -124,7 +133,7 @@ rustledger-wasm/src/editor/
 
 | Phase | File | Before | After | Reduction |
 |-------|------|--------|-------|-----------|
-| Phase 1 | executor.rs | 6,266 | 5,952 + 329 | Extracted types.rs |
+| Phase 1 | executor.rs | 6,266 | 4,159 + 329 + 1,951 | Extracted types.rs + functions/ |
 | Phase 2 | main.rs (ffi-wasi) | 3,779 | 2,381 | -1,398 lines |
 | Phase 3 | native.rs | 3,076 | 107 + 2,980 | Split trait/plugins |
 | Phase 4 | lib.rs (validate) | 2,223 | 1,987 + 245 | Extracted error.rs |
