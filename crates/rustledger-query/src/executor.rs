@@ -76,6 +76,19 @@ impl Interval {
         Self { count, unit }
     }
 
+    /// Convert interval to an approximate number of days for comparison.
+    /// Uses: Day=1, Week=7, Month=30, Quarter=91, Year=365.
+    const fn to_approx_days(&self) -> i64 {
+        let days_per_unit = match self.unit {
+            IntervalUnit::Day => 1,
+            IntervalUnit::Week => 7,
+            IntervalUnit::Month => 30,
+            IntervalUnit::Quarter => 91,
+            IntervalUnit::Year => 365,
+        };
+        self.count.saturating_mul(days_per_unit)
+    }
+
     /// Add this interval to a date.
     #[allow(clippy::missing_const_for_fn)] // chrono methods aren't const
     pub fn add_to_date(&self, date: NaiveDate) -> Option<NaiveDate> {
@@ -1189,7 +1202,12 @@ impl<'a> Executor<'a> {
         }
 
         // Get the table's column count for validation
-        let table_column_count = self.tables.get(&table_name).unwrap().columns.len();
+        let table_column_count = self
+            .tables
+            .get(&table_name)
+            .expect("table existence verified above")
+            .columns
+            .len();
 
         let rows_to_insert: Vec<Vec<Value>> = match &insert.source {
             InsertSource::Values(value_rows) => {
@@ -1253,7 +1271,10 @@ impl<'a> Executor<'a> {
         // Insert rows into the table
         if let Some(ref cols) = insert.columns {
             // Insert with specific columns - need to map to table column positions
-            let table = self.tables.get(&table_name).unwrap();
+            let table = self
+                .tables
+                .get(&table_name)
+                .expect("table existence verified above");
             let col_indices: Vec<Option<usize>> = cols
                 .iter()
                 .map(|c| {
@@ -1275,11 +1296,16 @@ impl<'a> Executor<'a> {
             }
 
             // Build full rows with NULLs for missing columns
-            let table = self.tables.get_mut(&table_name).unwrap();
+            let table = self
+                .tables
+                .get_mut(&table_name)
+                .expect("table existence verified above");
             for value_row in rows_to_insert {
                 let mut full_row = vec![Value::Null; table_column_count];
                 for (i, value) in value_row.into_iter().enumerate() {
-                    if let Some(idx) = col_indices[i] {
+                    // Use .get() for defensive bounds checking even though validation
+                    // should guarantee lengths match
+                    if let Some(idx) = col_indices.get(i).copied().flatten() {
                         full_row[idx] = value;
                     }
                 }
@@ -1287,7 +1313,10 @@ impl<'a> Executor<'a> {
             }
         } else {
             // Insert all columns in order
-            let table = self.tables.get_mut(&table_name).unwrap();
+            let table = self
+                .tables
+                .get_mut(&table_name)
+                .expect("table existence verified above");
             for row in rows_to_insert {
                 table.add_row(row);
             }
@@ -2038,7 +2067,18 @@ impl<'a> Executor<'a> {
             2 => {
                 let count = match self.evaluate_expr(&func.args[0], ctx)? {
                     Value::Integer(n) => n,
-                    Value::Number(d) => d.to_string().parse::<i64>().unwrap_or(0),
+                    Value::Number(d) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        // Reject decimals with fractional parts
+                        if !d.fract().is_zero() {
+                            return Err(QueryError::Type(
+                                "interval() count must be an integer".to_string(),
+                            ));
+                        }
+                        d.to_i64().ok_or_else(|| {
+                            QueryError::Type("interval() count must be an integer".to_string())
+                        })?
+                    }
                     _ => {
                         return Err(QueryError::Type(
                             "interval() count must be a number".to_string(),
@@ -3966,7 +4006,10 @@ impl<'a> Executor<'a> {
                 // Handle date - interval
                 match (&left, &right) {
                     (Value::Date(d), Value::Interval(i)) => {
-                        let neg_interval = Interval::new(-i.count, i.unit);
+                        let neg_count = i.count.checked_neg().ok_or_else(|| {
+                            QueryError::Evaluation("interval count overflow".to_string())
+                        })?;
+                        let neg_interval = Interval::new(neg_count, i.unit);
                         neg_interval
                             .add_to_date(*d)
                             .map(Value::Date)
@@ -4750,7 +4793,10 @@ impl<'a> Executor<'a> {
                 // Handle date - interval
                 match (left, right) {
                     (Value::Date(d), Value::Interval(i)) => {
-                        let neg_interval = Interval::new(-i.count, i.unit);
+                        let neg_count = i.count.checked_neg().ok_or_else(|| {
+                            QueryError::Evaluation("interval count overflow".to_string())
+                        })?;
+                        let neg_interval = Interval::new(neg_count, i.unit);
                         neg_interval
                             .add_to_date(*d)
                             .map(Value::Date)
@@ -4859,6 +4905,8 @@ impl<'a> Executor<'a> {
                     (None, None) => std::cmp::Ordering::Equal,
                 }
             }
+            // Compare intervals by approximate days
+            (Value::Interval(a), Value::Interval(b)) => a.to_approx_days().cmp(&b.to_approx_days()),
             _ => std::cmp::Ordering::Equal, // Can't compare other types
         }
     }

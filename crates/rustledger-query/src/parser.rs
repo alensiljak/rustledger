@@ -107,7 +107,10 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
                 // Check if this looks like a table name (uppercase convention or doesn't look like account)
                 // Table names should not contain ':' which accounts have
                 if name.contains(':') {
-                    Err(Rich::custom(span, "not a table name"))
+                    Err(Rich::custom(
+                        span,
+                        "table names cannot contain ':' - this looks like an account filter expression",
+                    ))
                 } else {
                     Ok(name)
                 }
