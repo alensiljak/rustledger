@@ -64,3 +64,4 @@ target/criterion/
 book/
 .mcp.*
 .bench-tools/
+tests/compat/synthetic/
