@@ -10,15 +10,106 @@ use chrono::Datelike;
 use regex::Regex;
 use rust_decimal::Decimal;
 use rustledger_core::{
-    Amount, Directive, InternedStr, Inventory, NaiveDate, Position, Transaction,
+    Amount, Directive, InternedStr, Inventory, MetaValue, Metadata, NaiveDate, Position,
+    Transaction,
 };
+use rustledger_loader::SourceMap;
+use rustledger_parser::Spanned;
 
 use crate::ast::{
-    BalancesQuery, BinaryOp, BinaryOperator, Expr, FromClause, FunctionCall, JournalQuery, Literal,
-    OrderSpec, PrintQuery, Query, SelectQuery, SortDirection, Target, UnaryOp, UnaryOperator,
-    WindowFunction,
+    BalancesQuery, BinaryOp, BinaryOperator, CreateTableStmt, Expr, FromClause, FunctionCall,
+    InsertSource, InsertStmt, JournalQuery, Literal, OrderSpec, PrintQuery, Query, SelectQuery,
+    SortDirection, Target, UnaryOp, UnaryOperator, WindowFunction,
 };
 use crate::error::QueryError;
+
+/// Source location information for a directive.
+#[derive(Debug, Clone)]
+pub struct SourceLocation {
+    /// File path.
+    pub filename: String,
+    /// Line number (1-based).
+    pub lineno: usize,
+}
+
+/// An interval unit for date arithmetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IntervalUnit {
+    /// Days.
+    Day,
+    /// Weeks.
+    Week,
+    /// Months.
+    Month,
+    /// Quarters.
+    Quarter,
+    /// Years.
+    Year,
+}
+
+impl IntervalUnit {
+    /// Parse an interval unit from a string.
+    pub fn parse_unit(s: &str) -> Option<Self> {
+        match s.to_uppercase().as_str() {
+            "DAY" | "DAYS" | "D" => Some(Self::Day),
+            "WEEK" | "WEEKS" | "W" => Some(Self::Week),
+            "MONTH" | "MONTHS" | "M" => Some(Self::Month),
+            "QUARTER" | "QUARTERS" | "Q" => Some(Self::Quarter),
+            "YEAR" | "YEARS" | "Y" => Some(Self::Year),
+            _ => None,
+        }
+    }
+}
+
+/// An interval value for date arithmetic.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Interval {
+    /// The count (can be negative).
+    pub count: i64,
+    /// The unit.
+    pub unit: IntervalUnit,
+}
+
+impl Interval {
+    /// Create a new interval.
+    pub const fn new(count: i64, unit: IntervalUnit) -> Self {
+        Self { count, unit }
+    }
+
+    /// Add this interval to a date.
+    #[allow(clippy::missing_const_for_fn)] // chrono methods aren't const
+    pub fn add_to_date(&self, date: NaiveDate) -> Option<NaiveDate> {
+        use chrono::Months;
+
+        match self.unit {
+            IntervalUnit::Day => date.checked_add_signed(chrono::Duration::days(self.count)),
+            IntervalUnit::Week => date.checked_add_signed(chrono::Duration::weeks(self.count)),
+            IntervalUnit::Month => {
+                if self.count >= 0 {
+                    date.checked_add_months(Months::new(self.count as u32))
+                } else {
+                    date.checked_sub_months(Months::new((-self.count) as u32))
+                }
+            }
+            IntervalUnit::Quarter => {
+                let months = self.count * 3;
+                if months >= 0 {
+                    date.checked_add_months(Months::new(months as u32))
+                } else {
+                    date.checked_sub_months(Months::new((-months) as u32))
+                }
+            }
+            IntervalUnit::Year => {
+                let months = self.count * 12;
+                if months >= 0 {
+                    date.checked_add_months(Months::new(months as u32))
+                } else {
+                    date.checked_sub_months(Months::new((-months) as u32))
+                }
+            }
+        }
+    }
+}
 
 /// A value that can result from evaluating a BQL expression.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +132,10 @@ pub enum Value {
     Inventory(Inventory),
     /// Set of strings (tags, links).
     StringSet(Vec<String>),
+    /// Metadata dictionary.
+    Metadata(Metadata),
+    /// Interval for date arithmetic.
+    Interval(Interval),
     /// NULL value.
     Null,
 }
@@ -92,6 +187,20 @@ impl Value {
                 for s in &sorted {
                     s.hash(state);
                 }
+            }
+            Self::Metadata(meta) => {
+                // Hash metadata in canonical order by sorting keys
+                let mut keys: Vec<_> = meta.keys().collect();
+                keys.sort();
+                for key in keys {
+                    key.hash(state);
+                    // Hash the debug representation of the value
+                    format!("{:?}", meta.get(key)).hash(state);
+                }
+            }
+            Self::Interval(interval) => {
+                interval.count.hash(state);
+                interval.unit.hash(state);
             }
             Self::Null => {}
         }
@@ -162,6 +271,8 @@ pub struct PostingContext<'a> {
     pub posting_index: usize,
     /// Running balance after this posting (optional).
     pub balance: Option<Inventory>,
+    /// The directive index (for source location lookup).
+    pub directive_index: Option<usize>,
 }
 
 /// Context for window function evaluation.
@@ -175,10 +286,48 @@ pub struct WindowContext {
     pub dense_rank: usize,
 }
 
+/// Account information cached from Open/Close directives.
+#[derive(Debug, Clone)]
+struct AccountInfo {
+    /// Date the account was opened.
+    open_date: Option<NaiveDate>,
+    /// Date the account was closed (if any).
+    close_date: Option<NaiveDate>,
+    /// Metadata from the Open directive.
+    open_meta: Metadata,
+}
+
+/// An in-memory table created by CREATE TABLE.
+#[derive(Debug, Clone)]
+pub struct Table {
+    /// Column names.
+    pub columns: Vec<String>,
+    /// Rows of data.
+    pub rows: Vec<Vec<Value>>,
+}
+
+impl Table {
+    /// Create a new empty table with the given column names.
+    #[allow(clippy::missing_const_for_fn)] // Vec::new() isn't const with owned columns
+    pub fn new(columns: Vec<String>) -> Self {
+        Self {
+            columns,
+            rows: Vec::new(),
+        }
+    }
+
+    /// Add a row to the table.
+    pub fn add_row(&mut self, row: Vec<Value>) {
+        self.rows.push(row);
+    }
+}
+
 /// Query executor.
 pub struct Executor<'a> {
     /// All directives to query over.
     directives: &'a [Directive],
+    /// Spanned directives (optional, for source location support).
+    spanned_directives: Option<&'a [Spanned<Directive>]>,
     /// Account balances (built up during query).
     balances: HashMap<InternedStr, Inventory>,
     /// Price database for `VALUE()` conversions.
@@ -187,19 +336,133 @@ pub struct Executor<'a> {
     target_currency: Option<String>,
     /// Cache for compiled regex patterns.
     regex_cache: RefCell<HashMap<String, Option<Regex>>>,
+    /// Account info cache from Open/Close directives.
+    account_info: HashMap<String, AccountInfo>,
+    /// Source locations for directives (indexed by directive index).
+    source_locations: Option<Vec<SourceLocation>>,
+    /// In-memory tables created by CREATE TABLE.
+    tables: HashMap<String, Table>,
 }
 
 impl<'a> Executor<'a> {
     /// Create a new executor with the given directives.
     pub fn new(directives: &'a [Directive]) -> Self {
         let price_db = crate::price::PriceDatabase::from_directives(directives);
+
+        // Build account info cache from Open/Close directives
+        let mut account_info: HashMap<String, AccountInfo> = HashMap::new();
+        for directive in directives {
+            match directive {
+                Directive::Open(open) => {
+                    let account = open.account.to_string();
+                    let info = account_info.entry(account).or_insert_with(|| AccountInfo {
+                        open_date: None,
+                        close_date: None,
+                        open_meta: Metadata::new(),
+                    });
+                    info.open_date = Some(open.date);
+                    info.open_meta.clone_from(&open.meta);
+                }
+                Directive::Close(close) => {
+                    let account = close.account.to_string();
+                    let info = account_info.entry(account).or_insert_with(|| AccountInfo {
+                        open_date: None,
+                        close_date: None,
+                        open_meta: Metadata::new(),
+                    });
+                    info.close_date = Some(close.date);
+                }
+                _ => {}
+            }
+        }
+
         Self {
             directives,
+            spanned_directives: None,
             balances: HashMap::new(),
             price_db,
             target_currency: None,
             regex_cache: RefCell::new(HashMap::new()),
+            account_info,
+            source_locations: None,
+            tables: HashMap::new(),
         }
+    }
+
+    /// Create a new executor with source location support.
+    ///
+    /// This constructor accepts spanned directives and a source map, enabling
+    /// the `filename`, `lineno`, and `location` columns in queries.
+    pub fn new_with_sources(
+        spanned_directives: &'a [Spanned<Directive>],
+        source_map: &SourceMap,
+    ) -> Self {
+        // Build price database from spanned directives
+        let mut price_db = crate::price::PriceDatabase::new();
+        for spanned in spanned_directives {
+            if let Directive::Price(p) = &spanned.value {
+                price_db.add_price(p);
+            }
+        }
+
+        // Build source locations
+        let source_locations: Vec<SourceLocation> = spanned_directives
+            .iter()
+            .map(|spanned| {
+                let file = source_map.get(spanned.file_id as usize);
+                let (line, _col) = file.map_or((0, 0), |f| f.line_col(spanned.span.start));
+                SourceLocation {
+                    filename: file.map_or_else(String::new, |f| f.path.display().to_string()),
+                    lineno: line,
+                }
+            })
+            .collect();
+
+        // Build account info cache from Open/Close directives
+        let mut account_info: HashMap<String, AccountInfo> = HashMap::new();
+        for spanned in spanned_directives {
+            match &spanned.value {
+                Directive::Open(open) => {
+                    let account = open.account.to_string();
+                    let info = account_info.entry(account).or_insert_with(|| AccountInfo {
+                        open_date: None,
+                        close_date: None,
+                        open_meta: Metadata::new(),
+                    });
+                    info.open_date = Some(open.date);
+                    info.open_meta.clone_from(&open.meta);
+                }
+                Directive::Close(close) => {
+                    let account = close.account.to_string();
+                    let info = account_info.entry(account).or_insert_with(|| AccountInfo {
+                        open_date: None,
+                        close_date: None,
+                        open_meta: Metadata::new(),
+                    });
+                    info.close_date = Some(close.date);
+                }
+                _ => {}
+            }
+        }
+
+        Self {
+            directives: &[], // Empty - we use spanned_directives instead
+            spanned_directives: Some(spanned_directives),
+            balances: HashMap::new(),
+            price_db,
+            target_currency: None,
+            regex_cache: RefCell::new(HashMap::new()),
+            account_info,
+            source_locations: Some(source_locations),
+            tables: HashMap::new(),
+        }
+    }
+
+    /// Get the source location for a directive by index.
+    fn get_source_location(&self, directive_index: usize) -> Option<&SourceLocation> {
+        self.source_locations
+            .as_ref()
+            .and_then(|locs| locs.get(directive_index))
     }
 
     /// Get or compile a regex pattern from the cache.
@@ -245,6 +508,8 @@ impl<'a> Executor<'a> {
             Query::Journal(journal) => self.execute_journal(journal),
             Query::Balances(balances) => self.execute_balances(balances),
             Query::Print(print) => self.execute_print(print),
+            Query::CreateTable(create) => self.execute_create_table(create),
+            Query::Insert(insert) => self.execute_insert(insert),
         }
     }
 
@@ -254,6 +519,10 @@ impl<'a> Executor<'a> {
         if let Some(from) = &query.from {
             if let Some(subquery) = &from.subquery {
                 return self.execute_select_from_subquery(query, subquery);
+            }
+            // Check if we're selecting from a user-created table
+            if let Some(table_name) = &from.table_name {
+                return self.execute_select_from_table(query, table_name);
             }
         }
 
@@ -424,6 +693,74 @@ impl<'a> Executor<'a> {
         Ok(result)
     }
 
+    /// Execute a SELECT query that sources from a user-created table.
+    fn execute_select_from_table(
+        &self,
+        query: &SelectQuery,
+        table_name: &str,
+    ) -> Result<QueryResult, QueryError> {
+        let table_name_upper = table_name.to_uppercase();
+
+        // Look up the table
+        let table = self.tables.get(&table_name_upper).ok_or_else(|| {
+            QueryError::Evaluation(format!("table '{table_name}' does not exist"))
+        })?;
+
+        // Build a column name -> index mapping for the table
+        let column_map: HashMap<String, usize> = table
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, name)| (name.to_lowercase(), i))
+            .collect();
+
+        // Determine column names for the result
+        let column_names = self.resolve_subquery_column_names(&query.targets, &table.columns)?;
+        let mut result = QueryResult::new(column_names);
+
+        // Use HashSet for O(1) DISTINCT deduplication
+        let mut seen_hashes: HashSet<u64> = if query.distinct {
+            HashSet::with_capacity(table.rows.len())
+        } else {
+            HashSet::new()
+        };
+
+        // Process each row from the table
+        for row in &table.rows {
+            // Apply WHERE clause if present
+            if let Some(where_expr) = &query.where_clause {
+                if !self.evaluate_subquery_filter(where_expr, row, &column_map)? {
+                    continue;
+                }
+            }
+
+            // Evaluate targets
+            let result_row = self.evaluate_subquery_row(&query.targets, row, &column_map)?;
+
+            if query.distinct {
+                // O(1) hash-based deduplication
+                let row_hash = hash_row(&result_row);
+                if seen_hashes.insert(row_hash) {
+                    result.add_row(result_row);
+                }
+            } else {
+                result.add_row(result_row);
+            }
+        }
+
+        // Apply ORDER BY
+        if let Some(order_by) = &query.order_by {
+            self.sort_results(&mut result, order_by)?;
+        }
+
+        // Apply LIMIT
+        if let Some(limit) = query.limit {
+            result.rows.truncate(limit as usize);
+        }
+
+        Ok(result)
+    }
+
     /// Resolve column names for a query from a subquery.
     fn resolve_subquery_column_names(
         &self,
@@ -499,6 +836,21 @@ impl<'a> Executor<'a> {
             Expr::Window(_) => Err(QueryError::Evaluation(
                 "Window functions not supported in subquery expressions".to_string(),
             )),
+            Expr::Between { value, low, high } => {
+                let val = self.evaluate_subquery_expr(value, row, column_map)?;
+                let low_val = self.evaluate_subquery_expr(low, row, column_map)?;
+                let high_val = self.evaluate_subquery_expr(high, row, column_map)?;
+
+                let ge = self.compare_values(&val, &low_val, std::cmp::Ordering::is_ge)?;
+                let le = self.compare_values(&val, &high_val, std::cmp::Ordering::is_le)?;
+
+                match (ge, le) {
+                    (Value::Boolean(g), Value::Boolean(l)) => Ok(Value::Boolean(g && l)),
+                    _ => Err(QueryError::Type(
+                        "BETWEEN requires comparable values".to_string(),
+                    )),
+                }
+            }
         }
     }
 
@@ -785,6 +1137,247 @@ impl<'a> Executor<'a> {
         }
     }
 
+    /// Execute a CREATE TABLE statement.
+    fn execute_create_table(
+        &mut self,
+        create: &CreateTableStmt,
+    ) -> Result<QueryResult, QueryError> {
+        let table_name = create.table_name.to_uppercase();
+
+        // Check if table already exists
+        if self.tables.contains_key(&table_name) {
+            return Err(QueryError::Evaluation(format!(
+                "table '{}' already exists",
+                create.table_name
+            )));
+        }
+
+        let table = if let Some(select) = &create.as_select {
+            // CREATE TABLE ... AS SELECT ...
+            let result = self.execute_select(select)?;
+            Table {
+                columns: result.columns,
+                rows: result.rows,
+            }
+        } else {
+            // CREATE TABLE ... (col1, col2, ...)
+            let columns = create.columns.iter().map(|c| c.name.clone()).collect();
+            Table::new(columns)
+        };
+
+        self.tables.insert(table_name, table);
+
+        // Return empty result with a message
+        let mut result = QueryResult::new(vec!["result".to_string()]);
+        result.add_row(vec![Value::String(format!(
+            "Created table '{}'",
+            create.table_name
+        ))]);
+        Ok(result)
+    }
+
+    /// Execute an INSERT statement.
+    fn execute_insert(&mut self, insert: &InsertStmt) -> Result<QueryResult, QueryError> {
+        let table_name = insert.table_name.to_uppercase();
+
+        // Check if table exists
+        if !self.tables.contains_key(&table_name) {
+            return Err(QueryError::Evaluation(format!(
+                "table '{}' does not exist",
+                insert.table_name
+            )));
+        }
+
+        // Get the table's column count for validation
+        let table_column_count = self.tables.get(&table_name).unwrap().columns.len();
+
+        let rows_to_insert: Vec<Vec<Value>> = match &insert.source {
+            InsertSource::Values(value_rows) => {
+                // Evaluate each row of expressions
+                let mut rows = Vec::with_capacity(value_rows.len());
+                for value_row in value_rows {
+                    // Validate column count
+                    if let Some(ref cols) = insert.columns {
+                        if value_row.len() != cols.len() {
+                            return Err(QueryError::Evaluation(format!(
+                                "INSERT has {} columns but VALUES has {} values",
+                                cols.len(),
+                                value_row.len()
+                            )));
+                        }
+                    } else if value_row.len() != table_column_count {
+                        return Err(QueryError::Evaluation(format!(
+                            "table has {} columns but VALUES has {} values",
+                            table_column_count,
+                            value_row.len()
+                        )));
+                    }
+
+                    // Evaluate each expression in the row
+                    let mut row = Vec::with_capacity(value_row.len());
+                    for expr in value_row {
+                        let value = self.evaluate_literal_expr(expr)?;
+                        row.push(value);
+                    }
+                    rows.push(row);
+                }
+                rows
+            }
+            InsertSource::Select(select) => {
+                // Execute the SELECT and use its results
+                let result = self.execute_select(select)?;
+
+                // Validate column count
+                if let Some(ref cols) = insert.columns {
+                    if result.columns.len() != cols.len() {
+                        return Err(QueryError::Evaluation(format!(
+                            "INSERT has {} columns but SELECT returns {} columns",
+                            cols.len(),
+                            result.columns.len()
+                        )));
+                    }
+                } else if result.columns.len() != table_column_count {
+                    return Err(QueryError::Evaluation(format!(
+                        "table has {} columns but SELECT returns {} columns",
+                        table_column_count,
+                        result.columns.len()
+                    )));
+                }
+
+                result.rows
+            }
+        };
+
+        let rows_inserted = rows_to_insert.len();
+
+        // Insert rows into the table
+        if let Some(ref cols) = insert.columns {
+            // Insert with specific columns - need to map to table column positions
+            let table = self.tables.get(&table_name).unwrap();
+            let col_indices: Vec<Option<usize>> = cols
+                .iter()
+                .map(|c| {
+                    table
+                        .columns
+                        .iter()
+                        .position(|tc| tc.eq_ignore_ascii_case(c))
+                })
+                .collect();
+
+            // Validate all column names exist
+            for (i, idx) in col_indices.iter().enumerate() {
+                if idx.is_none() {
+                    return Err(QueryError::Evaluation(format!(
+                        "column '{}' does not exist in table '{}'",
+                        cols[i], insert.table_name
+                    )));
+                }
+            }
+
+            // Build full rows with NULLs for missing columns
+            let table = self.tables.get_mut(&table_name).unwrap();
+            for value_row in rows_to_insert {
+                let mut full_row = vec![Value::Null; table_column_count];
+                for (i, value) in value_row.into_iter().enumerate() {
+                    if let Some(idx) = col_indices[i] {
+                        full_row[idx] = value;
+                    }
+                }
+                table.add_row(full_row);
+            }
+        } else {
+            // Insert all columns in order
+            let table = self.tables.get_mut(&table_name).unwrap();
+            for row in rows_to_insert {
+                table.add_row(row);
+            }
+        }
+
+        // Return result with row count
+        let mut result = QueryResult::new(vec!["result".to_string()]);
+        result.add_row(vec![Value::String(format!(
+            "Inserted {} row(s) into '{}'",
+            rows_inserted, insert.table_name
+        ))]);
+        Ok(result)
+    }
+
+    /// Evaluate a literal expression (for INSERT VALUES).
+    fn evaluate_literal_expr(&self, expr: &Expr) -> Result<Value, QueryError> {
+        match expr {
+            Expr::Literal(lit) => self.evaluate_literal(lit),
+            Expr::UnaryOp(unary) => {
+                let value = self.evaluate_literal_expr(&unary.operand)?;
+                match unary.op {
+                    UnaryOperator::Neg => match value {
+                        Value::Number(n) => Ok(Value::Number(-n)),
+                        Value::Integer(i) => Ok(Value::Integer(-i)),
+                        _ => Err(QueryError::Type(
+                            "cannot negate non-numeric value".to_string(),
+                        )),
+                    },
+                    UnaryOperator::Not => match value {
+                        Value::Boolean(b) => Ok(Value::Boolean(!b)),
+                        _ => Err(QueryError::Type(
+                            "cannot negate non-boolean value".to_string(),
+                        )),
+                    },
+                    _ => Err(QueryError::Evaluation(
+                        "unsupported operator in INSERT VALUES".to_string(),
+                    )),
+                }
+            }
+            Expr::Paren(inner) => self.evaluate_literal_expr(inner),
+            Expr::Function(func) => {
+                // Allow some simple functions in VALUES
+                let name = func.name.to_uppercase();
+                match name.as_str() {
+                    "DATE" => {
+                        // DATE(year, month, day) or DATE('YYYY-MM-DD')
+                        if func.args.len() == 1 {
+                            let arg = self.evaluate_literal_expr(&func.args[0])?;
+                            if let Value::String(s) = arg {
+                                if let Ok(date) = NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
+                                    return Ok(Value::Date(date));
+                                }
+                            }
+                            Err(QueryError::Type("invalid date string".to_string()))
+                        } else if func.args.len() == 3 {
+                            let year = self.evaluate_literal_expr(&func.args[0])?;
+                            let month = self.evaluate_literal_expr(&func.args[1])?;
+                            let day = self.evaluate_literal_expr(&func.args[2])?;
+                            match (year, month, day) {
+                                (Value::Integer(y), Value::Integer(m), Value::Integer(d)) => {
+                                    if let Some(date) =
+                                        NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32)
+                                    {
+                                        Ok(Value::Date(date))
+                                    } else {
+                                        Err(QueryError::Type("invalid date components".to_string()))
+                                    }
+                                }
+                                _ => Err(QueryError::Type(
+                                    "DATE() requires integer arguments".to_string(),
+                                )),
+                            }
+                        } else {
+                            Err(QueryError::Evaluation(
+                                "DATE() requires 1 or 3 arguments".to_string(),
+                            ))
+                        }
+                    }
+                    _ => Err(QueryError::Evaluation(format!(
+                        "function '{}' not supported in INSERT VALUES",
+                        func.name
+                    ))),
+                }
+            }
+            _ => Err(QueryError::Evaluation(
+                "only literal values are allowed in INSERT VALUES".to_string(),
+            )),
+        }
+    }
+
     /// Build up account balances with optional FROM filtering.
     fn build_balances_with_filter(&mut self, from: Option<&FromClause>) -> Result<(), QueryError> {
         for directive in self.directives {
@@ -829,7 +1422,20 @@ impl<'a> Executor<'a> {
         // Track running balance per account
         let mut running_balances: HashMap<InternedStr, Inventory> = HashMap::new();
 
-        for directive in self.directives {
+        // Create an iterator over (directive_index, directive) pairs
+        // Handle both spanned and unspanned directives
+        let directive_iter: Vec<(usize, &Directive)> =
+            if let Some(spanned) = self.spanned_directives {
+                spanned
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| (i, &s.value))
+                    .collect()
+            } else {
+                self.directives.iter().enumerate().collect()
+            };
+
+        for (directive_index, directive) in directive_iter {
             if let Directive::Transaction(txn) = directive {
                 // Check FROM clause (transaction-level filter)
                 if let Some(from) = from {
@@ -873,6 +1479,7 @@ impl<'a> Executor<'a> {
                         transaction: txn,
                         posting_index: i,
                         balance: running_balances.get(&posting.account).cloned(),
+                        directive_index: Some(directive_index),
                     };
 
                     // Check WHERE clause (posting-level filter)
@@ -925,6 +1532,7 @@ impl<'a> Executor<'a> {
                         transaction: txn,
                         posting_index: 0,
                         balance: None,
+                        directive_index: None,
                     };
                     self.evaluate_predicate(filter, &dummy_ctx)
                 }
@@ -976,6 +1584,7 @@ impl<'a> Executor<'a> {
                             transaction: txn,
                             posting_index: 0,
                             balance: None,
+                            directive_index: None,
                         };
                         self.evaluate_predicate(filter, &dummy_ctx)
                     }
@@ -987,6 +1596,7 @@ impl<'a> Executor<'a> {
                     transaction: txn,
                     posting_index: 0,
                     balance: None,
+                    directive_index: None,
                 };
                 self.evaluate_predicate(filter, &dummy_ctx)
             }
@@ -1020,6 +1630,21 @@ impl<'a> Executor<'a> {
             Expr::BinaryOp(op) => self.evaluate_binary_op(op, ctx),
             Expr::UnaryOp(op) => self.evaluate_unary_op(op, ctx),
             Expr::Paren(inner) => self.evaluate_expr(inner, ctx),
+            Expr::Between { value, low, high } => {
+                let val = self.evaluate_expr(value, ctx)?;
+                let low_val = self.evaluate_expr(low, ctx)?;
+                let high_val = self.evaluate_expr(high, ctx)?;
+
+                let ge = self.compare_values(&val, &low_val, std::cmp::Ordering::is_ge)?;
+                let le = self.compare_values(&val, &high_val, std::cmp::Ordering::is_le)?;
+
+                match (ge, le) {
+                    (Value::Boolean(g), Value::Boolean(l)) => Ok(Value::Boolean(g && l)),
+                    _ => Err(QueryError::Type(
+                        "BETWEEN requires comparable values".to_string(),
+                    )),
+                }
+            }
         }
     }
 
@@ -1123,6 +1748,121 @@ impl<'a> Executor<'a> {
             "number" => Ok(posting
                 .amount()
                 .map_or(Value::Null, |u| Value::Number(u.number))),
+            // Posting flag (separate from transaction flag)
+            "posting_flag" => Ok(posting
+                .flag
+                .map_or(Value::Null, |f| Value::String(f.to_string()))),
+            // Description: "payee narration" or just narration
+            "description" => {
+                let desc = match &ctx.transaction.payee {
+                    Some(payee) => format!("{} {}", payee, ctx.transaction.narration),
+                    None => ctx.transaction.narration.to_string(),
+                };
+                Ok(Value::String(desc))
+            }
+            // Cost number (per-unit cost)
+            "cost_number" => Ok(posting
+                .cost
+                .as_ref()
+                .and_then(|c| c.number_per)
+                .map_or(Value::Null, Value::Number)),
+            // Cost currency
+            "cost_currency" => Ok(posting
+                .cost
+                .as_ref()
+                .and_then(|c| c.currency.as_ref())
+                .map_or(Value::Null, |c| Value::String(c.to_string()))),
+            // Cost date
+            "cost_date" => Ok(posting
+                .cost
+                .as_ref()
+                .and_then(|c| c.date)
+                .map_or(Value::Null, Value::Date)),
+            // Cost label
+            "cost_label" => Ok(posting
+                .cost
+                .as_ref()
+                .and_then(|c| c.label.as_ref())
+                .map_or(Value::Null, |l| Value::String(l.clone()))),
+            // Price annotation
+            "price" => {
+                use rustledger_core::PriceAnnotation;
+                if let Some(price) = &posting.price {
+                    match price {
+                        PriceAnnotation::Unit(amount) | PriceAnnotation::Total(amount) => {
+                            Ok(Value::Amount(amount.clone()))
+                        }
+                        PriceAnnotation::UnitIncomplete(inc)
+                        | PriceAnnotation::TotalIncomplete(inc) => {
+                            // Try to get complete amount from incomplete
+                            if let Some(amount) = inc.as_amount().cloned() {
+                                Ok(Value::Amount(amount))
+                            } else {
+                                Ok(Value::Null)
+                            }
+                        }
+                        PriceAnnotation::UnitEmpty | PriceAnnotation::TotalEmpty => Ok(Value::Null),
+                    }
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            // All accounts in the transaction
+            "accounts" => Ok(Value::StringSet(
+                ctx.transaction
+                    .postings
+                    .iter()
+                    .map(|p| p.account.to_string())
+                    .collect(),
+            )),
+            // All accounts except the current posting's account
+            "other_accounts" => {
+                let current = &posting.account;
+                Ok(Value::StringSet(
+                    ctx.transaction
+                        .postings
+                        .iter()
+                        .filter(|p| &p.account != current)
+                        .map(|p| p.account.to_string())
+                        .collect(),
+                ))
+            }
+            // Posting metadata as dictionary
+            "meta" => Ok(Value::Metadata(posting.meta.clone())),
+            // Source location columns
+            "filename" => {
+                if let Some(idx) = ctx.directive_index {
+                    if let Some(loc) = self.get_source_location(idx) {
+                        Ok(Value::String(loc.filename.clone()))
+                    } else {
+                        Ok(Value::Null)
+                    }
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            "lineno" => {
+                if let Some(idx) = ctx.directive_index {
+                    if let Some(loc) = self.get_source_location(idx) {
+                        Ok(Value::Integer(loc.lineno as i64))
+                    } else {
+                        Ok(Value::Null)
+                    }
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            "location" => {
+                if let Some(idx) = ctx.directive_index {
+                    if let Some(loc) = self.get_source_location(idx) {
+                        Ok(Value::String(format!("{}:{}", loc.filename, loc.lineno)))
+                    } else {
+                        Ok(Value::Null)
+                    }
+                } else {
+                    Ok(Value::Null)
+                }
+            }
             _ => Err(QueryError::UnknownColumn(name.to_string())),
         }
     }
@@ -1153,12 +1893,21 @@ impl<'a> Executor<'a> {
             "YEAR" | "MONTH" | "DAY" | "WEEKDAY" | "QUARTER" | "YMONTH" | "TODAY" => {
                 self.eval_date_function(&name, func, ctx)
             }
+            // Extended date functions
+            "DATE" | "DATE_DIFF" | "DATE_ADD" | "DATE_TRUNC" | "DATE_PART" | "PARSE_DATE"
+            | "DATE_BIN" | "INTERVAL" => self.eval_extended_date_function(&name, func, ctx),
             // String functions
             "LENGTH" | "UPPER" | "LOWER" | "SUBSTR" | "SUBSTRING" | "TRIM" | "STARTSWITH"
-            | "ENDSWITH" => self.eval_string_function(&name, func, ctx),
+            | "ENDSWITH" | "GREP" | "GREPN" | "SUBST" | "SPLITCOMP" | "JOINSTR" | "MAXWIDTH" => {
+                self.eval_string_function(&name, func, ctx)
+            }
             // Account functions
             "PARENT" | "LEAF" | "ROOT" | "ACCOUNT_DEPTH" | "ACCOUNT_SORTKEY" => {
                 self.eval_account_function(&name, func, ctx)
+            }
+            // Account metadata functions
+            "OPEN_DATE" | "CLOSE_DATE" | "OPEN_META" => {
+                self.eval_account_meta_function(&name, func, ctx)
             }
             // Math functions
             "ABS" | "NEG" | "ROUND" | "SAFEDIV" => self.eval_math_function(&name, func, ctx),
@@ -1166,11 +1915,24 @@ impl<'a> Executor<'a> {
             "NUMBER" | "CURRENCY" | "GETITEM" | "GET" | "UNITS" | "COST" | "WEIGHT" | "VALUE" => {
                 self.eval_position_function(&name, func, ctx)
             }
+            // Inventory functions
+            "EMPTY" | "FILTER_CURRENCY" | "POSSIGN" => {
+                self.eval_inventory_function(&name, func, ctx)
+            }
             // Price functions
             "GETPRICE" => self.eval_getprice(func, ctx),
             // Utility functions
             "COALESCE" => self.eval_coalesce(func, ctx),
             "ONLY" => self.eval_only(func, ctx),
+            // Metadata functions
+            "META" | "ENTRY_META" | "ANY_META" => self.eval_meta_function(&name, func, ctx),
+            // Currency conversion
+            "CONVERT" => self.eval_convert(func, ctx),
+            // Type casting functions
+            "INT" => self.eval_int(func, ctx),
+            "DECIMAL" => self.eval_decimal(func, ctx),
+            "STR" => self.eval_str(func, ctx),
+            "BOOL" => self.eval_bool(func, ctx),
             // Aggregate functions return Null when evaluated on a single row
             // They're handled specially in aggregate evaluation
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
@@ -1225,6 +1987,478 @@ impl<'a> Executor<'a> {
             ))),
             _ => unreachable!(),
         }
+    }
+
+    /// Evaluate extended date functions.
+    fn eval_extended_date_function(
+        &self,
+        name: &str,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        match name {
+            "DATE" => self.eval_date_construct(func, ctx),
+            "DATE_DIFF" => self.eval_date_diff(func, ctx),
+            "DATE_ADD" => self.eval_date_add(func, ctx),
+            "DATE_TRUNC" => self.eval_date_trunc(func, ctx),
+            "DATE_PART" => self.eval_date_part(func, ctx),
+            "PARSE_DATE" => self.eval_parse_date(func, ctx),
+            "DATE_BIN" => self.eval_date_bin(func, ctx),
+            "INTERVAL" => self.eval_interval(func, ctx),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Evaluate INTERVAL function (construct an interval).
+    fn eval_interval(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        // interval(unit) - creates an interval of 1 unit
+        // interval(count, unit) - creates an interval of count units
+        match func.args.len() {
+            1 => {
+                let unit_str = match self.evaluate_expr(&func.args[0], ctx)? {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(QueryError::Type(
+                            "interval() unit must be a string".to_string(),
+                        ));
+                    }
+                };
+                let unit = IntervalUnit::parse_unit(&unit_str).ok_or_else(|| {
+                    QueryError::InvalidArguments(
+                        "INTERVAL".to_string(),
+                        format!("invalid interval unit: {unit_str}"),
+                    )
+                })?;
+                Ok(Value::Interval(Interval::new(1, unit)))
+            }
+            2 => {
+                let count = match self.evaluate_expr(&func.args[0], ctx)? {
+                    Value::Integer(n) => n,
+                    Value::Number(d) => d.to_string().parse::<i64>().unwrap_or(0),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "interval() count must be a number".to_string(),
+                        ));
+                    }
+                };
+                let unit_str = match self.evaluate_expr(&func.args[1], ctx)? {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(QueryError::Type(
+                            "interval() unit must be a string".to_string(),
+                        ));
+                    }
+                };
+                let unit = IntervalUnit::parse_unit(&unit_str).ok_or_else(|| {
+                    QueryError::InvalidArguments(
+                        "INTERVAL".to_string(),
+                        format!("invalid interval unit: {unit_str}"),
+                    )
+                })?;
+                Ok(Value::Interval(Interval::new(count, unit)))
+            }
+            _ => Err(QueryError::InvalidArguments(
+                "INTERVAL".to_string(),
+                "expected 1 or 2 arguments".to_string(),
+            )),
+        }
+    }
+
+    /// Evaluate DATE function (construct a date).
+    ///
+    /// `DATE(year, month, day)` - construct from components
+    /// `DATE(string)` - parse ISO date string
+    fn eval_date_construct(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        match func.args.len() {
+            1 => {
+                // DATE(string) - parse ISO date
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                match val {
+                    Value::String(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                        .map(Value::Date)
+                        .map_err(|_| QueryError::Type(format!("DATE: cannot parse '{s}' as date"))),
+                    Value::Date(d) => Ok(Value::Date(d)),
+                    _ => Err(QueryError::Type(
+                        "DATE: argument must be a string or date".to_string(),
+                    )),
+                }
+            }
+            3 => {
+                // DATE(year, month, day)
+                let year = match self.evaluate_expr(&func.args[0], ctx)? {
+                    Value::Integer(i) => i as i32,
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        n.to_i32().ok_or_else(|| {
+                            QueryError::Type("DATE: year must be an integer".to_string())
+                        })?
+                    }
+                    _ => {
+                        return Err(QueryError::Type(
+                            "DATE: year must be an integer".to_string(),
+                        ));
+                    }
+                };
+                let month = match self.evaluate_expr(&func.args[1], ctx)? {
+                    Value::Integer(i) => i as u32,
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        n.to_u32().ok_or_else(|| {
+                            QueryError::Type("DATE: month must be an integer".to_string())
+                        })?
+                    }
+                    _ => {
+                        return Err(QueryError::Type(
+                            "DATE: month must be an integer".to_string(),
+                        ));
+                    }
+                };
+                let day = match self.evaluate_expr(&func.args[2], ctx)? {
+                    Value::Integer(i) => i as u32,
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        n.to_u32().ok_or_else(|| {
+                            QueryError::Type("DATE: day must be an integer".to_string())
+                        })?
+                    }
+                    _ => return Err(QueryError::Type("DATE: day must be an integer".to_string())),
+                };
+                NaiveDate::from_ymd_opt(year, month, day)
+                    .map(Value::Date)
+                    .ok_or_else(|| {
+                        QueryError::Type(format!("DATE: invalid date {year}-{month}-{day}"))
+                    })
+            }
+            _ => Err(QueryError::InvalidArguments(
+                "DATE".to_string(),
+                "expected 1 or 3 arguments".to_string(),
+            )),
+        }
+    }
+
+    /// Evaluate `DATE_DIFF` function (difference in days).
+    ///
+    /// `DATE_DIFF(date1, date2)` - returns date1 - date2 in days
+    fn eval_date_diff(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DATE_DIFF", func, 2)?;
+
+        let date1 = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_DIFF: first argument must be a date".to_string(),
+                ));
+            }
+        };
+        let date2 = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_DIFF: second argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        let diff = date1.signed_duration_since(date2).num_days();
+        Ok(Value::Integer(diff))
+    }
+
+    /// Evaluate `DATE_ADD` function (add days or interval to a date).
+    ///
+    /// `DATE_ADD(date, days)` - returns date + days
+    /// `DATE_ADD(date, interval)` - returns date + interval
+    fn eval_date_add(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DATE_ADD", func, 2)?;
+
+        let date = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_ADD: first argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        let second_arg = self.evaluate_expr(&func.args[1], ctx)?;
+        let result = match second_arg {
+            Value::Integer(days) => date + chrono::Duration::days(days),
+            Value::Number(n) => {
+                use rust_decimal::prelude::ToPrimitive;
+                let days = n.to_i64().ok_or_else(|| {
+                    QueryError::Type("DATE_ADD: days must be an integer".to_string())
+                })?;
+                date + chrono::Duration::days(days)
+            }
+            Value::Interval(interval) => interval
+                .add_to_date(date)
+                .ok_or_else(|| QueryError::Evaluation("DATE_ADD: interval overflow".to_string()))?,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_ADD: second argument must be an integer or interval".to_string(),
+                ));
+            }
+        };
+
+        Ok(Value::Date(result))
+    }
+
+    /// Evaluate `DATE_TRUNC` function (truncate date to field).
+    ///
+    /// `DATE_TRUNC(field, date)` - truncate to year/month
+    fn eval_date_trunc(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DATE_TRUNC", func, 2)?;
+
+        let field = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s.to_uppercase(),
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_TRUNC: first argument must be a string".to_string(),
+                ));
+            }
+        };
+        let date = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_TRUNC: second argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        let result = match field.as_str() {
+            "YEAR" => NaiveDate::from_ymd_opt(date.year(), 1, 1),
+            "QUARTER" => {
+                let quarter = (date.month() - 1) / 3;
+                NaiveDate::from_ymd_opt(date.year(), quarter * 3 + 1, 1)
+            }
+            "MONTH" => NaiveDate::from_ymd_opt(date.year(), date.month(), 1),
+            "WEEK" => {
+                // Start of week (Monday)
+                let days_from_monday = i64::from(date.weekday().num_days_from_monday());
+                Some(date - chrono::Duration::days(days_from_monday))
+            }
+            "DAY" => Some(date),
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "DATE_TRUNC: unknown field '{field}', expected YEAR, QUARTER, MONTH, WEEK, or DAY"
+                )));
+            }
+        };
+
+        result
+            .map(Value::Date)
+            .ok_or_else(|| QueryError::Type("DATE_TRUNC: invalid date result".to_string()))
+    }
+
+    /// Evaluate `DATE_PART` function (extract date component).
+    ///
+    /// `DATE_PART(field, date)` - extract component
+    fn eval_date_part(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DATE_PART", func, 2)?;
+
+        let field = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s.to_uppercase(),
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_PART: first argument must be a string".to_string(),
+                ));
+            }
+        };
+        let date = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_PART: second argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        let result = match field.as_str() {
+            "YEAR" => i64::from(date.year()),
+            "MONTH" => i64::from(date.month()),
+            "DAY" => i64::from(date.day()),
+            "QUARTER" => i64::from((date.month() - 1) / 3 + 1),
+            "WEEK" => i64::from(date.iso_week().week()),
+            "WEEKDAY" | "DOW" => i64::from(date.weekday().num_days_from_monday()),
+            "DOY" => i64::from(date.ordinal()),
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "DATE_PART: unknown field '{field}', expected YEAR, MONTH, DAY, QUARTER, WEEK, WEEKDAY, DOW, or DOY"
+                )));
+            }
+        };
+
+        Ok(Value::Integer(result))
+    }
+
+    /// Evaluate `PARSE_DATE` function (parse date with format).
+    ///
+    /// `PARSE_DATE(string, format)` - parse with chrono format
+    fn eval_parse_date(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("PARSE_DATE", func, 2)?;
+
+        let string = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "PARSE_DATE: first argument must be a string".to_string(),
+                ));
+            }
+        };
+        let format = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "PARSE_DATE: second argument must be a format string".to_string(),
+                ));
+            }
+        };
+
+        NaiveDate::parse_from_str(&string, &format)
+            .map(Value::Date)
+            .map_err(|e| {
+                QueryError::Type(format!(
+                    "PARSE_DATE: cannot parse '{string}' with format '{format}': {e}"
+                ))
+            })
+    }
+
+    /// Evaluate `DATE_BIN` function (bin dates into buckets).
+    ///
+    /// `DATE_BIN(stride, source, origin)` - bins source date into buckets of stride size
+    /// starting from origin.
+    ///
+    /// Stride is a string like "1 day", "7 days", "1 week", "1 month", "3 months", "1 year".
+    fn eval_date_bin(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DATE_BIN", func, 3)?;
+
+        let stride = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            Value::Integer(days) => format!("{days} days"),
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_BIN: first argument must be a stride string or integer days".to_string(),
+                ));
+            }
+        };
+
+        let source = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_BIN: second argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        let origin = match self.evaluate_expr(&func.args[2], ctx)? {
+            Value::Date(d) => d,
+            _ => {
+                return Err(QueryError::Type(
+                    "DATE_BIN: third argument must be a date".to_string(),
+                ));
+            }
+        };
+
+        // Parse stride string
+        let stride_lower = stride.to_lowercase();
+        let parts: Vec<&str> = stride_lower.split_whitespace().collect();
+
+        let (amount, unit) = match parts.as_slice() {
+            [num, unit] => {
+                let n: i64 = num.parse().map_err(|_| {
+                    QueryError::Type(format!("DATE_BIN: invalid stride number '{num}'"))
+                })?;
+                (n, *unit)
+            }
+            [unit] => (1, *unit),
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "DATE_BIN: invalid stride format '{stride}'"
+                )));
+            }
+        };
+
+        // Calculate days from origin to source
+        let days_diff = (source - origin).num_days();
+
+        // Calculate binned date based on unit
+        let binned = match unit.trim_end_matches('s') {
+            "day" => {
+                let bucket = days_diff / amount;
+                origin + chrono::Duration::days(bucket * amount)
+            }
+            "week" => {
+                let days_per_stride = amount * 7;
+                let bucket = days_diff / days_per_stride;
+                origin + chrono::Duration::days(bucket * days_per_stride)
+            }
+            "month" => {
+                // For months, we need to work with calendar months
+                let months_diff = (source.year() - origin.year()) * 12 + (source.month() as i32)
+                    - (origin.month() as i32);
+                let bucket = months_diff / (amount as i32);
+                let total_months = (origin.month() as i32) - 1 + bucket * (amount as i32);
+                let year = origin.year() + total_months / 12;
+                let month = (total_months % 12 + 1) as u32;
+                NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(origin)
+            }
+            "quarter" => {
+                // 3-month buckets
+                let months_diff = (source.year() - origin.year()) * 12 + (source.month() as i32)
+                    - (origin.month() as i32);
+                let quarters = months_diff / (3 * amount as i32);
+                let total_months = (origin.month() as i32) - 1 + quarters * 3 * (amount as i32);
+                let year = origin.year() + total_months / 12;
+                let month = (total_months % 12 + 1) as u32;
+                NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(origin)
+            }
+            "year" => {
+                let years_diff = source.year() - origin.year();
+                let bucket = years_diff / (amount as i32);
+                let year = origin.year() + bucket * (amount as i32);
+                NaiveDate::from_ymd_opt(year, origin.month(), origin.day()).unwrap_or(origin)
+            }
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "DATE_BIN: unknown unit '{unit}', expected day(s), week(s), month(s), quarter(s), or year(s)"
+                )));
+            }
+        };
+
+        Ok(Value::Date(binned))
     }
 
     /// Evaluate string functions: `LENGTH`, `UPPER`, `LOWER`, `SUBSTR`, `TRIM`, `STARTSWITH`, `ENDSWITH`.
@@ -1291,7 +2525,251 @@ impl<'a> Executor<'a> {
                     _ => Err(QueryError::Type("ENDSWITH expects two strings".to_string())),
                 }
             }
+            "GREP" => self.eval_grep(func, ctx),
+            "GREPN" => self.eval_grepn(func, ctx),
+            "SUBST" => self.eval_subst(func, ctx),
+            "SPLITCOMP" => self.eval_splitcomp(func, ctx),
+            "JOINSTR" => self.eval_joinstr(func, ctx),
+            "MAXWIDTH" => self.eval_maxwidth(func, ctx),
             _ => unreachable!(),
+        }
+    }
+
+    /// Evaluate GREP function (regex match).
+    ///
+    /// `GREP(pattern, string)` - Return matched portion or null
+    fn eval_grep(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("GREP", func, 2)?;
+
+        let pattern = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GREP: first argument must be a pattern string".to_string(),
+                ));
+            }
+        };
+        let string = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GREP: second argument must be a string".to_string(),
+                ));
+            }
+        };
+
+        let re = Regex::new(&pattern)
+            .map_err(|e| QueryError::Type(format!("GREP: invalid regex '{pattern}': {e}")))?;
+
+        match re.find(&string) {
+            Some(m) => Ok(Value::String(m.as_str().to_string())),
+            None => Ok(Value::Null),
+        }
+    }
+
+    /// Evaluate GREPN function (regex capture group).
+    ///
+    /// `GREPN(pattern, string, n)` - Return nth capture group
+    fn eval_grepn(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("GREPN", func, 3)?;
+
+        let pattern = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GREPN: first argument must be a pattern string".to_string(),
+                ));
+            }
+        };
+        let string = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "GREPN: second argument must be a string".to_string(),
+                ));
+            }
+        };
+        let n = match self.evaluate_expr(&func.args[2], ctx)? {
+            Value::Integer(i) => i as usize,
+            Value::Number(n) => {
+                use rust_decimal::prelude::ToPrimitive;
+                n.to_usize().ok_or_else(|| {
+                    QueryError::Type("GREPN: third argument must be a non-negative integer".into())
+                })?
+            }
+            _ => {
+                return Err(QueryError::Type(
+                    "GREPN: third argument must be an integer".to_string(),
+                ));
+            }
+        };
+
+        let re = Regex::new(&pattern)
+            .map_err(|e| QueryError::Type(format!("GREPN: invalid regex '{pattern}': {e}")))?;
+
+        match re.captures(&string) {
+            Some(caps) => match caps.get(n) {
+                Some(m) => Ok(Value::String(m.as_str().to_string())),
+                None => Ok(Value::Null),
+            },
+            None => Ok(Value::Null),
+        }
+    }
+
+    /// Evaluate SUBST function (regex substitution).
+    ///
+    /// `SUBST(pattern, replacement, string)` - Replace matches with replacement
+    fn eval_subst(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("SUBST", func, 3)?;
+
+        let pattern = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "SUBST: first argument must be a pattern string".to_string(),
+                ));
+            }
+        };
+        let replacement = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "SUBST: second argument must be a replacement string".to_string(),
+                ));
+            }
+        };
+        let string = match self.evaluate_expr(&func.args[2], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "SUBST: third argument must be a string".to_string(),
+                ));
+            }
+        };
+
+        let re = Regex::new(&pattern)
+            .map_err(|e| QueryError::Type(format!("SUBST: invalid regex '{pattern}': {e}")))?;
+
+        Ok(Value::String(
+            re.replace_all(&string, &replacement).to_string(),
+        ))
+    }
+
+    /// Evaluate SPLITCOMP function (split and get component).
+    ///
+    /// `SPLITCOMP(string, delimiter, n)` - Split and return nth component (0-based)
+    fn eval_splitcomp(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("SPLITCOMP", func, 3)?;
+
+        let string = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "SPLITCOMP: first argument must be a string".to_string(),
+                ));
+            }
+        };
+        let delimiter = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "SPLITCOMP: second argument must be a delimiter string".to_string(),
+                ));
+            }
+        };
+        let n = match self.evaluate_expr(&func.args[2], ctx)? {
+            Value::Integer(i) => i as usize,
+            Value::Number(n) => {
+                use rust_decimal::prelude::ToPrimitive;
+                n.to_usize().ok_or_else(|| {
+                    QueryError::Type(
+                        "SPLITCOMP: third argument must be a non-negative integer".into(),
+                    )
+                })?
+            }
+            _ => {
+                return Err(QueryError::Type(
+                    "SPLITCOMP: third argument must be an integer".to_string(),
+                ));
+            }
+        };
+
+        let parts: Vec<&str> = string.split(&delimiter).collect();
+        match parts.get(n) {
+            Some(part) => Ok(Value::String((*part).to_string())),
+            None => Ok(Value::Null),
+        }
+    }
+
+    /// Evaluate JOINSTR function (join values with separator).
+    ///
+    /// `JOINSTR(value, ...)` - Join multiple values with comma separator
+    fn eval_joinstr(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        if func.args.is_empty() {
+            return Err(QueryError::InvalidArguments(
+                "JOINSTR".to_string(),
+                "expected at least 1 argument".to_string(),
+            ));
+        }
+
+        let mut parts = Vec::new();
+        for arg in &func.args {
+            let val = self.evaluate_expr(arg, ctx)?;
+            match val {
+                Value::String(s) => parts.push(s),
+                Value::StringSet(ss) => parts.extend(ss),
+                Value::Null => {} // Skip nulls
+                other => parts.push(self.value_to_string(&other)),
+            }
+        }
+
+        Ok(Value::String(parts.join(", ")))
+    }
+
+    /// Evaluate MAXWIDTH function (truncate with ellipsis).
+    ///
+    /// `MAXWIDTH(string, n)` - Truncate string to n characters with ellipsis
+    fn eval_maxwidth(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("MAXWIDTH", func, 2)?;
+
+        let string = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "MAXWIDTH: first argument must be a string".to_string(),
+                ));
+            }
+        };
+        let n = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::Integer(i) => i as usize,
+            Value::Number(n) => {
+                use rust_decimal::prelude::ToPrimitive;
+                n.to_usize().ok_or_else(|| {
+                    QueryError::Type("MAXWIDTH: second argument must be a positive integer".into())
+                })?
+            }
+            _ => {
+                return Err(QueryError::Type(
+                    "MAXWIDTH: second argument must be an integer".to_string(),
+                ));
+            }
+        };
+
+        if string.chars().count() <= n {
+            Ok(Value::String(string))
+        } else if n <= 3 {
+            Ok(Value::String(string.chars().take(n).collect()))
+        } else {
+            let truncated: String = string.chars().take(n - 3).collect();
+            Ok(Value::String(format!("{truncated}...")))
         }
     }
 
@@ -1399,6 +2877,71 @@ impl<'a> Executor<'a> {
                     _ => Err(QueryError::Type(
                         "ACCOUNT_SORTKEY expects an account string".to_string(),
                     )),
+                }
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Evaluate account metadata functions: `OPEN_DATE`, `CLOSE_DATE`, `OPEN_META`.
+    fn eval_account_meta_function(
+        &self,
+        name: &str,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        match name {
+            "OPEN_DATE" => {
+                Self::require_args(name, func, 1)?;
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                match val {
+                    Value::String(account) => {
+                        if let Some(info) = self.account_info.get(&account) {
+                            Ok(info.open_date.map_or(Value::Null, Value::Date))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "OPEN_DATE expects an account string".to_string(),
+                    )),
+                }
+            }
+            "CLOSE_DATE" => {
+                Self::require_args(name, func, 1)?;
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                match val {
+                    Value::String(account) => {
+                        if let Some(info) = self.account_info.get(&account) {
+                            Ok(info.close_date.map_or(Value::Null, Value::Date))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "CLOSE_DATE expects an account string".to_string(),
+                    )),
+                }
+            }
+            "OPEN_META" => {
+                Self::require_args(name, func, 2)?;
+                let account_val = self.evaluate_expr(&func.args[0], ctx)?;
+                let key_val = self.evaluate_expr(&func.args[1], ctx)?;
+
+                let (account, key) = match (account_val, key_val) {
+                    (Value::String(a), Value::String(k)) => (a, k),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "OPEN_META expects (account_string, key_string)".to_string(),
+                        ));
+                    }
+                };
+
+                if let Some(info) = self.account_info.get(&account) {
+                    let meta_value = info.open_meta.get(&key);
+                    Ok(Self::meta_value_to_value(meta_value))
+                } else {
+                    Ok(Value::Null)
                 }
             }
             _ => unreachable!(),
@@ -1567,6 +3110,89 @@ impl<'a> Executor<'a> {
             "COST" => self.eval_cost(func, ctx),
             "WEIGHT" => self.eval_weight(func, ctx),
             "VALUE" => self.eval_value(func, ctx),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Evaluate inventory functions: `EMPTY`, `FILTER_CURRENCY`, `POSSIGN`.
+    fn eval_inventory_function(
+        &self,
+        name: &str,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        match name {
+            "EMPTY" => {
+                Self::require_args(name, func, 1)?;
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                match val {
+                    Value::Inventory(inv) => Ok(Value::Boolean(inv.is_empty())),
+                    Value::Null => Ok(Value::Boolean(true)),
+                    _ => Err(QueryError::Type("EMPTY expects an inventory".to_string())),
+                }
+            }
+            "FILTER_CURRENCY" => {
+                Self::require_args(name, func, 2)?;
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                let currency = self.evaluate_expr(&func.args[1], ctx)?;
+
+                match (val, currency) {
+                    (Value::Inventory(inv), Value::String(curr)) => {
+                        let filtered: Vec<Position> = inv
+                            .positions()
+                            .iter()
+                            .filter(|p| p.units.currency.as_str() == curr)
+                            .cloned()
+                            .collect();
+                        let mut new_inv = Inventory::new();
+                        for pos in filtered {
+                            new_inv.add(pos);
+                        }
+                        Ok(Value::Inventory(new_inv))
+                    }
+                    (Value::Null, _) => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "FILTER_CURRENCY expects (inventory, string)".to_string(),
+                    )),
+                }
+            }
+            "POSSIGN" => {
+                Self::require_args(name, func, 2)?;
+                let val = self.evaluate_expr(&func.args[0], ctx)?;
+                let account = self.evaluate_expr(&func.args[1], ctx)?;
+
+                let account_str = match account {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(QueryError::Type(
+                            "POSSIGN expects (amount, account_string)".to_string(),
+                        ));
+                    }
+                };
+
+                // Determine if account is credit-normal (Liabilities, Equity, Income)
+                // These need their signs inverted; Assets/Expenses are debit-normal
+                let first_component = account_str.split(':').next().unwrap_or("");
+                let is_credit_normal =
+                    matches!(first_component, "Liabilities" | "Equity" | "Income");
+
+                match val {
+                    Value::Amount(mut a) => {
+                        if is_credit_normal {
+                            a.number = -a.number;
+                        }
+                        Ok(Value::Amount(a))
+                    }
+                    Value::Number(n) => {
+                        let adjusted = if is_credit_normal { -n } else { n };
+                        Ok(Value::Number(adjusted))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "POSSIGN expects (amount, account_string)".to_string(),
+                    )),
+                }
+            }
             _ => unreachable!(),
         }
     }
@@ -1799,6 +3425,232 @@ impl<'a> Executor<'a> {
         match self.price_db.get_price(&base, &quote, date) {
             Some(price) => Ok(Value::Number(price)),
             None => Ok(Value::Null),
+        }
+    }
+
+    /// Evaluate metadata functions: `META`, `ENTRY_META`, `ANY_META`.
+    ///
+    /// - `META(key)` - Get metadata value from the posting
+    /// - `ENTRY_META(key)` - Get metadata value from the transaction
+    /// - `ANY_META(key)` - Get metadata value from posting, falling back to transaction
+    fn eval_meta_function(
+        &self,
+        name: &str,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args(name, func, 1)?;
+
+        let key = match self.evaluate_expr(&func.args[0], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "{name}: argument must be a string key"
+                )));
+            }
+        };
+
+        let posting = &ctx.transaction.postings[ctx.posting_index];
+
+        let meta_value = match name {
+            "META" => posting.meta.get(&key),
+            "ENTRY_META" => ctx.transaction.meta.get(&key),
+            "ANY_META" => posting
+                .meta
+                .get(&key)
+                .or_else(|| ctx.transaction.meta.get(&key)),
+            _ => unreachable!(),
+        };
+
+        Ok(Self::meta_value_to_value(meta_value))
+    }
+
+    /// Convert a `MetaValue` to a `Value`.
+    fn meta_value_to_value(mv: Option<&MetaValue>) -> Value {
+        match mv {
+            None => Value::Null,
+            Some(MetaValue::String(s)) => Value::String(s.clone()),
+            Some(MetaValue::Number(n)) => Value::Number(*n),
+            Some(MetaValue::Date(d)) => Value::Date(*d),
+            Some(MetaValue::Bool(b)) => Value::Boolean(*b),
+            Some(MetaValue::Amount(a)) => Value::Amount(a.clone()),
+            Some(MetaValue::Account(s)) => Value::String(s.clone()),
+            Some(MetaValue::Currency(s)) => Value::String(s.clone()),
+            Some(MetaValue::Tag(s)) => Value::String(s.clone()),
+            Some(MetaValue::Link(s)) => Value::String(s.clone()),
+            Some(MetaValue::None) => Value::Null,
+        }
+    }
+
+    /// Evaluate CONVERT function (currency conversion).
+    ///
+    /// `CONVERT(position, currency)` - Convert position/amount to target currency.
+    /// `CONVERT(position, currency, date)` - Convert using price at specific date.
+    fn eval_convert(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        if func.args.len() < 2 || func.args.len() > 3 {
+            return Err(QueryError::InvalidArguments(
+                "CONVERT".to_string(),
+                "expected 2 or 3 arguments: (value, currency[, date])".to_string(),
+            ));
+        }
+
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+
+        let target_currency = match self.evaluate_expr(&func.args[1], ctx)? {
+            Value::String(s) => s,
+            _ => {
+                return Err(QueryError::Type(
+                    "CONVERT: second argument must be a currency string".to_string(),
+                ));
+            }
+        };
+
+        let date = if func.args.len() == 3 {
+            match self.evaluate_expr(&func.args[2], ctx)? {
+                Value::Date(d) => d,
+                _ => {
+                    return Err(QueryError::Type(
+                        "CONVERT: third argument must be a date".to_string(),
+                    ));
+                }
+            }
+        } else {
+            ctx.transaction.date
+        };
+
+        match val {
+            Value::Position(p) => {
+                if p.units.currency == target_currency {
+                    Ok(Value::Amount(p.units))
+                } else if let Some(converted) =
+                    self.price_db.convert(&p.units, &target_currency, date)
+                {
+                    Ok(Value::Amount(converted))
+                } else {
+                    // Return original units if no conversion available
+                    Ok(Value::Amount(p.units))
+                }
+            }
+            Value::Amount(a) => {
+                if a.currency == target_currency {
+                    Ok(Value::Amount(a))
+                } else if let Some(converted) = self.price_db.convert(&a, &target_currency, date) {
+                    Ok(Value::Amount(converted))
+                } else {
+                    Ok(Value::Amount(a))
+                }
+            }
+            Value::Inventory(inv) => {
+                let mut total = Decimal::ZERO;
+                for pos in inv.positions() {
+                    if pos.units.currency == target_currency {
+                        total += pos.units.number;
+                    } else if let Some(converted) =
+                        self.price_db.convert(&pos.units, &target_currency, date)
+                    {
+                        total += converted.number;
+                    }
+                }
+                Ok(Value::Amount(Amount::new(total, &target_currency)))
+            }
+            Value::Number(n) => {
+                // Just wrap the number as an amount with the target currency
+                Ok(Value::Amount(Amount::new(n, &target_currency)))
+            }
+            _ => Err(QueryError::Type(
+                "CONVERT expects a position, amount, inventory, or number".to_string(),
+            )),
+        }
+    }
+
+    /// Evaluate INT function (convert to integer).
+    fn eval_int(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        use rust_decimal::prelude::ToPrimitive;
+
+        Self::require_args("INT", func, 1)?;
+
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        match val {
+            Value::Integer(i) => Ok(Value::Integer(i)),
+            Value::Number(n) => {
+                // Truncate decimal to integer
+                n.trunc()
+                    .to_i64()
+                    .map(Value::Integer)
+                    .ok_or_else(|| QueryError::Type("INT: number too large for integer".into()))
+            }
+            Value::Boolean(b) => Ok(Value::Integer(i64::from(b))),
+            Value::String(s) => s
+                .parse::<i64>()
+                .map(Value::Integer)
+                .map_err(|_| QueryError::Type(format!("INT: cannot parse '{s}' as integer"))),
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type(
+                "INT expects a number, integer, boolean, or string".to_string(),
+            )),
+        }
+    }
+
+    /// Evaluate DECIMAL function (convert to decimal).
+    fn eval_decimal(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("DECIMAL", func, 1)?;
+
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        match val {
+            Value::Number(n) => Ok(Value::Number(n)),
+            Value::Integer(i) => Ok(Value::Number(Decimal::from(i))),
+            Value::Boolean(b) => Ok(Value::Number(if b { Decimal::ONE } else { Decimal::ZERO })),
+            Value::String(s) => s
+                .parse::<Decimal>()
+                .map(Value::Number)
+                .map_err(|_| QueryError::Type(format!("DECIMAL: cannot parse '{s}' as decimal"))),
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type(
+                "DECIMAL expects a number, integer, boolean, or string".to_string(),
+            )),
+        }
+    }
+
+    /// Evaluate STR function (convert to string).
+    fn eval_str(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("STR", func, 1)?;
+
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        match val {
+            Value::String(s) => Ok(Value::String(s)),
+            Value::Integer(i) => Ok(Value::String(i.to_string())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if b { "TRUE" } else { "FALSE" }.to_string())),
+            Value::Date(d) => Ok(Value::String(d.to_string())),
+            Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type("STR expects a scalar value".to_string())),
+        }
+    }
+
+    /// Evaluate BOOL function (convert to boolean).
+    fn eval_bool(&self, func: &FunctionCall, ctx: &PostingContext) -> Result<Value, QueryError> {
+        Self::require_args("BOOL", func, 1)?;
+
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        match val {
+            Value::Boolean(b) => Ok(Value::Boolean(b)),
+            Value::Integer(i) => Ok(Value::Boolean(i != 0)),
+            Value::Number(n) => Ok(Value::Boolean(!n.is_zero())),
+            Value::String(s) => {
+                let s_upper = s.to_uppercase();
+                match s_upper.as_str() {
+                    "TRUE" | "YES" | "1" | "T" | "Y" => Ok(Value::Boolean(true)),
+                    "FALSE" | "NO" | "0" | "F" | "N" | "" => Ok(Value::Boolean(false)),
+                    _ => Err(QueryError::Type(format!(
+                        "BOOL: cannot parse '{s}' as boolean"
+                    ))),
+                }
+            }
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type(
+                "BOOL expects an integer, number, boolean, or string".to_string(),
+            )),
         }
     }
 
@@ -2061,10 +3913,71 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
-            BinaryOperator::Add => self.arithmetic_op(&left, &right, |a, b| a + b),
-            BinaryOperator::Sub => self.arithmetic_op(&left, &right, |a, b| a - b),
+            BinaryOperator::NotRegex => {
+                // !~ operator: string does not match regex pattern
+                let s = match left {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(QueryError::Type(
+                            "!~ requires string left operand".to_string(),
+                        ));
+                    }
+                };
+                let pattern = match right {
+                    Value::String(p) => p,
+                    _ => {
+                        return Err(QueryError::Type("!~ requires string pattern".to_string()));
+                    }
+                };
+                let re = self.require_regex(&pattern)?;
+                Ok(Value::Boolean(!re.is_match(&s)))
+            }
+            BinaryOperator::NotIn => {
+                // NOT IN: check if left value is not in right set
+                match right {
+                    Value::StringSet(set) => {
+                        let needle = match left {
+                            Value::String(s) => s,
+                            _ => {
+                                return Err(QueryError::Type(
+                                    "NOT IN requires string left operand".to_string(),
+                                ));
+                            }
+                        };
+                        Ok(Value::Boolean(!set.contains(&needle)))
+                    }
+                    _ => Err(QueryError::Type(
+                        "NOT IN requires set right operand".to_string(),
+                    )),
+                }
+            }
+            BinaryOperator::Add => {
+                // Handle date + interval
+                match (&left, &right) {
+                    (Value::Date(d), Value::Interval(i)) | (Value::Interval(i), Value::Date(d)) => {
+                        i.add_to_date(*d)
+                            .map(Value::Date)
+                            .ok_or_else(|| QueryError::Evaluation("date overflow".to_string()))
+                    }
+                    _ => self.arithmetic_op(&left, &right, |a, b| a + b),
+                }
+            }
+            BinaryOperator::Sub => {
+                // Handle date - interval
+                match (&left, &right) {
+                    (Value::Date(d), Value::Interval(i)) => {
+                        let neg_interval = Interval::new(-i.count, i.unit);
+                        neg_interval
+                            .add_to_date(*d)
+                            .map(Value::Date)
+                            .ok_or_else(|| QueryError::Evaluation("date overflow".to_string()))
+                    }
+                    _ => self.arithmetic_op(&left, &right, |a, b| a - b),
+                }
+            }
             BinaryOperator::Mul => self.arithmetic_op(&left, &right, |a, b| a * b),
             BinaryOperator::Div => self.arithmetic_op(&left, &right, |a, b| a / b),
+            BinaryOperator::Mod => self.arithmetic_op(&left, &right, |a, b| a % b),
         }
     }
 
@@ -2088,6 +4001,8 @@ impl<'a> Executor<'a> {
                     "negation requires numeric value".to_string(),
                 )),
             },
+            UnaryOperator::IsNull => Ok(Value::Boolean(matches!(val, Value::Null))),
+            UnaryOperator::IsNotNull => Ok(Value::Boolean(!matches!(val, Value::Null))),
         }
     }
 
@@ -2453,6 +4368,15 @@ impl<'a> Executor<'a> {
                         key.push(',');
                     }
                 }
+                Value::Metadata(meta) => {
+                    // Metadata as GROUP BY key - use debug representation
+                    key.push('M');
+                    let _ = write!(key, "{meta:?}");
+                }
+                Value::Interval(i) => {
+                    key.push('R');
+                    let _ = write!(key, "{} {:?}", i.count, i.unit);
+                }
                 Value::Null => {
                     key.push('0');
                 }
@@ -2773,10 +4697,71 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
-            BinaryOperator::Add => self.arithmetic_op(left, right, |a, b| a + b),
-            BinaryOperator::Sub => self.arithmetic_op(left, right, |a, b| a - b),
+            BinaryOperator::NotRegex => {
+                // !~ operator: string does not match regex pattern
+                let s = match left {
+                    Value::String(s) => s,
+                    _ => {
+                        return Err(QueryError::Type(
+                            "!~ requires string left operand".to_string(),
+                        ));
+                    }
+                };
+                let pattern = match right {
+                    Value::String(p) => p,
+                    _ => {
+                        return Err(QueryError::Type("!~ requires string pattern".to_string()));
+                    }
+                };
+                let re = self.require_regex(pattern)?;
+                Ok(Value::Boolean(!re.is_match(s)))
+            }
+            BinaryOperator::NotIn => {
+                // NOT IN: check if left value is not in right set
+                match right {
+                    Value::StringSet(set) => {
+                        let needle = match left {
+                            Value::String(s) => s,
+                            _ => {
+                                return Err(QueryError::Type(
+                                    "NOT IN requires string left operand".to_string(),
+                                ));
+                            }
+                        };
+                        Ok(Value::Boolean(!set.contains(needle)))
+                    }
+                    _ => Err(QueryError::Type(
+                        "NOT IN requires set right operand".to_string(),
+                    )),
+                }
+            }
+            BinaryOperator::Add => {
+                // Handle date + interval
+                match (left, right) {
+                    (Value::Date(d), Value::Interval(i)) | (Value::Interval(i), Value::Date(d)) => {
+                        i.add_to_date(*d)
+                            .map(Value::Date)
+                            .ok_or_else(|| QueryError::Evaluation("date overflow".to_string()))
+                    }
+                    _ => self.arithmetic_op(left, right, |a, b| a + b),
+                }
+            }
+            BinaryOperator::Sub => {
+                // Handle date - interval
+                match (left, right) {
+                    (Value::Date(d), Value::Interval(i)) => {
+                        let neg_interval = Interval::new(-i.count, i.unit);
+                        neg_interval
+                            .add_to_date(*d)
+                            .map(Value::Date)
+                            .ok_or_else(|| QueryError::Evaluation("date overflow".to_string()))
+                    }
+                    _ => self.arithmetic_op(left, right, |a, b| a - b),
+                }
+            }
             BinaryOperator::Mul => self.arithmetic_op(left, right, |a, b| a * b),
             BinaryOperator::Div => self.arithmetic_op(left, right, |a, b| a / b),
+            BinaryOperator::Mod => self.arithmetic_op(left, right, |a, b| a % b),
         }
     }
 
@@ -2963,6 +4948,8 @@ impl<'a> Executor<'a> {
                             "Cannot negate non-numeric value".to_string(),
                         )),
                     },
+                    UnaryOperator::IsNull => Ok(Value::Boolean(matches!(val, Value::Null))),
+                    UnaryOperator::IsNotNull => Ok(Value::Boolean(!matches!(val, Value::Null))),
                 }
             }
             Expr::Paren(inner) => self.evaluate_having_expr(inner, row, col_map, alias_map, group),
@@ -2972,6 +4959,21 @@ impl<'a> Executor<'a> {
             Expr::Window(_) => Err(QueryError::Evaluation(
                 "Window functions not allowed in HAVING clause".to_string(),
             )),
+            Expr::Between { value, low, high } => {
+                let val = self.evaluate_having_expr(value, row, col_map, alias_map, group)?;
+                let low_val = self.evaluate_having_expr(low, row, col_map, alias_map, group)?;
+                let high_val = self.evaluate_having_expr(high, row, col_map, alias_map, group)?;
+
+                let ge = self.compare_values(&val, &low_val, std::cmp::Ordering::is_ge)?;
+                let le = self.compare_values(&val, &high_val, std::cmp::Ordering::is_le)?;
+
+                match (ge, le) {
+                    (Value::Boolean(g), Value::Boolean(l)) => Ok(Value::Boolean(g && l)),
+                    _ => Err(QueryError::Type(
+                        "BETWEEN requires comparable values".to_string(),
+                    )),
+                }
+            }
         }
     }
 
@@ -3140,6 +5142,12 @@ impl<'a> Executor<'a> {
             Value::Position(p) => p.to_string(),
             Value::Inventory(inv) => inv.to_string(),
             Value::StringSet(ss) => ss.join("   "),
+            Value::Metadata(meta) => {
+                // Format metadata as key=value pairs
+                let pairs: Vec<String> = meta.iter().map(|(k, v)| format!("{k}: {v:?}")).collect();
+                format!("{{{}}}", pairs.join(", "))
+            }
+            Value::Interval(i) => format!("{} {:?}", i.count, i.unit),
             Value::Null => "NULL".to_string(),
         }
     }
@@ -3583,5 +5591,529 @@ mod tests {
 
         result.add_row(vec![Value::Integer(2), Value::String("b".to_string())]);
         assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_type_cast_functions() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test INT function
+        let query = parse("SELECT int(5.7)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(5));
+
+        // Test DECIMAL function
+        let query = parse("SELECT decimal(42)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Number(dec!(42)));
+
+        // Test STR function
+        let query = parse("SELECT str(123)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("123".to_string()));
+
+        // Test BOOL function
+        let query = parse("SELECT bool(1)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Boolean(true));
+
+        let query = parse("SELECT bool(0)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Boolean(false));
+    }
+
+    #[test]
+    fn test_meta_functions() {
+        use std::collections::HashMap;
+
+        // Create directives with metadata
+        let mut txn_meta: HashMap<String, MetaValue> = HashMap::new();
+        txn_meta.insert(
+            "source".to_string(),
+            MetaValue::String("bank_import".to_string()),
+        );
+
+        let mut posting_meta: HashMap<String, MetaValue> = HashMap::new();
+        posting_meta.insert(
+            "category".to_string(),
+            MetaValue::String("food".to_string()),
+        );
+
+        let txn = Transaction {
+            date: date(2024, 1, 15),
+            flag: '*',
+            payee: Some("Coffee Shop".into()),
+            narration: "Coffee".into(),
+            tags: vec![],
+            links: vec![],
+            meta: txn_meta,
+            postings: vec![
+                Posting {
+                    account: "Expenses:Food".into(),
+                    units: Some(rustledger_core::IncompleteAmount::Complete(Amount::new(
+                        dec!(5),
+                        "USD",
+                    ))),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    meta: posting_meta,
+                },
+                Posting::new("Assets:Cash", Amount::new(dec!(-5), "USD")),
+            ],
+        };
+
+        let directives = vec![Directive::Transaction(txn)];
+        let mut executor = Executor::new(&directives);
+
+        // Test META (posting metadata)
+        let query = parse("SELECT meta('category') WHERE account ~ 'Expenses'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("food".to_string()));
+
+        // Test ENTRY_META (transaction metadata)
+        let query = parse("SELECT entry_meta('source') WHERE account ~ 'Expenses'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("bank_import".to_string()));
+
+        // Test ANY_META (falls back to txn meta when posting meta missing)
+        let query = parse("SELECT any_meta('source') WHERE account ~ 'Expenses'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("bank_import".to_string()));
+
+        // Test ANY_META (uses posting meta when available)
+        let query = parse("SELECT any_meta('category') WHERE account ~ 'Expenses'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("food".to_string()));
+
+        // Test missing meta returns NULL
+        let query = parse("SELECT meta('nonexistent') WHERE account ~ 'Expenses'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn test_convert_function() {
+        // Create directives with price information
+        let price = rustledger_core::Price {
+            date: date(2024, 1, 1),
+            currency: "EUR".into(),
+            amount: Amount::new(dec!(1.10), "USD"),
+            meta: HashMap::new(),
+        };
+
+        let txn = Transaction::new(date(2024, 1, 15), "Test")
+            .with_flag('*')
+            .with_posting(Posting::new("Assets:Euro", Amount::new(dec!(100), "EUR")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-110), "USD")));
+
+        let directives = vec![Directive::Price(price), Directive::Transaction(txn)];
+        let mut executor = Executor::new(&directives);
+
+        // Test CONVERT with amount
+        let query = parse("SELECT convert(position, 'USD') WHERE account ~ 'Euro'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        // 100 EUR × 1.10 = 110 USD
+        match &result.rows[0][0] {
+            Value::Amount(a) => {
+                assert_eq!(a.number, dec!(110));
+                assert_eq!(a.currency.as_ref(), "USD");
+            }
+            _ => panic!("Expected Amount, got {:?}", result.rows[0][0]),
+        }
+    }
+
+    #[test]
+    fn test_date_functions() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test DATE construction from string
+        let query = parse("SELECT date('2024-06-15')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 15)));
+
+        // Test DATE construction from components
+        let query = parse("SELECT date(2024, 6, 15)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 15)));
+
+        // Test DATE_DIFF
+        let query = parse("SELECT date_diff(date('2024-01-20'), date('2024-01-15'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(5));
+
+        // Test DATE_ADD
+        let query = parse("SELECT date_add(date('2024-01-15'), 10)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 25)));
+
+        // Test DATE_TRUNC year
+        let query = parse("SELECT date_trunc('year', date('2024-06-15'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 1)));
+
+        // Test DATE_TRUNC month
+        let query = parse("SELECT date_trunc('month', date('2024-06-15'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 1)));
+
+        // Test DATE_PART
+        let query = parse("SELECT date_part('month', date('2024-06-15'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(6));
+
+        // Test PARSE_DATE with custom format
+        let query = parse("SELECT parse_date('15/06/2024', '%d/%m/%Y')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 15)));
+
+        // Test DATE_BIN with day stride
+        let query =
+            parse("SELECT date_bin('7 days', date('2024-01-15'), date('2024-01-01'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 15))); // 15 is 14 days from 1, so bucket starts at 15
+
+        // Test DATE_BIN with week stride
+        let query =
+            parse("SELECT date_bin('1 week', date('2024-01-20'), date('2024-01-01'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 15))); // Week 3 starts at day 15
+
+        // Test DATE_BIN with month stride
+        let query =
+            parse("SELECT date_bin('1 month', date('2024-06-15'), date('2024-01-01'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 1))); // June bucket
+
+        // Test DATE_BIN with year stride
+        let query =
+            parse("SELECT date_bin('1 year', date('2024-06-15'), date('2020-01-01'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 1))); // 2024 bucket
+    }
+
+    #[test]
+    fn test_string_functions_extended() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test GREP - returns matched portion
+        let query = parse("SELECT grep('Ex[a-z]+', 'Hello Expenses World')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("Expenses".to_string()));
+
+        // Test GREP - no match returns NULL
+        let query = parse("SELECT grep('xyz', 'Hello World')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+
+        // Test GREPN - capture group (using [0-9] since \d is not escaped in BQL strings)
+        let query = parse("SELECT grepn('([0-9]+)-([0-9]+)', '2024-01', 1)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("2024".to_string()));
+
+        // Test SUBST - substitution
+        let query = parse("SELECT subst('-', '/', '2024-01-15')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("2024/01/15".to_string()));
+
+        // Test SPLITCOMP
+        let query = parse("SELECT splitcomp('a:b:c', ':', 1)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("b".to_string()));
+
+        // Test JOINSTR
+        let query = parse("SELECT joinstr('hello', 'world')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("hello, world".to_string()));
+
+        // Test MAXWIDTH - no truncation needed
+        let query = parse("SELECT maxwidth('hello', 10)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("hello".to_string()));
+
+        // Test MAXWIDTH - truncation with ellipsis
+        let query = parse("SELECT maxwidth('hello world', 8)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("hello...".to_string()));
+    }
+
+    #[test]
+    fn test_inventory_functions() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test EMPTY on sum of position (sum across all postings may cancel out)
+        // Use a filter to get non-canceling positions
+        let query = parse("SELECT empty(sum(position)) WHERE account ~ 'Assets'").unwrap();
+        let result = executor.execute(&query).unwrap();
+        // Should be a boolean (the actual value depends on sample data)
+        assert!(matches!(result.rows[0][0], Value::Boolean(_)));
+
+        // Test EMPTY with null returns true
+        // (null handling is already tested in the function)
+
+        // Test POSSIGN with debit account (Assets) - no sign change
+        let query = parse("SELECT possign(100, 'Assets:Bank')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Number(rust_decimal::Decimal::from(100))
+        );
+
+        // Test POSSIGN with credit account (Income) - sign is negated
+        let query = parse("SELECT possign(100, 'Income:Salary')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Number(rust_decimal::Decimal::from(-100))
+        );
+
+        // Test POSSIGN with Expenses (debit normal) - no sign change
+        let query = parse("SELECT possign(50, 'Expenses:Food')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Number(rust_decimal::Decimal::from(50))
+        );
+
+        // Test POSSIGN with Liabilities (credit normal) - sign is negated
+        let query = parse("SELECT possign(200, 'Liabilities:CreditCard')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Number(rust_decimal::Decimal::from(-200))
+        );
+
+        // Test POSSIGN with Equity (credit normal) - sign is negated
+        let query = parse("SELECT possign(300, 'Equity:OpeningBalances')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Number(rust_decimal::Decimal::from(-300))
+        );
+    }
+
+    #[test]
+    fn test_account_meta_functions() {
+        use rustledger_core::{Close, Metadata, Open};
+
+        // Create directives with Open/Close
+        let mut open_meta = Metadata::new();
+        open_meta.insert(
+            "category".to_string(),
+            MetaValue::String("checking".to_string()),
+        );
+
+        let directives = vec![
+            Directive::Open(Open {
+                date: date(2020, 1, 1),
+                account: "Assets:Bank:Checking".into(),
+                currencies: vec![],
+                booking: None,
+                meta: open_meta,
+            }),
+            Directive::Open(Open::new(date(2020, 2, 15), "Expenses:Food")),
+            Directive::Close(Close::new(date(2024, 12, 31), "Assets:Bank:Checking")),
+            // A transaction to have postings for the query context
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Coffee")
+                    .with_posting(Posting::new(
+                        "Expenses:Food",
+                        Amount::new(dec!(5.00), "USD"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Assets:Bank:Checking",
+                        Amount::new(dec!(-5.00), "USD"),
+                    )),
+            ),
+        ];
+
+        let mut executor = Executor::new(&directives);
+
+        // Test OPEN_DATE - account with open directive
+        let query = parse("SELECT open_date('Assets:Bank:Checking')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2020, 1, 1)));
+
+        // Test CLOSE_DATE - account with close directive
+        let query = parse("SELECT close_date('Assets:Bank:Checking')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Date(date(2024, 12, 31)));
+
+        // Test OPEN_DATE - account without close directive
+        let query = parse("SELECT close_date('Expenses:Food')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+
+        // Test OPEN_META - get metadata from open directive
+        let query = parse("SELECT open_meta('Assets:Bank:Checking', 'category')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::String("checking".to_string()));
+
+        // Test OPEN_META - non-existent key
+        let query = parse("SELECT open_meta('Assets:Bank:Checking', 'nonexistent')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+
+        // Test with non-existent account
+        let query = parse("SELECT open_date('NonExistent:Account')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn test_source_location_columns_return_null_without_sources() {
+        // When using the regular constructor (without source location support),
+        // the filename, lineno, and location columns should return Null
+        let directives = vec![Directive::Transaction(Transaction {
+            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            flag: '*',
+            payee: Some("Test".into()),
+            narration: "Test transaction".into(),
+            tags: vec![],
+            links: vec![],
+            meta: Metadata::new(),
+            postings: vec![
+                Posting::new("Assets:Bank", Amount::new(dec!(100), "USD")),
+                Posting::new("Expenses:Food", Amount::new(dec!(-100), "USD")),
+            ],
+        })];
+
+        let mut executor = Executor::new(&directives);
+
+        // Test filename column returns Null
+        let query = parse("SELECT filename").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+
+        // Test lineno column returns Null
+        let query = parse("SELECT lineno").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+
+        // Test location column returns Null
+        let query = parse("SELECT location").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Null);
+    }
+
+    #[test]
+    fn test_source_location_columns_with_sources() {
+        use rustledger_loader::SourceMap;
+        use rustledger_parser::Spanned;
+        use std::sync::Arc;
+
+        // Create a source map with a test file
+        let mut source_map = SourceMap::new();
+        let source: Arc<str> =
+            "2024-01-15 * \"Test\"\n  Assets:Bank  100 USD\n  Expenses:Food".into();
+        let file_id = source_map.add_file("test.beancount".into(), source);
+
+        // Create a spanned directive
+        let txn = Transaction {
+            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            flag: '*',
+            payee: Some("Test".into()),
+            narration: "Test transaction".into(),
+            tags: vec![],
+            links: vec![],
+            meta: Metadata::new(),
+            postings: vec![
+                Posting::new("Assets:Bank", Amount::new(dec!(100), "USD")),
+                Posting::new("Expenses:Food", Amount::new(dec!(-100), "USD")),
+            ],
+        };
+
+        let spanned_directives = vec![Spanned {
+            value: Directive::Transaction(txn),
+            span: rustledger_parser::Span { start: 0, end: 50 },
+            file_id: file_id as u16,
+        }];
+
+        let mut executor = Executor::new_with_sources(&spanned_directives, &source_map);
+
+        // Test filename column returns the file path
+        let query = parse("SELECT filename").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::String("test.beancount".to_string())
+        );
+
+        // Test lineno column returns line number
+        let query = parse("SELECT lineno").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(1));
+
+        // Test location column returns formatted location
+        let query = parse("SELECT location").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::String("test.beancount:1".to_string())
+        );
+    }
+
+    #[test]
+    fn test_interval_function() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test interval with single argument (unit only, count=1)
+        let query = parse("SELECT interval('month')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Interval(Interval::new(1, IntervalUnit::Month))
+        );
+
+        // Test interval with two arguments (count, unit)
+        let query = parse("SELECT interval(3, 'day')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Interval(Interval::new(3, IntervalUnit::Day))
+        );
+
+        // Test interval with negative count
+        let query = parse("SELECT interval(-2, 'week')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Interval(Interval::new(-2, IntervalUnit::Week))
+        );
+    }
+
+    #[test]
+    fn test_date_add_with_interval() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test date_add with interval
+        let query = parse("SELECT date_add(date(2024, 1, 15), interval(1, 'month'))").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Date(NaiveDate::from_ymd_opt(2024, 2, 15).unwrap())
+        );
+
+        // Test date + interval using binary operator
+        let query = parse("SELECT date(2024, 1, 15) + interval(1, 'year')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Date(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap())
+        );
+
+        // Test date - interval
+        let query = parse("SELECT date(2024, 3, 15) - interval(2, 'month')").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(
+            result.rows[0][0],
+            Value::Date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap())
+        );
     }
 }

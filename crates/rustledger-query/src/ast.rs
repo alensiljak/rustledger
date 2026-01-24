@@ -17,6 +17,50 @@ pub enum Query {
     Balances(BalancesQuery),
     /// PRINT shorthand query.
     Print(PrintQuery),
+    /// CREATE TABLE statement.
+    CreateTable(CreateTableStmt),
+    /// INSERT statement.
+    Insert(InsertStmt),
+}
+
+/// Column definition for CREATE TABLE.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ColumnDef {
+    /// Column name.
+    pub name: String,
+    /// Optional type hint (BQL is dynamically typed, but hints are allowed).
+    pub type_hint: Option<String>,
+}
+
+/// CREATE TABLE statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreateTableStmt {
+    /// Table name.
+    pub table_name: String,
+    /// Column definitions.
+    pub columns: Vec<ColumnDef>,
+    /// Optional AS SELECT (create from query).
+    pub as_select: Option<Box<SelectQuery>>,
+}
+
+/// INSERT statement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InsertStmt {
+    /// Target table name.
+    pub table_name: String,
+    /// Optional column list (if omitted, uses all columns in order).
+    pub columns: Option<Vec<String>>,
+    /// Source data: either VALUES or SELECT.
+    pub source: InsertSource,
+}
+
+/// Source data for INSERT.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InsertSource {
+    /// VALUES clause with literal rows.
+    Values(Vec<Vec<Expr>>),
+    /// SELECT query as source.
+    Select(Box<SelectQuery>),
 }
 
 /// A SELECT query.
@@ -64,6 +108,8 @@ pub struct FromClause {
     pub filter: Option<Expr>,
     /// Subquery (derived table).
     pub subquery: Option<Box<SelectQuery>>,
+    /// Table name (for querying user-created tables).
+    pub table_name: Option<String>,
 }
 
 /// ORDER BY specification.
@@ -131,6 +177,15 @@ pub enum Expr {
     UnaryOp(Box<UnaryOp>),
     /// Parenthesized expression.
     Paren(Box<Self>),
+    /// BETWEEN ... AND expression.
+    Between {
+        /// Value to test.
+        value: Box<Self>,
+        /// Lower bound.
+        low: Box<Self>,
+        /// Upper bound.
+        high: Box<Self>,
+    },
 }
 
 /// A literal value.
@@ -208,8 +263,12 @@ pub enum BinaryOperator {
     Ge,
     /// Regular expression match (~).
     Regex,
+    /// Regular expression not match (!~).
+    NotRegex,
     /// IN operator.
     In,
+    /// NOT IN operator.
+    NotIn,
 
     // Logical
     /// Logical AND.
@@ -226,6 +285,8 @@ pub enum BinaryOperator {
     Mul,
     /// Division (/).
     Div,
+    /// Modulo (%).
+    Mod,
 }
 
 /// A unary operation.
@@ -244,6 +305,10 @@ pub enum UnaryOperator {
     Not,
     /// Negation (-).
     Neg,
+    /// IS NULL.
+    IsNull,
+    /// IS NOT NULL.
+    IsNotNull,
 }
 
 impl SelectQuery {
@@ -335,6 +400,7 @@ impl FromClause {
             clear: false,
             filter: None,
             subquery: None,
+            table_name: None,
         }
     }
 
@@ -346,6 +412,19 @@ impl FromClause {
             clear: false,
             filter: None,
             subquery: Some(Box::new(query)),
+            table_name: None,
+        }
+    }
+
+    /// Create a FROM clause from a table name.
+    pub fn from_table(name: impl Into<String>) -> Self {
+        Self {
+            open_on: None,
+            close_on: None,
+            clear: false,
+            filter: None,
+            subquery: None,
+            table_name: Some(name.into()),
         }
     }
 
@@ -438,6 +517,15 @@ impl Expr {
     /// Create a unary operation.
     pub fn unary(op: UnaryOperator, operand: Self) -> Self {
         Self::UnaryOp(Box::new(UnaryOp { op, operand }))
+    }
+
+    /// Create a BETWEEN ... AND expression.
+    pub fn between(value: Self, low: Self, high: Self) -> Self {
+        Self::Between {
+            value: Box::new(value),
+            low: Box::new(low),
+            high: Box::new(high),
+        }
     }
 }
 

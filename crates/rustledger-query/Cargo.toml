@@ -17,6 +17,8 @@ bench = false
 
 [dependencies]
 rustledger-core.workspace = true
+rustledger-parser.workspace = true
+rustledger-loader.workspace = true
 chumsky.workspace = true
 ariadne.workspace = true
 rust_decimal.workspace = true

@@ -3066,6 +3066,8 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "rustledger-core",
+ "rustledger-loader",
+ "rustledger-parser",
  "thiserror 2.0.17",
 ]
 

@@ -821,3 +821,200 @@ fn test_select_payee_and_narration() {
         }
     }
 }
+
+// ============================================================================
+// CREATE TABLE and INSERT Tests
+// ============================================================================
+
+#[test]
+fn test_create_table_simple() {
+    let directives = make_test_directives();
+    let create_query = parse("CREATE TABLE test_table (col1, col2, col3)").expect("should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&create_query).expect("should execute");
+
+    assert_eq!(result.columns, vec!["result"]);
+    assert_eq!(result.rows.len(), 1);
+    if let Value::String(msg) = &result.rows[0][0] {
+        assert!(msg.contains("Created table"));
+    }
+}
+
+#[test]
+fn test_create_table_as_select() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create a table from a SELECT query (using GROUP BY account which is simpler)
+    let create_query =
+        parse("CREATE TABLE balances AS SELECT account, sum(number) GROUP BY account")
+            .expect("should parse");
+    let result = executor.execute(&create_query).expect("should execute");
+
+    assert_eq!(result.columns, vec!["result"]);
+    if let Value::String(msg) = &result.rows[0][0] {
+        assert!(msg.contains("Created table 'balances'"));
+    }
+
+    // Now select from the created table
+    let select_query = parse("SELECT * FROM balances").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert!(!result.is_empty());
+    assert_eq!(result.columns, vec!["account", "sum"]);
+}
+
+#[test]
+fn test_insert_values() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create a table
+    let create_query = parse("CREATE TABLE accounts (name, balance)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    // Insert values
+    let insert_query = parse("INSERT INTO accounts VALUES ('Checking', 100), ('Savings', 500)")
+        .expect("should parse");
+    let result = executor.execute(&insert_query).expect("should execute");
+
+    if let Value::String(msg) = &result.rows[0][0] {
+        assert!(msg.contains("Inserted 2 row(s)"));
+    }
+
+    // Select from the table
+    let select_query = parse("SELECT * FROM accounts").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][0], Value::String("Checking".to_string()));
+    // Numbers are parsed as Decimal (Number type)
+    assert_eq!(result.rows[0][1], Value::Number(dec!(100)));
+    assert_eq!(result.rows[1][0], Value::String("Savings".to_string()));
+    assert_eq!(result.rows[1][1], Value::Number(dec!(500)));
+}
+
+#[test]
+fn test_insert_select() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create a table from SELECT
+    let create_query = parse("CREATE TABLE expenses (account)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    // Insert from a SELECT query
+    let insert_query =
+        parse("INSERT INTO expenses SELECT DISTINCT account WHERE account ~ 'Expenses:'")
+            .expect("should parse");
+    let result = executor.execute(&insert_query).expect("should execute");
+
+    if let Value::String(msg) = &result.rows[0][0] {
+        assert!(msg.contains("Inserted"));
+    }
+
+    // Select from the table
+    let select_query = parse("SELECT * FROM expenses").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert!(!result.is_empty());
+    for row in &result.rows {
+        if let Value::String(acct) = &row[0] {
+            assert!(acct.starts_with("Expenses:"));
+        }
+    }
+}
+
+#[test]
+fn test_select_from_table_with_where() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create and populate a table
+    let create_query = parse("CREATE TABLE items (name, price)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query = parse("INSERT INTO items VALUES ('Apple', 1), ('Banana', 2), ('Cherry', 5)")
+        .expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // Select with a WHERE clause
+    let select_query = parse("SELECT name FROM items WHERE price > 1").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert_eq!(result.rows.len(), 2);
+    let names: Vec<_> = result.rows.iter().map(|r| &r[0]).collect();
+    assert!(names.contains(&&Value::String("Banana".to_string())));
+    assert!(names.contains(&&Value::String("Cherry".to_string())));
+}
+
+#[test]
+fn test_select_from_table_with_order_limit() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create and populate a table
+    let create_query = parse("CREATE TABLE nums (value)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    let insert_query =
+        parse("INSERT INTO nums VALUES (3), (1), (4), (1), (5)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // Select with ORDER BY and LIMIT
+    let select_query =
+        parse("SELECT value FROM nums ORDER BY value DESC LIMIT 3").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    assert_eq!(result.rows.len(), 3);
+    // Numbers are parsed as Decimal (Number type)
+    assert_eq!(result.rows[0][0], Value::Number(dec!(5)));
+    assert_eq!(result.rows[1][0], Value::Number(dec!(4)));
+    assert_eq!(result.rows[2][0], Value::Number(dec!(3)));
+}
+
+#[test]
+fn test_create_table_duplicate_error() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let create_query = parse("CREATE TABLE mytable (col1)").expect("should parse");
+    executor
+        .execute(&create_query)
+        .expect("should execute first time");
+
+    // Try to create the same table again - should error
+    let result = executor.execute(&create_query);
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("already exists"));
+    }
+}
+
+#[test]
+fn test_insert_table_not_exists_error() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let insert_query = parse("INSERT INTO nonexistent VALUES (1)").expect("should parse");
+    let result = executor.execute(&insert_query);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("does not exist"));
+    }
+}
+
+#[test]
+fn test_select_table_not_exists_error() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    let select_query = parse("SELECT * FROM nonexistent").expect("should parse");
+    let result = executor.execute(&select_query);
+
+    assert!(result.is_err());
+    if let Err(e) = result {
+        assert!(e.to_string().contains("does not exist"));
+    }
+}

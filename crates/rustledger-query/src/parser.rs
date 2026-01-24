@@ -7,15 +7,21 @@ use rust_decimal::Decimal;
 use std::str::FromStr;
 
 use crate::ast::{
-    BalancesQuery, BinaryOperator, Expr, FromClause, FunctionCall, JournalQuery, Literal,
-    OrderSpec, PrintQuery, Query, SelectQuery, SortDirection, Target, UnaryOperator,
-    WindowFunction, WindowSpec,
+    BalancesQuery, BinaryOperator, ColumnDef, CreateTableStmt, Expr, FromClause, FunctionCall,
+    InsertSource, InsertStmt, JournalQuery, Literal, OrderSpec, PrintQuery, Query, SelectQuery,
+    SortDirection, Target, UnaryOperator, WindowFunction, WindowSpec,
 };
 use crate::error::{ParseError, ParseErrorKind};
 use rustledger_core::NaiveDate;
 
 type ParserInput<'a> = &'a str;
 type ParserExtra<'a> = extra::Err<Rich<'a, char>>;
+
+/// Helper enum for parsing comparison suffix (BETWEEN or binary comparison).
+enum ComparisonSuffix {
+    Between(Expr, Expr),
+    Binary(BinaryOperator, Expr),
+}
 
 /// Parse a BQL query string.
 ///
@@ -67,6 +73,8 @@ fn digits<'a>() -> impl Parser<'a, ParserInput<'a>, &'a str, ParserExtra<'a>> + 
 /// Parse the main query.
 fn query_parser<'a>() -> impl Parser<'a, ParserInput<'a>, Query, ParserExtra<'a>> {
     ws().ignore_then(choice((
+        create_table_stmt().map(Query::CreateTable),
+        insert_stmt().map(Query::Insert),
         select_query().map(|sq| Query::Select(Box::new(sq))),
         journal_query().map(Query::Journal),
         balances_query().map(Query::Balances),
@@ -90,6 +98,35 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
             .then_ignore(just(')'))
             .map(|sq| Some(FromClause::from_subquery(sq)));
 
+        // Table name FROM clause: FROM tablename (where tablename is not a keyword)
+        // A table name is an identifier followed by WHERE/GROUP/ORDER/HAVING/LIMIT/PIVOT or end
+        let table_from = ws1()
+            .ignore_then(kw("FROM"))
+            .ignore_then(ws1())
+            .ignore_then(identifier().try_map(|name, span| {
+                // Check if this looks like a table name (uppercase convention or doesn't look like account)
+                // Table names should not contain ':' which accounts have
+                if name.contains(':') {
+                    Err(Rich::custom(span, "not a table name"))
+                } else {
+                    Ok(name)
+                }
+            }))
+            .then_ignore(
+                // Must be followed by WHERE, GROUP, ORDER, HAVING, LIMIT, PIVOT, or end
+                ws().then(choice((
+                    kw("WHERE").ignored(),
+                    kw("GROUP").ignored(),
+                    kw("ORDER").ignored(),
+                    kw("HAVING").ignored(),
+                    kw("LIMIT").ignored(),
+                    kw("PIVOT").ignored(),
+                    end().ignored(),
+                )))
+                .rewind(),
+            )
+            .map(|name| Some(FromClause::from_table(name)));
+
         // Regular FROM clause
         let regular_from = from_clause().map(Some);
 
@@ -104,6 +141,7 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
             .then(targets())
             .then(
                 subquery_from
+                    .or(table_from)
                     .or(regular_from)
                     .or_not()
                     .map(std::option::Option::flatten),
@@ -187,6 +225,7 @@ fn from_modifiers<'a>() -> impl Parser<'a, ParserInput<'a>, FromClause, ParserEx
     let clear = kw("CLEAR").then_ignore(ws());
 
     // Parse modifiers in order: OPEN ON, CLOSE ON, CLEAR, filter
+    // Or just a table name for user-created tables
     open_on
         .or_not()
         .then(close_on.or_not())
@@ -198,6 +237,7 @@ fn from_modifiers<'a>() -> impl Parser<'a, ParserInput<'a>, FromClause, ParserEx
             clear,
             filter,
             subquery: None,
+            table_name: None,
         })
 }
 
@@ -342,6 +382,96 @@ fn print_query<'a>() -> impl Parser<'a, ParserInput<'a>, PrintQuery, ParserExtra
         .map(|from| PrintQuery { from })
 }
 
+/// Parse CREATE TABLE statement.
+fn create_table_stmt<'a>() -> impl Parser<'a, ParserInput<'a>, CreateTableStmt, ParserExtra<'a>> {
+    // CREATE TABLE name (col1, col2, ...) or CREATE TABLE name AS SELECT ...
+    let column_def = identifier()
+        .then(ws().ignore_then(identifier()).or_not())
+        .map(|(name, type_hint)| ColumnDef { name, type_hint });
+
+    let column_list = just('(')
+        .ignore_then(ws())
+        .ignore_then(
+            column_def
+                .separated_by(ws().ignore_then(just(',')).then_ignore(ws()))
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(ws())
+        .then_ignore(just(')'));
+
+    let as_select = ws1()
+        .ignore_then(kw("AS"))
+        .ignore_then(ws1())
+        .ignore_then(select_query())
+        .map(Box::new);
+
+    kw("CREATE")
+        .ignore_then(ws1())
+        .ignore_then(kw("TABLE"))
+        .ignore_then(ws1())
+        .ignore_then(identifier())
+        .then(ws().ignore_then(column_list).or_not())
+        .then(as_select.or_not())
+        .map(|((table_name, columns), as_select)| CreateTableStmt {
+            table_name,
+            columns: columns.unwrap_or_default(),
+            as_select,
+        })
+}
+
+/// Parse INSERT statement.
+fn insert_stmt<'a>() -> impl Parser<'a, ParserInput<'a>, InsertStmt, ParserExtra<'a>> {
+    // Column list: (col1, col2, ...)
+    let column_list = just('(')
+        .ignore_then(ws())
+        .ignore_then(
+            identifier()
+                .separated_by(ws().ignore_then(just(',')).then_ignore(ws()))
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(ws())
+        .then_ignore(just(')'));
+
+    // VALUES clause: VALUES (v1, v2), (v3, v4), ...
+    let value_row = just('(')
+        .ignore_then(ws())
+        .ignore_then(
+            expr()
+                .separated_by(ws().ignore_then(just(',')).then_ignore(ws()))
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(ws())
+        .then_ignore(just(')'));
+
+    let values_source = kw("VALUES")
+        .ignore_then(ws())
+        .ignore_then(
+            value_row
+                .separated_by(ws().ignore_then(just(',')).then_ignore(ws()))
+                .collect::<Vec<_>>(),
+        )
+        .map(InsertSource::Values);
+
+    // SELECT as source
+    let select_source = select_query().map(|sq| InsertSource::Select(Box::new(sq)));
+
+    let source = choice((values_source, select_source));
+
+    kw("INSERT")
+        .ignore_then(ws1())
+        .ignore_then(kw("INTO"))
+        .ignore_then(ws1())
+        .ignore_then(identifier())
+        .then(ws().ignore_then(column_list).or_not())
+        .then_ignore(ws())
+        .then(source)
+        .map(|((table_name, columns), source)| InsertStmt {
+            table_name,
+            columns,
+            source,
+        })
+}
+
 /// Parse AT function (e.g., AT cost, AT units).
 fn at_function<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
     ws1()
@@ -369,11 +499,12 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
                 }
             });
 
-        // Multiplicative: * /
+        // Multiplicative: * / %
         let multiplicative = unary.clone().foldl(
             ws().ignore_then(choice((
                 just('*').to(BinaryOperator::Mul),
                 just('/').to(BinaryOperator::Div),
+                just('%').to(BinaryOperator::Mod),
             )))
             .then_ignore(ws())
             .then(unary)
@@ -393,20 +524,54 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
             |left, (op, right)| Expr::binary(left, op, right),
         );
 
-        // Comparison: = != < <= > >= ~ IN
+        // Comparison: = != < <= > >= ~ !~ IN NOT IN BETWEEN IS NULL
         let comparison = additive
             .clone()
             .then(
-                ws().ignore_then(comparison_op())
-                    .then_ignore(ws())
-                    .then(additive)
+                choice((
+                    // BETWEEN ... AND
+                    ws1()
+                        .ignore_then(kw("BETWEEN"))
+                        .ignore_then(ws1())
+                        .ignore_then(additive.clone())
+                        .then_ignore(ws1())
+                        .then_ignore(kw("AND"))
+                        .then_ignore(ws1())
+                        .then(additive.clone())
+                        .map(|(low, high)| ComparisonSuffix::Between(low, high)),
+                    // Regular comparison operators
+                    ws()
+                        .ignore_then(comparison_op())
+                        .then_ignore(ws())
+                        .then(additive)
+                        .map(|(op, right)| ComparisonSuffix::Binary(op, right)),
+                ))
+                .or_not(),
+            )
+            .map(|(left, suffix)| match suffix {
+                Some(ComparisonSuffix::Between(low, high)) => Expr::between(left, low, high),
+                Some(ComparisonSuffix::Binary(op, right)) => Expr::binary(left, op, right),
+                None => left,
+            })
+            // IS NULL / IS NOT NULL (postfix)
+            .then(
+                ws1()
+                    .ignore_then(kw("IS"))
+                    .ignore_then(ws1())
+                    .ignore_then(choice((
+                        kw("NOT")
+                            .ignore_then(ws1())
+                            .ignore_then(kw("NULL"))
+                            .to(UnaryOperator::IsNotNull),
+                        kw("NULL").to(UnaryOperator::IsNull),
+                    )))
                     .or_not(),
             )
-            .map(|(left, rest)| {
-                if let Some((op, right)) = rest {
-                    Expr::binary(left, op, right)
+            .map(|(expr, is_null)| {
+                if let Some(op) = is_null {
+                    Expr::unary(op, expr)
                 } else {
-                    left
+                    expr
                 }
             });
 
@@ -447,13 +612,21 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
 fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, ParserExtra<'a>> + Clone
 {
     choice((
+        // Multi-char operators first
         just("!=").to(BinaryOperator::Ne),
+        just("!~").to(BinaryOperator::NotRegex),
         just("<=").to(BinaryOperator::Le),
         just(">=").to(BinaryOperator::Ge),
+        // Single-char operators
         just('=').to(BinaryOperator::Eq),
         just('<').to(BinaryOperator::Lt),
         just('>').to(BinaryOperator::Gt),
         just('~').to(BinaryOperator::Regex),
+        // Keyword operators
+        kw("NOT")
+            .ignore_then(ws1())
+            .ignore_then(kw("IN"))
+            .to(BinaryOperator::NotIn),
         kw("IN").to(BinaryOperator::In),
     ))
 }
@@ -617,14 +790,26 @@ fn identifier<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>>
 /// Parse a string literal.
 fn string_literal<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
     // Double-quoted string
-    just('"')
+    let double_quoted = just('"')
         .ignore_then(
             none_of("\"\\")
                 .or(just('\\').ignore_then(any()))
                 .repeated()
                 .collect::<String>(),
         )
-        .then_ignore(just('"'))
+        .then_ignore(just('"'));
+
+    // Single-quoted string (SQL-style)
+    let single_quoted = just('\'')
+        .ignore_then(
+            none_of("'\\")
+                .or(just('\\').ignore_then(any()))
+                .repeated()
+                .collect::<String>(),
+        )
+        .then_ignore(just('\''));
+
+    choice((double_quoted, single_quoted))
 }
 
 /// Parse a date literal (YYYY-MM-DD).
@@ -1017,6 +1202,222 @@ mod tests {
                 Expr::Function(f) => {
                     assert_eq!(f.name, "sum");
                     assert!(matches!(&f.args[0], Expr::BinaryOp(_)));
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_is_null() {
+        let query = parse("SELECT * WHERE payee IS NULL").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::UnaryOp(op) => {
+                    assert_eq!(op.op, UnaryOperator::IsNull);
+                    assert!(matches!(&op.operand, Expr::Column(c) if c == "payee"));
+                }
+                _ => panic!("Expected unary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_is_not_null() {
+        let query = parse("SELECT * WHERE payee IS NOT NULL").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::UnaryOp(op) => {
+                    assert_eq!(op.op, UnaryOperator::IsNotNull);
+                    assert!(matches!(&op.operand, Expr::Column(c) if c == "payee"));
+                }
+                _ => panic!("Expected unary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_not_regex() {
+        let query = parse("SELECT * WHERE account !~ \"Assets:\"").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::NotRegex);
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_modulo() {
+        let query = parse("SELECT year % 4").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::Mod);
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_between() {
+        let query = parse("SELECT * WHERE year BETWEEN 2020 AND 2024").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::Between { value, low, high } => {
+                    assert!(matches!(*value, Expr::Column(c) if c == "year"));
+                    assert!(matches!(*low, Expr::Literal(Literal::Number(_))));
+                    assert!(matches!(*high, Expr::Literal(Literal::Number(_))));
+                }
+                _ => panic!("Expected BETWEEN"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_not_in() {
+        let query = parse("SELECT * WHERE account NOT IN tags").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::NotIn);
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_string_arg_function() {
+        // First test a function with a column reference - should work
+        let query = parse("SELECT foo(x)").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name, "foo");
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Now test a function with a string literal argument
+        let query = parse("SELECT foo('bar')").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name, "foo");
+                    assert!(matches!(&f.args[0], Expr::Literal(Literal::String(s)) if s == "bar"));
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_meta_function() {
+        let query = parse("SELECT meta('category')").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "META");
+                    assert_eq!(f.args.len(), 1);
+                    assert!(
+                        matches!(&f.args[0], Expr::Literal(Literal::String(s)) if s == "category")
+                    );
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_entry_meta_function() {
+        let query = parse("SELECT entry_meta('source')").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "ENTRY_META");
+                    assert_eq!(f.args.len(), 1);
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_convert_function() {
+        let query = parse("SELECT convert(position, 'USD')").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "CONVERT");
+                    assert_eq!(f.args.len(), 2);
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_type_cast_functions() {
+        // Test INT
+        let query = parse("SELECT int(number)").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "INT");
+                    assert_eq!(f.args.len(), 1);
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Test DECIMAL
+        let query = parse("SELECT decimal('123.45')").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "DECIMAL");
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Test STR
+        let query = parse("SELECT str(123)").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "STR");
+                }
+                _ => panic!("Expected function"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Test BOOL
+        let query = parse("SELECT bool(1)").unwrap();
+        match query {
+            Query::Select(sel) => match &sel.targets[0].expr {
+                Expr::Function(f) => {
+                    assert_eq!(f.name.to_uppercase(), "BOOL");
                 }
                 _ => panic!("Expected function"),
             },
