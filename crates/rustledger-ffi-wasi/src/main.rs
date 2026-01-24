@@ -1461,6 +1461,23 @@ fn value_to_json(value: &rustledger_query::Value) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
+        Value::Metadata(meta) => {
+            let obj: serde_json::Map<String, serde_json::Value> = meta
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::json!(format!("{v:?}"))))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        Value::Interval(interval) => serde_json::json!({
+            "count": interval.count,
+            "unit": match interval.unit {
+                rustledger_query::IntervalUnit::Day => "day",
+                rustledger_query::IntervalUnit::Week => "week",
+                rustledger_query::IntervalUnit::Month => "month",
+                rustledger_query::IntervalUnit::Quarter => "quarter",
+                rustledger_query::IntervalUnit::Year => "year",
+            },
+        }),
     }
 }
 
@@ -1479,6 +1496,8 @@ const fn value_datatype(value: &rustledger_query::Value) -> &'static str {
         Value::Inventory(_) => "Inventory",
         Value::StringSet(_) => "set",
         Value::Object(_) => "object",
+        Value::Metadata(_) => "Metadata",
+        Value::Interval(_) => "Interval",
     }
 }
 
