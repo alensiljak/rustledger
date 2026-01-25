@@ -2634,3 +2634,137 @@ fn test_number_returns_null_for_mixed_currency_inventory() {
         result.rows[0][0]
     );
 }
+
+// ============================================================================
+// Additional coverage tests for evaluate_function_on_values
+// ============================================================================
+
+#[test]
+fn test_safediv_division_by_zero() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), 0) as div_zero
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_safediv_with_null() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), number(cost(sum(position)))) as ratio
+           WHERE account ~ "Cash"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Cash has no cost, so NULL / anything = NULL
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_value_function_with_conversion() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(value(sum(position), "USD")) as market_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // 15 AAPL * 180 USD = 2700 USD
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(2700));
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_empty_function() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT empty(sum(position)) as is_empty GROUP BY account LIMIT 1"#,
+        &directives,
+    );
+
+    assert!(!result.is_empty());
+    // Most accounts have postings, so should be false
+    assert!(matches!(&result.rows[0][0], Value::Boolean(_)));
+}
+
+#[test]
+fn test_only_function_with_inventory() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT only(currency, sum(position)) as only_amt
+           WHERE account ~ "Brokerage"
+           GROUP BY currency"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(a) = &result.rows[0][0] {
+        assert_eq!(a.number, dec!(15)); // 10 + 5 AAPL
+    } else {
+        panic!("Expected Amount value");
+    }
+}
+
+#[test]
+fn test_filter_currency_function() {
+    let directives = make_multi_currency_holdings();
+    let result = execute_query(
+        r#"SELECT number(units(filter_currency(sum(position), "AAPL"))) as aapl_units
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(10)); // Only 10 AAPL, not GOOG
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_currency_on_inventory() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency(units(sum(position))) as curr
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "AAPL");
+    } else {
+        panic!("Expected String value for currency");
+    }
+}
+
+#[test]
+fn test_number_on_empty_inventory() {
+    let directives = make_test_directives();
+    // Query an account with no postings to get empty inventory
+    let result = execute_query(
+        r#"SELECT number(sum(position)) as num
+           WHERE account = "NonExistent:Account"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    // No results since account doesn't exist
+    assert!(result.is_empty());
+}
