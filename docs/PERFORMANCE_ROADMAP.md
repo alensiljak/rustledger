@@ -192,9 +192,9 @@ Custom rkyv wrappers for non-rkyv types:
 
 ### 5.3 CLI Integration ✅
 ```bash
-rledger-check --no-cache ledger.beancount  # Skip cache
-rledger-check -C ledger.beancount          # Short form
-rledger-check ledger.beancount             # Use cache (default)
+rledger check --no-cache ledger.beancount  # Skip cache
+rledger check -C ledger.beancount          # Short form
+rledger check ledger.beancount             # Use cache (default)
 ```
 
 ---
@@ -269,7 +269,7 @@ The benchmark claims have been independently verified. Key findings:
 **1. What each command measures:**
 | Tool | Command | Operation |
 |------|---------|-----------|
-| rustledger | `rledger-check file.beancount` | Parse + validate |
+| rustledger | `rledger check file.beancount` | Parse + validate |
 | beancount | `bean-check file.beancount` | Parse + validate (no plugins on simple files) |
 | ledger | `ledger -f file.ledger accounts` | Parse + list accounts |
 | hledger | `hledger check -f file.ledger` | Parse + validate |
@@ -277,7 +277,7 @@ The benchmark claims have been independently verified. Key findings:
 All commands perform equivalent work: parse the file and validate correctness.
 
 **2. Output equivalence verified:**
-Both `rledger-check` and `bean-check` produce the same result on test files (no errors, same directive counts).
+Both `rledger check` and `bean-check` produce the same result on test files (no errors, same directive counts).
 
 ### Scaling Analysis
 

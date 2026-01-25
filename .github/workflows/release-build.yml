@@ -189,7 +189,7 @@ jobs:
 
           # Step 2: Run workload to collect profile data
           for i in {1..10}; do
-            ./target/${{ matrix.target }}/release/rledger-check "$BENCHMARK_PATH" > /dev/null 2>&1
+            ./target/${{ matrix.target }}/release/rledger check "$BENCHMARK_PATH" > /dev/null 2>&1
           done
 
           # Step 3: Build optimized binary using profile data
@@ -208,7 +208,7 @@ jobs:
 
           # Step 2: Run workload to collect profile data
           for ($i = 0; $i -lt 10; $i++) {
-            & "./target/${{ matrix.target }}/release/rledger-check.exe" $benchmarkPath | Out-Null
+            & "./target/${{ matrix.target }}/release/rledger.exe" check $benchmarkPath | Out-Null
           }
 
           # Step 3: Build optimized binary using profile data
@@ -246,7 +246,7 @@ jobs:
           # Create archive with all binaries
           ARCHIVE="rustledger-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -czvf "../../../${ARCHIVE}" \
-            rledger-check rledger-format rledger-query rledger-report rledger-doctor rledger-extract rledger-price rledger-lsp \
+            rledger rledger-lsp \
             bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price
 
           # Create checksum
@@ -264,7 +264,7 @@ jobs:
           # Create archive with all binaries
           $ARCHIVE = "rustledger-${VERSION}-${{ matrix.target }}.zip"
           $binaries = @(
-            "rledger-check.exe", "rledger-format.exe", "rledger-query.exe", "rledger-report.exe", "rledger-doctor.exe", "rledger-extract.exe", "rledger-price.exe", "rledger-lsp.exe",
+            "rledger.exe", "rledger-lsp.exe",
             "bean-check.exe", "bean-format.exe", "bean-query.exe", "bean-report.exe", "bean-doctor.exe", "bean-extract.exe", "bean-price.exe"
           )
           Compress-Archive -Path $binaries -DestinationPath "../../../${ARCHIVE}"

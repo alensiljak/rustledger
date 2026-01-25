@@ -1,4 +1,4 @@
-//! Shared implementation for bean-format and rledger-format commands.
+//! Shared implementation for bean-format and rledger format commands.
 
 use crate::cmd::completions::ShellType;
 use crate::format::{FormatConfig, format_directive};
@@ -59,7 +59,8 @@ pub struct Args {
     pub verbose: bool,
 }
 
-fn run(args: &Args) -> Result<ExitCode> {
+/// Run the format command with the given arguments.
+pub fn run(args: &Args) -> Result<ExitCode> {
     if args.output.is_some() && args.files.len() > 1 {
         anyhow::bail!(
             "--output can only be used with a single input file. Use --in-place for multiple files."
@@ -195,11 +196,6 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
             .context("failed to write to stdout")?;
         Ok(ExitCode::SUCCESS)
     }
-}
-
-/// Main entry point for the format command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-format")
 }
 
 /// Main entry point with custom binary name (for bean-format compatibility).

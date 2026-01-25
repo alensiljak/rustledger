@@ -31,7 +31,7 @@ def load_jsonl(path: Path) -> list[dict]:
 
 
 def analyze_check_results(results: list[dict]) -> dict:
-    """Analyze bean-check vs rledger-check results."""
+    """Analyze bean-check vs rledger check results."""
     analysis = {
         "total": len(results),
         "matching": 0,
@@ -161,7 +161,7 @@ def print_report(results_dir: Path):
 
     # Analyze check results
     if check_files:
-        print("## Check Results (bean-check vs rledger-check)")
+        print("## Check Results (bean-check vs rledger check)")
         print("-" * 50)
         data = load_jsonl(check_files[0])
         analysis = analyze_check_results(data)

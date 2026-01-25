@@ -1,4 +1,4 @@
-//! rledger-report - Generate financial reports from beancount files.
+//! rledger report - Generate financial reports from beancount files.
 //!
 //! This is the primary rustledger command for generating reports.
 //! For backwards compatibility with Python beancount, `bean-report` is also available.
@@ -6,9 +6,9 @@
 //! # Usage
 //!
 //! ```bash
-//! rledger-report ledger.beancount balances
-//! rledger-report ledger.beancount income
-//! rledger-report ledger.beancount holdings
+//! rledger report ledger.beancount balances
+//! rledger report ledger.beancount income
+//! rledger report ledger.beancount holdings
 //! ```
 //!
 //! # Reports
@@ -45,40 +45,45 @@ use std::process::ExitCode;
 
 /// Generate reports from beancount files.
 #[derive(Parser, Debug)]
-#[command(name = "rledger-report")]
+#[command(name = "report")]
 #[command(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL", hide = true)]
     generate_completions: Option<ShellType>,
 
     /// The beancount file to process
     #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    pub file: Option<PathBuf>,
 
     /// The report to generate
     #[command(subcommand)]
-    report: Option<Report>,
+    pub report: Option<Report>,
 
     /// Show verbose output
     #[arg(short, long, global = true)]
-    verbose: bool,
+    pub verbose: bool,
 
     /// Output format (text, csv, json)
     #[arg(short = 'f', long, global = true, default_value = "text")]
-    format: OutputFormat,
+    pub format: OutputFormat,
 }
 
+/// Output format for reports.
 #[derive(Clone, Debug, Default, clap::ValueEnum)]
-enum OutputFormat {
+pub enum OutputFormat {
+    /// Plain text output.
     #[default]
     Text,
+    /// CSV output.
     Csv,
+    /// JSON output.
     Json,
 }
 
+/// Available report types.
 #[derive(Subcommand, Debug)]
-enum Report {
+pub enum Report {
     /// Show account balances
     Balances {
         /// Filter to accounts matching this prefix
@@ -127,11 +132,6 @@ enum Report {
     },
 }
 
-/// Main entry point for the report command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-report")
-}
-
 /// Main entry point with custom binary name (for bean-report compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
     let args = Args::parse();
@@ -164,7 +164,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 }
 
-fn run(file: &PathBuf, report: &Report, verbose: bool, format: &OutputFormat) -> Result<()> {
+/// Run the report command with the given arguments.
+pub fn run(file: &PathBuf, report: &Report, verbose: bool, format: &OutputFormat) -> Result<()> {
     let mut stdout = io::stdout().lock();
 
     // Check if file exists

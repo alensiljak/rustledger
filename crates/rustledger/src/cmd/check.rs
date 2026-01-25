@@ -1,4 +1,4 @@
-//! Shared implementation for bean-check and rledger-check commands.
+//! Shared implementation for bean-check and rledger check commands.
 
 use crate::cmd::completions::ShellType;
 use crate::report::{self, SourceCache};
@@ -173,7 +173,8 @@ pub struct Args {
     pub format: OutputFormat,
 }
 
-fn run(args: &Args) -> Result<ExitCode> {
+/// Run the check command with the given arguments.
+pub fn run(args: &Args) -> Result<ExitCode> {
     let mut stdout = io::stdout().lock();
     let start = std::time::Instant::now();
 
@@ -903,11 +904,6 @@ fn run(args: &Args) -> Result<ExitCode> {
     } else {
         Ok(ExitCode::SUCCESS)
     }
-}
-
-/// Main entry point for the check command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-check")
 }
 
 /// Main entry point with custom binary name (for bean-check compatibility).

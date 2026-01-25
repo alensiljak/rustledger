@@ -36,17 +36,19 @@ mod stats;
 #[derive(Parser, Debug)]
 #[command(name = "bean-doctor")]
 #[command(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL", hide = true)]
     generate_completions: Option<ShellType>,
 
+    /// The doctor subcommand to run.
     #[command(subcommand)]
-    command: Option<Command>,
+    pub command: Option<Command>,
 }
 
+/// Doctor subcommands for debugging and diagnostics.
 #[derive(Subcommand, Debug)]
-enum Command {
+pub enum Command {
     /// Dump the lexer output for a beancount file
     #[command(alias = "dump-lexer")]
     Lex {
@@ -162,18 +164,13 @@ enum Command {
     },
 }
 
-/// Conversion type for region balances
+/// Conversion type for region balances.
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
-enum Conversion {
+pub enum Conversion {
     /// Convert to market value using price database
     Value,
     /// Convert to cost basis
     Cost,
-}
-
-/// Main entry point for the doctor command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-doctor")
 }
 
 /// Main entry point with custom binary name (for bean-doctor compatibility).
@@ -202,7 +199,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 }
 
-fn run(command: Command) -> Result<()> {
+/// Run the doctor command with the given subcommand.
+pub fn run(command: Command) -> Result<()> {
     let mut stdout = io::stdout().lock();
 
     match command {
