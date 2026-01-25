@@ -520,8 +520,9 @@ impl<'a> Executor<'a> {
                             return Ok(Value::Number(Decimal::ZERO));
                         }
                         let first_currency = &positions[0].units.currency;
-                        let all_same_currency =
-                            positions.iter().all(|p| &p.units.currency == first_currency);
+                        let all_same_currency = positions
+                            .iter()
+                            .all(|p| &p.units.currency == first_currency);
                         if all_same_currency {
                             let total: Decimal = positions.iter().map(|p| p.units.number).sum();
                             Ok(Value::Number(total))
