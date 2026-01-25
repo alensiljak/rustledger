@@ -591,37 +591,38 @@ impl Inventory {
             });
         }
 
+        // Get cost currency from first lot (all lots of same commodity have same cost currency)
+        if let Some(&first_idx) = indices.first() {
+            if let Some(cost) = &self.positions[first_idx].cost {
+                cost_currency = Some(cost.currency.clone());
+            }
+        }
+
         for idx in indices {
             if remaining.is_zero() {
                 break;
             }
 
-            let pos = &self.positions[idx];
+            let pos = &mut self.positions[idx];
             let available = pos.units.number.abs();
             let take = remaining.min(available);
 
             // Calculate cost basis for this portion
             if let Some(cost) = &pos.cost {
                 cost_basis += take * cost.number;
-                cost_currency = Some(cost.currency.clone());
             }
 
             // Record what we matched
             let (taken, _) = pos.split(take * pos.units.number.signum());
             matched.push(taken);
 
-            // Reduce the lot
+            // Reduce the lot - modify in place to avoid cloning
             let reduction = if units.number.is_sign_negative() {
                 -take
             } else {
                 take
             };
-
-            let new_pos = Position {
-                units: Amount::new(pos.units.number + reduction, pos.units.currency.clone()),
-                cost: pos.cost.clone(),
-            };
-            self.positions[idx] = new_pos;
+            pos.units.number += reduction;
 
             remaining -= take;
         }

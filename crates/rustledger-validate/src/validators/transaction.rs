@@ -1,7 +1,7 @@
 //! Transaction validation.
 
 use rust_decimal::Decimal;
-use rustledger_core::{Amount, BookingMethod, Inventory, Posting, Transaction};
+use rustledger_core::{Amount, BookingMethod, InternedStr, Inventory, Posting, Transaction};
 use std::collections::HashMap;
 
 use crate::error::{ErrorCode, ValidationError};
@@ -179,7 +179,7 @@ pub fn validate_transaction_balance(
     for (currency, residual) in residuals {
         // Get the tolerance for this currency, defaulting to 0.005
         let tolerance = tolerances
-            .get(currency.as_str())
+            .get(&currency)
             .copied()
             .unwrap_or_else(|| Decimal::new(5, 3));
 
@@ -214,8 +214,10 @@ pub fn decimal_quantum(value: Decimal) -> Decimal {
 pub fn calculate_tolerances(
     txn: &Transaction,
     options: &ValidationOptions,
-) -> HashMap<String, Decimal> {
-    let mut tolerances: HashMap<String, Decimal> = HashMap::new();
+) -> HashMap<InternedStr, Decimal> {
+    // Pre-allocate for typical case (1-2 currencies)
+    let mut tolerances: HashMap<InternedStr, Decimal> =
+        HashMap::with_capacity(txn.postings.len().min(4));
 
     // Default tolerance based on quantum of amounts in postings
     for posting in &txn.postings {
@@ -225,7 +227,7 @@ pub fn calculate_tolerances(
             let base_tolerance = quantum * options.tolerance_multiplier;
 
             tolerances
-                .entry(units.currency.to_string())
+                .entry(units.currency.clone())
                 .and_modify(|t| *t = (*t).max(base_tolerance))
                 .or_insert(base_tolerance);
         }
@@ -246,7 +248,7 @@ pub fn calculate_tolerances(
 
                         // Update tolerance for the cost currency (take max)
                         tolerances
-                            .entry(cost_currency.to_string())
+                            .entry(cost_currency.clone())
                             .and_modify(|t| *t = (*t).max(cost_tolerance))
                             .or_insert(cost_tolerance);
                     }
