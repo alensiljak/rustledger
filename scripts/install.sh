@@ -221,9 +221,9 @@ main() {
   # Create directory if needed
   mkdir -p "$install_dir"
 
-  # Copy all binaries (rledger-* and bean-* variants)
-  for bin in rledger-check rledger-format rledger-query rledger-report rledger-doctor \
-    bean-check bean-format bean-query bean-report bean-doctor; do
+  # Copy all binaries (rledger unified binary and bean-* compatibility variants)
+  for bin in rledger \
+    bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price; do
     if [ -f "$tmpdir/$bin" ] || [ -f "$tmpdir/${bin}.exe" ]; then
       if [ "$os" = "windows" ]; then
         cp "$tmpdir/${bin}.exe" "$install_dir/"
@@ -252,8 +252,8 @@ main() {
 
   printf "\n"
   info "Get started:"
-  printf "    rledger-check ledger.beancount\n"
-  printf "    rledger-query ledger.beancount\n"
+  printf "    rledger check ledger.beancount\n"
+  printf "    rledger query ledger.beancount\n"
   printf "\n"
   info "Python beancount compatibility aliases also available:"
   printf "    bean-check, bean-format, bean-query, bean-report, bean-doctor\n"

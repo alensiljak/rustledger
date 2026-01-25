@@ -119,14 +119,14 @@ def parse_with_python(file_path: Path) -> Optional[ParseResult]:
     return result
 
 
-def parse_with_rust(file_path: Path, rledger_check: str, rledger_query: str) -> Optional[ParseResult]:
+def parse_with_rust(file_path: Path, rledger: str) -> Optional[ParseResult]:
     """Parse a file with rustledger and extract structured data."""
     result = ParseResult()
 
-    # Get error count from rledger-check --format json
+    # Get error count from rledger check --format json
     try:
         proc = subprocess.run(
-            [rledger_check, "--format", "json", str(file_path)],
+            [rledger, "check", "--format", "json", str(file_path)],
             capture_output=True,
             text=True,
             timeout=30
@@ -142,7 +142,7 @@ def parse_with_rust(file_path: Path, rledger_check: str, rledger_query: str) -> 
     # Get accounts via BQL
     try:
         proc = subprocess.run(
-            [rledger_query, str(file_path), "SELECT DISTINCT account ORDER BY account"],
+            [rledger, "query", str(file_path), "SELECT DISTINCT account ORDER BY account"],
             capture_output=True,
             text=True,
             timeout=30
@@ -160,7 +160,7 @@ def parse_with_rust(file_path: Path, rledger_check: str, rledger_query: str) -> 
     # Get posting count via BQL (COUNT(*) counts postings)
     try:
         proc = subprocess.run(
-            [rledger_query, str(file_path), "SELECT COUNT(*)"],
+            [rledger, "query", str(file_path), "SELECT COUNT(*)"],
             capture_output=True,
             text=True,
             timeout=30
@@ -209,13 +209,13 @@ def compare_results(file_path: str, python: Optional[ParseResult], rust: Optiona
 
 def test_single_file(args) -> ComparisonResult:
     """Test a single file - designed to run in parallel."""
-    file_path, rledger_check, rledger_query = args
+    file_path, rledger = args
     python_result = parse_with_python(file_path)
-    rust_result = parse_with_rust(file_path, rledger_check, rledger_query)
+    rust_result = parse_with_rust(file_path, rledger)
     return compare_results(str(file_path), python_result, rust_result)
 
 
-def run_comparison(directory: Path, rledger_check: str, rledger_query: str) -> list[ComparisonResult]:
+def run_comparison(directory: Path, rledger: str) -> list[ComparisonResult]:
     """Run comparison on all beancount files in directory (parallel)."""
     files = list(directory.rglob("*.beancount"))
 
@@ -226,7 +226,7 @@ def run_comparison(directory: Path, rledger_check: str, rledger_query: str) -> l
     completed = 0
 
     # Build args for parallel execution
-    test_args = [(f, rledger_check, rledger_query) for f in files]
+    test_args = [(f, rledger) for f in files]
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = [executor.submit(test_single_file, args) for args in test_args]
@@ -365,11 +365,10 @@ def main():
         print(f"Error: Directory not found: {test_dir}")
         sys.exit(1)
 
-    # Find rustledger binaries
-    rledger_check = "./target/release/rledger-check"
-    rledger_query = "./target/release/rledger-query"
+    # Find rustledger binary
+    rledger = "./target/release/rledger"
 
-    if not Path(rledger_check).exists():
+    if not Path(rledger).exists():
         print("Building rustledger...")
         subprocess.run(["cargo", "build", "--release", "-p", "rustledger"], check=True)
 
@@ -377,7 +376,7 @@ def main():
     print()
 
     # Run comparison
-    results = run_comparison(test_dir, rledger_check, rledger_query)
+    results = run_comparison(test_dir, rledger)
 
     # Print summary
     print_summary(results)

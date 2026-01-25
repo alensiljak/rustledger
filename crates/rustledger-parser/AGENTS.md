@@ -73,7 +73,7 @@ When in doubt, check Python beancount behavior:
 ```bash
 # Compare outputs
 bean-check test.beancount
-./target/debug/rledger-check test.beancount
+./target/debug/rledger check test.beancount
 ```
 
 Reference files in `spec/fixtures/` for expected behavior.

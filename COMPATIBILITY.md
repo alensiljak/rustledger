@@ -166,7 +166,7 @@ tests/compat-results/            # Test output (gitignored)
 ## Scripts
 
 - `scripts/fetch-compat-test-files.sh` - Downloads full test suite from GitHub
-- `scripts/compat-test.sh` - Main test harness (bean-check vs rledger-check)
+- `scripts/compat-test.sh` - Main test harness (bean-check vs rledger check)
 - `scripts/compat-bql-test.sh` - BQL query comparison
 - `scripts/analyze-compat-results.py` - Results analysis and reporting
 

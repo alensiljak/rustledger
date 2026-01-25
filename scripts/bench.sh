@@ -81,7 +81,7 @@ EOF
 
 echo ""
 echo "=== Tool Versions ==="
-echo "rustledger: $(./target/release/rledger-check --version 2>&1 || echo 'built')"
+echo "rustledger: $(./target/release/rledger --version 2>&1 || echo 'built')"
 echo "beancount:  $(bean-check --version 2>&1 | head -1)"
 echo "ledger:     $(ledger --version | head -1)"
 echo "hledger:    $(hledger --version)"
@@ -94,7 +94,7 @@ hyperfine \
     --warmup 3 \
     --runs 10 \
     --export-json "$TMPDIR/validation.json" \
-    --command-name 'rustledger' "./target/release/rledger-check $TMPDIR/benchmark.beancount" \
+    --command-name 'rustledger' "./target/release/rledger check $TMPDIR/benchmark.beancount" \
     --command-name 'beancount' "bean-check $TMPDIR/benchmark.beancount" \
     --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger accounts" \
     --command-name 'hledger' "hledger check -f $TMPDIR/benchmark.ledger"
@@ -107,7 +107,7 @@ hyperfine \
     --warmup 3 \
     --runs 10 \
     --export-json "$TMPDIR/balance.json" \
-    --command-name 'rustledger' "./target/release/rledger-report $TMPDIR/benchmark.beancount balances > /dev/null" \
+    --command-name 'rustledger' "./target/release/rledger report $TMPDIR/benchmark.beancount balances > /dev/null" \
     --command-name 'beancount' "bean-query -q $TMPDIR/benchmark.beancount BALANCES > /dev/null" \
     --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger balance > /dev/null" \
     --command-name 'hledger' "hledger -f $TMPDIR/benchmark.ledger balance > /dev/null"

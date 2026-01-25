@@ -85,8 +85,8 @@ jobs:
       - name: Generate synthetic test files
         run: |
           echo "Generating synthetic test files..."
-          # Use rledger-doctor to generate synthetic files with manifest
-          ./target/release/rledger-doctor generate-synthetic \
+          # Use rledger doctor to generate synthetic files with manifest
+          ./target/release/rledger doctor generate-synthetic \
             --output tests/compat/synthetic \
             --count 50 \
             --seed 12345 \
@@ -112,8 +112,8 @@ jobs:
           echo "=== Installed versions ==="
           bean-check --version
           bean-query --version
-          ./target/release/rledger-check --version
-          ./target/release/rledger-query --version
+          ./target/release/rledger check --version
+          ./target/release/rledger query --version
 
       - name: Fetch previous results for regression detection
         run: |
@@ -147,8 +147,9 @@ jobs:
               print("Warning: beancount not installed")
 
           TEST_DIRS = [Path("tests/compat/files"), Path("tests/compat/synthetic")]
-          RLEDGER_CHECK = "./target/release/rledger-check"
-          RLEDGER_QUERY = "./target/release/rledger-query"
+          RLEDGER = "./target/release/rledger"
+          RLEDGER_CHECK = [RLEDGER, "check"]
+          RLEDGER_QUERY = [RLEDGER, "query"]
 
           # Use available CPUs, but cap at 8 for CI stability
           MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
@@ -246,7 +247,7 @@ jobs:
               # === Rust parsing - check ===
               try:
                   proc = subprocess.run(
-                      [RLEDGER_CHECK, "--format", "json", str(file_path)],
+                      [*RLEDGER_CHECK, "--format", "json", str(file_path)],
                       capture_output=True, text=True, timeout=30
                   )
                   result.rust_ok = (proc.returncode == 0)
@@ -272,7 +273,7 @@ jobs:
               rust_accounts = set()
               try:
                   proc = subprocess.run(
-                      [RLEDGER_QUERY, str(file_path), "SELECT DISTINCT account ORDER BY account"],
+                      [*RLEDGER_QUERY, str(file_path), "SELECT DISTINCT account ORDER BY account"],
                       capture_output=True, text=True, timeout=30
                   )
                   if proc.returncode == 0:
@@ -288,7 +289,7 @@ jobs:
               # === Rust posting count via BQL ===
               try:
                   proc = subprocess.run(
-                      [RLEDGER_QUERY, str(file_path), "SELECT COUNT(*)"],
+                      [*RLEDGER_QUERY, str(file_path), "SELECT COUNT(*)"],
                       capture_output=True, text=True, timeout=30
                   )
                   if proc.returncode == 0:
@@ -480,7 +481,8 @@ jobs:
           import multiprocessing
 
           TEST_DIRS = [Path("tests/compat/files"), Path("tests/compat/synthetic")]
-          RLEDGER_QUERY = "./target/release/rledger-query"
+          RLEDGER = "./target/release/rledger"
+          RLEDGER_QUERY = [RLEDGER, "query"]
 
           MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
           print(f"Running BQL tests with {MAX_WORKERS} parallel workers")
@@ -515,10 +517,10 @@ jobs:
               except Exception:
                   py_out = "ERROR"
 
-              # Run Rust rledger-query
+              # Run Rust rledger query
               try:
                   rs_proc = subprocess.run(
-                      [RLEDGER_QUERY, str(file_path), query],
+                      [*RLEDGER_QUERY, str(file_path), query],
                       capture_output=True, text=True, timeout=30
                   )
                   rs_out = rs_proc.stdout

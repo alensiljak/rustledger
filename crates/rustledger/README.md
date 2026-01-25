@@ -6,13 +6,13 @@ Drop-in replacement for Beancount CLI tools. Pure Rust, 10-30x faster.
 
 | Command | Description |
 |---------|-------------|
-| `rledger-check` | Validate ledger files |
-| `rledger-query` | Run BQL queries |
-| `rledger-format` | Auto-format beancount files |
-| `rledger-report` | Generate reports (balances, stats) |
-| `rledger-doctor` | Debug ledger issues |
-| `rledger-extract` | Import from CSV/OFX |
-| `rledger-price` | Fetch commodity prices |
+| `rledger check` | Validate ledger files |
+| `rledger query` | Run BQL queries |
+| `rledger format` | Auto-format beancount files |
+| `rledger report` | Generate reports (balances, stats) |
+| `rledger doctor` | Debug ledger issues |
+| `rledger extract` | Import from CSV/OFX |
+| `rledger price` | Fetch commodity prices |
 
 ## Compatibility
 
@@ -30,9 +30,9 @@ cargo install rustledger --no-default-features
 ## Example
 
 ```bash
-rledger-check ledger.beancount
-rledger-query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
-rledger-format --in-place ledger.beancount
+rledger check ledger.beancount
+rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
+rledger format --in-place ledger.beancount
 ```
 
 ## Cargo Features

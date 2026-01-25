@@ -29,14 +29,10 @@ cargo build --release
 %install
 install -d %{buildroot}%{_bindir}
 
-install -m 755 target/release/rledger-check %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-format %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-query %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-report %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-doctor %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-extract %{buildroot}%{_bindir}/
-install -m 755 target/release/rledger-price %{buildroot}%{_bindir}/
+# Main unified binary
+install -m 755 target/release/rledger %{buildroot}%{_bindir}/
 
+# Bean-* compatibility binaries
 install -m 755 target/release/bean-check %{buildroot}%{_bindir}/
 install -m 755 target/release/bean-format %{buildroot}%{_bindir}/
 install -m 755 target/release/bean-query %{buildroot}%{_bindir}/
@@ -47,7 +43,7 @@ install -m 755 target/release/bean-price %{buildroot}%{_bindir}/
 
 %files
 %license LICENSE
-%{_bindir}/rledger-*
+%{_bindir}/rledger
 %{_bindir}/bean-*
 
 %changelog

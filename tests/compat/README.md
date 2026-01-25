@@ -29,12 +29,12 @@ This downloads ~800 beancount files from 10+ open source repositories.
 
 ## Running Tests
 
-### Check Compatibility (bean-check vs rledger-check)
+### Check Compatibility (bean-check vs rledger check)
 ```bash
 ./scripts/compat-test.sh
 ```
 
-### BQL Query Compatibility (bean-query vs rledger-query)
+### BQL Query Compatibility (bean-query vs rledger query)
 ```bash
 ./scripts/compat-bql-test.sh
 ```

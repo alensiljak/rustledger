@@ -2,7 +2,7 @@
 set -e
 
 # Beancount Compatibility Test Harness (Parallel)
-# Compares bean-check (Python) vs rledger-check (Rust) on all .beancount files
+# Compares bean-check (Python) vs rledger check (Rust) on all .beancount files
 # Run inside: nix develop --command ./scripts/compat-test.sh [directory]
 #
 # Examples:
@@ -48,10 +48,10 @@ trap "rm -rf $TEMP_DIR" EXIT
 # Build rustledger in release mode
 echo "Building rustledger..."
 cargo build --release --quiet
-RLEDGER_CHECK="./target/release/rledger-check"
+RLEDGER="./target/release/rledger"
 
-if [ ! -x "$RLEDGER_CHECK" ]; then
-    echo "Error: rledger-check not found at $RLEDGER_CHECK"
+if [ ! -x "$RLEDGER" ]; then
+    echo "Error: rledger not found at $RLEDGER"
     exit 1
 fi
 
@@ -63,7 +63,7 @@ fi
 
 echo "Using:"
 echo "  Python: $(bean-check --version 2>&1 | head -1 || echo 'bean-check available')"
-echo "  Rust:   $($RLEDGER_CHECK --version 2>&1 || echo 'rledger-check available')"
+echo "  Rust:   $($RLEDGER --version 2>&1 || echo 'rledger available')"
 echo "  Parallel jobs: $PARALLEL_JOBS"
 echo ""
 
@@ -76,7 +76,7 @@ echo "Results will be written to: $RESULTS_FILE"
 echo ""
 
 # Export variables and functions for parallel execution
-export FIXTURES_DIR RLEDGER_CHECK TEMP_DIR
+export FIXTURES_DIR RLEDGER TEMP_DIR
 
 # Create a test script that can be run in parallel
 cat > "$TEMP_DIR/test_one.sh" << 'SCRIPT'
@@ -99,11 +99,11 @@ bean-check "$file" >/dev/null 2>"$py_stderr" && py_exit=0 || py_exit=$?
 py_err=$(cat "$py_stderr" | head -c 500)
 rm -f "$py_stderr"
 
-# Run Rust rledger-check (capture both stdout and stderr since errors go to stdout)
+# Run Rust rledger check (capture both stdout and stderr since errors go to stdout)
 # Always use --no-cache for reproducible results during testing
 # Strip ANSI codes to avoid breaking JSON
 rs_output=$(mktemp)
-"$RLEDGER_CHECK" --no-cache "$file" >"$rs_output" 2>&1 && rs_exit=0 || rs_exit=$?
+"$RLEDGER" check --no-cache "$file" >"$rs_output" 2>&1 && rs_exit=0 || rs_exit=$?
 rs_err=$(cat "$rs_output" | sed 's/\x1b\[[0-9;]*m//g' | head -c 500)
 rm -f "$rs_output"
 

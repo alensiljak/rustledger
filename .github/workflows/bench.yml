@@ -176,7 +176,7 @@ jobs:
             --warmup 3 \
             --runs 10 \
             --export-json bench-validation.json \
-            --command-name 'rustledger' './target/release/rledger-check benchmark.beancount' \
+            --command-name 'rustledger' './target/release/rledger check benchmark.beancount' \
             --command-name 'beancount' 'bean-check benchmark.beancount' \
             --command-name 'ledger' 'ledger -f benchmark.ledger accounts' \
             --command-name 'hledger' 'hledger check -f benchmark.ledger'
@@ -215,7 +215,7 @@ jobs:
             --warmup 3 \
             --runs 10 \
             --export-json bench-balance.json \
-            --command-name 'rustledger' './target/release/rledger-report benchmark.beancount balances > /dev/null' \
+            --command-name 'rustledger' './target/release/rledger report benchmark.beancount balances > /dev/null' \
             --command-name 'beancount' 'bean-query -q benchmark.beancount BALANCES > /dev/null' \
             --command-name 'ledger' 'ledger -f benchmark.ledger balance > /dev/null' \
             --command-name 'hledger' 'hledger -f benchmark.ledger balance > /dev/null'
@@ -271,7 +271,7 @@ jobs:
             echo "${name}_mem_mb=${median_mb}" >> $GITHUB_OUTPUT
           }
 
-          measure_memory "rustledger" "./target/release/rledger-check benchmark.beancount"
+          measure_memory "rustledger" "./target/release/rledger check benchmark.beancount"
           measure_memory "beancount" "bean-check benchmark.beancount"
           measure_memory "ledger" "ledger -f benchmark.ledger accounts"
           measure_memory "hledger" "hledger check -f benchmark.ledger"
@@ -820,7 +820,7 @@ jobs:
             --warmup 2 \
             --runs 5 \
             --export-json "bench-scaling-${{ matrix.size }}.json" \
-            --command-name 'rustledger' './target/release/rledger-check benchmark.beancount' \
+            --command-name 'rustledger' './target/release/rledger check benchmark.beancount' \
             --command-name 'beancount' 'bean-check benchmark.beancount' \
             --command-name 'hledger' 'hledger check -f benchmark.ledger'
 
