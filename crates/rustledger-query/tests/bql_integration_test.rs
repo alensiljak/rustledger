@@ -2562,31 +2562,6 @@ fn test_unary_negation_on_aggregate() {
 }
 
 #[test]
-fn test_number_on_multi_currency_inventory_returns_null() {
-    // When an inventory has multiple currencies, NUMBER should return NULL
-    // rather than summing across currencies (which is meaningless)
-    let directives = make_holdings_directives();
-    // Query without GROUP BY currency - will aggregate AAPL and USD together
-    let result = execute_query(
-        r#"SELECT number(units(sum(position))) as units_num
-           WHERE account ~ "Brokerage"
-           GROUP BY account"#,
-        &directives,
-    );
-
-    assert_eq!(result.len(), 1);
-    // Should be NULL because inventory has both AAPL and USD (from cost)
-    // Actually, units(sum(position)) returns inventory with AAPL only
-    // Let me verify the actual behavior - this tests single currency case
-    if let Value::Number(n) = &result.rows[0][0] {
-        // 10 + 5 = 15 AAPL (all same currency)
-        assert_eq!(*n, dec!(15));
-    } else {
-        panic!("Expected Number for single-currency inventory");
-    }
-}
-
-#[test]
 fn test_number_on_single_currency_inventory() {
     // When inventory has one currency, NUMBER should return the total
     let directives = make_holdings_directives();
