@@ -18,7 +18,11 @@ use std::process::ExitCode;
 /// rledger - A pure Rust implementation of Beancount
 #[derive(Parser)]
 #[command(name = "rledger")]
-#[command(author, version, about = "Pure Rust implementation of Beancount, 10-30x faster")]
+#[command(
+    author,
+    version,
+    about = "Pure Rust implementation of Beancount, 10-30x faster"
+)]
 #[command(propagate_version = true)]
 struct Cli {
     #[command(subcommand)]
@@ -81,33 +85,27 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Check { args } => {
-            match rustledger::cmd::check::run(&args) {
-                Ok(code) => code,
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    ExitCode::from(2)
-                }
+        Commands::Check { args } => match rustledger::cmd::check::run(&args) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(2)
             }
-        }
-        Commands::Query { args } => {
-            match rustledger::cmd::query::run(&args) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    ExitCode::from(1)
-                }
+        },
+        Commands::Query { args } => match rustledger::cmd::query::run(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(1)
             }
-        }
-        Commands::Format { args } => {
-            match rustledger::cmd::format::run(&args) {
-                Ok(code) => code,
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    ExitCode::from(2)
-                }
+        },
+        Commands::Format { args } => match rustledger::cmd::format::run(&args) {
+            Ok(code) => code,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(2)
             }
-        }
+        },
         Commands::Report { args } => {
             // Report requires file and report subcommand
             let Some(ref file) = args.file else {
@@ -152,14 +150,12 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Price { args } => {
-            match rustledger::cmd::price_cmd::run(&args.price_args) {
-                Ok(()) => ExitCode::SUCCESS,
-                Err(e) => {
-                    eprintln!("error: {e:#}");
-                    ExitCode::from(1)
-                }
+        Commands::Price { args } => match rustledger::cmd::price_cmd::run(&args.price_args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(1)
             }
-        }
+        },
     }
 }
