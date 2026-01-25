@@ -23,16 +23,17 @@ fn spec_fixtures_dir() -> PathBuf {
     project_root().join("spec/fixtures")
 }
 
-fn rust_bean_check_binary() -> PathBuf {
-    project_root().join("target/debug/rledger-check")
+fn rledger_binary() -> PathBuf {
+    project_root().join("target/debug/rledger")
 }
 
-/// Run rledger-check on a file and return (success, output).
+/// Run rledger check on a file and return (success, output).
 fn rledger_check(path: &Path) -> (bool, String) {
-    let output = Command::new(rust_bean_check_binary())
+    let output = Command::new(rledger_binary())
+        .arg("check")
         .arg(path)
         .output()
-        .expect("Failed to run rledger-check");
+        .expect("Failed to run rledger check");
 
     let success = output.status.success();
     let combined = format!(
@@ -43,14 +44,15 @@ fn rledger_check(path: &Path) -> (bool, String) {
     (success, combined)
 }
 
-/// Run rledger-check with `auto_accounts` plugin (permissive mode like Python beancount).
+/// Run rledger check with `auto_accounts` plugin (permissive mode like Python beancount).
 fn rledger_check_permissive(path: &Path) -> (bool, String) {
-    let output = Command::new(rust_bean_check_binary())
+    let output = Command::new(rledger_binary())
+        .arg("check")
         .arg("--native-plugin")
         .arg("auto_accounts")
         .arg(path)
         .output()
-        .expect("Failed to run rledger-check");
+        .expect("Failed to run rledger check");
 
     let success = output.status.success();
     let combined = format!(

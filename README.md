@@ -49,21 +49,21 @@ Parse and validate your ledger faster than Python beancount.
 ## Quick Start
 
 ```bash
-rledger-check ledger.beancount
-rledger-query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
+rledger check ledger.beancount
+rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `rledger-check` | Validate ledger files with detailed error messages |
-| `rledger-query` | Run BQL queries (interactive shell or one-shot) |
-| `rledger-format` | Auto-format beancount files |
-| `rledger-report` | Generate balance, account, and statistics reports |
-| `rledger-doctor` | Debugging tools for ledger issues |
-| `rledger-extract` | Import transactions from CSV/OFX bank statements |
-| `rledger-price` | Fetch commodity prices from online sources |
+| `rledger check` | Validate ledger files with detailed error messages |
+| `rledger query` | Run BQL queries (interactive shell or one-shot) |
+| `rledger format` | Auto-format beancount files |
+| `rledger report` | Generate balance, account, and statistics reports |
+| `rledger doctor` | Debugging tools for ledger issues |
+| `rledger extract` | Import transactions from CSV/OFX bank statements |
+| `rledger price` | Fetch commodity prices from online sources |
 
 Python beancount users can also use `bean-check`, `bean-query`, etc.
 
@@ -72,20 +72,20 @@ Python beancount users can also use `bean-check`, `bean-query`, etc.
 
 ```bash
 # Validate with plugins
-rledger-check --native-plugin auto_accounts ledger.beancount
+rledger check --native-plugin auto_accounts ledger.beancount
 
 # Interactive query shell
-rledger-query ledger.beancount
+rledger query ledger.beancount
 
 # One-shot query
-rledger-query ledger.beancount "SELECT date, narration WHERE account ~ 'Expenses:Food'"
+rledger query ledger.beancount "SELECT date, narration WHERE account ~ 'Expenses:Food'"
 
 # Reports
-rledger-report ledger.beancount balances
-rledger-report ledger.beancount stats
+rledger report ledger.beancount balances
+rledger report ledger.beancount stats
 
 # Format in place
-rledger-format --in-place ledger.beancount
+rledger format --in-place ledger.beancount
 ```
 
 </details>
@@ -94,7 +94,7 @@ rledger-format --in-place ledger.beancount
 
 | Crate | Description |
 |-------|-------------|
-| `rustledger` | CLI tools (rledger-check, rledger-query, etc.) |
+| `rustledger` | CLI tool (`rledger check`, `rledger query`, etc.) |
 | `rustledger-core` | Core types: Amount, Position, Inventory |
 | `rustledger-parser` | Lexer and parser with error recovery |
 | `rustledger-loader` | File loading and includes |

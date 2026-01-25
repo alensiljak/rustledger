@@ -1,4 +1,4 @@
-//! rledger-query - Query beancount files with BQL.
+//! rledger query - Query beancount files with BQL.
 //!
 //! This is the primary rustledger command for querying ledgers.
 //! For backwards compatibility with Python beancount, `bean-query` is also available.
@@ -6,9 +6,9 @@
 //! # Usage
 //!
 //! ```bash
-//! rledger-query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
-//! rledger-query ledger.beancount -F query.bql
-//! rledger-query ledger.beancount  # Interactive mode
+//! rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
+//! rledger query ledger.beancount -F query.bql
+//! rledger query ledger.beancount  # Interactive mode
 //! ```
 
 use crate::cmd::completions::ShellType;
@@ -30,7 +30,7 @@ use std::process::ExitCode;
 #[derive(Parser, Debug)]
 #[command(name = "rledger-query")]
 #[command(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// The beancount file to query
     #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
     file: Option<PathBuf>,
@@ -87,11 +87,6 @@ impl std::fmt::Display for OutputFormat {
     }
 }
 
-/// Main entry point for the query command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-query")
-}
-
 /// Main entry point with custom binary name (for bean-query compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
     let args = Args::parse();
@@ -111,7 +106,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 }
 
-fn run(args: &Args) -> Result<()> {
+/// Run the query command with the given arguments.
+pub fn run(args: &Args) -> Result<()> {
     // File is guaranteed to be Some here (checked in main)
     let file = args.file.as_ref().expect("file required");
 

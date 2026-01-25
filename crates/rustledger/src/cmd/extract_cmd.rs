@@ -1,4 +1,4 @@
-//! rledger-extract - Extract transactions from bank files.
+//! rledger extract - Extract transactions from bank files.
 //!
 //! This is the primary rustledger command for importing transactions from
 //! CSV, OFX, and other bank statement formats.
@@ -6,8 +6,8 @@
 //! # Usage
 //!
 //! ```bash
-//! rledger-extract bank.csv --account Assets:Bank:Checking
-//! rledger-extract statement.csv --config bank-config.json
+//! rledger extract bank.csv --account Assets:Bank:Checking
+//! rledger extract statement.csv --config bank-config.json
 //! ```
 
 use crate::cmd::completions::ShellType;
@@ -23,14 +23,14 @@ use std::process::ExitCode;
 #[derive(Parser, Debug)]
 #[command(name = "rledger-extract")]
 #[command(author, version, about, long_about = None)]
-struct Args {
+pub struct Args {
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL", hide = true)]
     generate_completions: Option<ShellType>,
 
     /// The file to extract transactions from
     #[arg(value_name = "FILE")]
-    file: Option<PathBuf>,
+    pub file: Option<PathBuf>,
 
     /// Target account for imported transactions
     #[arg(short, long, default_value = "Assets:Bank:Checking")]
@@ -85,11 +85,6 @@ struct Args {
     no_header: bool,
 }
 
-/// Main entry point for the extract command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-extract")
-}
-
 /// Main entry point with custom binary name (for bean-extract compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
     let args = Args::parse();
@@ -116,7 +111,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 }
 
-fn run(args: &Args, file: &PathBuf) -> Result<()> {
+/// Run the extract command with the given arguments.
+pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
     let mut stdout = io::stdout().lock();
 
     // Build the importer configuration

@@ -2,7 +2,7 @@
 set -e
 
 # BQL Compatibility Test (Parallel)
-# Compares bean-query (Python) vs rledger-query (Rust) on valid beancount files
+# Compares bean-query (Python) vs rledger query (Rust) on valid beancount files
 # Run inside: nix develop --command ./scripts/compat-bql-test.sh
 #
 # Environment variables:
@@ -37,10 +37,10 @@ trap "rm -rf $TEMP_DIR" EXIT
 # Build rustledger
 echo "Building rustledger..."
 cargo build --release --quiet
-RLEDGER_QUERY="./target/release/rledger-query"
+RLEDGER="./target/release/rledger"
 
-if [ ! -x "$RLEDGER_QUERY" ]; then
-    echo "Error: rledger-query not found"
+if [ ! -x "$RLEDGER" ]; then
+    echo "Error: rledger not found"
     exit 1
 fi
 
@@ -92,7 +92,7 @@ cat > "$TEMP_DIR/test_bql.sh" << 'SCRIPT'
 file="$1"
 query="$2"
 FIXTURES_DIR="$3"
-RLEDGER_QUERY="$4"
+RLEDGER="$4"
 
 full_path="$FIXTURES_DIR/$file"
 [ ! -f "$full_path" ] && exit 0
@@ -101,8 +101,8 @@ full_path="$FIXTURES_DIR/$file"
 py_out=$(bean-query "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
 py_exit=$?
 
-# Run Rust rledger-query
-rs_out=$("$RLEDGER_QUERY" "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
+# Run Rust rledger query
+rs_out=$("$RLEDGER" query "$full_path" "$query" 2>/dev/null | head -50 || echo "ERROR")
 rs_exit=$?
 
 # Normalize function: extract just the data values
@@ -205,7 +205,7 @@ while IFS=$'\t' read -r file query; do
 done < "$TEST_CASES_FILE" | \
     xargs -P "$PARALLEL_JOBS" -I {} bash -c '
         IFS=$'"'"'\t'"'"' read -r file query <<< "{}"
-        '"$TEMP_DIR"'/test_bql.sh "$file" "$query" "'"$FIXTURES_DIR"'" "'"$RLEDGER_QUERY"'"
+        '"$TEMP_DIR"'/test_bql.sh "$file" "$query" "'"$FIXTURES_DIR"'" "'"$RLEDGER"'"
     ' > "$RESULTS_FILE"
 
 end_time=$(date +%s)

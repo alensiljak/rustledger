@@ -78,7 +78,7 @@ The project is a Cargo workspace with 9 crates:
 | `rustledger-validate` | Validation with 27 error codes |
 | `rustledger-query` | BQL query engine |
 | `rustledger-plugin` | Native and WASM plugin system (20 plugins) |
-| `rustledger` | CLI tools (rledger-check, rledger-query, etc.) |
+| `rustledger` | CLI tool (`rledger check`, `rledger query`, etc.) |
 | `rustledger-wasm` | WebAssembly library target |
 
 ## Code Standards

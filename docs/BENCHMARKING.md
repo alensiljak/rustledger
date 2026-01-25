@@ -124,8 +124,8 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 - Charts: `.github/badges/*.svg`
 
 **Commands used:**
-- Validation: `rledger-check` (rustledger), `bean-check` (beancount), `ledger accounts` (ledger), `hledger check` (hledger)
-- Balance: `rledger-report balances` (rustledger), `bean-query BALANCES` (beancount), `ledger balance` (ledger), `hledger balance` (hledger)
+- Validation: `rledger check` (rustledger), `bean-check` (beancount), `ledger accounts` (ledger), `hledger check` (hledger)
+- Balance: `rledger report balances` (rustledger), `bean-query BALANCES` (beancount), `ledger balance` (ledger), `hledger balance` (hledger)
 
 ### 3. PR Benchmarks
 

@@ -22,8 +22,9 @@ pub struct Args {
     #[arg(long, value_name = "SHELL")]
     generate_completions: Option<ShellType>,
 
+    /// Price command arguments.
     #[command(flatten)]
-    price_args: PriceArgs,
+    pub price_args: PriceArgs,
 }
 
 /// Price-specific arguments.
@@ -146,11 +147,6 @@ impl PriceSource for YahooFinance {
     fn name(&self) -> &'static str {
         "yahoo"
     }
-}
-
-/// Main entry point for the price command.
-pub fn main() -> ExitCode {
-    main_with_name("rledger-price")
 }
 
 /// Main entry point with custom binary name (for bean-price compatibility).
