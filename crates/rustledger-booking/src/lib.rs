@@ -57,6 +57,11 @@ pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal>
 ///
 /// Python beancount infers cost currency from simple postings (those without
 /// cost specs) when a cost is specified without a currency like `{100}`.
+///
+/// Currency inference follows this priority:
+/// 1. An explicit currency in the cost specification itself (handled by the caller).
+/// 2. A price annotation on a simple posting (the price currency takes precedence).
+/// 3. The currency of other simple postings (units or currency-only amounts).
 pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Option<InternedStr> {
     for posting in &transaction.postings {
         // Skip postings with cost specs - we're looking for simple postings
