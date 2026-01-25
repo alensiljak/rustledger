@@ -40,7 +40,8 @@ use std::collections::HashMap;
 /// Tolerance is the maximum of all individual amount tolerances.
 #[must_use]
 pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal> {
-    let mut tolerances: HashMap<InternedStr, Decimal> = HashMap::new();
+    // Pre-allocate for typical case (1-3 currencies per transaction)
+    let mut tolerances: HashMap<InternedStr, Decimal> = HashMap::with_capacity(amounts.len().min(4));
 
     for amount in amounts {
         let tol = amount.inferred_tolerance();
@@ -109,7 +110,9 @@ pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Op
 /// A balanced transaction has all residuals within tolerance.
 #[must_use]
 pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Decimal> {
-    let mut residuals: HashMap<InternedStr, Decimal> = HashMap::new();
+    // Pre-allocate for typical case (1-2 currencies per transaction)
+    let mut residuals: HashMap<InternedStr, Decimal> =
+        HashMap::with_capacity(transaction.postings.len().min(4));
 
     // Lazily compute inferred currency only when needed (most transactions don't need it)
     let mut inferred_cost_currency: Option<Option<InternedStr>> = None;
