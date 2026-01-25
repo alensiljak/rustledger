@@ -46,7 +46,7 @@ impl Inventory {
         }
     }
 
-    /// Try STRICT/STRICT_WITH_SIZE booking without modifying inventory.
+    /// Try `STRICT`/`STRICT_WITH_SIZE` booking without modifying inventory.
     fn try_reduce_strict(
         &self,
         units: &Amount,
