@@ -21,7 +21,7 @@ use std::process::ExitCode;
 
 /// Extract transactions from bank files.
 #[derive(Parser, Debug)]
-#[command(name = "rledger-extract")]
+#[command(name = "extract")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Generate shell completions and exit

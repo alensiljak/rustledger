@@ -28,7 +28,7 @@ use std::process::ExitCode;
 
 /// Query beancount files with BQL.
 #[derive(Parser, Debug)]
-#[command(name = "rledger-query")]
+#[command(name = "query")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// The beancount file to query

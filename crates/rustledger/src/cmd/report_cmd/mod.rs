@@ -45,7 +45,7 @@ use std::process::ExitCode;
 
 /// Generate reports from beancount files.
 #[derive(Parser, Debug)]
-#[command(name = "rledger-report")]
+#[command(name = "report")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
     /// Generate shell completions and exit
