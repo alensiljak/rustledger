@@ -309,12 +309,26 @@ impl BookingEngine {
         }
 
         // Apply posting expansions (replace single postings with multiple)
-        // Process in reverse order to maintain correct indices
-        for (orig_idx, expanded) in expansions.into_iter().rev() {
-            result.postings.remove(orig_idx);
-            for (i, posting) in expanded.into_iter().enumerate() {
-                result.postings.insert(orig_idx + i, posting);
+        // Build new postings Vec in one O(n) pass instead of O(n²) remove+insert
+        if !expansions.is_empty() {
+            // Sort expansions by index for forward iteration
+            expansions.sort_by_key(|(idx, _)| *idx);
+
+            let mut new_postings =
+                Vec::with_capacity(result.postings.len() + expansions.iter().map(|(_, e)| e.len()).sum::<usize>());
+            let mut expansion_iter = expansions.into_iter().peekable();
+
+            for (idx, posting) in result.postings.into_iter().enumerate() {
+                if expansion_iter.peek().is_some_and(|(exp_idx, _)| *exp_idx == idx) {
+                    // Replace this posting with expanded postings
+                    let (_, expanded) = expansion_iter.next().unwrap();
+                    new_postings.extend(expanded);
+                } else {
+                    // Keep original posting
+                    new_postings.push(posting);
+                }
             }
+            result.postings = new_postings;
         }
 
         // Normalize total prices (@@) to per-unit prices (@)
