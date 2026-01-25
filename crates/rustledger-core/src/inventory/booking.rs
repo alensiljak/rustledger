@@ -768,16 +768,29 @@ impl Inventory {
         let (matched, _) = pos.split(requested * pos.units.number.signum());
 
         // Update the position
+        let currency = pos.units.currency.clone();
         let new_units = pos.units.number + units.number;
         let new_pos = Position {
-            units: Amount::new(new_units, pos.units.currency.clone()),
+            units: Amount::new(new_units, currency.clone()),
             cost: pos.cost.clone(),
         };
         self.positions[idx] = new_pos;
 
-        // Remove if empty
+        // Update units cache incrementally (units.number is negative for reductions)
+        if let Some(cached) = self.units_cache.get_mut(&currency) {
+            *cached += units.number;
+        }
+
+        // Remove if empty and rebuild simple_index
         if self.positions[idx].is_empty() {
             self.positions.remove(idx);
+            // Only rebuild simple_index when position is removed
+            self.simple_index.clear();
+            for (i, p) in self.positions.iter().enumerate() {
+                if p.cost.is_none() {
+                    self.simple_index.insert(p.units.currency.clone(), i);
+                }
+            }
         }
 
         Ok(BookingResult {
