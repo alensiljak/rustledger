@@ -2274,3 +2274,497 @@ fn test_filter_with_not_equal() {
         }
     }
 }
+
+// ============================================================================
+// Nested Aggregate Function Tests (Holdings-style queries)
+// ============================================================================
+
+use rustledger_core::{CostSpec, Price};
+
+fn make_holdings_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // Price directives
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "AAPL",
+            Amount::new(dec!(150), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "AAPL",
+            Amount::new(dec!(180), "USD"),
+        )),
+        // Buy 10 AAPL at $100
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("USD")
+                            .with_date(date(2024, 1, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD"))),
+        ),
+        // Buy 5 more AAPL at $120
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 20), "Buy more AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(5), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(120))
+                            .with_currency("USD")
+                            .with_date(date(2024, 3, 20)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-600), "USD"))),
+        ),
+    ]
+}
+
+#[test]
+fn test_units_sum_position() {
+    // Test units(sum(position)) - nested aggregate with non-aggregate function
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r"SELECT account, units(sum(position)) as units GROUP BY account",
+        &directives,
+    );
+
+    // Should have 2 rows: Brokerage and Cash
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_cost_sum_position() {
+    // Test cost(sum(position)) - book value calculation
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT account, cost(sum(position)) as book_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Book value should be 10*100 + 5*120 = 1600 USD
+    if let Value::Amount(amt) = &result.rows[0][1] {
+        assert_eq!(amt.number, dec!(1600));
+        assert_eq!(amt.currency.as_str(), "USD");
+    } else {
+        panic!("Expected Amount value for book_value");
+    }
+}
+
+#[test]
+fn test_number_cost_sum_position() {
+    // Test number(cost(sum(position))) - deeply nested
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(cost(sum(position))) as cost_number
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_safediv_with_aggregates() {
+    // Test safediv with aggregate expressions - like profit percentage calculation
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), 100) as cost_pct
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(16)); // 1600 / 100 = 16
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_parenthesized_aggregate_expression() {
+    // Test that parentheses work correctly with aggregate expressions
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT (cost(sum(position))) as book_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(amt) = &result.rows[0][0] {
+        assert_eq!(amt.number, dec!(1600));
+    } else {
+        panic!("Expected Amount value");
+    }
+}
+
+#[test]
+fn test_complex_arithmetic_with_aggregates() {
+    // Test complex arithmetic expressions with aggregates
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT (number(cost(sum(position))) - 1000) * 2 as calc
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // (1600 - 1000) * 2 = 1200
+        assert_eq!(*n, dec!(1200));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_multiple_nested_aggregates_in_select() {
+    // Test multiple columns with nested aggregates
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT
+             account,
+             units(sum(position)) as units,
+             cost(sum(position)) as book_value,
+             number(cost(sum(position))) as cost_num
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Verify cost_num column
+    if let Value::Number(n) = &result.rows[0][3] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value for cost_num");
+    }
+}
+
+// ============================================================================
+// Unit tests for evaluate_function_on_values code path
+// These test non-aggregate functions wrapping aggregate expressions
+// ============================================================================
+
+#[test]
+fn test_currency_on_aggregate() {
+    // Test currency(cost(sum(position))) - currency extraction from aggregate result
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency(cost(sum(position))) as cost_curr
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "USD");
+    } else {
+        panic!("Expected String value for currency");
+    }
+}
+
+#[test]
+fn test_deeply_nested_aggregate_functions() {
+    // Test abs(number(cost(sum(position)))) - 3 levels of nesting
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT abs(number(cost(sum(position)))) as abs_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_safediv_with_two_aggregate_args() {
+    // Test safediv with two aggregate arguments: safediv(sum(...), count(...))
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), count(1)) as avg_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // 1600 / 2 postings = 800
+        assert_eq!(*n, dec!(800));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_null_propagation_in_nested_aggregates() {
+    // Test that NULL values propagate correctly through nested functions
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(cost(sum(position))) as cost_num
+           WHERE account ~ "Cash"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Cash positions have no cost, so should be NULL
+    assert!(
+        matches!(&result.rows[0][0], Value::Null),
+        "Expected Null for cash position cost"
+    );
+}
+
+#[test]
+fn test_unary_negation_on_aggregate() {
+    // Test -number(cost(sum(position))) - unary operator on aggregate
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT -number(cost(sum(position))) as neg_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(-1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_number_on_single_currency_inventory() {
+    // When inventory has one currency, NUMBER should return the total
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency, number(units(sum(position))) as units_num
+           WHERE account ~ "Brokerage"
+           GROUP BY currency"#,
+        &directives,
+    );
+
+    // Should have 1 row for AAPL
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][1] {
+        assert_eq!(*n, dec!(15)); // 10 + 5 AAPL
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+fn make_multi_currency_holdings() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // Buy 10 AAPL
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("USD")
+                            .with_date(date(2024, 1, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD"))),
+        ),
+        // Buy 5 GOOG (different currency/stock)
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 10), "Buy GOOG")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(5), "GOOG")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD")
+                            .with_date(date(2024, 2, 10)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-750), "USD"))),
+        ),
+    ]
+}
+
+#[test]
+fn test_number_returns_null_for_mixed_currency_inventory() {
+    // When an inventory contains multiple currencies (AAPL + GOOG),
+    // NUMBER should return NULL rather than a meaningless sum
+    let directives = make_multi_currency_holdings();
+    let result = execute_query(
+        r#"SELECT number(units(sum(position))) as units_num
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should be NULL because inventory has AAPL and GOOG
+    assert!(
+        matches!(&result.rows[0][0], Value::Null),
+        "Expected Null for multi-currency inventory, got {:?}",
+        result.rows[0][0]
+    );
+}
+
+// ============================================================================
+// Additional coverage tests for evaluate_function_on_values
+// ============================================================================
+
+#[test]
+fn test_safediv_division_by_zero() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), 0) as div_zero
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_safediv_with_null() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), number(cost(sum(position)))) as ratio
+           WHERE account ~ "Cash"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Cash has no cost, so NULL / anything = NULL
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_value_function_with_conversion() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(value(sum(position), "USD")) as market_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // 15 AAPL * 180 USD = 2700 USD
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(2700));
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_empty_function() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r"SELECT empty(sum(position)) as is_empty GROUP BY account LIMIT 1",
+        &directives,
+    );
+
+    assert!(!result.is_empty());
+    // Most accounts have postings, so should be false
+    assert!(matches!(&result.rows[0][0], Value::Boolean(_)));
+}
+
+#[test]
+fn test_only_function_with_inventory() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT only(currency, sum(position)) as only_amt
+           WHERE account ~ "Brokerage"
+           GROUP BY currency"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(a) = &result.rows[0][0] {
+        assert_eq!(a.number, dec!(15)); // 10 + 5 AAPL
+    } else {
+        panic!("Expected Amount value");
+    }
+}
+
+#[test]
+fn test_filter_currency_function() {
+    let directives = make_multi_currency_holdings();
+    let result = execute_query(
+        r#"SELECT number(units(filter_currency(sum(position), "AAPL"))) as aapl_units
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(10)); // Only 10 AAPL, not GOOG
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_currency_on_inventory() {
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency(units(sum(position))) as curr
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "AAPL");
+    } else {
+        panic!("Expected String value for currency");
+    }
+}
+
+#[test]
+fn test_number_on_empty_inventory() {
+    let directives = make_test_directives();
+    // Query an account with no postings to get empty inventory
+    let result = execute_query(
+        r#"SELECT number(sum(position)) as num
+           WHERE account = "NonExistent:Account"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    // No results since account doesn't exist
+    assert!(result.is_empty());
+}

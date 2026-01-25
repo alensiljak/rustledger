@@ -344,9 +344,10 @@ impl Executor<'_> {
             ));
         }
 
-        // Get base currency
+        // Get base currency - handle NULL gracefully
         let base = match self.evaluate_expr(&func.args[0], ctx)? {
             Value::String(s) => s,
+            Value::Null => return Ok(Value::Null),
             _ => {
                 return Err(QueryError::Type(
                     "GETPRICE: first argument must be a currency string".to_string(),
@@ -354,9 +355,10 @@ impl Executor<'_> {
             }
         };
 
-        // Get quote currency
+        // Get quote currency - handle NULL gracefully
         let quote = match self.evaluate_expr(&func.args[1], ctx)? {
             Value::String(s) => s,
+            Value::Null => return Ok(Value::Null),
             _ => {
                 return Err(QueryError::Type(
                     "GETPRICE: second argument must be a currency string".to_string(),
