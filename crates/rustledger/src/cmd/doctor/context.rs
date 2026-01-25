@@ -4,6 +4,15 @@ use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
 
+/// Convert a byte offset to a 1-based line number.
+fn byte_offset_to_line(source: &str, offset: usize) -> usize {
+    source[..offset.min(source.len())]
+        .chars()
+        .filter(|&c| c == '\n')
+        .count()
+        + 1
+}
+
 pub(super) fn cmd_context<W: Write>(file: &PathBuf, line: usize, writer: &mut W) -> Result<()> {
     let mut loader = Loader::new();
     let load_result = loader
@@ -32,8 +41,11 @@ pub(super) fn cmd_context<W: Write>(file: &PathBuf, line: usize, writer: &mut W)
     writeln!(writer)?;
     for spanned in &load_result.directives {
         let span = &spanned.span;
-        // Check if line falls within directive's span (approximate)
-        if span.start <= line && span.end >= line {
+        // Convert byte offsets to line numbers for comparison
+        let span_start_line = byte_offset_to_line(&source, span.start);
+        let span_end_line = byte_offset_to_line(&source, span.end);
+
+        if span_start_line <= line && span_end_line >= line {
             writeln!(writer, "Directive at this location:")?;
             writeln!(writer, "{:?}", spanned.value)?;
             break;
