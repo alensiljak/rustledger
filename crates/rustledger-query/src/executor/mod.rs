@@ -513,7 +513,11 @@ impl<'a> Executor<'a> {
                     Value::Number(n) => Ok(Value::Number(*n)),
                     Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
                     Value::Inventory(inv) => {
-                        // For inventory, sum all numbers (regardless of currency)
+                        // For inventory, sum all numeric units across positions, ignoring currency.
+                        // NOTE: This is a convenience operation and a known limitation: when the
+                        // inventory contains multiple currencies, the resulting number may not be
+                        // economically meaningful because amounts in different currencies are
+                        // aggregated without conversion.
                         let total: Decimal = inv.positions().iter().map(|p| p.units.number).sum();
                         Ok(Value::Number(total))
                     }

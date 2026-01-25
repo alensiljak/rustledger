@@ -2459,3 +2459,104 @@ fn test_multiple_nested_aggregates_in_select() {
         panic!("Expected Number value for cost_num");
     }
 }
+
+// ============================================================================
+// Unit tests for evaluate_function_on_values code path
+// These test non-aggregate functions wrapping aggregate expressions
+// ============================================================================
+
+#[test]
+fn test_currency_on_aggregate() {
+    // Test currency(cost(sum(position))) - currency extraction from aggregate result
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency(cost(sum(position))) as cost_curr
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "USD");
+    } else {
+        panic!("Expected String value for currency");
+    }
+}
+
+#[test]
+fn test_deeply_nested_aggregate_functions() {
+    // Test abs(number(cost(sum(position)))) - 3 levels of nesting
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT abs(number(cost(sum(position)))) as abs_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_safediv_with_two_aggregate_args() {
+    // Test safediv with two aggregate arguments: safediv(sum(...), count(...))
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), count(1)) as avg_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // 1600 / 2 postings = 800
+        assert_eq!(*n, dec!(800));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_null_propagation_in_nested_aggregates() {
+    // Test that NULL values propagate correctly through nested functions
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(cost(sum(position))) as cost_num
+           WHERE account ~ "Cash"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Cash positions have no cost, so should be NULL
+    assert!(
+        matches!(&result.rows[0][0], Value::Null),
+        "Expected Null for cash position cost"
+    );
+}
+
+#[test]
+fn test_unary_negation_on_aggregate() {
+    // Test -number(cost(sum(position))) - unary operator on aggregate
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT -number(cost(sum(position))) as neg_cost
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(-1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
