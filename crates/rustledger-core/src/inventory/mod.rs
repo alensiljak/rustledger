@@ -184,6 +184,12 @@ pub struct Inventory {
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
     simple_index: HashMap<InternedStr, usize>,
+    /// Cache of total units per currency for O(1) `units()` lookups.
+    /// Updated incrementally on `add()` and `reduce()`.
+    /// Not serialized - rebuilt on demand.
+    #[serde(skip)]
+    #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
+    units_cache: HashMap<InternedStr, Decimal>,
 }
 
 impl PartialEq for Inventory {
@@ -232,13 +238,19 @@ impl Inventory {
     /// Get total units of a currency (ignoring cost lots).
     ///
     /// This sums all positions of the given currency regardless of cost basis.
+    /// Uses an internal cache for O(1) lookups.
     #[must_use]
     pub fn units(&self, currency: &str) -> Decimal {
-        self.positions
-            .iter()
-            .filter(|p| p.units.currency == currency)
-            .map(|p| p.units.number)
-            .sum()
+        // Use cache if available, otherwise compute and the caller should
+        // ensure cache is built via rebuild_caches() after deserialization
+        self.units_cache.get(currency).copied().unwrap_or_else(|| {
+            // Fallback to computation if cache miss (e.g., after deserialization)
+            self.positions
+                .iter()
+                .filter(|p| p.units.currency == currency)
+                .map(|p| p.units.number)
+                .sum()
+        })
     }
 
     /// Get all currencies in this inventory.
@@ -253,6 +265,21 @@ impl Inventory {
         currencies.sort_unstable();
         currencies.dedup();
         currencies
+    }
+
+    /// Check if the given units would reduce (not augment) this inventory.
+    ///
+    /// Returns `true` if there's a position with the same currency but opposite
+    /// sign, meaning these units would reduce the inventory rather than add to it.
+    ///
+    /// This is used to determine whether a posting is a sale/reduction or a
+    /// purchase/augmentation.
+    #[must_use]
+    pub fn is_reduced_by(&self, units: &Amount) -> bool {
+        self.positions.iter().any(|pos| {
+            pos.units.currency == units.currency
+                && pos.units.number.is_sign_positive() != units.number.is_sign_positive()
+        })
     }
 
     /// Get the total book value (cost basis) for a currency.
@@ -285,6 +312,12 @@ impl Inventory {
         if position.is_empty() {
             return;
         }
+
+        // Update units cache
+        *self
+            .units_cache
+            .entry(position.units.currency.clone())
+            .or_default() += position.units.number;
 
         // For positions without cost, use index for O(1) lookup
         if position.cost.is_none() {
@@ -345,11 +378,20 @@ impl Inventory {
         self.rebuild_index();
     }
 
-    /// Rebuild the `simple_index` from positions.
-    /// Called after operations that may invalidate the index (like retain).
+    /// Rebuild all caches (`simple_index` and `units_cache`) from positions.
+    /// Called after operations that may invalidate caches (like retain or deserialization).
     fn rebuild_index(&mut self) {
         self.simple_index.clear();
+        self.units_cache.clear();
+
         for (idx, pos) in self.positions.iter().enumerate() {
+            // Update units cache for all positions
+            *self
+                .units_cache
+                .entry(pos.units.currency.clone())
+                .or_default() += pos.units.number;
+
+            // Update simple_index only for positions without cost
             if pos.cost.is_none() {
                 debug_assert!(
                     !self.simple_index.contains_key(&pos.units.currency),

@@ -742,6 +742,15 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         );
     }
 
+    // Sort directives by date before booking, so lot matching works correctly
+    // regardless of source file ordering (e.g., reverse-chronological ledgers).
+    // Uses stable sort to preserve original ordering for same-date directives.
+    directives.sort_by(|a, b| {
+        a.date()
+            .cmp(&b.date())
+            .then_with(|| a.priority().cmp(&b.priority()))
+    });
+
     let booking_method: BookingMethod = options
         .booking_method
         .parse()

@@ -135,22 +135,13 @@ impl BookingEngine {
                     if let Some(inv) = self.inventories.get(&posting.account) {
                         // Check if inventory is_reduced_by these units
                         // (signs differ for the same currency)
-                        let is_reduction = inv.positions().iter().any(|pos| {
-                            pos.units.currency == units.currency
-                                && pos.units.number.is_sign_positive()
-                                    != units.number.is_sign_positive()
-                        });
+                        let is_reduction = inv.is_reduced_by(units);
 
                         if is_reduction {
-                            // Clone inventory to try booking
-                            let mut inv_clone = inv.clone();
-                            let reduction_amount = units.clone();
-
-                            if let Ok(booking_result) = inv_clone.reduce(
-                                &reduction_amount,
-                                Some(cost_spec),
-                                self.booking_method,
-                            ) {
+                            // Use try_reduce to preview booking without cloning inventory
+                            if let Ok(booking_result) =
+                                inv.try_reduce(units, Some(cost_spec), self.booking_method)
+                            {
                                 // Check if multiple lots were matched
                                 if booking_result.matched.len() > 1 {
                                     // Expand single posting into multiple postings
@@ -287,14 +278,10 @@ impl BookingEngine {
 
                         // Check if this is a reduction (opposite sign exists in inventory)
                         // Reductions get their date from matched lot, augmentations get txn date
-                        let is_reduction =
-                            self.inventories.get(&posting.account).is_some_and(|inv| {
-                                inv.positions().iter().any(|pos| {
-                                    pos.units.currency == units.currency
-                                        && pos.units.number.is_sign_positive()
-                                            != units.number.is_sign_positive()
-                                })
-                            });
+                        let is_reduction = self
+                            .inventories
+                            .get(&posting.account)
+                            .is_some_and(|inv| inv.is_reduced_by(units));
 
                         // Fill in date for augmentations only (not reductions)
                         let inferred_date = if is_reduction {
@@ -320,12 +307,30 @@ impl BookingEngine {
         }
 
         // Apply posting expansions (replace single postings with multiple)
-        // Process in reverse order to maintain correct indices
-        for (orig_idx, expanded) in expansions.into_iter().rev() {
-            result.postings.remove(orig_idx);
-            for (i, posting) in expanded.into_iter().enumerate() {
-                result.postings.insert(orig_idx + i, posting);
+        // Build new postings Vec in one O(n) pass instead of O(n²) remove+insert
+        if !expansions.is_empty() {
+            // Sort expansions by index for forward iteration
+            expansions.sort_by_key(|(idx, _)| *idx);
+
+            let mut new_postings = Vec::with_capacity(
+                result.postings.len() + expansions.iter().map(|(_, e)| e.len()).sum::<usize>(),
+            );
+            let mut expansion_iter = expansions.into_iter().peekable();
+
+            for (idx, posting) in result.postings.into_iter().enumerate() {
+                if expansion_iter
+                    .peek()
+                    .is_some_and(|(exp_idx, _)| *exp_idx == idx)
+                {
+                    // Replace this posting with expanded postings
+                    let (_, expanded) = expansion_iter.next().unwrap();
+                    new_postings.extend(expanded);
+                } else {
+                    // Keep original posting
+                    new_postings.push(posting);
+                }
             }
+            result.postings = new_postings;
         }
 
         // Normalize total prices (@@) to per-unit prices (@)
@@ -379,12 +384,7 @@ impl BookingEngine {
 
                 // Determine if this is a reduction using is_reduced_by logic:
                 // Units reduce inventory when signs differ for the same currency
-                let is_reduction = posting.cost.is_some()
-                    && inv.positions().iter().any(|pos| {
-                        pos.units.currency == units.currency
-                            && pos.units.number.is_sign_positive()
-                                != units.number.is_sign_positive()
-                    });
+                let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units);
 
                 if is_reduction {
                     // Reduce from inventory

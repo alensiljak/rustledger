@@ -1516,30 +1516,18 @@ pub fn parse(source: &str) -> ParseResult {
         let span = index_to_byte_span(&tokens, start_idx, end_idx);
         match item {
             ParsedItem::Directive(d) => {
-                // Apply pushed tags to transactions
-                let tags_only: Vec<InternedStr> =
-                    tag_stack.iter().map(|(t, _)| t.clone()).collect();
-                let d = apply_pushed_tags(d, &tags_only);
-                // Apply pushed meta to all directives
-                let meta_only: Vec<(String, MetaValue)> = meta_stack
-                    .iter()
-                    .map(|(k, v, _)| (k.clone(), v.clone()))
-                    .collect();
-                let d = apply_pushed_meta(d, &meta_only);
+                // Apply pushed tags and meta to directive
+                // Pass iterators to avoid intermediate allocations
+                let d = apply_pushed_tags(d, &tag_stack);
+                let d = apply_pushed_meta(d, &meta_stack);
                 directives.push(Spanned::new(d, span));
             }
             ParsedItem::DirectiveWithPipe(d) => {
                 // Emit deprecation warning for pipe symbol
                 push_pop_errors.push(ParseError::new(ParseErrorKind::DeprecatedPipeSymbol, span));
                 // Still process the directive normally
-                let tags_only: Vec<InternedStr> =
-                    tag_stack.iter().map(|(t, _)| t.clone()).collect();
-                let d = apply_pushed_tags(d, &tags_only);
-                let meta_only: Vec<(String, MetaValue)> = meta_stack
-                    .iter()
-                    .map(|(k, v, _)| (k.clone(), v.clone()))
-                    .collect();
-                let d = apply_pushed_meta(d, &meta_only);
+                let d = apply_pushed_tags(d, &tag_stack);
+                let d = apply_pushed_meta(d, &meta_stack);
                 directives.push(Spanned::new(d, span));
             }
             ParsedItem::Option(k, v) => options.push((k, v, span)),
@@ -1909,14 +1897,15 @@ pub fn parse(source: &str) -> ParseResult {
 }
 
 /// Apply pushed tags to a directive (only affects transactions).
-fn apply_pushed_tags(directive: Directive, tag_stack: &[InternedStr]) -> Directive {
+/// Accepts the full tag stack with spans to avoid intermediate allocations.
+fn apply_pushed_tags(directive: Directive, tag_stack: &[(InternedStr, Span)]) -> Directive {
     if tag_stack.is_empty() {
         return directive;
     }
 
     match directive {
         Directive::Transaction(mut txn) => {
-            for tag in tag_stack {
+            for (tag, _span) in tag_stack {
                 if !txn.tags.contains(tag) {
                     txn.tags.push(tag.clone());
                 }
@@ -1928,14 +1917,15 @@ fn apply_pushed_tags(directive: Directive, tag_stack: &[InternedStr]) -> Directi
 }
 
 /// Apply pushed metadata to a directive.
-fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -> Directive {
+/// Accepts the full meta stack with spans to avoid intermediate allocations.
+fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue, Span)]) -> Directive {
     if meta_stack.is_empty() {
         return directive;
     }
 
     match directive {
         Directive::Transaction(mut txn) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !txn.meta.contains_key(key) {
                     txn.meta.insert(key.clone(), value.clone());
                 }
@@ -1943,7 +1933,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Transaction(txn)
         }
         Directive::Balance(mut bal) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !bal.meta.contains_key(key) {
                     bal.meta.insert(key.clone(), value.clone());
                 }
@@ -1951,7 +1941,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Balance(bal)
         }
         Directive::Open(mut open) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !open.meta.contains_key(key) {
                     open.meta.insert(key.clone(), value.clone());
                 }
@@ -1959,7 +1949,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Open(open)
         }
         Directive::Close(mut close) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !close.meta.contains_key(key) {
                     close.meta.insert(key.clone(), value.clone());
                 }
@@ -1967,7 +1957,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Close(close)
         }
         Directive::Commodity(mut commodity) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !commodity.meta.contains_key(key) {
                     commodity.meta.insert(key.clone(), value.clone());
                 }
@@ -1975,7 +1965,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Commodity(commodity)
         }
         Directive::Pad(mut pad) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !pad.meta.contains_key(key) {
                     pad.meta.insert(key.clone(), value.clone());
                 }
@@ -1983,7 +1973,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Pad(pad)
         }
         Directive::Event(mut event) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !event.meta.contains_key(key) {
                     event.meta.insert(key.clone(), value.clone());
                 }
@@ -1991,7 +1981,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Event(event)
         }
         Directive::Query(mut query) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !query.meta.contains_key(key) {
                     query.meta.insert(key.clone(), value.clone());
                 }
@@ -1999,7 +1989,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Query(query)
         }
         Directive::Note(mut note) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !note.meta.contains_key(key) {
                     note.meta.insert(key.clone(), value.clone());
                 }
@@ -2007,7 +1997,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Note(note)
         }
         Directive::Document(mut document) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !document.meta.contains_key(key) {
                     document.meta.insert(key.clone(), value.clone());
                 }
@@ -2015,7 +2005,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Document(document)
         }
         Directive::Price(mut price) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !price.meta.contains_key(key) {
                     price.meta.insert(key.clone(), value.clone());
                 }
@@ -2023,7 +2013,7 @@ fn apply_pushed_meta(directive: Directive, meta_stack: &[(String, MetaValue)]) -
             Directive::Price(price)
         }
         Directive::Custom(mut custom) => {
-            for (key, value) in meta_stack {
+            for (key, value, _span) in meta_stack {
                 if !custom.meta.contains_key(key) {
                     custom.meta.insert(key.clone(), value.clone());
                 }

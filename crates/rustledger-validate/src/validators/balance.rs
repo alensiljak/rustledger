@@ -6,6 +6,10 @@ use rustledger_core::{Amount, Balance, Pad, Position};
 use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
 
+/// Multiplier for balance assertion tolerance (matches Python beancount).
+/// Balance assertions use 2x the accumulated tolerance from transactions.
+const BALANCE_TOLERANCE_MULTIPLIER: Decimal = Decimal::TWO;
+
 /// Validate a Pad directive.
 pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<ValidationError>) {
     // Check that the target account exists
@@ -83,9 +87,13 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
             // Apply padding: calculate difference and add to both accounts
             // Balance assertions include sub-accounts, so sum them all up
             let mut actual = Decimal::ZERO;
-            let account_prefix = format!("{}:", bal.account);
+            // Check for sub-accounts without allocating a prefix string
+            let account_str = bal.account.as_str();
             for (account, inv) in &state.inventories {
-                if account == &bal.account || account.starts_with(&account_prefix) {
+                if account == &bal.account
+                    || (account.starts_with(account_str)
+                        && account.as_bytes().get(account_str.len()) == Some(&b':'))
+                {
                     actual += inv.units(&bal.amount.currency);
                 }
             }
@@ -124,57 +132,69 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
     // In beancount, balance assertions include sub-accounts
     // e.g., balance Assets:Checking includes Assets:Checking:Sub1, Assets:Checking:Sub2, etc.
     let mut actual = Decimal::ZERO;
-    let account_prefix = format!("{}:", bal.account);
+    // Check for sub-accounts without allocating a prefix string
+    let account_str = bal.account.as_str();
     for (account, inv) in &state.inventories {
         // Include exact match or sub-accounts (account:*)
-        if account == &bal.account || account.starts_with(&account_prefix) {
+        if account == &bal.account
+            || (account.starts_with(account_str)
+                && account.as_bytes().get(account_str.len()) == Some(&b':'))
+        {
             actual += inv.units(&bal.amount.currency);
         }
     }
 
-    if actual != Decimal::ZERO || state.inventories.contains_key(&bal.account) {
-        let expected = bal.amount.number;
-        let difference = (actual - expected).abs();
+    // Always check balance assertions, even for accounts with no transactions.
+    // This matches Python beancount behavior where `balance Account 1 USD` fails
+    // if the account has 0 USD (no transactions).
+    let expected = bal.amount.number;
+    let difference = (actual - expected).abs();
 
-        // Determine tolerance and whether it was explicitly specified
-        // For inferred tolerances, Python beancount uses a 2x multiplier for Balance/Pad
-        // directives because user-created balances may be further off than transaction amounts.
-        let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
-            (t, true)
+    // Determine tolerance. Use explicit tolerance if specified, otherwise use
+    // accumulated tolerance from transactions with 2x multiplier (Python beancount behavior).
+    // If no transactions have been seen for this currency, tolerance is 0 (exact match required).
+    let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
+        (t, true)
+    } else {
+        // Use accumulated tolerance from transactions * 2
+        // This matches Python beancount's inferred_tolerance_multiplier behavior
+        let base_tolerance = state
+            .tolerances
+            .get(&bal.amount.currency)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        (base_tolerance * BALANCE_TOLERANCE_MULTIPLIER, false)
+    };
+
+    if difference > tolerance {
+        // Use E2002 for explicit tolerance, E2001 for inferred
+        let error_code = if is_explicit {
+            ErrorCode::BalanceToleranceExceeded
         } else {
-            (bal.amount.inferred_tolerance() * Decimal::TWO, false)
+            ErrorCode::BalanceAssertionFailed
         };
 
-        if difference > tolerance {
-            // Use E2002 for explicit tolerance, E2001 for inferred
-            let error_code = if is_explicit {
-                ErrorCode::BalanceToleranceExceeded
-            } else {
-                ErrorCode::BalanceAssertionFailed
-            };
+        let message = if is_explicit {
+            format!(
+                "Balance exceeds explicit tolerance for {}: expected {} {} ~ {}, got {} {} (difference: {})",
+                bal.account,
+                expected,
+                bal.amount.currency,
+                tolerance,
+                actual,
+                bal.amount.currency,
+                difference
+            )
+        } else {
+            format!(
+                "Balance assertion failed for {}: expected {} {}, got {} {}",
+                bal.account, expected, bal.amount.currency, actual, bal.amount.currency
+            )
+        };
 
-            let message = if is_explicit {
-                format!(
-                    "Balance exceeds explicit tolerance for {}: expected {} {} ~ {}, got {} {} (difference: {})",
-                    bal.account,
-                    expected,
-                    bal.amount.currency,
-                    tolerance,
-                    actual,
-                    bal.amount.currency,
-                    difference
-                )
-            } else {
-                format!(
-                    "Balance assertion failed for {}: expected {} {}, got {} {}",
-                    bal.account, expected, bal.amount.currency, actual, bal.amount.currency
-                )
-            };
-
-            errors.push(
-                ValidationError::new(error_code, message, bal.date)
-                    .with_context(format!("difference: {difference}, tolerance: {tolerance}")),
-            );
-        }
+        errors.push(
+            ValidationError::new(error_code, message, bal.date)
+                .with_context(format!("difference: {difference}, tolerance: {tolerance}")),
+        );
     }
 }

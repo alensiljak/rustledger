@@ -232,10 +232,13 @@ impl Executor<'_> {
                             let cost = Cost::new(*number_per, currency.clone())
                                 .with_date_opt(cost_spec.date)
                                 .with_label_opt(cost_spec.label.clone());
-                            return Ok(Value::Position(Position::with_cost(units.clone(), cost)));
+                            return Ok(Value::Position(Box::new(Position::with_cost(
+                                units.clone(),
+                                cost,
+                            ))));
                         }
                     }
-                    Ok(Value::Position(Position::simple(units.clone())))
+                    Ok(Value::Position(Box::new(Position::simple(units.clone()))))
                 } else {
                     Ok(Value::Null)
                 }
@@ -279,7 +282,7 @@ impl Executor<'_> {
             "balance" => {
                 // Running balance for this account
                 if let Some(ref balance) = ctx.balance {
-                    Ok(Value::Inventory(balance.clone()))
+                    Ok(Value::Inventory(Box::new(balance.clone())))
                 } else {
                     Ok(Value::Null)
                 }
@@ -373,7 +376,7 @@ impl Executor<'_> {
                 ))
             }
             // Posting metadata as dictionary
-            "meta" => Ok(Value::Metadata(posting.meta.clone())),
+            "meta" => Ok(Value::Metadata(Box::new(posting.meta.clone()))),
             // Source location columns
             "filename" => {
                 if let Some(idx) = ctx.directive_index {
@@ -436,8 +439,8 @@ impl Executor<'_> {
                 for (k, v) in &txn.meta {
                     meta_obj.insert(k.clone(), Self::meta_value_to_value(Some(v)));
                 }
-                obj.insert("meta".to_string(), Value::Object(meta_obj));
-                Ok(Value::Object(obj))
+                obj.insert("meta".to_string(), Value::Object(Box::new(meta_obj)));
+                Ok(Value::Object(Box::new(obj)))
             }
             _ => Err(QueryError::UnknownColumn(name.to_string())),
         }

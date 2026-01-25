@@ -343,7 +343,7 @@ pub fn value_to_json(value: &rustledger_query::Value) -> serde_json::Value {
         }
         Value::Object(obj) => {
             let mut map = serde_json::Map::new();
-            for (k, v) in obj {
+            for (k, v) in obj.as_ref() {
                 map.insert(k.clone(), value_to_json(v));
             }
             serde_json::Value::Object(map)

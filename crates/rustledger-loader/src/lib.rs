@@ -223,8 +223,10 @@ fn decrypt_gpg_file(path: &Path) -> Result<String, LoadError> {
 pub struct Loader {
     /// Files that have been loaded (for cycle detection).
     loaded_files: HashSet<PathBuf>,
-    /// Stack for cycle detection during loading.
+    /// Stack for cycle detection during loading (maintains order for error messages).
     include_stack: Vec<PathBuf>,
+    /// Set for O(1) cycle detection (mirrors `include_stack`).
+    include_stack_set: HashSet<PathBuf>,
     /// Root directory for path traversal protection.
     /// If set, includes must resolve to paths within this directory.
     root_dir: Option<PathBuf>,
@@ -330,9 +332,11 @@ impl Loader {
         source_map: &mut SourceMap,
         errors: &mut Vec<LoadError>,
     ) -> Result<(), LoadError> {
-        // Check for cycles
+        // Allocate path once for reuse
         let path_buf = path.to_path_buf();
-        if self.include_stack.contains(&path_buf) {
+
+        // Check for cycles using O(1) HashSet lookup
+        if self.include_stack_set.contains(&path_buf) {
             let mut cycle: Vec<String> = self
                 .include_stack
                 .iter()
@@ -343,28 +347,33 @@ impl Loader {
         }
 
         // Check if already loaded
-        if self.loaded_files.contains(path) {
+        if self.loaded_files.contains(&path_buf) {
             return Ok(());
         }
 
         // Read file (decrypting if necessary)
-        // Use lossy UTF-8 decoding to handle non-UTF-8 files gracefully (like Python beancount)
+        // Try fast UTF-8 conversion first, fall back to lossy for non-UTF-8 files
         let source: std::sync::Arc<str> = if is_encrypted_file(path) {
             decrypt_gpg_file(path)?.into()
         } else {
             let bytes = fs::read(path).map_err(|e| LoadError::Io {
-                path: path.to_path_buf(),
+                path: path_buf.clone(),
                 source: e,
             })?;
-            String::from_utf8_lossy(&bytes).into_owned().into()
+            // Try zero-copy conversion first (common case), fall back to lossy
+            match String::from_utf8(bytes) {
+                Ok(s) => s.into(),
+                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned().into(),
+            }
         };
 
         // Add to source map (Arc::clone is cheap - just increments refcount)
-        let file_id = source_map.add_file(path.to_path_buf(), std::sync::Arc::clone(&source));
+        let file_id = source_map.add_file(path_buf.clone(), std::sync::Arc::clone(&source));
 
-        // Mark as loading
-        self.include_stack.push(path.to_path_buf());
-        self.loaded_files.insert(path.to_path_buf());
+        // Mark as loading (update both stack and set)
+        self.include_stack_set.insert(path_buf.clone());
+        self.include_stack.push(path_buf.clone());
+        self.loaded_files.insert(path_buf);
 
         // Parse (borrows from Arc, no allocation)
         let result = rustledger_parser::parse(&source);
@@ -427,8 +436,10 @@ impl Loader {
                 .map(|d| d.with_file_id(file_id)),
         );
 
-        // Pop from stack
-        self.include_stack.pop();
+        // Pop from stack and set
+        if let Some(popped) = self.include_stack.pop() {
+            self.include_stack_set.remove(&popped);
+        }
 
         Ok(())
     }

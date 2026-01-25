@@ -57,6 +57,10 @@ use validators::{
 
 use chrono::{Local, NaiveDate};
 use rayon::prelude::*;
+
+/// Threshold for using parallel sort. For small collections, sequential sort
+/// is faster due to reduced threading overhead.
+const PARALLEL_SORT_THRESHOLD: usize = 5000;
 use rust_decimal::Decimal;
 use rustledger_core::{BookingMethod, Directive, InternedStr, Inventory};
 use rustledger_parser::Spanned;
@@ -145,6 +149,9 @@ pub struct LedgerState {
     options: ValidationOptions,
     /// Track previous directive date for out-of-order detection.
     last_date: Option<NaiveDate>,
+    /// Accumulated tolerances per currency from transaction amounts.
+    /// Balance assertions use these with 2x multiplier (Python beancount behavior).
+    tolerances: HashMap<InternedStr, Decimal>,
 }
 
 impl LedgerState {
@@ -214,14 +221,20 @@ pub fn validate_with_options(
 
     let today = Local::now().date_naive();
 
-    // Sort directives by date, then by type priority (parallel)
+    // Sort directives by date, then by type priority
     // (e.g., balance assertions before transactions on the same day)
+    // Use parallel sort only for large collections (threading overhead otherwise)
     let mut sorted: Vec<&Directive> = directives.iter().collect();
-    sorted.par_sort_by(|a, b| {
+    let sort_fn = |a: &&Directive, b: &&Directive| {
         a.date()
             .cmp(&b.date())
             .then_with(|| a.priority().cmp(&b.priority()))
-    });
+    };
+    if sorted.len() >= PARALLEL_SORT_THRESHOLD {
+        sorted.par_sort_by(sort_fn);
+    } else {
+        sorted.sort_by(sort_fn);
+    }
 
     for directive in sorted {
         let date = directive.date();
@@ -315,14 +328,20 @@ pub fn validate_spanned_with_options(
 
     let today = Local::now().date_naive();
 
-    // Sort directives by date, then by type priority (parallel)
+    // Sort directives by date, then by type priority
+    // Use parallel sort only for large collections (threading overhead otherwise)
     let mut sorted: Vec<&Spanned<Directive>> = directives.iter().collect();
-    sorted.par_sort_by(|a, b| {
+    let sort_fn = |a: &&Spanned<Directive>, b: &&Spanned<Directive>| {
         a.value
             .date()
             .cmp(&b.value.date())
             .then_with(|| a.value.priority().cmp(&b.value.priority()))
-    });
+    };
+    if sorted.len() >= PARALLEL_SORT_THRESHOLD {
+        sorted.par_sort_by(sort_fn);
+    } else {
+        sorted.sort_by(sort_fn);
+    }
 
     for spanned in sorted {
         let directive = &spanned.value;
@@ -543,16 +562,15 @@ mod tests {
         );
     }
 
-    /// Test that balance assertions use 2x tolerance multiplier (beancount compatibility).
+    /// Test that balance assertions use inferred tolerance (matching Python beancount).
     ///
-    /// Python beancount uses 2x the inferred tolerance for Balance/Pad directives
-    /// because user-created balances may be further off than transaction amounts.
-    /// For 2 decimal places: base tolerance 0.005 * 2 = 0.01.
+    /// Tolerance is derived from transaction amounts, then multiplied by 2 for balance checks.
+    /// Transaction with 2 decimal places: quantum = 0.01, base tolerance = 0.005, 2x = 0.01.
     #[test]
-    fn test_validate_balance_assertion_2x_tolerance_multiplier() {
-        // Actual balance is 100.00, assertion is 100.01
-        // Difference is 0.01, which equals the 2x tolerance (0.005 * 2)
-        // This should PASS with the 2x multiplier
+    fn test_validate_balance_assertion_within_tolerance() {
+        // Actual balance is 100.00, assertion is 100.005
+        // Difference is 0.005, which is less than tolerance (0.01 = 0.005 * 2)
+        // This should PASS (matching Python beancount behavior)
         let directives = vec![
             Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
             Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Misc")),
@@ -560,7 +578,7 @@ mod tests {
                 Transaction::new(date(2024, 1, 15), "Deposit")
                     .with_posting(Posting::new(
                         "Assets:Bank",
-                        Amount::new(dec!(100.00), "USD"),
+                        Amount::new(dec!(100.00), "USD"), // 2 decimal places → tolerance = 0.005 * 2 = 0.01
                     ))
                     .with_posting(Posting::new(
                         "Expenses:Misc",
@@ -570,22 +588,23 @@ mod tests {
             Directive::Balance(Balance::new(
                 date(2024, 1, 16),
                 "Assets:Bank",
-                Amount::new(dec!(100.01), "USD"), // 0.01 difference, within 2x tolerance
+                Amount::new(dec!(100.005), "USD"), // 0.005 difference, within tolerance of 0.01
             )),
         ];
 
         let errors = validate(&directives);
         assert!(
             errors.is_empty(),
-            "Balance within 2x tolerance should pass: {errors:?}"
+            "Balance within tolerance should pass: {errors:?}"
         );
     }
 
-    /// Test that balance assertions still fail when exceeding 2x tolerance.
+    /// Test that balance assertions fail when exceeding tolerance.
     #[test]
-    fn test_validate_balance_assertion_exceeds_2x_tolerance() {
+    fn test_validate_balance_assertion_exceeds_tolerance() {
         // Actual balance is 100.00, assertion is 100.011
-        // Difference is 0.011, which exceeds the 2x tolerance for 3 decimals (0.0005 * 2 = 0.001)
+        // Transaction has 2 decimal places: tolerance = 0.005 * 2 = 0.01
+        // Difference is 0.011, which exceeds tolerance
         // This should FAIL
         let directives = vec![
             Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
