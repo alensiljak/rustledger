@@ -2330,7 +2330,7 @@ fn test_units_sum_position() {
     // Test units(sum(position)) - nested aggregate with non-aggregate function
     let directives = make_holdings_directives();
     let result = execute_query(
-        r#"SELECT account, units(sum(position)) as units GROUP BY account"#,
+        r"SELECT account, units(sum(position)) as units GROUP BY account",
         &directives,
     );
 
@@ -2691,7 +2691,7 @@ fn test_value_function_with_conversion() {
 fn test_empty_function() {
     let directives = make_test_directives();
     let result = execute_query(
-        r#"SELECT empty(sum(position)) as is_empty GROUP BY account LIMIT 1"#,
+        r"SELECT empty(sum(position)) as is_empty GROUP BY account LIMIT 1",
         &directives,
     );
 
