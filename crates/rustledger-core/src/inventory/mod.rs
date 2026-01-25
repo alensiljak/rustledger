@@ -255,6 +255,21 @@ impl Inventory {
         currencies
     }
 
+    /// Check if the given units would reduce (not augment) this inventory.
+    ///
+    /// Returns `true` if there's a position with the same currency but opposite
+    /// sign, meaning these units would reduce the inventory rather than add to it.
+    ///
+    /// This is used to determine whether a posting is a sale/reduction or a
+    /// purchase/augmentation.
+    #[must_use]
+    pub fn is_reduced_by(&self, units: &Amount) -> bool {
+        self.positions.iter().any(|pos| {
+            pos.units.currency == units.currency
+                && pos.units.number.is_sign_positive() != units.number.is_sign_positive()
+        })
+    }
+
     /// Get the total book value (cost basis) for a currency.
     ///
     /// Returns the sum of all cost bases for positions of the given currency.

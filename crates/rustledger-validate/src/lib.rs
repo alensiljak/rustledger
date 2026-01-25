@@ -57,6 +57,10 @@ use validators::{
 
 use chrono::{Local, NaiveDate};
 use rayon::prelude::*;
+
+/// Threshold for using parallel sort. For small collections, sequential sort
+/// is faster due to reduced threading overhead.
+const PARALLEL_SORT_THRESHOLD: usize = 5000;
 use rust_decimal::Decimal;
 use rustledger_core::{BookingMethod, Directive, InternedStr, Inventory};
 use rustledger_parser::Spanned;
@@ -214,14 +218,20 @@ pub fn validate_with_options(
 
     let today = Local::now().date_naive();
 
-    // Sort directives by date, then by type priority (parallel)
+    // Sort directives by date, then by type priority
     // (e.g., balance assertions before transactions on the same day)
+    // Use parallel sort only for large collections (threading overhead otherwise)
     let mut sorted: Vec<&Directive> = directives.iter().collect();
-    sorted.par_sort_by(|a, b| {
+    let sort_fn = |a: &&Directive, b: &&Directive| {
         a.date()
             .cmp(&b.date())
             .then_with(|| a.priority().cmp(&b.priority()))
-    });
+    };
+    if sorted.len() >= PARALLEL_SORT_THRESHOLD {
+        sorted.par_sort_by(sort_fn);
+    } else {
+        sorted.sort_by(sort_fn);
+    }
 
     for directive in sorted {
         let date = directive.date();
@@ -315,14 +325,20 @@ pub fn validate_spanned_with_options(
 
     let today = Local::now().date_naive();
 
-    // Sort directives by date, then by type priority (parallel)
+    // Sort directives by date, then by type priority
+    // Use parallel sort only for large collections (threading overhead otherwise)
     let mut sorted: Vec<&Spanned<Directive>> = directives.iter().collect();
-    sorted.par_sort_by(|a, b| {
+    let sort_fn = |a: &&Spanned<Directive>, b: &&Spanned<Directive>| {
         a.value
             .date()
             .cmp(&b.value.date())
             .then_with(|| a.value.priority().cmp(&b.value.priority()))
-    });
+    };
+    if sorted.len() >= PARALLEL_SORT_THRESHOLD {
+        sorted.par_sort_by(sort_fn);
+    } else {
+        sorted.sort_by(sort_fn);
+    }
 
     for spanned in sorted {
         let directive = &spanned.value;
