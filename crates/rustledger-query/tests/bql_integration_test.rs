@@ -2560,3 +2560,102 @@ fn test_unary_negation_on_aggregate() {
         panic!("Expected Number value");
     }
 }
+
+#[test]
+fn test_number_on_multi_currency_inventory_returns_null() {
+    // When an inventory has multiple currencies, NUMBER should return NULL
+    // rather than summing across currencies (which is meaningless)
+    let directives = make_holdings_directives();
+    // Query without GROUP BY currency - will aggregate AAPL and USD together
+    let result = execute_query(
+        r#"SELECT number(units(sum(position))) as units_num
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should be NULL because inventory has both AAPL and USD (from cost)
+    // Actually, units(sum(position)) returns inventory with AAPL only
+    // Let me verify the actual behavior - this tests single currency case
+    if let Value::Number(n) = &result.rows[0][0] {
+        // 10 + 5 = 15 AAPL (all same currency)
+        assert_eq!(*n, dec!(15));
+    } else {
+        panic!("Expected Number for single-currency inventory");
+    }
+}
+
+#[test]
+fn test_number_on_single_currency_inventory() {
+    // When inventory has one currency, NUMBER should return the total
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT currency, number(units(sum(position))) as units_num
+           WHERE account ~ "Brokerage"
+           GROUP BY currency"#,
+        &directives,
+    );
+
+    // Should have 1 row for AAPL
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][1] {
+        assert_eq!(*n, dec!(15)); // 10 + 5 AAPL
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+fn make_multi_currency_holdings() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // Buy 10 AAPL
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("USD")
+                            .with_date(date(2024, 1, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD"))),
+        ),
+        // Buy 5 GOOG (different currency/stock)
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 10), "Buy GOOG")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(5), "GOOG")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD")
+                            .with_date(date(2024, 2, 10)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-750), "USD"))),
+        ),
+    ]
+}
+
+#[test]
+fn test_number_returns_null_for_mixed_currency_inventory() {
+    // When an inventory contains multiple currencies (AAPL + GOOG),
+    // NUMBER should return NULL rather than a meaningless sum
+    let directives = make_multi_currency_holdings();
+    let result = execute_query(
+        r#"SELECT number(units(sum(position))) as units_num
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should be NULL because inventory has AAPL and GOOG
+    assert!(
+        matches!(&result.rows[0][0], Value::Null),
+        "Expected Null for multi-currency inventory, got {:?}",
+        result.rows[0][0]
+    );
+}

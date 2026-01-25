@@ -513,13 +513,22 @@ impl<'a> Executor<'a> {
                     Value::Number(n) => Ok(Value::Number(*n)),
                     Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
                     Value::Inventory(inv) => {
-                        // For inventory, sum all numeric units across positions, ignoring currency.
-                        // NOTE: This is a convenience operation and a known limitation: when the
-                        // inventory contains multiple currencies, the resulting number may not be
-                        // economically meaningful because amounts in different currencies are
-                        // aggregated without conversion.
-                        let total: Decimal = inv.positions().iter().map(|p| p.units.number).sum();
-                        Ok(Value::Number(total))
+                        // For inventory, only return a number if all positions share the same
+                        // currency. Summing across different currencies is not meaningful.
+                        let positions = inv.positions();
+                        if positions.is_empty() {
+                            return Ok(Value::Number(Decimal::ZERO));
+                        }
+                        let first_currency = &positions[0].units.currency;
+                        let all_same_currency =
+                            positions.iter().all(|p| &p.units.currency == first_currency);
+                        if all_same_currency {
+                            let total: Decimal = positions.iter().map(|p| p.units.number).sum();
+                            Ok(Value::Number(total))
+                        } else {
+                            // Multiple currencies - return NULL rather than a meaningless sum
+                            Ok(Value::Null)
+                        }
                     }
                     Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type(
