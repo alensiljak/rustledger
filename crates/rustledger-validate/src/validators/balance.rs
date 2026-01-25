@@ -137,10 +137,12 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
         let difference = (actual - expected).abs();
 
         // Determine tolerance and whether it was explicitly specified
+        // For inferred tolerances, Python beancount uses a 2x multiplier for Balance/Pad
+        // directives because user-created balances may be further off than transaction amounts.
         let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
             (t, true)
         } else {
-            (bal.amount.inferred_tolerance(), false)
+            (bal.amount.inferred_tolerance() * Decimal::TWO, false)
         };
 
         if difference > tolerance {

@@ -543,6 +543,80 @@ mod tests {
         );
     }
 
+    /// Test that balance assertions use 2x tolerance multiplier (beancount compatibility).
+    ///
+    /// Python beancount uses 2x the inferred tolerance for Balance/Pad directives
+    /// because user-created balances may be further off than transaction amounts.
+    /// For 2 decimal places: base tolerance 0.005 * 2 = 0.01.
+    #[test]
+    fn test_validate_balance_assertion_2x_tolerance_multiplier() {
+        // Actual balance is 100.00, assertion is 100.01
+        // Difference is 0.01, which equals the 2x tolerance (0.005 * 2)
+        // This should PASS with the 2x multiplier
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Misc")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Deposit")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(100.00), "USD"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Expenses:Misc",
+                        Amount::new(dec!(-100.00), "USD"),
+                    )),
+            ),
+            Directive::Balance(Balance::new(
+                date(2024, 1, 16),
+                "Assets:Bank",
+                Amount::new(dec!(100.01), "USD"), // 0.01 difference, within 2x tolerance
+            )),
+        ];
+
+        let errors = validate(&directives);
+        assert!(
+            errors.is_empty(),
+            "Balance within 2x tolerance should pass: {errors:?}"
+        );
+    }
+
+    /// Test that balance assertions still fail when exceeding 2x tolerance.
+    #[test]
+    fn test_validate_balance_assertion_exceeds_2x_tolerance() {
+        // Actual balance is 100.00, assertion is 100.011
+        // Difference is 0.011, which exceeds the 2x tolerance for 3 decimals (0.0005 * 2 = 0.001)
+        // This should FAIL
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Misc")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Deposit")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(100.00), "USD"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Expenses:Misc",
+                        Amount::new(dec!(-100.00), "USD"),
+                    )),
+            ),
+            Directive::Balance(Balance::new(
+                date(2024, 1, 16),
+                "Assets:Bank",
+                Amount::new(dec!(100.011), "USD"), // 0.011 difference, exceeds 2x tolerance
+            )),
+        ];
+
+        let errors = validate(&directives);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::BalanceAssertionFailed),
+            "Balance exceeding 2x tolerance should fail"
+        );
+    }
+
     #[test]
     fn test_validate_unbalanced_transaction() {
         let directives = vec![
