@@ -171,7 +171,7 @@ jobs:
           FROM scratch
           ARG TARGETARCH
           COPY ${TARGETARCH}/* /usr/local/bin/
-          ENTRYPOINT ["rledger-check"]
+          ENTRYPOINT ["rledger"]
           EOF
       - name: Extract metadata
         id: meta

@@ -94,7 +94,7 @@ jobs:
             --warmup 2 \
             --runs 5 \
             --export-json bench-pr.json \
-            --command-name 'rustledger' './target/release/rledger-check benchmark.beancount' \
+            --command-name 'rustledger' './target/release/rledger check benchmark.beancount' \
             --command-name 'beancount' 'bean-check benchmark.beancount'
 
           # Extract results
@@ -133,7 +133,7 @@ jobs:
         id: memory
         run: |
           # Measure peak RSS
-          rustledger_mem=$(/usr/bin/time -v ./target/release/rledger-check benchmark.beancount 2>&1 | grep "Maximum resident set size" | awk '{print $6}')
+          rustledger_mem=$(/usr/bin/time -v ./target/release/rledger check benchmark.beancount 2>&1 | grep "Maximum resident set size" | awk '{print $6}')
           beancount_mem=$(/usr/bin/time -v bean-check benchmark.beancount 2>&1 | grep "Maximum resident set size" | awk '{print $6}')
 
           rustledger_mb=$(echo "scale=1; $rustledger_mem / 1024" | bc)
