@@ -1590,6 +1590,104 @@ fn test_select_order_by_desc() {
     assert_eq!(result.rows[2][0], Value::String("Carol".to_string())); // 78
 }
 
+/// Test ORDER BY with GROUP BY expressions that are not in SELECT.
+///
+/// This test verifies that ORDER BY can reference expressions that appear in
+/// GROUP BY but not in SELECT (hidden columns). This is valid SQL semantics
+/// and matches Python beancount behavior.
+#[test]
+fn test_order_by_group_by_expression_not_in_select() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Query with account_sortkey in GROUP BY and ORDER BY but not in SELECT
+    // This should work because account_sortkey(account) is a GROUP BY expression
+    let query = parse(
+        "SELECT account, sum(number) \
+         GROUP BY account, account_sortkey(account) \
+         ORDER BY account_sortkey(account)",
+    )
+    .expect("should parse");
+    let result = executor.execute(&query).expect("should execute");
+
+    // The result should only have 2 columns (account and sum), not the hidden sortkey column
+    assert_eq!(result.columns.len(), 2);
+    assert_eq!(result.columns[0], "account");
+    assert_eq!(result.columns[1], "sum");
+
+    // Verify all rows have exactly 2 values
+    for row in &result.rows {
+        assert_eq!(
+            row.len(),
+            2,
+            "Row should have 2 columns, not hidden columns"
+        );
+    }
+}
+
+/// Test ORDER BY with multiple GROUP BY expressions, some not in SELECT.
+#[test]
+fn test_order_by_multiple_hidden_columns() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Multiple ORDER BY expressions where some are not in SELECT
+    let query = parse(
+        "SELECT account, sum(number), currency \
+         GROUP BY account, currency, account_sortkey(account) \
+         ORDER BY account_sortkey(account), currency",
+    )
+    .expect("should parse");
+    let result = executor.execute(&query).expect("should execute");
+
+    // Should have 3 visible columns
+    assert_eq!(result.columns.len(), 3);
+    assert_eq!(result.columns[0], "account");
+    assert_eq!(result.columns[1], "sum");
+    assert_eq!(result.columns[2], "currency");
+
+    // Verify all rows have exactly 3 values
+    for row in &result.rows {
+        assert_eq!(
+            row.len(),
+            3,
+            "Row should have 3 columns, not hidden columns"
+        );
+    }
+}
+
+/// Test ORDER BY with hidden columns in non-aggregate query.
+///
+/// This tests the edge case where a query has GROUP BY but no aggregate functions.
+#[test]
+fn test_order_by_hidden_column_non_aggregate() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Query without aggregate functions but with GROUP BY and ORDER BY
+    // Note: This is unusual but valid SQL semantics
+    let query = parse(
+        "SELECT account \
+         GROUP BY account, account_sortkey(account) \
+         ORDER BY account_sortkey(account)",
+    )
+    .expect("should parse");
+    let result = executor.execute(&query).expect("should execute");
+
+    // Should only have 1 column (account), hidden column should be removed
+    assert_eq!(result.columns.len(), 1);
+    assert_eq!(result.columns[0], "account");
+
+    // Verify all rows have exactly 1 value
+    for row in &result.rows {
+        assert_eq!(
+            row.len(),
+            1,
+            "Row should have 1 column, hidden column removed"
+        );
+    }
+}
+
 #[test]
 fn test_select_with_limit() {
     let directives = make_test_directives();

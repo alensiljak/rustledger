@@ -36,14 +36,16 @@ impl Executor<'_> {
                     .copied()
                     .ok_or_else(|| QueryError::UnknownColumn(name.clone()))?,
                 Expr::Function(func) => {
-                    // Try to find a column with the function name
+                    // First try to find a column with the function name (e.g., "sum" for sum(amount))
+                    // Then try the full expression string (e.g., "account_sortkey(account)")
+                    let expr_str = spec.expr.to_string();
                     column_indices
                         .get(func.name.as_str())
+                        .or_else(|| column_indices.get(expr_str.as_str()))
                         .copied()
                         .ok_or_else(|| {
                             QueryError::Evaluation(format!(
-                                "ORDER BY expression not found in SELECT: {}",
-                                func.name
+                                "ORDER BY expression not found in SELECT: {expr_str}"
                             ))
                         })?
                 }

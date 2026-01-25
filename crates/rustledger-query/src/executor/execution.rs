@@ -27,8 +27,17 @@ impl Executor<'_> {
             }
         }
 
-        // Determine column names
-        let column_names = self.resolve_column_names(&query.targets)?;
+        // Find ORDER BY expressions that are in GROUP BY but not in SELECT.
+        // These need to be added as hidden columns for sorting.
+        let hidden_targets = self.find_hidden_order_by_targets(query);
+        let num_hidden = hidden_targets.len();
+
+        // Create extended targets including hidden columns
+        let mut extended_targets = query.targets.clone();
+        extended_targets.extend(hidden_targets);
+
+        // Determine column names (including hidden columns)
+        let column_names = self.resolve_column_names(&extended_targets)?;
         let mut result = QueryResult::new(column_names.clone());
 
         // Collect matching postings
@@ -44,9 +53,11 @@ impl Executor<'_> {
             // Group and aggregate
             let grouped = self.group_postings(&postings, query.group_by.as_ref())?;
             for (_, group) in grouped {
-                let row = self.evaluate_aggregate_row(&query.targets, &group)?;
+                // Use extended_targets to include hidden columns for ORDER BY
+                let row = self.evaluate_aggregate_row(&extended_targets, &group)?;
 
                 // Apply HAVING filter on aggregated row
+                // Note: HAVING only references visible columns, which are at indices 0..N
                 if let Some(having_expr) = &query.having {
                     if !self.evaluate_having_filter(
                         having_expr,
@@ -83,10 +94,11 @@ impl Executor<'_> {
             };
 
             for (i, ctx) in postings.iter().enumerate() {
+                // Use extended_targets to include hidden columns for ORDER BY
                 let row = if let Some(ref wctxs) = window_contexts {
-                    self.evaluate_row_with_window(&query.targets, ctx, Some(&wctxs[i]))?
+                    self.evaluate_row_with_window(&extended_targets, ctx, Some(&wctxs[i]))?
                 } else {
-                    self.evaluate_row(&query.targets, ctx)?
+                    self.evaluate_row(&extended_targets, ctx)?
                 };
                 if query.distinct {
                     // O(1) hash-based deduplication
@@ -120,12 +132,69 @@ impl Executor<'_> {
             self.sort_results(&mut result, &default_order)?;
         }
 
+        // Remove hidden columns after sorting
+        if num_hidden > 0 {
+            let visible_count = result.columns.len() - num_hidden;
+            result.columns.truncate(visible_count);
+            for row in &mut result.rows {
+                row.truncate(visible_count);
+            }
+        }
+
         // Apply LIMIT
         if let Some(limit) = query.limit {
             result.rows.truncate(limit as usize);
         }
 
         Ok(result)
+    }
+
+    /// Find ORDER BY expressions that are in GROUP BY but not in SELECT.
+    ///
+    /// These expressions need to be added as hidden columns so sorting can work.
+    /// Returns targets with aliases set to the full expression string for matching.
+    fn find_hidden_order_by_targets(&self, query: &SelectQuery) -> Vec<Target> {
+        let Some(order_by) = &query.order_by else {
+            return Vec::new();
+        };
+        let Some(group_by) = &query.group_by else {
+            return Vec::new();
+        };
+
+        let mut hidden = Vec::new();
+        for spec in order_by {
+            // Check if this ORDER BY expression is in GROUP BY
+            let in_group_by = group_by.contains(&spec.expr);
+            if !in_group_by {
+                continue;
+            }
+
+            // Check if it's already in SELECT (by expression or by alias)
+            let expr_str = spec.expr.to_string();
+            let in_select = query.targets.iter().any(|t| {
+                // Check if expression matches (Expr derives PartialEq)
+                if t.expr == spec.expr {
+                    return true;
+                }
+                // Check if alias matches the expression string
+                if let Some(alias) = &t.alias {
+                    if alias == &expr_str {
+                        return true;
+                    }
+                }
+                false
+            });
+
+            if !in_select {
+                // Add as hidden target with alias = full expression string for matching
+                hidden.push(Target {
+                    expr: spec.expr.clone(),
+                    alias: Some(expr_str),
+                });
+            }
+        }
+
+        hidden
     }
 
     /// Execute a SELECT query that sources from a subquery.

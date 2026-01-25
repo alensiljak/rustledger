@@ -5,6 +5,7 @@
 
 use rust_decimal::Decimal;
 use rustledger_core::NaiveDate;
+use std::fmt;
 
 /// A complete BQL query.
 #[derive(Debug, Clone, PartialEq)]
@@ -544,5 +545,251 @@ impl OrderSpec {
             expr,
             direction: SortDirection::Desc,
         }
+    }
+}
+
+impl fmt::Display for Expr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Wildcard => write!(f, "*"),
+            Self::Column(name) => write!(f, "{name}"),
+            Self::Literal(lit) => write!(f, "{lit}"),
+            Self::Function(func) => {
+                write!(f, "{}(", func.name)?;
+                for (i, arg) in func.args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ")")
+            }
+            Self::Window(wf) => {
+                write!(f, "{}(", wf.name)?;
+                for (i, arg) in wf.args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ") OVER ()")
+            }
+            Self::BinaryOp(op) => write!(f, "({} {} {})", op.left, op.op, op.right),
+            Self::UnaryOp(op) => {
+                // IS NULL and IS NOT NULL are postfix operators
+                match op.op {
+                    UnaryOperator::IsNull => write!(f, "{} IS NULL", op.operand),
+                    UnaryOperator::IsNotNull => write!(f, "{} IS NOT NULL", op.operand),
+                    _ => write!(f, "{}{}", op.op, op.operand),
+                }
+            }
+            Self::Paren(inner) => write!(f, "({inner})"),
+            Self::Between { value, low, high } => {
+                write!(f, "{value} BETWEEN {low} AND {high}")
+            }
+        }
+    }
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(s) => write!(f, "\"{s}\""),
+            Self::Number(n) => write!(f, "{n}"),
+            Self::Integer(n) => write!(f, "{n}"),
+            Self::Date(d) => write!(f, "{d}"),
+            Self::Boolean(b) => write!(f, "{b}"),
+            Self::Null => write!(f, "NULL"),
+        }
+    }
+}
+
+impl fmt::Display for BinaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Eq => "=",
+            Self::Ne => "!=",
+            Self::Lt => "<",
+            Self::Le => "<=",
+            Self::Gt => ">",
+            Self::Ge => ">=",
+            Self::Regex => "~",
+            Self::NotRegex => "!~",
+            Self::In => "IN",
+            Self::NotIn => "NOT IN",
+            Self::And => "AND",
+            Self::Or => "OR",
+            Self::Add => "+",
+            Self::Sub => "-",
+            Self::Mul => "*",
+            Self::Div => "/",
+            Self::Mod => "%",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl fmt::Display for UnaryOperator {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Not => "NOT ",
+            Self::Neg => "-",
+            Self::IsNull => " IS NULL",
+            Self::IsNotNull => " IS NOT NULL",
+        };
+        write!(f, "{s}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    #[test]
+    fn test_expr_display_wildcard() {
+        assert_eq!(Expr::Wildcard.to_string(), "*");
+    }
+
+    #[test]
+    fn test_expr_display_column() {
+        assert_eq!(Expr::Column("account".to_string()).to_string(), "account");
+    }
+
+    #[test]
+    fn test_expr_display_literals() {
+        assert_eq!(Expr::string("hello").to_string(), "\"hello\"");
+        assert_eq!(Expr::integer(42).to_string(), "42");
+        assert_eq!(Expr::number(dec!(3.14)).to_string(), "3.14");
+        assert_eq!(Expr::boolean(true).to_string(), "true");
+        assert_eq!(Expr::null().to_string(), "NULL");
+    }
+
+    #[test]
+    fn test_expr_display_date() {
+        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        assert_eq!(Expr::date(date).to_string(), "2024-01-15");
+    }
+
+    #[test]
+    fn test_expr_display_function_no_args() {
+        let func = Expr::function("now", vec![]);
+        assert_eq!(func.to_string(), "now()");
+    }
+
+    #[test]
+    fn test_expr_display_function_one_arg() {
+        let func = Expr::function("account_sortkey", vec![Expr::column("account")]);
+        assert_eq!(func.to_string(), "account_sortkey(account)");
+    }
+
+    #[test]
+    fn test_expr_display_function_multiple_args() {
+        let func = Expr::function(
+            "coalesce",
+            vec![Expr::column("a"), Expr::column("b"), Expr::integer(0)],
+        );
+        assert_eq!(func.to_string(), "coalesce(a, b, 0)");
+    }
+
+    #[test]
+    fn test_expr_display_window() {
+        let wf = Expr::Window(WindowFunction {
+            name: "row_number".to_string(),
+            args: vec![],
+            over: WindowSpec::default(),
+        });
+        assert_eq!(wf.to_string(), "row_number() OVER ()");
+    }
+
+    #[test]
+    fn test_expr_display_window_with_args() {
+        let wf = Expr::Window(WindowFunction {
+            name: "sum".to_string(),
+            args: vec![Expr::column("amount")],
+            over: WindowSpec::default(),
+        });
+        assert_eq!(wf.to_string(), "sum(amount) OVER ()");
+    }
+
+    #[test]
+    fn test_expr_display_binary_op() {
+        let expr = Expr::binary(Expr::column("a"), BinaryOperator::Add, Expr::integer(1));
+        assert_eq!(expr.to_string(), "(a + 1)");
+    }
+
+    #[test]
+    fn test_expr_display_unary_not() {
+        let expr = Expr::unary(UnaryOperator::Not, Expr::column("flag"));
+        assert_eq!(expr.to_string(), "NOT flag");
+    }
+
+    #[test]
+    fn test_expr_display_unary_neg() {
+        let expr = Expr::unary(UnaryOperator::Neg, Expr::column("x"));
+        assert_eq!(expr.to_string(), "-x");
+    }
+
+    #[test]
+    fn test_expr_display_is_null() {
+        let expr = Expr::unary(UnaryOperator::IsNull, Expr::column("x"));
+        assert_eq!(expr.to_string(), "x IS NULL");
+    }
+
+    #[test]
+    fn test_expr_display_is_not_null() {
+        let expr = Expr::unary(UnaryOperator::IsNotNull, Expr::column("x"));
+        assert_eq!(expr.to_string(), "x IS NOT NULL");
+    }
+
+    #[test]
+    fn test_expr_display_paren() {
+        let inner = Expr::binary(Expr::column("a"), BinaryOperator::Add, Expr::column("b"));
+        let expr = Expr::Paren(Box::new(inner));
+        assert_eq!(expr.to_string(), "((a + b))");
+    }
+
+    #[test]
+    fn test_expr_display_between() {
+        let expr = Expr::between(Expr::column("x"), Expr::integer(1), Expr::integer(10));
+        assert_eq!(expr.to_string(), "x BETWEEN 1 AND 10");
+    }
+
+    #[test]
+    fn test_binary_operator_display() {
+        assert_eq!(BinaryOperator::Eq.to_string(), "=");
+        assert_eq!(BinaryOperator::Ne.to_string(), "!=");
+        assert_eq!(BinaryOperator::Lt.to_string(), "<");
+        assert_eq!(BinaryOperator::Le.to_string(), "<=");
+        assert_eq!(BinaryOperator::Gt.to_string(), ">");
+        assert_eq!(BinaryOperator::Ge.to_string(), ">=");
+        assert_eq!(BinaryOperator::Regex.to_string(), "~");
+        assert_eq!(BinaryOperator::NotRegex.to_string(), "!~");
+        assert_eq!(BinaryOperator::In.to_string(), "IN");
+        assert_eq!(BinaryOperator::NotIn.to_string(), "NOT IN");
+        assert_eq!(BinaryOperator::And.to_string(), "AND");
+        assert_eq!(BinaryOperator::Or.to_string(), "OR");
+        assert_eq!(BinaryOperator::Add.to_string(), "+");
+        assert_eq!(BinaryOperator::Sub.to_string(), "-");
+        assert_eq!(BinaryOperator::Mul.to_string(), "*");
+        assert_eq!(BinaryOperator::Div.to_string(), "/");
+        assert_eq!(BinaryOperator::Mod.to_string(), "%");
+    }
+
+    #[test]
+    fn test_unary_operator_display() {
+        assert_eq!(UnaryOperator::Not.to_string(), "NOT ");
+        assert_eq!(UnaryOperator::Neg.to_string(), "-");
+        assert_eq!(UnaryOperator::IsNull.to_string(), " IS NULL");
+        assert_eq!(UnaryOperator::IsNotNull.to_string(), " IS NOT NULL");
+    }
+
+    #[test]
+    fn test_literal_display() {
+        assert_eq!(Literal::String("test".to_string()).to_string(), "\"test\"");
+        assert_eq!(Literal::Number(dec!(1.5)).to_string(), "1.5");
+        assert_eq!(Literal::Integer(42).to_string(), "42");
+        assert_eq!(Literal::Boolean(false).to_string(), "false");
+        assert_eq!(Literal::Null.to_string(), "NULL");
     }
 }

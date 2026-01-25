@@ -65,7 +65,13 @@ impl Executor<'_> {
                 Self::require_args(name, func, 1)?;
                 let val = self.evaluate_expr(&func.args[0], ctx)?;
                 match val {
-                    Value::String(s) => Ok(Value::String(s)),
+                    Value::String(s) => {
+                        // Return "{type_index}-{account}" for sorting
+                        // Type indices match Python beancount:
+                        // Assets=0, Liabilities=1, Equity=2, Income=3, Expenses=4, Other=5
+                        let type_index = Self::account_type_index(&s);
+                        Ok(Value::String(format!("{type_index}-{s}")))
+                    }
                     _ => Err(QueryError::Type(
                         "ACCOUNT_SORTKEY expects an account string".to_string(),
                     )),
@@ -179,6 +185,28 @@ impl Executor<'_> {
             _ => Err(QueryError::Type(
                 "ROOT expects an account string".to_string(),
             )),
+        }
+    }
+
+    /// Get the account type index for sorting.
+    ///
+    /// Returns the type index matching Python beancount:
+    /// - Assets = 0
+    /// - Liabilities = 1
+    /// - Equity = 2
+    /// - Income = 3
+    /// - Expenses = 4
+    /// - Other = 5 (for custom account types)
+    pub(crate) fn account_type_index(account: &str) -> u8 {
+        // Extract the first component (root account type)
+        let root = account.split(':').next().unwrap_or(account);
+        match root {
+            "Assets" => 0,
+            "Liabilities" => 1,
+            "Equity" => 2,
+            "Income" => 3,
+            "Expenses" => 4,
+            _ => 5, // Custom account types sort last
         }
     }
 }
