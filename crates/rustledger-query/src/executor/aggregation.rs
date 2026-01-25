@@ -15,10 +15,15 @@ impl<'a> Executor<'a> {
     pub(super) fn is_aggregate_expr(expr: &Expr) -> bool {
         match expr {
             Expr::Function(func) => {
-                matches!(
+                // Check if this function itself is an aggregate
+                if matches!(
                     func.name.to_uppercase().as_str(),
                     "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG"
-                )
+                ) {
+                    return true;
+                }
+                // Also check if any argument contains an aggregate (e.g., units(sum(position)))
+                func.args.iter().any(Self::is_aggregate_expr)
             }
             Expr::BinaryOp(op) => {
                 Self::is_aggregate_expr(&op.left) || Self::is_aggregate_expr(&op.right)
@@ -335,12 +340,14 @@ impl<'a> Executor<'a> {
                         }
                     }
                     _ => {
-                        // Non-aggregate function
-                        if let Some(ctx) = group.first() {
-                            self.evaluate_function(func, ctx)
-                        } else {
-                            Ok(Value::Null)
+                        // Non-aggregate function - but arguments may contain aggregates
+                        // First recursively evaluate all arguments in aggregate mode
+                        let mut evaluated_args = Vec::with_capacity(func.args.len());
+                        for arg in &func.args {
+                            evaluated_args.push(self.evaluate_aggregate_expr(arg, group)?);
                         }
+                        // Then apply the function to pre-evaluated values
+                        self.evaluate_function_on_values(&func.name, &evaluated_args)
                     }
                 }
             }
@@ -358,8 +365,26 @@ impl<'a> Executor<'a> {
                 // Re-evaluate with computed values
                 self.binary_op_on_values(op.op, &left, &right)
             }
+            Expr::UnaryOp(op) => {
+                let val = self.evaluate_aggregate_expr(&op.operand, group)?;
+                self.unary_op_on_value(op.op, &val)
+            }
+            Expr::Paren(inner) => self.evaluate_aggregate_expr(inner, group),
+            Expr::Between { value, low, high } => {
+                let val = self.evaluate_aggregate_expr(value, group)?;
+                let low_val = self.evaluate_aggregate_expr(low, group)?;
+                let high_val = self.evaluate_aggregate_expr(high, group)?;
+                let ge = self.compare_values(&val, &low_val, std::cmp::Ordering::is_ge)?;
+                let le = self.compare_values(&val, &high_val, std::cmp::Ordering::is_le)?;
+                match (ge, le) {
+                    (Value::Boolean(g), Value::Boolean(l)) => Ok(Value::Boolean(g && l)),
+                    _ => Err(QueryError::Type(
+                        "BETWEEN requires comparable values".to_string(),
+                    )),
+                }
+            }
             _ => {
-                // For other expressions, evaluate on first row
+                // For other expressions (Column, Literal, Wildcard, Window), evaluate on first row
                 if let Some(ctx) = group.first() {
                     self.evaluate_expr(expr, ctx)
                 } else {
