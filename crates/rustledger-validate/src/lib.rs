@@ -149,6 +149,9 @@ pub struct LedgerState {
     options: ValidationOptions,
     /// Track previous directive date for out-of-order detection.
     last_date: Option<NaiveDate>,
+    /// Accumulated tolerances per currency from transaction amounts.
+    /// Balance assertions use these with 2x multiplier (Python beancount behavior).
+    tolerances: HashMap<InternedStr, Decimal>,
 }
 
 impl LedgerState {
@@ -561,13 +564,13 @@ mod tests {
 
     /// Test that balance assertions use inferred tolerance (matching Python beancount).
     ///
-    /// Tolerance is half the quantum of the expected amount.
-    /// For 2 decimal places: tolerance = 0.005.
+    /// Tolerance is derived from transaction amounts, then multiplied by 2 for balance checks.
+    /// Transaction with 2 decimal places: quantum = 0.01, base tolerance = 0.005, 2x = 0.01.
     #[test]
     fn test_validate_balance_assertion_within_tolerance() {
-        // Actual balance is 100.003, assertion is 100.00
-        // Difference is 0.003, which is less than tolerance (0.005 for 2 decimal places)
-        // This should PASS
+        // Actual balance is 100.00, assertion is 100.005
+        // Difference is 0.005, which is less than tolerance (0.01 = 0.005 * 2)
+        // This should PASS (matching Python beancount behavior)
         let directives = vec![
             Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
             Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Misc")),
@@ -575,17 +578,17 @@ mod tests {
                 Transaction::new(date(2024, 1, 15), "Deposit")
                     .with_posting(Posting::new(
                         "Assets:Bank",
-                        Amount::new(dec!(100.003), "USD"),
+                        Amount::new(dec!(100.00), "USD"), // 2 decimal places → tolerance = 0.005 * 2 = 0.01
                     ))
                     .with_posting(Posting::new(
                         "Expenses:Misc",
-                        Amount::new(dec!(-100.003), "USD"),
+                        Amount::new(dec!(-100.00), "USD"),
                     )),
             ),
             Directive::Balance(Balance::new(
                 date(2024, 1, 16),
                 "Assets:Bank",
-                Amount::new(dec!(100.00), "USD"), // 0.003 difference, within tolerance of 0.005
+                Amount::new(dec!(100.005), "USD"), // 0.005 difference, within tolerance of 0.01
             )),
         ];
 
@@ -600,7 +603,8 @@ mod tests {
     #[test]
     fn test_validate_balance_assertion_exceeds_tolerance() {
         // Actual balance is 100.00, assertion is 100.011
-        // Difference is 0.011, which exceeds the tolerance for 3 decimals (0.0005)
+        // Transaction has 2 decimal places: tolerance = 0.005 * 2 = 0.01
+        // Difference is 0.011, which exceeds tolerance
         // This should FAIL
         let directives = vec![
             Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),

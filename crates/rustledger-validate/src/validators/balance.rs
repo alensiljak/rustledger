@@ -6,6 +6,10 @@ use rustledger_core::{Amount, Balance, Pad, Position};
 use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
 
+/// Multiplier for balance assertion tolerance (matches Python beancount).
+/// Balance assertions use 2x the accumulated tolerance from transactions.
+const BALANCE_TOLERANCE_MULTIPLIER: Decimal = Decimal::TWO;
+
 /// Validate a Pad directive.
 pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<ValidationError>) {
     // Check that the target account exists
@@ -87,7 +91,8 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
             let account_str = bal.account.as_str();
             for (account, inv) in &state.inventories {
                 if account == &bal.account
-                    || (account.starts_with(account_str) && account.as_bytes().get(account_str.len()) == Some(&b':'))
+                    || (account.starts_with(account_str)
+                        && account.as_bytes().get(account_str.len()) == Some(&b':'))
                 {
                     actual += inv.units(&bal.amount.currency);
                 }
@@ -146,11 +151,19 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
     let difference = (actual - expected).abs();
 
     // Determine tolerance. Use explicit tolerance if specified, otherwise use
-    // half the quantum of the expected amount (matching Python beancount behavior).
+    // accumulated tolerance from transactions with 2x multiplier (Python beancount behavior).
+    // If no transactions have been seen for this currency, tolerance is 0 (exact match required).
     let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
         (t, true)
     } else {
-        (bal.amount.inferred_tolerance(), false)
+        // Use accumulated tolerance from transactions * 2
+        // This matches Python beancount's inferred_tolerance_multiplier behavior
+        let base_tolerance = state
+            .tolerances
+            .get(&bal.amount.currency)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        (base_tolerance * BALANCE_TOLERANCE_MULTIPLIER, false)
     };
 
     if difference > tolerance {

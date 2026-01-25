@@ -24,6 +24,17 @@ pub fn validate_transaction(
     // Check transaction balance
     validate_transaction_balance(txn, &state.options, errors);
 
+    // Accumulate tolerances for balance assertions (Python beancount behavior).
+    // Balance assertions use the accumulated tolerances from transactions.
+    let tolerances = calculate_tolerances(txn, &state.options);
+    for (currency, tolerance) in tolerances {
+        state
+            .tolerances
+            .entry(currency)
+            .and_modify(|t| *t = (*t).max(tolerance))
+            .or_insert(tolerance);
+    }
+
     // Update inventories with booking validation
     update_inventories(state, txn, errors);
 }

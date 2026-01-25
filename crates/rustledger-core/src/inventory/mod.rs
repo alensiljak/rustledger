@@ -243,17 +243,14 @@ impl Inventory {
     pub fn units(&self, currency: &str) -> Decimal {
         // Use cache if available, otherwise compute and the caller should
         // ensure cache is built via rebuild_caches() after deserialization
-        self.units_cache
-            .get(currency)
-            .copied()
-            .unwrap_or_else(|| {
-                // Fallback to computation if cache miss (e.g., after deserialization)
-                self.positions
-                    .iter()
-                    .filter(|p| p.units.currency == currency)
-                    .map(|p| p.units.number)
-                    .sum()
-            })
+        self.units_cache.get(currency).copied().unwrap_or_else(|| {
+            // Fallback to computation if cache miss (e.g., after deserialization)
+            self.positions
+                .iter()
+                .filter(|p| p.units.currency == currency)
+                .map(|p| p.units.number)
+                .sum()
+        })
     }
 
     /// Get all currencies in this inventory.

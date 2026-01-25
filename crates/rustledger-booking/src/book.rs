@@ -139,11 +139,9 @@ impl BookingEngine {
 
                         if is_reduction {
                             // Use try_reduce to preview booking without cloning inventory
-                            if let Ok(booking_result) = inv.try_reduce(
-                                units,
-                                Some(cost_spec),
-                                self.booking_method,
-                            ) {
+                            if let Ok(booking_result) =
+                                inv.try_reduce(units, Some(cost_spec), self.booking_method)
+                            {
                                 // Check if multiple lots were matched
                                 if booking_result.matched.len() > 1 {
                                     // Expand single posting into multiple postings
@@ -314,12 +312,16 @@ impl BookingEngine {
             // Sort expansions by index for forward iteration
             expansions.sort_by_key(|(idx, _)| *idx);
 
-            let mut new_postings =
-                Vec::with_capacity(result.postings.len() + expansions.iter().map(|(_, e)| e.len()).sum::<usize>());
+            let mut new_postings = Vec::with_capacity(
+                result.postings.len() + expansions.iter().map(|(_, e)| e.len()).sum::<usize>(),
+            );
             let mut expansion_iter = expansions.into_iter().peekable();
 
             for (idx, posting) in result.postings.into_iter().enumerate() {
-                if expansion_iter.peek().is_some_and(|(exp_idx, _)| *exp_idx == idx) {
+                if expansion_iter
+                    .peek()
+                    .is_some_and(|(exp_idx, _)| *exp_idx == idx)
+                {
                     // Replace this posting with expanded postings
                     let (_, expanded) = expansion_iter.next().unwrap();
                     new_postings.extend(expanded);

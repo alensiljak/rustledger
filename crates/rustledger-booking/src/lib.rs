@@ -41,7 +41,8 @@ use std::collections::HashMap;
 #[must_use]
 pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal> {
     // Pre-allocate for typical case (1-3 currencies per transaction)
-    let mut tolerances: HashMap<InternedStr, Decimal> = HashMap::with_capacity(amounts.len().min(4));
+    let mut tolerances: HashMap<InternedStr, Decimal> =
+        HashMap::with_capacity(amounts.len().min(4));
 
     for amount in amounts {
         let tol = amount.inferred_tolerance();

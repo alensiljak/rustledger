@@ -344,6 +344,10 @@ mod tests {
     fn test_value_size() {
         use std::mem::size_of;
         // Value should be ~40 bytes with boxed variants (vs 120 unboxed)
-        assert!(size_of::<Value>() <= 48, "Value enum too large: {} bytes", size_of::<Value>());
+        assert!(
+            size_of::<Value>() <= 48,
+            "Value enum too large: {} bytes",
+            size_of::<Value>()
+        );
     }
 }

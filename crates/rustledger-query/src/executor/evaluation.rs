@@ -232,7 +232,10 @@ impl Executor<'_> {
                             let cost = Cost::new(*number_per, currency.clone())
                                 .with_date_opt(cost_spec.date)
                                 .with_label_opt(cost_spec.label.clone());
-                            return Ok(Value::Position(Box::new(Position::with_cost(units.clone(), cost))));
+                            return Ok(Value::Position(Box::new(Position::with_cost(
+                                units.clone(),
+                                cost,
+                            ))));
                         }
                     }
                     Ok(Value::Position(Box::new(Position::simple(units.clone()))))
