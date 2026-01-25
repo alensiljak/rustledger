@@ -45,6 +45,9 @@ proptest! {
 
     /// TLA+ ValidationCorrect ErrorMeansFirstMismatch:
     /// If a balance assertion error is reported, the expected and actual differ
+    ///
+    /// Note: With beancount's 2x tolerance multiplier for balance assertions,
+    /// integer amounts have tolerance = 0.5 * 2 = 1.0, so difference must be > 1.
     #[test]
     fn prop_balance_error_means_mismatch(
         open_date in date_strategy(),
@@ -59,8 +62,10 @@ proptest! {
             balance_date
         };
 
-        // Ensure expected != actual for this test
-        prop_assume!(actual_balance != wrong_expected);
+        // Ensure difference exceeds the 2x tolerance for integer amounts.
+        // For integers (scale=0), tolerance = 0.5 * 2 = 1.0, so diff must be > 1.
+        let diff = (actual_balance - wrong_expected).abs();
+        prop_assume!(diff > 1);
 
         let account = "Assets:Bank:Checking".to_string();
 
