@@ -76,8 +76,13 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     let mut result = transaction.clone();
     let mut filled_indices = Vec::new();
 
-    // Pre-compute inferred currency for cost specs without explicit currency
-    let inferred_cost_currency = crate::infer_cost_currency_from_postings(transaction);
+    // Lazily compute inferred currency only when needed (most transactions don't need it)
+    let mut inferred_cost_currency: Option<Option<InternedStr>> = None;
+    let get_inferred_currency = |cache: &mut Option<Option<InternedStr>>| -> Option<InternedStr> {
+        cache
+            .get_or_insert_with(|| crate::infer_cost_currency_from_postings(transaction))
+            .clone()
+    };
 
     // Calculate initial residuals from postings with amounts
     let mut residuals: HashMap<InternedStr, Decimal> = HashMap::new();
@@ -116,7 +121,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                         .currency
                         .clone()
                         .or(price_currency)
-                        .or_else(|| inferred_cost_currency.clone());
+                        .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
                     if let (Some(per_unit), Some(cost_curr)) =
                         (&cost_spec.number_per, &inferred_currency)

@@ -111,8 +111,13 @@ pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Op
 pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Decimal> {
     let mut residuals: HashMap<InternedStr, Decimal> = HashMap::new();
 
-    // Pre-compute inferred currency for cost specs without explicit currency
-    let inferred_cost_currency = infer_cost_currency_from_postings(transaction);
+    // Lazily compute inferred currency only when needed (most transactions don't need it)
+    let mut inferred_cost_currency: Option<Option<InternedStr>> = None;
+    let get_inferred_currency = |cache: &mut Option<Option<InternedStr>>| -> Option<InternedStr> {
+        cache
+            .get_or_insert_with(|| infer_cost_currency_from_postings(transaction))
+            .clone()
+    };
 
     for posting in &transaction.postings {
         // Only process complete amounts
@@ -143,7 +148,7 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Dec
                     .currency
                     .clone()
                     .or(price_currency)
-                    .or_else(|| inferred_cost_currency.clone());
+                    .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
                 if let (Some(per_unit), Some(cost_curr)) =
                     (&cost_spec.number_per, &inferred_currency)
