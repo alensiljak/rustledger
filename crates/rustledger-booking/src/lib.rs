@@ -53,6 +53,56 @@ pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal>
     tolerances
 }
 
+/// Infer the cost currency from other postings in the transaction.
+///
+/// Python beancount infers cost currency from simple postings (those without
+/// cost specs) when a cost is specified without a currency like `{100}`.
+///
+/// Currency inference follows this priority:
+/// 1. An explicit currency in the cost specification itself (handled by the caller).
+/// 2. A price annotation on a simple posting (the price currency takes precedence).
+/// 3. The currency of other simple postings (units or currency-only amounts).
+pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Option<InternedStr> {
+    for posting in &transaction.postings {
+        // Skip postings with cost specs - we're looking for simple postings
+        if posting.cost.is_some() {
+            continue;
+        }
+
+        // Get the currency from this posting's units
+        if let Some(units) = &posting.units {
+            match units {
+                IncompleteAmount::Complete(amount) => {
+                    // If this posting has a price annotation, the "real" currency
+                    // is the price currency, not the units currency
+                    if let Some(price) = &posting.price {
+                        match price {
+                            rustledger_core::PriceAnnotation::Unit(a)
+                            | rustledger_core::PriceAnnotation::Total(a) => {
+                                return Some(a.currency.clone());
+                            }
+                            rustledger_core::PriceAnnotation::UnitIncomplete(inc)
+                            | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                                if let Some(a) = inc.as_amount() {
+                                    return Some(a.currency.clone());
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    // Simple posting - use its currency
+                    return Some(amount.currency.clone());
+                }
+                IncompleteAmount::CurrencyOnly(currency) => {
+                    return Some(currency.clone());
+                }
+                IncompleteAmount::NumberOnly(_) => {}
+            }
+        }
+    }
+    None
+}
+
 /// Calculate the residual (imbalance) of a transaction.
 ///
 /// Returns a map of currency -> residual amount.
@@ -60,6 +110,9 @@ pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal>
 #[must_use]
 pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Decimal> {
     let mut residuals: HashMap<InternedStr, Decimal> = HashMap::new();
+
+    // Pre-compute inferred currency for cost specs without explicit currency
+    let inferred_cost_currency = infer_cost_currency_from_postings(transaction);
 
     for posting in &transaction.postings {
         // Only process complete amounts
@@ -70,7 +123,9 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Dec
             // - Otherwise, the weight is just the units
 
             // Check if cost spec has determinable values.
-            // If cost has number but no currency, try to infer currency from price annotation.
+            // If cost has number but no currency, try to infer currency from:
+            // 1. Price annotation
+            // 2. Other postings in the transaction
             let cost_contribution = posting.cost.as_ref().and_then(|cost_spec| {
                 // Helper to get currency from price annotation
                 let price_currency = posting.price.as_ref().and_then(|p| match p {
@@ -83,8 +138,12 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Dec
                     _ => None,
                 });
 
-                // Try to get cost currency, falling back to price currency
-                let inferred_currency = cost_spec.currency.clone().or(price_currency);
+                // Try to get cost currency, falling back to price currency, then other postings
+                let inferred_currency = cost_spec
+                    .currency
+                    .clone()
+                    .or(price_currency)
+                    .or_else(|| inferred_cost_currency.clone());
 
                 if let (Some(per_unit), Some(cost_curr)) =
                     (&cost_spec.number_per, &inferred_currency)
@@ -642,5 +701,100 @@ mod tests {
         let residual = calculate_residual(&txn);
         // Only the complete posting is counted
         assert_eq!(residual.get("USD"), Some(&dec!(50.00)));
+    }
+
+    // =========================================================================
+    // Cost currency inference tests (issue #203)
+    // =========================================================================
+
+    /// Test cost currency is inferred from other postings.
+    /// This is the exact case from issue #203.
+    #[test]
+    fn test_calculate_residual_infers_cost_currency_from_other_posting() {
+        // 2026-01-01 * "Opening balance"
+        //   Assets:Vanguard:IRA:Trad:VFIFX  10 VFIFX {100}
+        //   Equity:Opening-Balances      -1000 USD
+        //
+        // Python beancount infers the cost currency as USD from the second posting.
+        let txn = Transaction::new(date(2026, 1, 1), "Opening balance")
+            .with_posting(
+                Posting::new(
+                    "Assets:Vanguard:IRA:Trad:VFIFX",
+                    Amount::new(dec!(10), "VFIFX"),
+                )
+                .with_cost(CostSpec::empty().with_number_per(dec!(100))),
+            )
+            .with_posting(Posting::new(
+                "Equity:Opening-Balances",
+                Amount::new(dec!(-1000), "USD"),
+            ));
+
+        let residual = calculate_residual(&txn);
+        // Cost posting should contribute 10 * 100 = 1000 USD (inferred from other posting)
+        // Equity posting contributes -1000 USD
+        // Residual should be 0
+        assert_eq!(
+            residual.get("USD"),
+            Some(&dec!(0)),
+            "Should balance when cost currency is inferred from other posting"
+        );
+        // VFIFX should not appear in residuals
+        assert_eq!(residual.get("VFIFX"), None);
+    }
+
+    /// Test cost currency inference with total cost.
+    #[test]
+    fn test_calculate_residual_infers_cost_currency_total_cost() {
+        // 10 VFIFX {{1000}} with -1000 USD posting
+        let txn = Transaction::new(date(2026, 1, 1), "Test")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "VFIFX"))
+                    .with_cost(CostSpec::empty().with_number_total(dec!(1000))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD")));
+
+        let residual = calculate_residual(&txn);
+        assert_eq!(residual.get("USD"), Some(&dec!(0)));
+    }
+
+    /// Test that explicit cost currency takes precedence over inference.
+    #[test]
+    fn test_calculate_residual_explicit_cost_currency_takes_precedence() {
+        // If cost has explicit currency, don't infer from other postings
+        let txn = Transaction::new(date(2026, 1, 1), "Test")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(100))
+                        .with_currency("EUR"), // Explicit EUR
+                ),
+            )
+            .with_posting(Posting::new(
+                "Assets:Cash",
+                Amount::new(dec!(-1000), "USD"), // USD posting
+            ));
+
+        let residual = calculate_residual(&txn);
+        // Should use EUR (explicit) not USD (from other posting)
+        assert_eq!(residual.get("EUR"), Some(&dec!(1000)));
+        assert_eq!(residual.get("USD"), Some(&dec!(-1000)));
+    }
+
+    /// Test that price annotation takes precedence over other posting inference.
+    #[test]
+    fn test_calculate_residual_price_annotation_takes_precedence() {
+        // If cost has price annotation, use that currency
+        let txn = Transaction::new(date(2026, 1, 1), "Test")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL"))
+                    .with_cost(CostSpec::empty().with_number_per(dec!(100)))
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(105), "EUR"))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD")));
+
+        let residual = calculate_residual(&txn);
+        // Should use EUR (from price annotation) not USD (from other posting)
+        assert_eq!(residual.get("EUR"), Some(&dec!(1000)));
+        assert_eq!(residual.get("USD"), Some(&dec!(-1000)));
     }
 }
