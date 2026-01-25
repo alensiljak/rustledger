@@ -1617,7 +1617,11 @@ fn test_order_by_group_by_expression_not_in_select() {
 
     // Verify all rows have exactly 2 values
     for row in &result.rows {
-        assert_eq!(row.len(), 2, "Row should have 2 columns, not hidden columns");
+        assert_eq!(
+            row.len(),
+            2,
+            "Row should have 2 columns, not hidden columns"
+        );
     }
 }
 
@@ -1644,7 +1648,11 @@ fn test_order_by_multiple_hidden_columns() {
 
     // Verify all rows have exactly 3 values
     for row in &result.rows {
-        assert_eq!(row.len(), 3, "Row should have 3 columns, not hidden columns");
+        assert_eq!(
+            row.len(),
+            3,
+            "Row should have 3 columns, not hidden columns"
+        );
     }
 }
 
@@ -1672,7 +1680,11 @@ fn test_order_by_hidden_column_non_aggregate() {
 
     // Verify all rows have exactly 1 value
     for row in &result.rows {
-        assert_eq!(row.len(), 1, "Row should have 1 column, hidden column removed");
+        assert_eq!(
+            row.len(),
+            1,
+            "Row should have 1 column, hidden column removed"
+        );
     }
 }
 
