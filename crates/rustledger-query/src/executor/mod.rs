@@ -567,7 +567,7 @@ impl<'a> Executor<'a> {
                         for pos in inv.positions() {
                             units_inv.add(Position::simple(pos.units.clone()));
                         }
-                        Ok(Value::Inventory(units_inv))
+                        Ok(Value::Inventory(Box::new(units_inv)))
                     }
                     Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type(
@@ -915,7 +915,7 @@ impl<'a> Executor<'a> {
                         for pos in filtered {
                             new_inv.add(pos);
                         }
-                        Ok(Value::Inventory(new_inv))
+                        Ok(Value::Inventory(Box::new(new_inv)))
                     }
                     Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type(
@@ -1154,12 +1154,12 @@ mod tests {
             Value::Boolean(true),
             Value::Boolean(false),
             Value::Amount(Amount::new(dec!(100), "USD")),
-            Value::Position(Position::simple(Amount::new(dec!(10), "AAPL"))),
-            Value::Position(Position::with_cost(
+            Value::Position(Box::new(Position::simple(Amount::new(dec!(10), "AAPL")))),
+            Value::Position(Box::new(Position::with_cost(
                 Amount::new(dec!(10), "AAPL"),
                 Cost::new(dec!(150), "USD"),
-            )),
-            Value::Inventory(Inventory::new()),
+            ))),
+            Value::Inventory(Box::new(Inventory::new())),
             Value::StringSet(vec!["tag1".to_string(), "tag2".to_string()]),
             Value::Null,
         ];
@@ -1224,8 +1224,8 @@ mod tests {
             Cost::new(dec!(200), "USD"),
         ));
 
-        let hash1 = hash_single_value(&Value::Inventory(inv1));
-        let hash2 = hash_single_value(&Value::Inventory(inv2));
+        let hash1 = hash_single_value(&Value::Inventory(Box::new(inv1)));
+        let hash2 = hash_single_value(&Value::Inventory(Box::new(inv2)));
 
         assert_ne!(hash1, hash2);
     }

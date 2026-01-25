@@ -83,9 +83,12 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
             // Apply padding: calculate difference and add to both accounts
             // Balance assertions include sub-accounts, so sum them all up
             let mut actual = Decimal::ZERO;
-            let account_prefix = format!("{}:", bal.account);
+            // Check for sub-accounts without allocating a prefix string
+            let account_str = bal.account.as_str();
             for (account, inv) in &state.inventories {
-                if account == &bal.account || account.starts_with(&account_prefix) {
+                if account == &bal.account
+                    || (account.starts_with(account_str) && account.as_bytes().get(account_str.len()) == Some(&b':'))
+                {
                     actual += inv.units(&bal.amount.currency);
                 }
             }
@@ -124,10 +127,14 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
     // In beancount, balance assertions include sub-accounts
     // e.g., balance Assets:Checking includes Assets:Checking:Sub1, Assets:Checking:Sub2, etc.
     let mut actual = Decimal::ZERO;
-    let account_prefix = format!("{}:", bal.account);
+    // Check for sub-accounts without allocating a prefix string
+    let account_str = bal.account.as_str();
     for (account, inv) in &state.inventories {
         // Include exact match or sub-accounts (account:*)
-        if account == &bal.account || account.starts_with(&account_prefix) {
+        if account == &bal.account
+            || (account.starts_with(account_str)
+                && account.as_bytes().get(account_str.len()) == Some(&b':'))
+        {
             actual += inv.units(&bal.amount.currency);
         }
     }

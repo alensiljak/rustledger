@@ -548,7 +548,7 @@ impl Executor<'_> {
                             Value::String(txn.narration.to_string()),
                             Value::String(posting.account.to_string()),
                             position_value,
-                            Value::Inventory(balance.clone()),
+                            Value::Inventory(Box::new(balance.clone())),
                         ];
                         result.add_row(row);
                     }
@@ -586,17 +586,17 @@ impl Executor<'_> {
                     "COST" => {
                         // Sum up cost basis
                         let cost_inventory = balance.at_cost();
-                        Value::Inventory(cost_inventory)
+                        Value::Inventory(Box::new(cost_inventory))
                     }
                     "UNITS" => {
                         // Just the units (remove cost info)
                         let units_inventory = balance.at_units();
-                        Value::Inventory(units_inventory)
+                        Value::Inventory(Box::new(units_inventory))
                     }
-                    _ => Value::Inventory(balance.clone()),
+                    _ => Value::Inventory(Box::new(balance.clone())),
                 }
             } else {
-                Value::Inventory(balance.clone())
+                Value::Inventory(Box::new(balance.clone()))
             };
 
             let row = vec![Value::String(account.to_string()), balance_value];

@@ -92,7 +92,7 @@ impl<'a> Executor<'a> {
                 Value::Object(obj) => {
                     // Objects are complex; serialize keys/values
                     key.push('O');
-                    for (k, v) in obj {
+                    for (k, v) in obj.as_ref() {
                         key.push_str(k);
                         key.push(':');
                         let _ = write!(key, "{v:?}");
@@ -186,7 +186,7 @@ impl<'a> Executor<'a> {
                                     has_positions = true;
                                 }
                                 Value::Position(pos) => {
-                                    total_inventory.add(pos);
+                                    total_inventory.add(*pos);
                                     has_positions = true;
                                 }
                                 Value::Number(n) => {
@@ -216,7 +216,7 @@ impl<'a> Executor<'a> {
                                     "__NUMBER__".to_string(),
                                 )));
                             }
-                            Ok(Value::Inventory(total_inventory))
+                            Ok(Value::Inventory(Box::new(total_inventory)))
                         } else if has_numbers {
                             // Pure number sum - return as Number
                             Ok(Value::Number(total_number))

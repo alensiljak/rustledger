@@ -85,7 +85,7 @@ impl Executor<'_> {
                         for pos in filtered {
                             new_inv.add(pos);
                         }
-                        Ok(Value::Inventory(new_inv))
+                        Ok(Value::Inventory(Box::new(new_inv)))
                     }
                     (Value::Null, _) => Ok(Value::Null),
                     _ => Err(QueryError::Type(
