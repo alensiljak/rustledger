@@ -76,6 +76,9 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     let mut result = transaction.clone();
     let mut filled_indices = Vec::new();
 
+    // Pre-compute inferred currency for cost specs without explicit currency
+    let inferred_cost_currency = crate::infer_cost_currency_from_postings(transaction);
+
     // Calculate initial residuals from postings with amounts
     let mut residuals: HashMap<InternedStr, Decimal> = HashMap::new();
     let mut missing_by_currency: HashMap<InternedStr, Vec<usize>> = HashMap::new();
@@ -93,7 +96,9 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                 // - Otherwise, weight is the units themselves
 
                 // Check if cost spec has determinable values.
-                // If cost has number but no currency, try to infer currency from price annotation.
+                // If cost has number but no currency, try to infer currency from:
+                // 1. Price annotation
+                // 2. Other postings in the transaction
                 let cost_contribution = posting.cost.as_ref().and_then(|cost_spec| {
                     // Helper to get currency from price annotation
                     let price_currency = posting.price.as_ref().and_then(|p| match p {
@@ -106,8 +111,12 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                         _ => None,
                     });
 
-                    // Try to get cost currency, falling back to price currency
-                    let inferred_currency = cost_spec.currency.clone().or(price_currency);
+                    // Try to get cost currency, falling back to price currency, then other postings
+                    let inferred_currency = cost_spec
+                        .currency
+                        .clone()
+                        .or(price_currency)
+                        .or_else(|| inferred_cost_currency.clone());
 
                     if let (Some(per_unit), Some(cost_curr)) =
                         (&cost_spec.number_per, &inferred_currency)
@@ -733,5 +742,85 @@ mod tests {
                 "{currency} residual should be ~0, got {residual}"
             );
         }
+    }
+
+    // =========================================================================
+    // Cost currency inference tests (issue #203)
+    // =========================================================================
+
+    /// Test interpolation with cost currency inferred from other postings.
+    /// This is the exact case from issue #203.
+    #[test]
+    fn test_interpolate_cost_currency_inferred_from_other_posting() {
+        // 2026-01-01 * "Opening balance"
+        //   Assets:Vanguard:IRA:Trad:VFIFX  10 VFIFX {100}
+        //   Equity:Opening-Balances
+        //
+        // The cost currency should be inferred, and the elided posting should
+        // be filled with -1000 USD.
+        let txn = Transaction::new(date(2026, 1, 1), "Opening balance")
+            .with_posting(
+                Posting::new(
+                    "Assets:Vanguard:IRA:Trad:VFIFX",
+                    Amount::new(dec!(10), "VFIFX"),
+                )
+                .with_cost(rustledger_core::CostSpec::empty().with_number_per(dec!(100))),
+            )
+            .with_posting(Posting::new(
+                "Equity:Opening-Balances",
+                Amount::new(dec!(-1000), "USD"),
+            ));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // Transaction should balance
+        let residual = result
+            .residuals
+            .get("USD")
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        assert!(
+            residual.abs() < dec!(0.01),
+            "USD residual should be ~0, got {residual}"
+        );
+    }
+
+    /// Test interpolation where the cash posting is elided.
+    #[test]
+    fn test_interpolate_cost_currency_inferred_elided_cash() {
+        // Like issue #203 but with elided cash posting:
+        // 2026-01-01 * "Opening balance"
+        //   Assets:Vanguard:IRA:Trad:VFIFX  10 VFIFX {100}
+        //   Equity:Opening-Balances  -1000 USD
+        //
+        // Both postings are complete, should just balance.
+        let txn = Transaction::new(date(2026, 1, 1), "Opening balance")
+            .with_posting(
+                Posting::new(
+                    "Assets:Vanguard:IRA:Trad:VFIFX",
+                    Amount::new(dec!(10), "VFIFX"),
+                )
+                .with_cost(rustledger_core::CostSpec::empty().with_number_per(dec!(100))),
+            )
+            .with_posting(Posting::new(
+                "Equity:Opening-Balances",
+                Amount::new(dec!(-1000), "USD"),
+            ));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // No postings filled since both are complete
+        assert!(result.filled_indices.is_empty());
+
+        // Should balance
+        let residual = result
+            .residuals
+            .get("USD")
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        assert!(
+            residual.abs() < dec!(0.01),
+            "USD residual should be ~0, got {residual}"
+        );
     }
 }
