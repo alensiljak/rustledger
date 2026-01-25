@@ -2274,3 +2274,188 @@ fn test_filter_with_not_equal() {
         }
     }
 }
+
+// ============================================================================
+// Nested Aggregate Function Tests (Holdings-style queries)
+// ============================================================================
+
+use rustledger_core::{CostSpec, Price};
+
+fn make_holdings_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // Price directives
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "AAPL",
+            Amount::new(dec!(150), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "AAPL",
+            Amount::new(dec!(180), "USD"),
+        )),
+        // Buy 10 AAPL at $100
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("USD")
+                            .with_date(date(2024, 1, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD"))),
+        ),
+        // Buy 5 more AAPL at $120
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 20), "Buy more AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(5), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(120))
+                            .with_currency("USD")
+                            .with_date(date(2024, 3, 20)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-600), "USD"))),
+        ),
+    ]
+}
+
+#[test]
+fn test_units_sum_position() {
+    // Test units(sum(position)) - nested aggregate with non-aggregate function
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT account, units(sum(position)) as units GROUP BY account"#,
+        &directives,
+    );
+
+    // Should have 2 rows: Brokerage and Cash
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_cost_sum_position() {
+    // Test cost(sum(position)) - book value calculation
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT account, cost(sum(position)) as book_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Book value should be 10*100 + 5*120 = 1600 USD
+    if let Value::Amount(amt) = &result.rows[0][1] {
+        assert_eq!(amt.number, dec!(1600));
+        assert_eq!(amt.currency.as_str(), "USD");
+    } else {
+        panic!("Expected Amount value for book_value");
+    }
+}
+
+#[test]
+fn test_number_cost_sum_position() {
+    // Test number(cost(sum(position))) - deeply nested
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT number(cost(sum(position))) as cost_number
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_safediv_with_aggregates() {
+    // Test safediv with aggregate expressions - like profit percentage calculation
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT safediv(number(cost(sum(position))), 100) as cost_pct
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(16)); // 1600 / 100 = 16
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_parenthesized_aggregate_expression() {
+    // Test that parentheses work correctly with aggregate expressions
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT (cost(sum(position))) as book_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(amt) = &result.rows[0][0] {
+        assert_eq!(amt.number, dec!(1600));
+    } else {
+        panic!("Expected Amount value");
+    }
+}
+
+#[test]
+fn test_complex_arithmetic_with_aggregates() {
+    // Test complex arithmetic expressions with aggregates
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT (number(cost(sum(position))) - 1000) * 2 as calc
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // (1600 - 1000) * 2 = 1200
+        assert_eq!(*n, dec!(1200));
+    } else {
+        panic!("Expected Number value");
+    }
+}
+
+#[test]
+fn test_multiple_nested_aggregates_in_select() {
+    // Test multiple columns with nested aggregates
+    let directives = make_holdings_directives();
+    let result = execute_query(
+        r#"SELECT
+             account,
+             units(sum(position)) as units,
+             cost(sum(position)) as book_value,
+             number(cost(sum(position))) as cost_num
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Verify cost_num column
+    if let Value::Number(n) = &result.rows[0][3] {
+        assert_eq!(*n, dec!(1600));
+    } else {
+        panic!("Expected Number value for cost_num");
+    }
+}

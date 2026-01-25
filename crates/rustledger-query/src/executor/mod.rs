@@ -16,9 +16,10 @@ use std::collections::HashMap;
 
 use chrono::Datelike;
 use regex::Regex;
+use rust_decimal::Decimal;
+use rustledger_core::{Amount, Directive, InternedStr, Inventory, Metadata, Position};
 #[cfg(test)]
-use rustledger_core::{Amount, MetaValue, NaiveDate, Transaction};
-use rustledger_core::{Directive, InternedStr, Inventory, Metadata, Position};
+use rustledger_core::{MetaValue, NaiveDate, Transaction};
 use rustledger_loader::SourceMap;
 use rustledger_parser::Spanned;
 
@@ -37,6 +38,8 @@ pub struct Executor<'a> {
     price_db: crate::price::PriceDatabase,
     /// Target currency for `VALUE()` conversions.
     target_currency: Option<String>,
+    /// Query date for price lookups (defaults to today).
+    query_date: chrono::NaiveDate,
     /// Cache for compiled regex patterns.
     regex_cache: RefCell<HashMap<String, Option<Regex>>>,
     /// Account info cache from Open/Close directives.
@@ -93,6 +96,7 @@ impl<'a> Executor<'a> {
             balances: HashMap::new(),
             price_db,
             target_currency: None,
+            query_date: chrono::Local::now().date_naive(),
             regex_cache: RefCell::new(HashMap::new()),
             account_info,
             source_locations: None,
@@ -162,6 +166,7 @@ impl<'a> Executor<'a> {
             balances: HashMap::new(),
             price_db,
             target_currency: None,
+            query_date: chrono::Local::now().date_naive(),
             regex_cache: RefCell::new(HashMap::new()),
             account_info,
             source_locations: Some(source_locations),
@@ -498,6 +503,442 @@ impl<'a> Executor<'a> {
                     }
                 }
                 Ok(Value::Null)
+            }
+            // Position/Amount functions
+            "NUMBER" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Amount(a) => Ok(Value::Number(a.number)),
+                    Value::Position(p) => Ok(Value::Number(p.units.number)),
+                    Value::Number(n) => Ok(Value::Number(*n)),
+                    Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
+                    Value::Inventory(inv) => {
+                        // For inventory, sum all numbers (regardless of currency)
+                        let total: Decimal = inv.positions().iter().map(|p| p.units.number).sum();
+                        Ok(Value::Number(total))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "NUMBER expects an amount, position, or inventory".to_string(),
+                    )),
+                }
+            }
+            "CURRENCY" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Amount(a) => Ok(Value::String(a.currency.to_string())),
+                    Value::Position(p) => Ok(Value::String(p.units.currency.to_string())),
+                    Value::Inventory(inv) => {
+                        // Return the currency of the first position, or Null if empty
+                        if let Some(pos) = inv.positions().first() {
+                            Ok(Value::String(pos.units.currency.to_string()))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "CURRENCY expects an amount or position".to_string(),
+                    )),
+                }
+            }
+            "UNITS" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Position(p) => Ok(Value::Amount(p.units.clone())),
+                    Value::Amount(a) => Ok(Value::Amount(a.clone())),
+                    Value::Inventory(inv) => {
+                        // Return inventory with just units (no cost info)
+                        let mut units_inv = Inventory::new();
+                        for pos in inv.positions() {
+                            units_inv.add(Position::simple(pos.units.clone()));
+                        }
+                        Ok(Value::Inventory(units_inv))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "UNITS expects a position or inventory".to_string(),
+                    )),
+                }
+            }
+            "COST" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Position(p) => {
+                        if let Some(cost) = &p.cost {
+                            let total = p.units.number.abs() * cost.number;
+                            Ok(Value::Amount(Amount::new(total, cost.currency.clone())))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    Value::Amount(a) => Ok(Value::Amount(a.clone())),
+                    Value::Inventory(inv) => {
+                        let mut total = Decimal::ZERO;
+                        let mut currency: Option<InternedStr> = None;
+                        for pos in inv.positions() {
+                            if let Some(cost) = &pos.cost {
+                                total += pos.units.number.abs() * cost.number;
+                                if currency.is_none() {
+                                    currency = Some(cost.currency.clone());
+                                }
+                            }
+                        }
+                        if let Some(curr) = currency {
+                            Ok(Value::Amount(Amount::new(total, curr)))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "COST expects a position or inventory".to_string(),
+                    )),
+                }
+            }
+            "VALUE" => {
+                // VALUE requires price database context - for now, just return the amount/position as-is
+                // Full implementation would convert using target_currency
+                if args.is_empty() || args.len() > 2 {
+                    return Err(QueryError::InvalidArguments(
+                        "VALUE".to_string(),
+                        "expected 1-2 arguments".to_string(),
+                    ));
+                }
+                let target_currency = if args.len() == 2 {
+                    match &args[1] {
+                        Value::String(s) => Some(s.clone()),
+                        _ => None,
+                    }
+                } else {
+                    self.target_currency.clone()
+                };
+                match &args[0] {
+                    Value::Position(p) => {
+                        if let Some(ref target) = target_currency {
+                            if p.units.currency.as_str() == target {
+                                return Ok(Value::Amount(p.units.clone()));
+                            }
+                            // Try price conversion
+                            if let Some(converted) =
+                                self.price_db.convert(&p.units, target, self.query_date)
+                            {
+                                return Ok(Value::Amount(converted));
+                            }
+                        }
+                        Ok(Value::Amount(p.units.clone()))
+                    }
+                    Value::Amount(a) => {
+                        if let Some(ref target) = target_currency {
+                            if a.currency.as_str() == target {
+                                return Ok(Value::Amount(a.clone()));
+                            }
+                            if let Some(converted) =
+                                self.price_db.convert(a, target, self.query_date)
+                            {
+                                return Ok(Value::Amount(converted));
+                            }
+                        }
+                        Ok(Value::Amount(a.clone()))
+                    }
+                    Value::Inventory(inv) => {
+                        if let Some(ref target) = target_currency {
+                            let mut total = Decimal::ZERO;
+                            for pos in inv.positions() {
+                                if pos.units.currency.as_str() == target {
+                                    total += pos.units.number;
+                                } else if let Some(converted) =
+                                    self.price_db.convert(&pos.units, target, self.query_date)
+                                {
+                                    total += converted.number;
+                                }
+                            }
+                            return Ok(Value::Amount(Amount::new(total, target)));
+                        }
+                        // No target currency - can't convert inventory to single amount
+                        Ok(Value::Inventory(inv.clone()))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "VALUE expects a position or inventory".to_string(),
+                    )),
+                }
+            }
+            // Math functions
+            "SAFEDIV" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                let (dividend, divisor) = (&args[0], &args[1]);
+                match (dividend, divisor) {
+                    (Value::Number(a), Value::Number(b)) => {
+                        if b.is_zero() {
+                            Ok(Value::Null)
+                        } else {
+                            Ok(Value::Number(a / b))
+                        }
+                    }
+                    (Value::Integer(a), Value::Integer(b)) => {
+                        if *b == 0 {
+                            Ok(Value::Null)
+                        } else {
+                            Ok(Value::Number(Decimal::from(*a) / Decimal::from(*b)))
+                        }
+                    }
+                    (Value::Number(a), Value::Integer(b)) => {
+                        if *b == 0 {
+                            Ok(Value::Null)
+                        } else {
+                            Ok(Value::Number(a / Decimal::from(*b)))
+                        }
+                    }
+                    (Value::Integer(a), Value::Number(b)) => {
+                        if b.is_zero() {
+                            Ok(Value::Null)
+                        } else {
+                            Ok(Value::Number(Decimal::from(*a) / b))
+                        }
+                    }
+                    (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "SAFEDIV expects numeric arguments".to_string(),
+                    )),
+                }
+            }
+            "NEG" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Number(n) => Ok(Value::Number(-n)),
+                    Value::Integer(i) => Ok(Value::Integer(-i)),
+                    Value::Amount(a) => {
+                        Ok(Value::Amount(Amount::new(-a.number, a.currency.clone())))
+                    }
+                    _ => Err(QueryError::Type(
+                        "NEG expects a number or amount".to_string(),
+                    )),
+                }
+            }
+            // Account functions
+            "ACCOUNT_SORTKEY" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(s) => {
+                        let type_index = Self::account_type_index(s);
+                        Ok(Value::String(format!("{type_index}-{s}")))
+                    }
+                    _ => Err(QueryError::Type(
+                        "ACCOUNT_SORTKEY expects an account string".to_string(),
+                    )),
+                }
+            }
+            "PARENT" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(s) => {
+                        if let Some(idx) = s.rfind(':') {
+                            Ok(Value::String(s[..idx].to_string()))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "PARENT expects an account string".to_string(),
+                    )),
+                }
+            }
+            "LEAF" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(s) => {
+                        if let Some(idx) = s.rfind(':') {
+                            Ok(Value::String(s[idx + 1..].to_string()))
+                        } else {
+                            Ok(Value::String(s.clone()))
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "LEAF expects an account string".to_string(),
+                    )),
+                }
+            }
+            "ROOT" => {
+                if args.is_empty() || args.len() > 2 {
+                    return Err(QueryError::InvalidArguments(
+                        "ROOT".to_string(),
+                        "expected 1 or 2 arguments".to_string(),
+                    ));
+                }
+                let n = if args.len() == 2 {
+                    match &args[1] {
+                        Value::Integer(i) => *i as usize,
+                        _ => 1,
+                    }
+                } else {
+                    1
+                };
+                match &args[0] {
+                    Value::String(s) => {
+                        let parts: Vec<&str> = s.split(':').collect();
+                        if n >= parts.len() {
+                            Ok(Value::String(s.clone()))
+                        } else {
+                            Ok(Value::String(parts[..n].join(":")))
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "ROOT expects an account string".to_string(),
+                    )),
+                }
+            }
+            // ONLY function: extract single-currency amount from inventory
+            "ONLY" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                let currency = match &args[0] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "ONLY: first argument must be a currency string".to_string(),
+                        ));
+                    }
+                };
+                match &args[1] {
+                    Value::Inventory(inv) => {
+                        let total = inv.units(&currency);
+                        if total.is_zero() {
+                            Ok(Value::Null)
+                        } else {
+                            Ok(Value::Amount(Amount::new(total, &currency)))
+                        }
+                    }
+                    Value::Position(p) => {
+                        if p.units.currency.as_str() == currency {
+                            Ok(Value::Amount(p.units.clone()))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    Value::Amount(a) => {
+                        if a.currency.as_str() == currency {
+                            Ok(Value::Amount(a.clone()))
+                        } else {
+                            Ok(Value::Null)
+                        }
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "ONLY: second argument must be an inventory, position, or amount"
+                            .to_string(),
+                    )),
+                }
+            }
+            // GETPRICE function - needs price database
+            "GETPRICE" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(QueryError::InvalidArguments(
+                        "GETPRICE".to_string(),
+                        "expected 2 or 3 arguments".to_string(),
+                    ));
+                }
+                // Handle NULL arguments gracefully
+                let base = match &args[0] {
+                    Value::String(s) => s.clone(),
+                    Value::Null => return Ok(Value::Null),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "GETPRICE: first argument must be a currency string".to_string(),
+                        ));
+                    }
+                };
+                let quote = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    Value::Null => return Ok(Value::Null),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "GETPRICE: second argument must be a currency string".to_string(),
+                        ));
+                    }
+                };
+                let date = if args.len() == 3 {
+                    match &args[2] {
+                        Value::Date(d) => *d,
+                        Value::Null => self.query_date,
+                        _ => self.query_date,
+                    }
+                } else {
+                    self.query_date
+                };
+                match self.price_db.get_price(&base, &quote, date) {
+                    Some(price) => Ok(Value::Number(price)),
+                    None => Ok(Value::Null),
+                }
+            }
+            // Inventory functions
+            "EMPTY" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Inventory(inv) => Ok(Value::Boolean(inv.is_empty())),
+                    Value::Null => Ok(Value::Boolean(true)),
+                    _ => Err(QueryError::Type("EMPTY expects an inventory".to_string())),
+                }
+            }
+            "FILTER_CURRENCY" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                let currency = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "FILTER_CURRENCY expects (inventory, string)".to_string(),
+                        ));
+                    }
+                };
+                match &args[0] {
+                    Value::Inventory(inv) => {
+                        let filtered: Vec<Position> = inv
+                            .positions()
+                            .iter()
+                            .filter(|p| p.units.currency.as_str() == currency)
+                            .cloned()
+                            .collect();
+                        let mut new_inv = Inventory::new();
+                        for pos in filtered {
+                            new_inv.add(pos);
+                        }
+                        Ok(Value::Inventory(new_inv))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "FILTER_CURRENCY expects (inventory, string)".to_string(),
+                    )),
+                }
+            }
+            "POSSIGN" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                let account_str = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "POSSIGN expects (amount, account_string)".to_string(),
+                        ));
+                    }
+                };
+                let first_component = account_str.split(':').next().unwrap_or("");
+                let is_credit_normal =
+                    matches!(first_component, "Liabilities" | "Equity" | "Income");
+                match &args[0] {
+                    Value::Amount(a) => {
+                        let mut amt = a.clone();
+                        if is_credit_normal {
+                            amt.number = -amt.number;
+                        }
+                        Ok(Value::Amount(amt))
+                    }
+                    Value::Number(n) => {
+                        let adjusted = if is_credit_normal { -n } else { *n };
+                        Ok(Value::Number(adjusted))
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "POSSIGN expects (amount, account_string)".to_string(),
+                    )),
+                }
             }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
