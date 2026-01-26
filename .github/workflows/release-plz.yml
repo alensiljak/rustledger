@@ -41,12 +41,18 @@ jobs:
     # Don't run in forks
     if: github.repository == 'rustledger/rustledger'
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
         with:
           fetch-depth: 0
-          # Use PAT for checkout so PR triggers CI workflows
-          token: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -69,7 +75,7 @@ jobs:
             --verbose \
             2>&1 || echo "Exit code: $?"
 
-      # Use PAT to create PR so it triggers CI workflows automatically
+      # Use app token to create PR so it triggers CI workflows automatically
       # (GITHUB_TOKEN can't trigger other workflows)
       - name: Run release-plz
         id: release-plz
@@ -77,7 +83,7 @@ jobs:
         with:
           command: release-pr
         env:
-          GITHUB_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           RUST_LOG: ${{ inputs.debug_semver == true && 'release_plz_core::semver_check=debug,release_plz_core=info' || '' }}
 
       # Clean up old release-plz branches (from closed/superseded PRs)
@@ -121,15 +127,6 @@ jobs:
           else
             echo "Could not extract PR number from output"
           fi
-
-      # Generate GitHub App token for signed commits
-      - name: Generate GitHub App token
-        id: app-token
-        if: steps.release-plz.outputs.pr != ''
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.BOT_APP_ID }}
-          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
       # Sync all package versions to the release PR branch (not main!)
       # This ensures the version sync is included when the PR merges
@@ -216,19 +213,27 @@ jobs:
       github.event_name == 'push' &&
       contains(github.event.head_commit.message, 'chore: release')
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
         with:
           fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
-      # Use PAT (not GITHUB_TOKEN) so tag creation triggers release-build.yml
+      # Use GitHub App token (not GITHUB_TOKEN) so tag creation triggers release-build.yml
       # GITHUB_TOKEN events don't trigger other workflows (GitHub security feature)
       - name: Run release-plz release
         uses: release-plz/action@99b33d83e322fcd1b1fa126f8c4a74744aae3c8d # v0.5
         with:
           command: release
         env:
-          GITHUB_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
