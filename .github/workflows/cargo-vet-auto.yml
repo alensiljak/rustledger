@@ -77,10 +77,9 @@ jobs:
             done
 
             # Create new tree
-            NEW_TREE=$(echo "$TREE_ENTRIES" | gh api "repos/$REPO/git/trees" \
-              --input - \
-              -f base_tree="$BASE_TREE" \
-              --jq '.sha')
+            NEW_TREE=$(jq -n --argjson tree "$TREE_ENTRIES" --arg base "$BASE_TREE" \
+              '{tree: $tree, base_tree: $base}' | \
+              gh api "repos/$REPO/git/trees" --input - --jq '.sha')
             echo "New tree: $NEW_TREE"
 
             # Create commit (GitHub will sign this)
