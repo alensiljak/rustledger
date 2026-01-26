@@ -263,9 +263,29 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
+      # Check if the release tag already exists (from a previous partial run)
+      # If it does, skip release-plz since the tag will have already triggered release-build.yml
+      - name: Check if release tag exists
+        id: check-tag
+        run: |
+          VERSION=$(grep -A5 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if [ -z "$VERSION" ]; then
+            VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
+            echo "::notice::Tag v$VERSION already exists - skipping release-plz (release already triggered)"
+            echo "skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "Tag v$VERSION does not exist - proceeding with release"
+            echo "skip=false" >> $GITHUB_OUTPUT
+          fi
+
       # Use GitHub App token (not GITHUB_TOKEN) so tag creation triggers release-build.yml
       # GITHUB_TOKEN events don't trigger other workflows (GitHub security feature)
       - name: Run release-plz release
+        if: steps.check-tag.outputs.skip != 'true'
         uses: release-plz/action@99b33d83e322fcd1b1fa126f8c4a74744aae3c8d # v0.5
         with:
           command: release
