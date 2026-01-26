@@ -35,6 +35,8 @@ jobs:
 
       - name: Install cargo-vet
         uses: taiki-e/install-action@30791125b88ed3200de59e9b5edbf78d1949e41f # v2
+        with:
+          tool: cargo-vet
 
       - name: Regenerate exemptions
         run: cargo vet regenerate exemptions
