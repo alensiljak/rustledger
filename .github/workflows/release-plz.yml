@@ -268,13 +268,17 @@ jobs:
       - name: Check if release tag exists
         id: check-tag
         run: |
-          VERSION=$(grep -A5 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version = "\(.*\)"/\1/')
-          if [ -z "$VERSION" ]; then
-            VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          # Use cargo metadata for robust version extraction (handles formatting variations)
+          METADATA=$(cargo metadata --no-deps --format-version 1)
+          VERSION=$(echo "$METADATA" | jq -r '. as $m | $m.packages[] | select(.name == "rustledger").version')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "null" ]; then
+            # Fallback to first package version
+            VERSION=$(echo "$METADATA" | jq -r '.packages[0].version')
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-          if git ls-remote --tags origin "v$VERSION" | grep -q "v$VERSION"; then
+          # Use exact match to avoid v0.7.5 matching v0.7.50
+          if git ls-remote --tags origin "v$VERSION" | grep -q "refs/tags/v$VERSION$"; then
             echo "::notice::Tag v$VERSION already exists - skipping release-plz (release already triggered)"
             echo "skip=true" >> $GITHUB_OUTPUT
           else
