@@ -122,13 +122,22 @@ jobs:
             echo "Could not extract PR number from output"
           fi
 
+      # Generate GitHub App token for signed commits
+      - name: Generate GitHub App token
+        id: app-token
+        if: steps.release-plz.outputs.pr != ''
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.BOT_APP_ID }}
+          private-key: ${{ secrets.BOT_PRIVATE_KEY }}
+
       # Sync all package versions to the release PR branch (not main!)
       # This ensures the version sync is included when the PR merges
       - name: Sync package versions (npm, rpm)
         # Use pr output instead of pr_created/pr_updated flags (more reliable)
         if: steps.release-plz.outputs.pr != ''
         env:
-          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_DATA: ${{ steps.release-plz.outputs.pr }}
         run: |
           # Extract the PR branch name from release-plz output
@@ -178,12 +187,23 @@ jobs:
           if git diff --quiet packages/ packaging/; then
             echo "No package version changes needed"
           else
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
+            # Get the GitHub App's user ID for proper commit attribution
+            APP_USER=$(gh api /users/rustledger-bot[bot] --jq '.id' 2>/dev/null || echo "")
+            if [ -n "$APP_USER" ]; then
+              git config user.name "rustledger-bot[bot]"
+              git config user.email "${APP_USER}+rustledger-bot[bot]@users.noreply.github.com"
+            else
+              # Fallback to generic bot identity
+              git config user.name "github-actions[bot]"
+              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            fi
+
             git add packages/ packaging/
             git commit -m "chore: sync package versions to $VERSION"
-            git push origin "$PR_BRANCH"
-            echo "Package versions synced to PR branch"
+
+            # Push using the GitHub App token (creates signed commits)
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" "$PR_BRANCH"
+            echo "Package versions synced to PR branch (signed)"
           fi
 
   # Create release when PR is merged
