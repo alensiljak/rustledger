@@ -68,6 +68,7 @@ jobs:
   #
   # License Policy:
   # - Permissive licenses (MIT, Apache-2.0, BSD-*, ISC, Zlib, 0BSD): Always allowed
+  # - Apache-2.0 WITH LLVM-exception: Permissive (used by Wasmtime/Cranelift), allowed
   # - Unicode-3.0, CDLA-Permissive-2.0: Data/content licenses, allowed
   # - MPL-2.0: Weak copyleft (file-level), allowed for dependencies
   # - LGPL-3.0: Weak copyleft (linking), allowed for build tools (e.g., rust-cache action)
@@ -87,6 +88,6 @@ jobs:
           fail-on-severity: high
           # See License Policy comment above before adding new licenses
           allow-licenses: >-
-            MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC,
-            GPL-3.0-only, MPL-2.0, Zlib, 0BSD, Unicode-3.0,
-            CDLA-Permissive-2.0, LGPL-3.0
+            MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception,
+            BSD-2-Clause, BSD-3-Clause, ISC, GPL-3.0-only, MPL-2.0,
+            Zlib, 0BSD, Unicode-3.0, CDLA-Permissive-2.0, LGPL-3.0
