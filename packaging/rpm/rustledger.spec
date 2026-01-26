@@ -1,13 +1,13 @@
 %global debug_package %{nil}
 
 Name:           rustledger
-Version:        0.1.0
+Version:        0.7.3
 Release:        1%{?dist}
 Summary:        Fast, pure Rust implementation of Beancount double-entry accounting
 
 License:        GPL-3.0-only
 URL:            https://rustledger.github.io
-Source0:        https://github.com/rustledger/rustledger/archive/refs/tags/v0.1.0.tar.gz
+Source0:        https://github.com/rustledger/rustledger/archive/refs/tags/v0.7.3.tar.gz
 
 BuildRequires:  rust >= 1.75
 BuildRequires:  cargo
@@ -21,7 +21,7 @@ bookkeeping language. It provides a 10-30x faster alternative to Python beancoun
 with full syntax compatibility.
 
 %prep
-%setup -q -n rustledger-0.1.0
+%setup -q -n rustledger-0.7.3
 
 %build
 cargo build --release
@@ -47,5 +47,9 @@ install -m 755 target/release/bean-price %{buildroot}%{_bindir}/
 %{_bindir}/bean-*
 
 %changelog
+* Sat Jan 25 2026 rustledger <rustledger@users.noreply.github.com> - 0.7.3-1
+- Update to version 0.7.3
+- Add CI automation for version sync
+
 * Tue Jan 14 2026 rustledger <rustledger@users.noreply.github.com> - 0.1.0-1
 - Switch to semver 0.x.y versioning

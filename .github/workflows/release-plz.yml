@@ -82,7 +82,7 @@ jobs:
 
       # Clean up old release-plz branches (from closed/superseded PRs)
       - name: Cleanup old release-plz branches
-        if: steps.release-plz.outputs.pr_created == 'true'
+        if: steps.release-plz.outputs.pr != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_DATA: ${{ steps.release-plz.outputs.pr }}
@@ -109,7 +109,7 @@ jobs:
 
       # Enable auto-merge for release PRs (will merge when checks pass and approved)
       - name: Enable auto-merge for release PR
-        if: steps.release-plz.outputs.pr_created == 'true'
+        if: steps.release-plz.outputs.pr != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_DATA: ${{ steps.release-plz.outputs.pr }}
@@ -122,10 +122,11 @@ jobs:
             echo "Could not extract PR number from output"
           fi
 
-      # Sync npm versions to the release PR branch (not main!)
+      # Sync all package versions to the release PR branch (not main!)
       # This ensures the version sync is included when the PR merges
-      - name: Sync npm package versions
-        if: steps.release-plz.outputs.pr_created == 'true' || steps.release-plz.outputs.pr_updated == 'true'
+      - name: Sync package versions (npm, rpm)
+        # Use pr output instead of pr_created/pr_updated flags (more reliable)
+        if: steps.release-plz.outputs.pr != ''
         env:
           GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
           PR_DATA: ${{ steps.release-plz.outputs.pr }}
@@ -162,16 +163,27 @@ jobs:
             echo "Updated packages/mcp-server/package.json to version $VERSION"
           fi
 
+          # Update RPM spec file
+          if [ -f "packaging/rpm/rustledger.spec" ]; then
+            # Update Version field
+            sed -i "s/^Version:.*$/Version:        $VERSION/" packaging/rpm/rustledger.spec
+            # Update Source0 URL
+            sed -i "s|/v[0-9.]*\.tar\.gz|/v$VERSION.tar.gz|" packaging/rpm/rustledger.spec
+            # Update %setup directory name
+            sed -i "s/rustledger-[0-9.]*/rustledger-$VERSION/" packaging/rpm/rustledger.spec
+            echo "Updated packaging/rpm/rustledger.spec to version $VERSION"
+          fi
+
           # Check if there are changes to commit
-          if git diff --quiet packages/; then
-            echo "No npm package changes needed"
+          if git diff --quiet packages/ packaging/; then
+            echo "No package version changes needed"
           else
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add packages/
-            git commit -m "chore: sync npm package versions to $VERSION"
+            git add packages/ packaging/
+            git commit -m "chore: sync package versions to $VERSION"
             git push origin "$PR_BRANCH"
-            echo "npm package versions synced to PR branch"
+            echo "Package versions synced to PR branch"
           fi
 
   # Create release when PR is merged
