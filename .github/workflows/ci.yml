@@ -113,7 +113,7 @@ jobs:
       RUSTC_WRAPPER: ""  # Disable sccache for MSRV check
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
-      - uses: dtolnay/rust-toolchain@1.89
+      - uses: dtolnay/rust-toolchain@9710f9012180ecfb08dcfc878269be6dc6f1d80e # 1.89
       - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
       - name: Check MSRV compatibility
         run: cargo check --workspace --all-features
