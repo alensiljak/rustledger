@@ -261,19 +261,25 @@ impl BookingEngine {
                         && (cost_spec.number_per.is_some() || cost_spec.number_total.is_some())
                     {
                         // Cost spec has a number but may be missing date or currency
-                        // Fill in missing parts from price annotation and transaction date
+                        // Fill in missing parts from price annotation, other postings, and transaction date
                         let inferred_currency = cost_spec.currency.clone().or_else(|| {
-                            posting.price.as_ref().and_then(|p| match p {
-                                rustledger_core::PriceAnnotation::Unit(a)
-                                | rustledger_core::PriceAnnotation::Total(a) => {
-                                    Some(a.currency.clone())
-                                }
-                                rustledger_core::PriceAnnotation::UnitIncomplete(inc)
-                                | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                                    inc.currency().map(Into::into)
-                                }
-                                _ => None,
-                            })
+                            // First try price annotation on this posting
+                            posting
+                                .price
+                                .as_ref()
+                                .and_then(|p| match p {
+                                    rustledger_core::PriceAnnotation::Unit(a)
+                                    | rustledger_core::PriceAnnotation::Total(a) => {
+                                        Some(a.currency.clone())
+                                    }
+                                    rustledger_core::PriceAnnotation::UnitIncomplete(inc)
+                                    | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                                        inc.currency().map(Into::into)
+                                    }
+                                    _ => None,
+                                })
+                                // Then try inferring from other postings in the transaction
+                                .or_else(|| crate::infer_cost_currency_from_postings(txn))
                         });
 
                         // Check if this is a reduction (opposite sign exists in inventory)
@@ -407,19 +413,25 @@ impl BookingEngine {
                             None
                         };
 
-                        // Infer cost currency from price annotation if not specified
+                        // Infer cost currency from price annotation or other postings
                         let cost_currency = cost_spec.currency.clone().or_else(|| {
-                            posting.price.as_ref().and_then(|p| match p {
-                                rustledger_core::PriceAnnotation::Unit(a)
-                                | rustledger_core::PriceAnnotation::Total(a) => {
-                                    Some(a.currency.clone())
-                                }
-                                rustledger_core::PriceAnnotation::UnitIncomplete(inc)
-                                | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                                    inc.currency().map(Into::into)
-                                }
-                                _ => None,
-                            })
+                            // First try price annotation on this posting
+                            posting
+                                .price
+                                .as_ref()
+                                .and_then(|p| match p {
+                                    rustledger_core::PriceAnnotation::Unit(a)
+                                    | rustledger_core::PriceAnnotation::Total(a) => {
+                                        Some(a.currency.clone())
+                                    }
+                                    rustledger_core::PriceAnnotation::UnitIncomplete(inc)
+                                    | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                                        inc.currency().map(Into::into)
+                                    }
+                                    _ => None,
+                                })
+                                // Then try inferring from other postings in the transaction
+                                .or_else(|| crate::infer_cost_currency_from_postings(txn))
                         });
 
                         if let (Some(per_unit), Some(currency)) = (per_unit_cost, cost_currency) {
@@ -886,5 +898,71 @@ mod tests {
 
         // Zero gain should not be added to gains vector
         assert!(booked.gains.is_empty(), "Zero gain should not be recorded");
+    }
+
+    /// Test cost currency inference from other postings (issue #230).
+    ///
+    /// When a cost is specified without a currency (e.g., `{1}`), the currency
+    /// should be inferred from simple postings in the same transaction.
+    #[test]
+    fn test_cost_currency_inference_from_other_postings() {
+        let mut engine = BookingEngine::new();
+
+        // Opening balance with cost without currency - should infer USD from other posting
+        // 2026-01-01 * "Opening balance"
+        //   Assets:Abc   1 ABC {1}           <- no currency, should infer USD
+        //   Equity:Opening-Balances -1 USD
+        let open = Transaction::new(date(2026, 1, 1), "Opening balance")
+            .with_posting(
+                Posting::new("Assets:Abc", Amount::new(dec!(1), "ABC"))
+                    .with_cost(CostSpec::empty().with_number_per(dec!(1))), // No currency!
+            )
+            .with_posting(Posting::new(
+                "Equity:Opening-Balances",
+                Amount::new(dec!(-1), "USD"),
+            ));
+
+        // Book and apply the opening
+        let booked = engine.book(&open).unwrap();
+        engine.apply(&booked.transaction);
+
+        // Check that the cost spec was filled in with USD
+        let cost_spec = booked.transaction.postings[0].cost.as_ref().unwrap();
+        assert_eq!(
+            cost_spec.currency.as_deref(),
+            Some("USD"),
+            "Cost currency should be inferred as USD from other posting"
+        );
+
+        // Check inventory has the position with correct cost
+        let inv = engine.inventory(&"Assets:Abc".into()).unwrap();
+        let pos = inv.positions().first().unwrap();
+        assert!(pos.cost.is_some(), "Position should have cost");
+        let cost = pos.cost.as_ref().unwrap();
+        assert_eq!(cost.currency.as_ref(), "USD", "Cost currency should be USD");
+        assert_eq!(cost.number, dec!(1), "Cost number should be 1");
+
+        // Now sell with explicit cost currency - should match the lot
+        // 2026-01-02 * "Sale"
+        //   Assets:Abc  -1 ABC {1 USD}
+        //   Expenses:Abc
+        let sell = Transaction::new(date(2026, 1, 2), "Sale")
+            .with_posting(
+                Posting::new("Assets:Abc", Amount::new(dec!(-1), "ABC")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(1))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Expenses:Abc"));
+
+        // This should succeed - the lot with {1 USD} should be found
+        let booked_sell = engine.book(&sell).unwrap();
+
+        // Check that the lot was matched
+        assert!(
+            !booked_sell.booked_indices.is_empty(),
+            "Sale should match the lot created in opening"
+        );
     }
 }
