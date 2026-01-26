@@ -38,7 +38,7 @@ jobs:
     name: Validate Version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Validate tag matches Cargo.toml version
@@ -97,7 +97,7 @@ jobs:
             os: windows-latest
             # No PGO - can't run ARM binary on x86 runner
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
@@ -286,7 +286,7 @@ jobs:
     needs: validate-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
@@ -316,7 +316,7 @@ jobs:
     needs: validate-version
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
@@ -350,7 +350,7 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           token: ${{ steps.app-token.outputs.token }}
@@ -403,7 +403,7 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
