@@ -131,8 +131,8 @@ jobs:
       # Sync all package versions to the release PR branch (not main!)
       # This ensures the version sync is included when the PR merges
       - name: Sync package versions (npm, rpm)
-        # Use pr output instead of pr_created/pr_updated flags (more reliable)
-        if: steps.release-plz.outputs.pr != ''
+        # Only run when a PR was actually created/updated (not empty object {})
+        if: steps.release-plz.outputs.pr != '' && steps.release-plz.outputs.pr != '{}'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           PR_DATA: ${{ steps.release-plz.outputs.pr }}
@@ -242,9 +242,10 @@ jobs:
     runs-on: ubuntu-latest
     needs: release-plz
     # Only run if this is a merge of a release-plz PR
+    # Merge commit message contains branch name: "Merge pull request #N from rustledger/release-plz-..."
     if: |
       github.event_name == 'push' &&
-      contains(github.event.head_commit.message, 'chore: release')
+      contains(github.event.head_commit.message, 'release-plz-')
     steps:
       - name: Generate GitHub App token
         id: app-token
