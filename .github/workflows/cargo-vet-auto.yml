@@ -94,7 +94,7 @@ jobs:
             gh api "repos/$REPO/git/refs/heads/$BRANCH" \
               -X PATCH \
               -f sha="$NEW_COMMIT" \
-              -f force=false
+              -F force=false
 
             echo "Exemptions updated (signed via GitHub API)"
           fi

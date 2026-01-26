@@ -231,7 +231,7 @@ jobs:
             gh api "repos/$REPO/git/refs/heads/$PR_BRANCH" \
               -X PATCH \
               -f sha="$NEW_COMMIT" \
-              -f force=false
+              -F force=false
 
             echo "Package versions synced to PR branch (signed via GitHub API)"
           fi
