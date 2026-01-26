@@ -43,22 +43,59 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
-          # Get the GitHub App's user ID for proper commit attribution
-          APP_USER=$(gh api /users/rustledger-bot[bot] --jq '.id' 2>/dev/null || echo "")
-          if [ -n "$APP_USER" ]; then
-            git config user.name "rustledger-bot[bot]"
-            git config user.email "${APP_USER}+rustledger-bot[bot]@users.noreply.github.com"
-          else
-            echo "::warning::Failed to fetch GitHub App user ID for rustledger-bot[bot]; falling back to generic bot identity"
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          fi
-
           git add supply-chain/
           if git diff --staged --quiet; then
             echo "No exemption changes needed"
           else
-            git commit -m "chore: regenerate cargo-vet exemptions"
-            git push
-            echo "Exemptions updated and pushed (signed by rustledger-bot)"
+            # Use GitHub API to create commits (signed by GitHub)
+            # This is required because branch protection requires signed commits
+            REPO="${{ github.repository }}"
+            BRANCH="${{ github.head_ref }}"
+            COMMIT_MSG="chore: regenerate cargo-vet exemptions"
+
+            # Get the current commit SHA
+            CURRENT_SHA=$(gh api "repos/$REPO/git/refs/heads/$BRANCH" --jq '.object.sha')
+            echo "Current commit: $CURRENT_SHA"
+
+            # Get the tree SHA from the current commit
+            BASE_TREE=$(gh api "repos/$REPO/git/commits/$CURRENT_SHA" --jq '.tree.sha')
+            echo "Base tree: $BASE_TREE"
+
+            # Create blobs for all changed files in supply-chain/
+            TREE_ENTRIES="[]"
+            for file in $(git diff --staged --name-only); do
+              if [ -f "$file" ]; then
+                CONTENT=$(base64 -w 0 "$file")
+                BLOB_SHA=$(gh api "repos/$REPO/git/blobs" \
+                  -f encoding=base64 \
+                  -f content="$CONTENT" \
+                  --jq '.sha')
+                echo "Created blob for $file: $BLOB_SHA"
+                TREE_ENTRIES=$(echo "$TREE_ENTRIES" | jq --arg path "$file" --arg sha "$BLOB_SHA" \
+                  '. + [{"path": $path, "mode": "100644", "type": "blob", "sha": $sha}]')
+              fi
+            done
+
+            # Create new tree
+            NEW_TREE=$(echo "$TREE_ENTRIES" | gh api "repos/$REPO/git/trees" \
+              --input - \
+              -f base_tree="$BASE_TREE" \
+              --jq '.sha')
+            echo "New tree: $NEW_TREE"
+
+            # Create commit (GitHub will sign this)
+            NEW_COMMIT=$(gh api "repos/$REPO/git/commits" \
+              -f message="$COMMIT_MSG" \
+              -f tree="$NEW_TREE" \
+              -f "parents[]=$CURRENT_SHA" \
+              --jq '.sha')
+            echo "New commit: $NEW_COMMIT"
+
+            # Update branch reference
+            gh api "repos/$REPO/git/refs/heads/$BRANCH" \
+              -X PATCH \
+              -f sha="$NEW_COMMIT" \
+              -f force=false
+
+            echo "Exemptions updated (signed via GitHub API)"
           fi
