@@ -49,6 +49,7 @@ jobs:
             git config user.name "rustledger-bot[bot]"
             git config user.email "${APP_USER}+rustledger-bot[bot]@users.noreply.github.com"
           else
+            echo "::warning::Failed to fetch GitHub App user ID for rustledger-bot[bot]; falling back to generic bot identity"
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           fi
