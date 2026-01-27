@@ -1,14 +1,17 @@
 //! Balance and pad validation.
 
-use rust_decimal::Decimal;
+use rust_decimal::{Decimal, MathematicalOps};
 use rustledger_core::{Amount, Balance, Pad, Position};
 
 use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
 
 /// Multiplier for balance assertion tolerance (matches Python beancount).
-/// Balance assertions use 2x the accumulated tolerance from transactions.
+/// Balance assertions use 2x the `tolerance_multiplier` option.
 const BALANCE_TOLERANCE_MULTIPLIER: Decimal = Decimal::TWO;
+
+/// Base 10 for tolerance scale calculation.
+const DECIMAL_TEN: Decimal = Decimal::TEN;
 
 /// Validate a Pad directive.
 pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<ValidationError>) {
@@ -150,20 +153,27 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
     let expected = bal.amount.number;
     let difference = (actual - expected).abs();
 
-    // Determine tolerance. Use explicit tolerance if specified, otherwise use
-    // accumulated tolerance from transactions with 2x multiplier (Python beancount behavior).
-    // If no transactions have been seen for this currency, tolerance is 0 (exact match required).
+    // Determine tolerance. Use explicit tolerance if specified, otherwise derive
+    // from the balance assertion amount's decimal precision (Python beancount behavior).
+    // See: https://github.com/beancount/beancount/blob/master/beancount/ops/balance.py
     let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
         (t, true)
     } else {
-        // Use accumulated tolerance from transactions * 2
-        // This matches Python beancount's inferred_tolerance_multiplier behavior
-        let base_tolerance = state
-            .tolerances
-            .get(&bal.amount.currency)
-            .copied()
-            .unwrap_or(Decimal::ZERO);
-        (base_tolerance * BALANCE_TOLERANCE_MULTIPLIER, false)
+        // Python beancount derives tolerance from the balance amount's decimal places:
+        //   expo = balance_entry.amount.number.as_tuple().exponent
+        //   tolerance = tolerance_multiplier * 2 * 10^expo
+        // In rust_decimal, scale() gives number of decimal places (positive), so we negate it.
+        let scale = expected.scale();
+        if scale > 0 {
+            let quantum = DECIMAL_TEN.powi(-i64::from(scale));
+            (
+                state.options.tolerance_multiplier * BALANCE_TOLERANCE_MULTIPLIER * quantum,
+                false,
+            )
+        } else {
+            // Integer amount: exact match required
+            (Decimal::ZERO, false)
+        }
     };
 
     if difference > tolerance {
