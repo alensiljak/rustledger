@@ -34,6 +34,10 @@ fn proof_amount_addition_reversible() {
     let a: i64 = kani::any();
     let b: i64 = kani::any();
 
+    // Exclude i64::MIN to avoid overflow in .abs() (i64::MIN.abs() overflows)
+    kani::assume(a != i64::MIN);
+    kani::assume(b != i64::MIN);
+
     // Constrain to reasonable range to avoid Decimal overflow
     kani::assume(a.abs() < 1_000_000);
     kani::assume(b.abs() < 1_000_000);
@@ -81,6 +85,7 @@ fn proof_positive_multiplication() {
 #[kani::unwind(1)]
 fn proof_zero_identity() {
     let a: i64 = kani::any();
+    kani::assume(a != i64::MIN); // Exclude i64::MIN to avoid overflow in .abs()
     kani::assume(a.abs() < 1_000_000_000);
 
     let dec_a = Decimal::from(a);
@@ -99,6 +104,7 @@ fn proof_zero_identity() {
 #[kani::unwind(1)]
 fn proof_self_subtraction() {
     let a: i64 = kani::any();
+    kani::assume(a != i64::MIN); // Exclude i64::MIN to avoid overflow in .abs()
     kani::assume(a.abs() < 1_000_000_000);
 
     let dec_a = Decimal::from(a);
@@ -118,6 +124,8 @@ fn proof_addition_commutative() {
     let a: i64 = kani::any();
     let b: i64 = kani::any();
 
+    kani::assume(a != i64::MIN); // Exclude i64::MIN to avoid overflow in .abs()
+    kani::assume(b != i64::MIN);
     kani::assume(a.abs() < 1_000_000);
     kani::assume(b.abs() < 1_000_000);
 
@@ -141,6 +149,10 @@ fn proof_addition_associative() {
     let b: i64 = kani::any();
     let c: i64 = kani::any();
 
+    // Exclude i64::MIN to avoid overflow in .abs()
+    kani::assume(a != i64::MIN);
+    kani::assume(b != i64::MIN);
+    kani::assume(c != i64::MIN);
     kani::assume(a.abs() < 100_000);
     kani::assume(b.abs() < 100_000);
     kani::assume(c.abs() < 100_000);
@@ -166,6 +178,10 @@ fn proof_comparison_transitive() {
     let b: i64 = kani::any();
     let c: i64 = kani::any();
 
+    // Exclude i64::MIN to avoid overflow in .abs()
+    kani::assume(a != i64::MIN);
+    kani::assume(b != i64::MIN);
+    kani::assume(c != i64::MIN);
     kani::assume(a.abs() < 1_000_000);
     kani::assume(b.abs() < 1_000_000);
     kani::assume(c.abs() < 1_000_000);
@@ -188,6 +204,7 @@ fn proof_comparison_transitive() {
 #[kani::unwind(1)]
 fn proof_negation_involutive() {
     let a: i64 = kani::any();
+    kani::assume(a != i64::MIN); // Exclude i64::MIN to avoid overflow in .abs()
     kani::assume(a.abs() < 1_000_000_000);
 
     let dec_a = Decimal::from(a);
