@@ -1,0 +1,163 @@
+# WASM Testing
+#
+# Tests the rustledger-wasm crate in actual WASM environments:
+# - Node.js (fast, headless)
+# - Headless browser (Chrome/Firefox)
+#
+# Also builds and checks the npm package.
+#
+name: WASM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'crates/rustledger-wasm/**'
+      - 'crates/rustledger-parser/**'
+      - 'crates/rustledger-core/**'
+  pull_request:
+    paths:
+      - 'crates/rustledger-wasm/**'
+      - 'crates/rustledger-parser/**'
+      - 'crates/rustledger-core/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Test in Node.js environment (fast)
+  test-node:
+    name: Test (Node.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: wasm
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Run WASM tests (Node.js)
+        run: |
+          cd crates/rustledger-wasm
+          wasm-pack test --node
+
+  # Test in headless browser (more realistic but slower)
+  test-browser:
+    name: Test (Browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: wasm
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Run WASM tests (headless Chrome)
+        run: |
+          cd crates/rustledger-wasm
+          wasm-pack test --headless --chrome
+
+  # Build the npm package and verify it's valid
+  build-package:
+    name: Build Package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: wasm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install wasm-pack
+        run: cargo install wasm-pack --locked
+
+      - name: Build WASM package (bundler target)
+        run: |
+          cd crates/rustledger-wasm
+          wasm-pack build --target bundler --release
+
+      - name: Build WASM package (web target)
+        run: |
+          cd crates/rustledger-wasm
+          wasm-pack build --target web --release --out-dir pkg-web
+
+      - name: Build WASM package (nodejs target)
+        run: |
+          cd crates/rustledger-wasm
+          wasm-pack build --target nodejs --release --out-dir pkg-node
+
+      - name: Verify package.json
+        run: |
+          cd crates/rustledger-wasm/pkg
+          echo "Package contents:"
+          ls -la
+          echo ""
+          echo "package.json:"
+          cat package.json
+          echo ""
+          # Verify it's valid JSON
+          node -e "JSON.parse(require('fs').readFileSync('package.json'))"
+          echo "package.json is valid"
+
+      - name: Check WASM binary size
+        run: |
+          cd crates/rustledger-wasm/pkg
+          WASM_SIZE=$(stat -c%s *.wasm 2>/dev/null || stat -f%z *.wasm)
+          WASM_SIZE_KB=$((WASM_SIZE / 1024))
+          echo "WASM binary size: ${WASM_SIZE_KB} KB"
+
+          # Warn if over 2MB (typical threshold for web)
+          if [ "$WASM_SIZE_KB" -gt 2048 ]; then
+            echo "::warning::WASM binary is over 2MB (${WASM_SIZE_KB}KB). Consider optimizing."
+          fi
+
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-packages
+          path: |
+            crates/rustledger-wasm/pkg/
+            crates/rustledger-wasm/pkg-web/
+            crates/rustledger-wasm/pkg-node/
+          retention-days: 7
+
+      - name: Summary
+        run: |
+          echo "## WASM Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Package Targets Built" >> $GITHUB_STEP_SUMMARY
+          echo "- bundler (default)" >> $GITHUB_STEP_SUMMARY
+          echo "- web" >> $GITHUB_STEP_SUMMARY
+          echo "- nodejs" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Binary Sizes" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -lh crates/rustledger-wasm/pkg/*.wasm >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
