@@ -63,6 +63,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # nightly
         if: steps.check.outputs.should_run == 'true'
+        with:
+          toolchain: nightly
 
       - name: Install cargo-fuzz
         if: steps.check.outputs.should_run == 'true'
@@ -160,6 +162,8 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # nightly
         if: steps.check.outputs.should_run == 'true'
+        with:
+          toolchain: nightly
 
       - name: Install cargo-fuzz
         if: steps.check.outputs.should_run == 'true'
