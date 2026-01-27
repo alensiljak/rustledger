@@ -24,7 +24,7 @@ jobs:
             exit 0
           fi
 
-          PATTERN="^(feature|fix|docs|chore|refactor|release|hotfix|claude|dependabot|copilot)/[a-zA-Z0-9][a-zA-Z0-9/_-]*$"
+          PATTERN="^(feat|feature|fix|docs|chore|refactor|release|hotfix|claude|dependabot|copilot)/[a-zA-Z0-9][a-zA-Z0-9/_-]*$"
 
           if [[ "$BRANCH" =~ $PATTERN ]]; then
             echo "✅ Branch name '$BRANCH' is valid"
@@ -32,11 +32,11 @@ jobs:
             echo "❌ Branch name '$BRANCH' does not match pattern"
             echo ""
             echo "Branch names must follow: <type>/<description>"
-            echo "  Types: feature, fix, docs, chore, refactor, release, hotfix, claude, dependabot, copilot"
+            echo "  Types: feat, feature, fix, docs, chore, refactor, release, hotfix, claude, dependabot, copilot"
             echo "  Description: letters, numbers, hyphens, underscores, slashes"
             echo ""
             echo "Examples:"
-            echo "  feature/add-csv-export"
+            echo "  feat/add-csv-export"
             echo "  fix/balance-calculation"
             echo "  claude/repo-improvements-T04lB"
             exit 1
