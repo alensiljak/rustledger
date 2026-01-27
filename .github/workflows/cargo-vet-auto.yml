@@ -2,8 +2,11 @@
 # This prevents cargo-deny check failures when Dependabot updates dependencies
 name: Cargo Vet Auto
 
+# SECURITY: Using pull_request_target to avoid untrusted checkout vulnerability (CodeQL alert #82).
+# This workflow only runs for dependabot[bot] and only modifies supply-chain/ files.
+# The PR's Cargo.lock is fetched explicitly after checking out the base branch.
 on:
-  pull_request:
+  pull_request_target:
     paths:
       - 'Cargo.lock'
 
@@ -24,11 +27,20 @@ jobs:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
 
-      - name: Checkout repository
+      # SECURITY: Checkout base branch first (trusted code), then fetch only Cargo.lock from PR
+      - name: Checkout base branch
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.base_ref }}
           token: ${{ steps.app-token.outputs.token }}
+
+      - name: Fetch PR's Cargo.lock
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          # Fetch only Cargo.lock from the PR branch (not arbitrary code)
+          gh api "repos/${{ github.repository }}/contents/Cargo.lock?ref=${{ github.event.pull_request.head.sha }}" \
+            --jq '.content' | base64 -d > Cargo.lock
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -52,7 +64,7 @@ jobs:
             # Use GitHub API to create commits (signed by GitHub)
             # This is required because branch protection requires signed commits
             REPO="${{ github.repository }}"
-            BRANCH="${{ github.head_ref }}"
+            BRANCH="${{ github.event.pull_request.head.ref }}"
             COMMIT_MSG="chore: regenerate cargo-vet exemptions"
 
             # Get the current commit SHA

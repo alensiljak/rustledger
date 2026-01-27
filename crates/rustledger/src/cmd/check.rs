@@ -731,6 +731,27 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         }
     }
 
+    // Convert directives back to Spanned form BEFORE sorting and booking.
+    // This ensures spans stay associated with directives even when reordered.
+    // If directive count matches original, re-associate original spans
+    // Otherwise use default spans (plugins may have added/removed directives)
+    let mut spanned_directives: Vec<rustledger_parser::Spanned<Directive>> =
+        if directives.len() == directive_spans.len() {
+            directives
+                .into_iter()
+                .zip(directive_spans)
+                .map(|(d, (span, file_id))| {
+                    rustledger_parser::Spanned::new(d, span).with_file_id(file_id as usize)
+                })
+                .collect()
+        } else {
+            // Directive count changed (plugins modified list), use default spans
+            directives
+                .into_iter()
+                .map(|d| rustledger_parser::Spanned::new(d, rustledger_parser::Span::new(0, 0)))
+                .collect()
+        };
+
     // Run booking and interpolation on transactions (sequential)
     // Booking must be sequential because lot matching depends on prior inventory.
     // This matches Python beancount behavior where booking runs before interpolation
@@ -738,17 +759,18 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     if args.verbose && !args.quiet {
         eprintln!(
             "Booking and interpolating {} directives...",
-            directives.len()
+            spanned_directives.len()
         );
     }
 
     // Sort directives by date before booking, so lot matching works correctly
     // regardless of source file ordering (e.g., reverse-chronological ledgers).
     // Uses stable sort to preserve original ordering for same-date directives.
-    directives.sort_by(|a, b| {
-        a.date()
-            .cmp(&b.date())
-            .then_with(|| a.priority().cmp(&b.priority()))
+    spanned_directives.sort_by(|a, b| {
+        a.value
+            .date()
+            .cmp(&b.value.date())
+            .then_with(|| a.value.priority().cmp(&b.value.priority()))
     });
 
     let booking_method: BookingMethod = options
@@ -758,8 +780,8 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let mut booking_engine = BookingEngine::with_method(booking_method);
     let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
 
-    for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive {
+    for spanned in &mut spanned_directives {
+        if let Directive::Transaction(txn) = &mut spanned.value {
             match booking_engine.book_and_interpolate(txn) {
                 Ok(result) => {
                     // Apply the booked transaction to update inventory for subsequent lot matching
@@ -809,7 +831,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Validate the directives
     if args.verbose && !args.quiet {
-        eprintln!("Validating {} directives...", directives.len());
+        eprintln!("Validating {} directives...", spanned_directives.len());
     }
 
     // Build validation options with account types from loader options
@@ -820,28 +842,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         document_base,
         ..Default::default()
     };
-
-    // Convert directives back to Spanned form for validation
-    // If directive count matches original, re-associate original spans
-    // Otherwise use default spans (plugins may have added/removed directives)
-    let spanned_for_validation: Vec<rustledger_parser::Spanned<Directive>> =
-        if directives.len() == directive_spans.len() {
-            directives
-                .into_iter()
-                .zip(directive_spans)
-                .map(|(d, (span, file_id))| {
-                    rustledger_parser::Spanned::new(d, span).with_file_id(file_id as usize)
-                })
-                .collect()
-        } else {
-            // Directive count changed (plugins modified list), use default spans
-            directives
-                .into_iter()
-                .map(|d| rustledger_parser::Spanned::new(d, rustledger_parser::Span::new(0, 0)))
-                .collect()
-        };
-    let validation_errors =
-        validate_spanned_with_options(&spanned_for_validation, validation_options);
+    let validation_errors = validate_spanned_with_options(&spanned_directives, validation_options);
     let validation_error_count = validation_errors
         .iter()
         .filter(|e| !e.code.is_warning())
