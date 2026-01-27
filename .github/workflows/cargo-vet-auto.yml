@@ -37,9 +37,12 @@ jobs:
       - name: Fetch PR's Cargo.lock
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # SECURITY: Pass via env vars to prevent potential shell injection
+          REPO: ${{ github.repository }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # Fetch only Cargo.lock from the PR branch (not arbitrary code)
-          gh api "repos/${{ github.repository }}/contents/Cargo.lock?ref=${{ github.event.pull_request.head.sha }}" \
+          gh api "repos/$REPO/contents/Cargo.lock?ref=$PR_SHA" \
             --jq '.content' | base64 -d > Cargo.lock
 
       - name: Install Rust toolchain
