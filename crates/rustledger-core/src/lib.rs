@@ -52,6 +52,10 @@ pub mod inventory;
 pub mod position;
 pub mod synthetic;
 
+// Kani formal verification proofs (only compiled with Kani)
+#[cfg(kani)]
+mod kani_proofs;
+
 pub use amount::{Amount, IncompleteAmount};
 pub use cost::{Cost, CostSpec};
 pub use directive::{
