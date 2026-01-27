@@ -300,7 +300,8 @@ def test_error_quality(test: TestCase, verbose: bool = False) -> dict:
             status = "rust_missed"
         elif py_exit == 0 and rs_exit != 0:
             status = "rust_extra"
-        elif py_exit == 0 and rs_exit == 0:
+        elif py_exit == 0:
+            # Both pass (rs_exit == 0 implied by previous conditions)
             status = "both_pass"  # Unexpected - test case should fail
         elif not rs_has_expected and py_has_expected:
             status = "rust_unhelpful"

@@ -246,7 +246,7 @@ jobs:
       RUST_MIN_STACK: 8388608
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # nightly
         with:
           components: miri
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
@@ -259,15 +259,15 @@ jobs:
       - name: Run Miri on core crates
         run: |
           echo "::group::rustledger-core"
-          cargo miri test --package rustledger-core --all-features 2>&1 || true
+          cargo miri test --package rustledger-core --all-features
           echo "::endgroup::"
 
           echo "::group::rustledger-parser"
-          cargo miri test --package rustledger-parser --all-features 2>&1 || true
+          cargo miri test --package rustledger-parser --all-features
           echo "::endgroup::"
 
           echo "::group::rustledger-booking"
-          cargo miri test --package rustledger-booking --all-features 2>&1 || true
+          cargo miri test --package rustledger-booking --all-features
           echo "::endgroup::"
         env:
           MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance
