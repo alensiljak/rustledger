@@ -7,6 +7,9 @@ on:
     branches: [main]
   merge_group:
     branches: [main]
+  schedule:
+    # Weekly on Sunday at 5 AM UTC - for Miri and other expensive checks
+    - cron: '0 5 * * 0'
   # Allow manual triggering (useful for bot PRs where GITHUB_TOKEN can't trigger workflows)
   workflow_dispatch:
     inputs:
@@ -54,8 +57,9 @@ jobs:
             cmd: cargo clippy --all-features --all-targets -- -D warnings
             components: clippy
           - name: Test
-            cmd: cargo test --all-features
+            cmd: cargo nextest run --all-features
             components: ""
+            install: nextest
           - name: Documentation
             cmd: cargo doc --all-features --no-deps
             components: ""
@@ -67,10 +71,29 @@ jobs:
           components: ${{ matrix.components }}
       - uses: mozilla-actions/sccache-action@d651010b8da762cde178750d8eda7b5febfe147a # v0.0.9
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Install nextest
+        if: matrix.install == 'nextest'
+        uses: taiki-e/install-action@735e5933943122c5ac182670a935f54a949265c1 # v2
+        with:
+          tool: cargo-nextest
       - name: ${{ matrix.name }}
         run: ${{ matrix.cmd }}
         env:
           RUSTDOCFLAGS: ${{ matrix.env == 'RUSTDOCFLAGS=-Dwarnings' && '-Dwarnings' || '' }}
+
+  # Doctests run separately (nextest doesn't support them)
+  doctest:
+    name: Doctests
+    runs-on: ubuntu-latest
+    env:
+      RUST_MIN_STACK: 8388608
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - uses: mozilla-actions/sccache-action@d651010b8da762cde178750d8eda7b5febfe147a # v0.0.9
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Run doctests
+        run: cargo test --doc --all-features
 
   # Semver check - detect breaking API changes
   # Uses official action with built-in rustdoc caching (~50% faster)
@@ -206,10 +229,59 @@ jobs:
             criterion-output.txt
           retention-days: 30
 
+  # Miri - detect undefined behavior in unsafe code
+  # Runs weekly and on manual trigger (too slow for every PR)
+  miri:
+    name: Miri
+    runs-on: ubuntu-latest
+    # Run on schedule (weekly) or manual trigger, not on regular PRs
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    env:
+      RUSTC_WRAPPER: ""  # Disable sccache for Miri
+      RUST_MIN_STACK: 8388608
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: miri
+
+      - name: Setup Miri
+        run: cargo miri setup
+
+      - name: Run Miri on core crates
+        run: |
+          echo "::group::rustledger-core"
+          cargo miri test --package rustledger-core --all-features 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::rustledger-parser"
+          cargo miri test --package rustledger-parser --all-features 2>&1 || true
+          echo "::endgroup::"
+
+          echo "::group::rustledger-booking"
+          cargo miri test --package rustledger-booking --all-features 2>&1 || true
+          echo "::endgroup::"
+        env:
+          MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance
+
+      - name: Summary
+        run: |
+          echo "## Miri Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Miri checks for undefined behavior in unsafe Rust code." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Checked crates:" >> $GITHUB_STEP_SUMMARY
+          echo "- rustledger-core" >> $GITHUB_STEP_SUMMARY
+          echo "- rustledger-parser" >> $GITHUB_STEP_SUMMARY
+          echo "- rustledger-booking" >> $GITHUB_STEP_SUMMARY
+
   # All checks pass - required for branch protection
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: [ci, fmt]
+    needs: [ci, fmt, doctest]
     steps:
       - run: echo "All checks passed!"
