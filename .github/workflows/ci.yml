@@ -76,6 +76,11 @@ jobs:
         uses: taiki-e/install-action@735e5933943122c5ac182670a935f54a949265c1 # v2
         with:
           tool: cargo-nextest
+        continue-on-error: true
+        id: install-nextest
+      - name: Install nextest (fallback)
+        if: matrix.install == 'nextest' && steps.install-nextest.outcome == 'failure'
+        run: cargo install cargo-nextest --locked
       - name: ${{ matrix.name }}
         run: ${{ matrix.cmd }}
         env:
