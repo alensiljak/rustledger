@@ -203,36 +203,29 @@ jobs:
               } else {
                 status = 'unchanged'; emoji = '✅';
               }
-              baselineSection = `
-### vs main branch (${baseline_date})
-| Metric | main | this PR | Change |
-|--------|------|---------|--------|
-| Time | ${baseline_ms}ms | ${rustledger_ms}ms | ${change >= 0 ? '+' : ''}${changeStr}% ${emoji} |
-`;
+              const sign = change >= 0 ? '+' : '';
+              baselineSection = '\n### vs main branch (' + baseline_date + ')\n' +
+                '| Metric | main | this PR | Change |\n' +
+                '|--------|------|---------|--------|\n' +
+                '| Time | ' + baseline_ms + 'ms | ' + rustledger_ms + 'ms | ' + sign + changeStr + '% ' + emoji + ' |\n';
             } else {
-              baselineSection = `
-> ℹ️ *No baseline available yet. Comparison will appear after first merge to main.*
-`;
+              baselineSection = '\n> ℹ️ *No baseline available yet. Comparison will appear after first merge to main.*\n';
             }
 
-            const body = `## 📊 Benchmark Results
-
-| Tool | Time | Memory |
-|------|------|--------|
-| **rustledger** | ${rustledger_ms}ms ± ${rustledger_stddev}ms | ${rustledger_mem} MB |
-| beancount | ${beancount_ms}ms ± ${beancount_stddev}ms | ${beancount_mem} MB |
-| **Comparison** | **${speedup}x faster** | **${mem_ratio}x less** |
-${baselineSection}
-<sub>1K transactions · 5 runs, 2 warmup · <a href="https://github.com/sharkdp/hyperfine">hyperfine</a></sub>
-
-<details>
-<summary>What do these numbers mean?</summary>
-
-- **Time**: Wall-clock time to parse and validate the ledger (± std dev)
-- **Memory**: Peak resident set size (RSS)
-- **vs main**: Compared to latest nightly benchmark on main branch
-
-</details>`;
+            const body = '## 📊 Benchmark Results\n\n' +
+              '| Tool | Time | Memory |\n' +
+              '|------|------|--------|\n' +
+              '| **rustledger** | ' + rustledger_ms + 'ms ± ' + rustledger_stddev + 'ms | ' + rustledger_mem + ' MB |\n' +
+              '| beancount | ' + beancount_ms + 'ms ± ' + beancount_stddev + 'ms | ' + beancount_mem + ' MB |\n' +
+              '| **Comparison** | **' + speedup + 'x faster** | **' + mem_ratio + 'x less** |\n' +
+              baselineSection +
+              '<sub>1K transactions · 5 runs, 2 warmup · <a href="https://github.com/sharkdp/hyperfine">hyperfine</a></sub>\n\n' +
+              '<details>\n' +
+              '<summary>What do these numbers mean?</summary>\n\n' +
+              '- **Time**: Wall-clock time to parse and validate the ledger (± std dev)\n' +
+              '- **Memory**: Peak resident set size (RSS)\n' +
+              '- **vs main**: Compared to latest nightly benchmark on main branch\n\n' +
+              '</details>';
 
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({
