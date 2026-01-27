@@ -5,6 +5,7 @@
 #
 # Runs on:
 # - Monthly schedule (1st of each month)
+# - PR changes to core crates (TLA+-verified modules)
 # - Manual trigger with configurable packages
 #
 # See: https://mutants.rs/
@@ -15,6 +16,12 @@ on:
   schedule:
     # Monthly on 1st at 6 AM UTC
     - cron: '0 6 1 * *'
+  pull_request:
+    paths:
+      # TLA+-verified modules (inventory, booking, validation)
+      - 'crates/rustledger-core/src/inventory/**'
+      - 'crates/rustledger-booking/src/**'
+      - 'crates/rustledger-validate/src/**'
   workflow_dispatch:
     inputs:
       packages:
@@ -165,11 +172,24 @@ jobs:
       - name: Check mutation score threshold
         run: |
           SCORE="${{ steps.results.outputs.score }}"
-          THRESHOLD=60
+          MISSED="${{ steps.results.outputs.missed }}"
+          # PR runs require 70% for TLA+-verified modules
+          # Scheduled runs are informational at 60%
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            THRESHOLD=70
+          else
+            THRESHOLD=60
+          fi
 
           if [ "$SCORE" -lt "$THRESHOLD" ]; then
             echo "::warning::Mutation score ($SCORE%) is below threshold ($THRESHOLD%)"
-            echo "Consider adding more tests for the missed mutants listed above."
+            echo "Consider adding more tests for the $MISSED missed mutants."
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo ""
+              echo "TLA+-verified modules require a minimum 70% mutation score."
+              echo "Please add tests that catch the missed mutants."
+              # Don't fail the workflow, just warn
+            fi
           else
             echo "Mutation score ($SCORE%) meets threshold ($THRESHOLD%)"
           fi

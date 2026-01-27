@@ -2942,6 +2942,7 @@ dependencies = [
 name = "rustledger-booking"
 version = "0.7.5"
 dependencies = [
+ "proptest",
  "rust_decimal",
  "rust_decimal_macros",
  "rustledger-core",
@@ -3056,6 +3057,7 @@ version = "0.7.5"
 dependencies = [
  "anyhow",
  "dirs",
+ "proptest",
  "rmp-serde",
  "rust_decimal",
  "rust_decimal_macros",
@@ -3081,6 +3083,7 @@ dependencies = [
  "chumsky 1.0.0-alpha.8",
  "criterion",
  "insta",
+ "proptest",
  "regex",
  "rust_decimal",
  "rust_decimal_macros",

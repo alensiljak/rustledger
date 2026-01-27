@@ -1,0 +1,309 @@
+# TLA+ to Rust Mapping
+
+This document maps TLA+ specifications to their Rust implementations and test coverage.
+
+## Overview
+
+rustledger uses a **multi-layered verification approach**:
+
+1. **TLA+ Model Checking** (`spec/tla/`) - Verifies algorithm design
+2. **Kani Proofs** (`crates/rustledger-core/src/kani_proofs.rs`) - Verifies numerical invariants
+3. **Property-Based Tests** (`crates/*/tests/tla_proptest.rs`) - Verifies implementation with real types
+4. **Unit Tests** - Verifies specific behaviors
+
+## Specification Mapping
+
+### Conservation.tla
+
+**Purpose**: Verifies that units are never created or destroyed.
+
+**Invariant**: `inventory + totalReduced = totalAdded`
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `ConservationInvariant` | `Inventory::add`, `Inventory::reduce` | `prop_conservation_invariant` |
+| `AddAmount` | `Inventory::add()` | `proof_conservation_add_reduce` |
+| `ReduceAmount` | `Inventory::reduce()` | `proof_conservation_multiple_operations` |
+| `ReduceBound` | `Inventory::reduce()` returns error if insufficient | `prop_fifo_conservation`, etc. |
+
+**Files**:
+- TLA+: `spec/tla/Conservation.tla`
+- Rust: `crates/rustledger-core/src/inventory/mod.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+- Kani: `crates/rustledger-core/src/kani_proofs.rs`
+
+---
+
+### FIFOCorrect.tla
+
+**Purpose**: Verifies FIFO (First-In-First-Out) lot selection.
+
+**Invariant**: `selected_date <= all other lot dates`
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `FIFOSelectsOldest` | `BookingMethod::Fifo` | `prop_fifo_selects_oldest` |
+| `FIFO` action | `Inventory::reduce()` with `BookingMethod::Fifo` | `proof_fifo_selects_oldest_of_two` |
+
+**Files**:
+- TLA+: `spec/tla/FIFOCorrect.tla`
+- Rust: `crates/rustledger-core/src/inventory/booking.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+- Kani: `crates/rustledger-core/src/kani_proofs.rs`
+
+---
+
+### LIFOCorrect.tla
+
+**Purpose**: Verifies LIFO (Last-In-First-Out) lot selection.
+
+**Invariant**: `selected_date >= all other lot dates`
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `LIFOSelectsNewest` | `BookingMethod::Lifo` | `prop_lifo_selects_newest` |
+| `LIFO` action | `Inventory::reduce()` with `BookingMethod::Lifo` | `proof_lifo_selects_newest` |
+
+**Files**:
+- TLA+: `spec/tla/LIFOCorrect.tla`
+- Rust: `crates/rustledger-core/src/inventory/booking.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+- Kani: `crates/rustledger-core/src/kani_proofs.rs`
+
+---
+
+### HIFOCorrect.tla
+
+**Purpose**: Verifies HIFO (Highest-In-First-Out) lot selection.
+
+**Invariant**: `selected_cost >= all other lot costs`
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `HIFOSelectsHighestCost` | `BookingMethod::Hifo` | `prop_hifo_selects_highest_cost` |
+| `HIFO` action | `Inventory::reduce()` with `BookingMethod::Hifo` | `proof_hifo_selects_highest_cost` |
+
+**Files**:
+- TLA+: `spec/tla/HIFOCorrect.tla`
+- Rust: `crates/rustledger-core/src/inventory/booking.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+- Kani: `crates/rustledger-core/src/kani_proofs.rs`
+
+---
+
+### DoubleEntry.tla
+
+**Purpose**: Verifies double-entry bookkeeping (debits = credits).
+
+**Invariant**: `sum(postings) = 0` for every transaction
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `TransactionsBalance` | `rustledger_booking::calculate_residual()` | `prop_transfer_conserves_amount` |
+| `Debit/Credit` | Posting amounts | `proof_double_entry_two_postings` |
+| `Balance` | `rustledger_validate::validate()` | `proof_double_entry_multiple_postings` |
+
+**Files**:
+- TLA+: `spec/tla/DoubleEntry.tla`
+- Rust: `crates/rustledger-booking/src/interpolate.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+- Kani: `crates/rustledger-core/src/kani_proofs.rs`
+
+---
+
+### Interpolation.tla
+
+**Purpose**: Verifies missing amount inference (auto-fill).
+
+**Invariants**:
+- `AtMostOneNull`: At most one posting per currency can have missing amount
+- `CompleteImpliesBalanced`: After interpolation, sum = 0
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `AtMostOneNull` | `interpolate()` error handling | `prop_interpolation_at_most_one_null_enforced` |
+| `CompleteImpliesBalanced` | `interpolate()` result | `prop_interpolation_completes_balanced` |
+| `HasNullAccurate` | `InterpolationResult.filled_indices` | `prop_interpolation_fills_correct_postings` |
+
+**Files**:
+- TLA+: `spec/tla/Interpolation.tla`
+- Rust: `crates/rustledger-booking/src/interpolate.rs`
+- Proptest: `crates/rustledger-booking/tests/tla_proptest.rs`
+
+---
+
+### MultiCurrency.tla
+
+**Purpose**: Verifies per-currency conservation.
+
+**Invariants**:
+- `ConservationPerCurrency`: Each currency has its own conservation
+- `NoCurrencyMixing`: Units don't leak between currencies
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `ConservationPerCurrency` | `Inventory` stores by currency | `prop_multi_currency_conservation` |
+| `NonNegativeInventory` | `Inventory::reduce()` returns error | `prop_multi_currency_non_negative` |
+| `NoCurrencyMixing` | Currency keys in `Inventory` | `prop_multi_currency_isolation` |
+
+**Files**:
+- TLA+: `spec/tla/MultiCurrency.tla`
+- Rust: `crates/rustledger-core/src/inventory/mod.rs`
+- Proptest: `crates/rustledger-core/tests/tla_proptest.rs`
+
+---
+
+### ValidationCorrect.tla
+
+**Purpose**: Verifies balance assertion validation.
+
+**Invariants**:
+- `ErrorMeansFirstMismatch`: Error implies expected != actual
+- `ErrorDetailsConsistent`: Error details are accurate
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `ErrorMeansFirstMismatch` | `validate()` balance checks | `prop_balance_error_means_mismatch` |
+| `NonNegativeBalance` | Balance tracking | `prop_balance_tracking_accurate` |
+| Tolerance handling | `ValidationOptions.tolerance` | `prop_tolerance_bounds_respected` |
+
+**Files**:
+- TLA+: `spec/tla/ValidationCorrect.tla`
+- Rust: `crates/rustledger-validate/src/lib.rs`
+- Proptest: `crates/rustledger-validate/tests/tla_proptest.rs`
+
+---
+
+### QueryExecution.tla
+
+**Purpose**: Verifies BQL query correctness.
+
+**Invariants**:
+- `FilterCorrectness`: WHERE selects only matching rows
+- `CountAccuracy`: COUNT returns exact count
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `FilterCorrectness` | `Executor::execute_select()` | `prop_filter_no_false_positives` |
+| `CountAccuracy` | `COUNT()` aggregate | `prop_count_accuracy` |
+| `ResultMatchesSelection` | Query result filtering | `prop_result_matches_selection` |
+
+**Files**:
+- TLA+: `spec/tla/QueryExecution.tla`
+- Rust: `crates/rustledger-query/src/executor/mod.rs`
+- Proptest: `crates/rustledger-query/tests/tla_proptest.rs`
+
+---
+
+### PriceDB.tla
+
+**Purpose**: Verifies price database invariants.
+
+**Invariants**:
+- `IdentityProperty`: `price(X, X) = 1`
+- `SelfPricesNeverSet`: Self-prices are not stored
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `IdentityProperty` | `PriceDatabase::get_price()` | `prop_price_identity` |
+| `SelfPricesNeverSet` | Self-price handling | `prop_no_self_prices` |
+| `InverseReciprocal` | `PriceDatabase::get_price()` | `prop_price_inverse_reciprocal` |
+| `ChainTransitivity` | Price chain resolution | `prop_price_chain_transitivity` |
+
+**Files**:
+- TLA+: `spec/tla/PriceDB.tla`
+- Rust: `crates/rustledger-query/src/price.rs`
+- Proptest: `crates/rustledger-query/tests/tla_proptest.rs`
+
+---
+
+### PluginCorrect.tla
+
+**Purpose**: Verifies plugin execution ordering.
+
+**Invariants**:
+- `PluginsInOrder`: Plugin N+1 doesn't start before N completes
+- `DirectivesInOrder`: Sequential directive processing
+- `NoFutureDirectives`: Plugin can't see later plugins' additions
+
+| TLA+ Element | Rust Implementation | Test Coverage |
+|--------------|---------------------|---------------|
+| `PluginsInOrder` | `PluginManager::execute_all()` | `prop_plugins_execute_in_order` |
+| `DirectivesInOrder` | Plugin process loop | `prop_directives_maintain_order` |
+| `NoFutureDirectives` | Input cloning | `prop_plugin_isolation` |
+
+**Files**:
+- TLA+: `spec/tla/PluginCorrect.tla`
+- Rust: `crates/rustledger-plugin/src/runtime.rs`, `src/native/mod.rs`
+- Proptest: `crates/rustledger-plugin/tests/tla_proptest.rs`
+
+---
+
+## Test Coverage Summary
+
+| TLA+ Spec | Kani Proofs | Proptest | Unit Tests |
+|-----------|-------------|----------|------------|
+| Conservation.tla | 3 proofs | 4 tests | Many |
+| FIFOCorrect.tla | 2 proofs | 2 tests | Many |
+| LIFOCorrect.tla | 1 proof | 2 tests | Many |
+| HIFOCorrect.tla | 1 proof | 2 tests | Many |
+| DoubleEntry.tla | 2 proofs | 1 test | Many |
+| Interpolation.tla | - | 8 tests | Many |
+| MultiCurrency.tla | - | 4 tests | Many |
+| ValidationCorrect.tla | - | 8 tests | Many |
+| QueryExecution.tla | - | 12 tests | Many |
+| PriceDB.tla | - | 4 tests | Many |
+| PluginCorrect.tla | - | 8 tests | Many |
+
+## Running Verification
+
+```bash
+# Run TLA+ model checking
+cd spec/tla
+tlc Conservation.tla
+
+# Run Kani proofs
+cd crates/rustledger-core
+cargo kani --all-features
+
+# Run property-based tests
+cargo test --all-features tla_proptest
+
+# Run mutation testing
+cargo mutants --package rustledger-core
+```
+
+## Adding New Specifications
+
+When adding a new TLA+ specification:
+
+1. Create `spec/tla/NewSpec.tla` with invariants
+2. Run TLC to verify the model
+3. Add proptest coverage in `crates/*/tests/tla_proptest.rs`
+4. (Optional) Add Kani proofs for numerical properties
+5. Update this mapping document
+
+## Design Rationale
+
+### Why Both TLA+ and Rust Tests?
+
+- **TLA+** verifies that the *algorithm design* is correct at an abstract level
+- **Proptest** verifies that the *implementation* matches the design using real Rust types
+- **Kani** provides bit-precise verification of numerical invariants
+- **Unit tests** cover specific edge cases and integration scenarios
+
+This layered approach catches bugs at different abstraction levels:
+- TLA+ catches design flaws before implementation
+- Proptest catches implementation bugs with random inputs
+- Kani catches numerical edge cases (overflow, precision)
+- Unit tests catch regression and integration issues
+
+### Why Property-Based Testing?
+
+Property-based tests (proptest) are the primary verification layer because:
+1. They test real Rust types (`Inventory`, `Decimal`, etc.)
+2. They generate thousands of test cases automatically
+3. They find edge cases humans would miss
+4. They map directly to TLA+ invariants
+
+Kani proofs complement proptest for numerical properties where bit-precise verification matters (e.g., overflow checks).

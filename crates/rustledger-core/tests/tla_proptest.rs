@@ -557,3 +557,212 @@ proptest! {
         }
     }
 }
+
+// ============================================================================
+// Multi-Currency Conservation Tests (from MultiCurrency.tla)
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// TLA+ ConservationPerCurrency:
+    /// inventory[c] + totalReduced[c] = totalAdded[c] for each currency.
+    ///
+    /// Each currency maintains its own conservation invariant independently.
+    #[test]
+    fn prop_multi_currency_conservation(
+        units_aapl in 10i64..100,
+        units_goog in 10i64..100,
+        reduce_aapl in 1i64..10,
+        reduce_goog in 1i64..10,
+    ) {
+        let mut inv = Inventory::new();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        // Add AAPL
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_aapl), "AAPL"),
+            Cost::new(dec!(100), "USD").with_date(date),
+        ));
+        let total_added_aapl = Decimal::from(units_aapl);
+
+        // Add GOOG
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_goog), "GOOG"),
+            Cost::new(dec!(150), "USD").with_date(date),
+        ));
+        let total_added_goog = Decimal::from(units_goog);
+
+        // Reduce AAPL
+        let mut total_reduced_aapl = Decimal::ZERO;
+        let aapl_reduce = Decimal::from(reduce_aapl).min(Decimal::from(units_aapl));
+        if let Ok(r) = inv.reduce(
+            &Amount::new(-aapl_reduce, "AAPL"),
+            None,
+            BookingMethod::Fifo,
+        ) {
+            total_reduced_aapl = r.matched.iter().map(|p| p.units.number.abs()).sum();
+        }
+
+        // Reduce GOOG
+        let mut total_reduced_goog = Decimal::ZERO;
+        let goog_reduce = Decimal::from(reduce_goog).min(Decimal::from(units_goog));
+        if let Ok(r) = inv.reduce(
+            &Amount::new(-goog_reduce, "GOOG"),
+            None,
+            BookingMethod::Fifo,
+        ) {
+            total_reduced_goog = r.matched.iter().map(|p| p.units.number.abs()).sum();
+        }
+
+        // Check conservation for each currency independently
+        let inv_aapl = inv.units("AAPL");
+        let inv_goog = inv.units("GOOG");
+
+        prop_assert_eq!(
+            inv_aapl + total_reduced_aapl,
+            total_added_aapl,
+            "AAPL conservation violated: {} + {} != {}",
+            inv_aapl, total_reduced_aapl, total_added_aapl
+        );
+
+        prop_assert_eq!(
+            inv_goog + total_reduced_goog,
+            total_added_goog,
+            "GOOG conservation violated: {} + {} != {}",
+            inv_goog, total_reduced_goog, total_added_goog
+        );
+    }
+
+    /// TLA+ NonNegativeInventory:
+    /// All currencies maintain non-negative inventory.
+    #[test]
+    fn prop_multi_currency_non_negative(
+        units_aapl in 10i64..50,
+        units_goog in 10i64..50,
+    ) {
+        let mut inv = Inventory::new();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_aapl), "AAPL"),
+            Cost::new(dec!(100), "USD").with_date(date),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_goog), "GOOG"),
+            Cost::new(dec!(150), "USD").with_date(date),
+        ));
+
+        // Try to reduce more than available for each currency
+        let _ = inv.reduce(
+            &Amount::new(Decimal::from(-units_aapl - 10), "AAPL"),
+            None,
+            BookingMethod::Fifo,
+        );
+        let _ = inv.reduce(
+            &Amount::new(Decimal::from(-units_goog - 10), "GOOG"),
+            None,
+            BookingMethod::Fifo,
+        );
+
+        // Both should remain non-negative after failed reductions
+        prop_assert!(
+            inv.units("AAPL") >= Decimal::ZERO,
+            "AAPL inventory went negative: {}",
+            inv.units("AAPL")
+        );
+        prop_assert!(
+            inv.units("GOOG") >= Decimal::ZERO,
+            "GOOG inventory went negative: {}",
+            inv.units("GOOG")
+        );
+    }
+
+    /// TLA+ NoCurrencyMixing / Isolation:
+    /// Operations on one currency don't affect another currency's balance.
+    #[test]
+    fn prop_multi_currency_isolation(
+        units_aapl in 10i64..50,
+        units_goog in 10i64..50,
+        reduce_aapl in 1i64..10,
+    ) {
+        let mut inv = Inventory::new();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_aapl), "AAPL"),
+            Cost::new(dec!(100), "USD").with_date(date),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(units_goog), "GOOG"),
+            Cost::new(dec!(150), "USD").with_date(date),
+        ));
+
+        // Record GOOG balance before AAPL operation
+        let goog_before = inv.units("GOOG");
+
+        // Reduce AAPL
+        let aapl_reduce = Decimal::from(reduce_aapl).min(Decimal::from(units_aapl));
+        let _ = inv.reduce(
+            &Amount::new(-aapl_reduce, "AAPL"),
+            None,
+            BookingMethod::Fifo,
+        );
+
+        // GOOG should be unaffected
+        let goog_after = inv.units("GOOG");
+        prop_assert_eq!(
+            goog_before,
+            goog_after,
+            "GOOG balance changed after AAPL operation: {} -> {}",
+            goog_before, goog_after
+        );
+    }
+
+    /// TLA+ ReduceBoundPerCurrency:
+    /// Total reduced can never exceed total added for any currency.
+    #[test]
+    fn prop_multi_currency_reduce_bound(
+        add1 in 10i64..50,
+        add2 in 10i64..50,
+    ) {
+        let mut inv = Inventory::new();
+        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+
+        // Add to AAPL twice
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(add1), "AAPL"),
+            Cost::new(dec!(100), "USD").with_date(date),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(add2), "AAPL"),
+            Cost::new(dec!(110), "USD").with_date(date),
+        ));
+
+        let total_added = Decimal::from(add1 + add2);
+        let mut total_reduced = Decimal::ZERO;
+
+        // Try to reduce multiple times
+        for _ in 0..5 {
+            let current = inv.units("AAPL");
+            if current > Decimal::ZERO {
+                let to_reduce = (current / Decimal::from(2)).max(Decimal::ONE).min(current);
+                if let Ok(r) = inv.reduce(
+                    &Amount::new(-to_reduce, "AAPL"),
+                    None,
+                    BookingMethod::Fifo,
+                ) {
+                    let reduced: Decimal = r.matched.iter().map(|p| p.units.number.abs()).sum();
+                    total_reduced += reduced;
+                }
+            }
+        }
+
+        // Reduced should never exceed added
+        prop_assert!(
+            total_reduced <= total_added,
+            "Reduced ({}) exceeded added ({})",
+            total_reduced, total_added
+        );
+    }
+}
