@@ -67,7 +67,10 @@ fn proof_positive_multiplication() {
 
     let product = dec_a * dec_b;
 
-    kani::assert(product > Decimal::ZERO, "Positive * positive must be positive");
+    kani::assert(
+        product > Decimal::ZERO,
+        "Positive * positive must be positive",
+    );
 }
 
 /// Proof: Zero is identity for addition.
@@ -225,6 +228,6 @@ fn proof_conservation_add_subtract() {
 
     kani::assert(
         final_inventory == expected,
-        "Conservation: inventory must equal added - reduced"
+        "Conservation: inventory must equal added - reduced",
     );
 }

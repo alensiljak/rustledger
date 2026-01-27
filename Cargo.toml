@@ -123,6 +123,8 @@ rustledger-importer = { version = "0.7.5", path = "crates/rustledger-importer" }
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
+# Allow cfg(kani) for Kani formal verification proofs
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
