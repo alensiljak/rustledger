@@ -61,9 +61,15 @@ if [ -z "$COMPAT_RESULTS" ]; then
 fi
 
 # Get files where both implementations passed (match=true and both exit=0)
-mapfile -t valid_files < <(jq -r 'select(.match == true and .python.exit == 0 and .rust.exit == 0) | .file' "$COMPAT_RESULTS" | head -50)
+# BQL_FILE_LIMIT controls max files (default: 100, use 0 for unlimited)
+BQL_FILE_LIMIT="${BQL_FILE_LIMIT:-100}"
+if [ "$BQL_FILE_LIMIT" -eq 0 ]; then
+    mapfile -t valid_files < <(jq -r 'select(.match == true and .python.exit == 0 and .rust.exit == 0) | .file' "$COMPAT_RESULTS")
+else
+    mapfile -t valid_files < <(jq -r 'select(.match == true and .python.exit == 0 and .rust.exit == 0) | .file' "$COMPAT_RESULTS" | head -"$BQL_FILE_LIMIT")
+fi
 
-# Standard queries to test - expanded coverage
+# Standard queries to test - expanded coverage (50+ queries)
 # Note: All queries with LIMIT must have ORDER BY for deterministic results
 # Without ORDER BY, LIMIT selects different rows depending on processing order
 QUERIES_FILE="$TEMP_DIR/queries.txt"
@@ -79,6 +85,35 @@ SELECT MONTH(date) AS month, COUNT(*) AS cnt GROUP BY month ORDER BY month
 SELECT date, narration ORDER BY date, narration LIMIT 10
 SELECT account, FIRST(date) AS first_date GROUP BY account ORDER BY account LIMIT 10
 SELECT MIN(date) AS min_date, MAX(date) AS max_date
+SELECT DAY(date) AS day, COUNT(*) AS cnt GROUP BY day ORDER BY day
+SELECT WEEKDAY(date) AS weekday, COUNT(*) AS cnt GROUP BY weekday ORDER BY weekday
+SELECT QUARTER(date) AS quarter, COUNT(*) AS cnt GROUP BY quarter ORDER BY quarter
+SELECT account, LAST(date) AS last_date GROUP BY account ORDER BY account LIMIT 10
+SELECT account, COUNT(*) AS cnt GROUP BY account ORDER BY cnt DESC LIMIT 10
+SELECT PARENT(account) AS parent, COUNT(*) AS cnt GROUP BY parent ORDER BY parent LIMIT 10
+SELECT LENGTH(narration) AS len, COUNT(*) AS cnt GROUP BY len ORDER BY len LIMIT 20
+SELECT DISTINCT flag ORDER BY flag
+SELECT flag, COUNT(*) AS cnt GROUP BY flag ORDER BY flag
+SELECT account, SUM(NUMBER(position)) AS total GROUP BY account ORDER BY total DESC LIMIT 10
+SELECT DISTINCT tags ORDER BY tags LIMIT 20
+SELECT DISTINCT links ORDER BY links LIMIT 20
+SELECT account WHERE account ~ "Assets:" ORDER BY account LIMIT 20
+SELECT account WHERE account ~ "Expenses:" ORDER BY account LIMIT 20
+SELECT account WHERE account ~ "Income:" ORDER BY account LIMIT 20
+SELECT account WHERE account ~ "Liabilities:" ORDER BY account LIMIT 20
+SELECT date, account, position WHERE NUMBER(position) > 100 ORDER BY date, account LIMIT 20
+SELECT date, account, position WHERE NUMBER(position) < 0 ORDER BY date, account LIMIT 20
+SELECT account, AVG(NUMBER(position)) AS avg_amt GROUP BY account ORDER BY avg_amt DESC LIMIT 10
+SELECT YEAR(date) AS year, SUM(NUMBER(position)) AS total GROUP BY year ORDER BY year
+SELECT date, account, narration WHERE narration ~ ".*" ORDER BY date LIMIT 10
+SELECT account, MIN(NUMBER(position)) AS min_amt, MAX(NUMBER(position)) AS max_amt GROUP BY account ORDER BY account LIMIT 10
+SELECT DISTINCT CURRENCY(position) AS curr ORDER BY curr
+SELECT account, CURRENCY(position) AS curr, SUM(NUMBER(position)) AS total GROUP BY account, curr ORDER BY account, curr LIMIT 20
+BALANCES
+BALANCES AT cost
+BALANCES WHERE account ~ "Assets:"
+BALANCES WHERE account ~ "Liabilities:"
+JOURNAL "Assets:*"
 EOF
 
 QUERY_COUNT=$(wc -l < "$QUERIES_FILE" | tr -d ' ')
