@@ -56,6 +56,9 @@ jobs:
       - name: Commit and push changes
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # SECURITY: Pass via env vars to prevent shell injection from branch names
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           git add supply-chain/
           if git diff --staged --quiet; then
@@ -63,8 +66,6 @@ jobs:
           else
             # Use GitHub API to create commits (signed by GitHub)
             # This is required because branch protection requires signed commits
-            REPO="${{ github.repository }}"
-            BRANCH="${{ github.event.pull_request.head.ref }}"
             COMMIT_MSG="chore: regenerate cargo-vet exemptions"
 
             # Get the current commit SHA
