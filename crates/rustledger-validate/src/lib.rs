@@ -564,9 +564,8 @@ mod tests {
 
     /// Test that balance assertions use inferred tolerance (matching Python beancount).
     ///
-    /// Tolerance is derived from transaction amounts, then multiplied by 2 for balance checks.
-    /// Python beancount derives tolerance from the balance assertion amount's precision,
-    /// not from transaction postings. See: <https://github.com/beancount/beancount/blob/master/beancount/ops/balance.py>
+    /// Tolerance is derived from the balance assertion amount's precision, then multiplied by 2.
+    /// See: <https://github.com/beancount/beancount/blob/master/beancount/ops/balance.py>
     /// Balance assertion with 2 decimal places: tolerance = 0.5 * 2 * 10^(-2) = 0.01.
     #[test]
     fn test_validate_balance_assertion_within_tolerance() {
