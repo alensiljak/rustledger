@@ -1,0 +1,239 @@
+# Fuzzing workflow - continuous fuzzing for parser and query engine
+#
+# Runs on:
+# - PRs that touch parser/query code (10 min per target)
+# - Nightly schedule (30 min per target)
+# - Manual trigger with configurable duration
+#
+name: Fuzz
+
+on:
+  pull_request:
+    paths:
+      - 'crates/rustledger-parser/**'
+      - 'crates/rustledger-query/**'
+  schedule:
+    # Nightly at 4 AM UTC
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: 'Fuzz duration in seconds per target'
+        required: false
+        default: '600'
+        type: string
+      target:
+        description: 'Specific target to fuzz (or "all")'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - fuzz_parse
+          - fuzz_parse_line
+          - fuzz_query_parse
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz-parser:
+    name: Fuzz Parser (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fuzz_parse, fuzz_parse_line]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - name: Check if target should run
+        id: check
+        run: |
+          INPUT_TARGET="${{ github.event.inputs.target || 'all' }}"
+          if [ "$INPUT_TARGET" = "all" ] || [ "$INPUT_TARGET" = "${{ matrix.target }}" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: dtolnay/rust-toolchain@nightly
+        if: steps.check.outputs.should_run == 'true'
+
+      - name: Install cargo-fuzz
+        if: steps.check.outputs.should_run == 'true'
+        run: cargo install cargo-fuzz
+
+      - name: Restore corpus cache
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: crates/rustledger-parser/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Determine fuzz duration
+        if: steps.check.outputs.should_run == 'true'
+        id: duration
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Nightly: 30 minutes per target
+            echo "seconds=1800" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual: use input or default 10 minutes
+            echo "seconds=${{ github.event.inputs.duration || '600' }}" >> $GITHUB_OUTPUT
+          else
+            # PR: 10 minutes per target
+            echo "seconds=600" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run fuzzer
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-parser
+          echo "Running ${{ matrix.target }} for ${{ steps.duration.outputs.seconds }} seconds..."
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time=${{ steps.duration.outputs.seconds }} \
+            -max_len=4096 \
+            -print_final_stats=1 \
+            2>&1 | tee fuzz-output.txt
+
+      - name: Check for crashes
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-parser
+          if [ -d "fuzz/artifacts/${{ matrix.target }}" ] && [ "$(ls -A fuzz/artifacts/${{ matrix.target }})" ]; then
+            echo "::error::Fuzzer found crashes!"
+            ls -la fuzz/artifacts/${{ matrix.target }}/
+            exit 1
+          else
+            echo "No crashes found"
+          fi
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-${{ matrix.target }}
+          path: crates/rustledger-parser/fuzz/artifacts/${{ matrix.target }}/
+
+      - name: Upload corpus
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-${{ matrix.target }}
+          path: crates/rustledger-parser/fuzz/corpus/${{ matrix.target }}/
+          retention-days: 7
+
+      - name: Summary
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          echo "## Fuzz Results: ${{ matrix.target }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Duration: ${{ steps.duration.outputs.seconds }} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 crates/rustledger-parser/fuzz-output.txt >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  fuzz-query:
+    name: Fuzz Query (fuzz_query_parse)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - name: Check if target should run
+        id: check
+        run: |
+          INPUT_TARGET="${{ github.event.inputs.target || 'all' }}"
+          if [ "$INPUT_TARGET" = "all" ] || [ "$INPUT_TARGET" = "fuzz_query_parse" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: dtolnay/rust-toolchain@nightly
+        if: steps.check.outputs.should_run == 'true'
+
+      - name: Install cargo-fuzz
+        if: steps.check.outputs.should_run == 'true'
+        run: cargo install cargo-fuzz
+
+      - name: Restore corpus cache
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: crates/rustledger-query/fuzz/corpus/fuzz_query_parse
+          key: fuzz-corpus-query-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-query-
+
+      - name: Determine fuzz duration
+        if: steps.check.outputs.should_run == 'true'
+        id: duration
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Nightly: 30 minutes
+            echo "seconds=1800" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual: use input or default 10 minutes
+            echo "seconds=${{ github.event.inputs.duration || '600' }}" >> $GITHUB_OUTPUT
+          else
+            # PR: 10 minutes
+            echo "seconds=600" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run fuzzer
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-query
+          echo "Running fuzz_query_parse for ${{ steps.duration.outputs.seconds }} seconds..."
+          cargo +nightly fuzz run fuzz_query_parse -- \
+            -max_total_time=${{ steps.duration.outputs.seconds }} \
+            -max_len=2048 \
+            -print_final_stats=1 \
+            2>&1 | tee fuzz-output.txt
+
+      - name: Check for crashes
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-query
+          if [ -d "fuzz/artifacts/fuzz_query_parse" ] && [ "$(ls -A fuzz/artifacts/fuzz_query_parse)" ]; then
+            echo "::error::Fuzzer found crashes!"
+            ls -la fuzz/artifacts/fuzz_query_parse/
+            exit 1
+          else
+            echo "No crashes found"
+          fi
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crashes-fuzz_query_parse
+          path: crates/rustledger-query/fuzz/artifacts/fuzz_query_parse/
+
+      - name: Upload corpus
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'schedule'
+        uses: actions/upload-artifact@v4
+        with:
+          name: corpus-fuzz_query_parse
+          path: crates/rustledger-query/fuzz/corpus/fuzz_query_parse/
+          retention-days: 7
+
+      - name: Summary
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          echo "## Fuzz Results: fuzz_query_parse" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Duration: ${{ steps.duration.outputs.seconds }} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 crates/rustledger-query/fuzz-output.txt >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
