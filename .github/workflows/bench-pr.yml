@@ -1,7 +1,7 @@
-# PR Benchmark workflow - quick benchmarks with PR comments
+# PR Benchmark workflow - benchmarks with PR comments
 #
-# Runs a lightweight benchmark on PRs and posts results as a comment.
-# Uses fewer iterations and a smaller dataset for speed.
+# Runs a benchmark on PRs (10K transactions) and posts results as a comment.
+# Uses same dataset size as nightly for accurate "vs main" comparison.
 #
 name: PR Benchmarks
 
@@ -52,7 +52,7 @@ jobs:
       - name: Build rustledger
         run: cargo build --release -p rustledger --no-default-features
 
-      - name: Generate test ledger (1K transactions)
+      - name: Generate test ledger (10K transactions)
         run: |
           python3 << 'EOF'
           import random
@@ -73,21 +73,21 @@ jobs:
               f.write("\n")
 
               start_date = date(2020, 1, 1)
-              for i in range(1000):
-                  d = start_date + timedelta(days=i // 5)
+              for i in range(10000):
+                  d = start_date + timedelta(days=i // 50)
                   amount = round(random.uniform(5, 500), 2)
                   expense = random.choice([a for a in accounts if a.startswith("Expenses:")])
-                  f.write(f'{d} * "Payee {i % 50}" "Transaction {i}"\n')
+                  f.write(f'{d} * "Payee {i % 100}" "Transaction {i}"\n')
                   f.write(f"  {expense}  {amount} USD\n")
                   f.write(f"  Assets:Bank:Checking\n\n")
 
-          print("Generated benchmark.beancount (1K transactions)")
+          print("Generated benchmark.beancount (10K transactions)")
           EOF
 
       - name: Run PR benchmark
         id: benchmark
         run: |
-          echo "=== PR Benchmark (1K transactions) ==="
+          echo "=== PR Benchmark (10K transactions) ==="
 
           # Quick benchmark: 5 runs, 2 warmup
           hyperfine \
@@ -219,7 +219,7 @@ jobs:
               '| beancount | ' + beancount_ms + 'ms ± ' + beancount_stddev + 'ms | ' + beancount_mem + ' MB |\n' +
               '| **Comparison** | **' + speedup + 'x faster** | **' + mem_ratio + 'x less** |\n' +
               baselineSection +
-              '<sub>1K transactions · 5 runs, 2 warmup · <a href="https://github.com/sharkdp/hyperfine">hyperfine</a></sub>\n\n' +
+              '<sub>10K transactions · 5 runs, 2 warmup · <a href="https://github.com/sharkdp/hyperfine">hyperfine</a></sub>\n\n' +
               '<details>\n' +
               '<summary>What do these numbers mean?</summary>\n\n' +
               '- **Time**: Wall-clock time to parse and validate the ledger (± std dev)\n' +
