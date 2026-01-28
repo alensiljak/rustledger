@@ -8,8 +8,8 @@ set -e
 # Environment variables:
 #   PARALLEL_JOBS: Number of parallel workers (default: CPU count, max 8)
 
-FIXTURES_DIR="${1:-tests/compat/files}"
-RESULTS_DIR="tests/compat-results"
+FIXTURES_DIR="${1:-tests/compatibility/files}"
+RESULTS_DIR="tests/compatibility-results"
 
 # Check if test files exist
 if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then

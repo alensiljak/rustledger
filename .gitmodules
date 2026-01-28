@@ -1,3 +1,0 @@
-[submodule "pta-standards"]
-	path = pta-standards
-	url = git@github.com:rustledger/pta-standards.git

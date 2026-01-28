@@ -39,11 +39,8 @@ states/
 traces/
 
 # Test fixtures (downloaded)
-spec/fixtures/lima-tests/
-spec/fixtures/examples/
-spec/fixtures/python-tests/
-tests/compat-full/
-tests/compat-results/
+tests/compatibility-full/
+tests/compatibility-results/
 
 # Benchmark results
 target/criterion/
@@ -64,4 +61,5 @@ target/criterion/
 book/
 .mcp.*
 .bench-tools/
-tests/compat/synthetic/
+tests/compatibility/synthetic/
+.playwright*

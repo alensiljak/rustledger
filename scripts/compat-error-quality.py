@@ -406,7 +406,7 @@ def main():
         print(f"\n{json.dumps(results, indent=2)}")
 
     # Save results
-    results_dir = Path("tests/compat-results")
+    results_dir = Path("tests/compatibility-results")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     from datetime import datetime

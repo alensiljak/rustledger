@@ -9,7 +9,7 @@ set -e
 #
 # Target: 800+ unique beancount files from 70+ diverse sources (after deduplication)
 
-DEST="tests/compat/files"
+DEST="tests/compatibility/files"
 TMPDIR="/tmp/beancount-fetch-$$"
 
 echo "=== Fetching Beancount Test Files ==="

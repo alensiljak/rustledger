@@ -110,9 +110,9 @@ See [project/performance.md](project/performance.md) for benchmarks.
 |-----------|-------------|----------|
 | Unit Tests | Inline `#[test]` | `crates/*/src/` |
 | Integration | Fixture-based | `crates/*/tests/` |
-| Golden Tests | 220+ cases from Lima | `spec/fixtures/lima-tests/` |
+| Golden Tests | 220+ cases from Lima | `tests/fixtures/lima-tests/` |
 | Property Tests | 22 proptest properties | `impl/properties.md` |
-| Compatibility | Compare vs Python | `tests/compat/` |
+| Compatibility | Compare vs Python | `tests/compatibility/` |
 | Formal | TLA+ model checking | `spec/tla/` |
 | Fuzz | libFuzzer targets | `fuzz/` |
 

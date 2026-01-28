@@ -7,8 +7,8 @@ excludes = [
   "target/*",
   "result/*",
   ".direnv/*",
-  "spec/fixtures/lima-tests/*",
-  "spec/fixtures/examples/*",
+  "tests/fixtures/lima-tests/*",
+  "tests/fixtures/examples/*",
   "*.lock",
 ]
 

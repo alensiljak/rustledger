@@ -1,0 +1,20 @@
+# Note: no transaction is produced.
+
+errors {
+  message: "found 'ERROR unrecognized token'"
+}
+errors {
+  message: "found 'ERROR unrecognized token'"
+}
+errors {
+  message: "found 'ERROR unrecognized token'"
+}
+errors {
+  message: "found ')'"
+}
+errors {
+  message: "found ')'"
+}
+errors {
+  message: "found ')'"
+}

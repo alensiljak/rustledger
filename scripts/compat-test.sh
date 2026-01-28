@@ -9,9 +9,9 @@ set -e
 #   ./scripts/fetch-compat-test-files.sh       # Download test files first
 #   ./scripts/compat-test.sh                   # Run tests on downloaded files
 
-# Default to tests/compat/files/, allow override via argument
-FIXTURES_DIR="${1:-tests/compat/files}"
-RESULTS_DIR="tests/compat-results"
+# Default to tests/compatibility/files/, allow override via argument
+FIXTURES_DIR="${1:-tests/compatibility/files}"
+RESULTS_DIR="tests/compatibility-results"
 
 # Check if test files exist
 if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then

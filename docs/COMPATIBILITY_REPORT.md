@@ -124,11 +124,11 @@ These affect files with options trading and HSA investments that have buy/sell t
 # Inside nix develop shell:
 
 # Quick test with curated files (~100 files, committed)
-./scripts/compat-test.sh tests/compat/files
+./scripts/compat-test.sh tests/compatibility/files
 
 # Full test suite (~800 files, downloaded)
 ./scripts/fetch-compat-test-files.sh  # Download first
-./scripts/compat-test.sh               # Runs on tests/compat-full/
+./scripts/compat-test.sh               # Runs on tests/compatibility-full/
 
 # Run BQL comparison
 ./scripts/compat-bql-test.sh
@@ -140,7 +140,7 @@ python scripts/analyze-compat-results.py
 ## Directory Structure
 
 ```
-tests/compat/                    # Curated test suite (committed)
+tests/compatibility/                    # Curated test suite (committed)
 ├── README.md                    # Test documentation
 ├── sources.toml                 # Source documentation and licenses
 └── files/                       # ~100 curated beancount files
@@ -150,7 +150,7 @@ tests/compat/                    # Curated test suite (committed)
     ├── real-world/              # Real-world examples
     └── edge-cases/              # Known compatibility differences
 
-tests/compat-full/               # Full test suite (gitignored, downloaded)
+tests/compatibility-full/               # Full test suite (gitignored, downloaded)
 ├── beancount-v2/                # Official beancount v2 files
 ├── beancount-v3/                # Official beancount v3 files
 ├── parser-lima/                 # Parser conformance tests
@@ -160,7 +160,7 @@ tests/compat-full/               # Full test suite (gitignored, downloaded)
 ├── beancount-import/            # Import test data
 └── community/                   # Community project files
 
-tests/compat-results/            # Test output (gitignored)
+tests/compatibility-results/            # Test output (gitignored)
 ```
 
 ## Scripts

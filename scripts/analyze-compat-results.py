@@ -275,7 +275,7 @@ def main():
     if len(sys.argv) > 1:
         results_dir = Path(sys.argv[1])
     else:
-        results_dir = Path("tests/compat-results")
+        results_dir = Path("tests/compatibility-results")
 
     if not results_dir.exists():
         print(f"Error: Results directory not found: {results_dir}")

@@ -227,9 +227,9 @@ cargo test -p rustledger-core tla_proptest
 
 Compare rustledger against Python beancount to ensure identical behavior.
 
-**Curated files (93 files):** Committed to `tests/compat/files/`
+**Curated files (93 files):** Committed to `tests/compatibility/files/`
 ```bash
-./scripts/compat-test.sh tests/compat/files
+./scripts/compat-test.sh tests/compatibility/files
 ```
 
 **Full suite (~800 files):** Downloaded on demand
@@ -248,7 +248,7 @@ Compare rustledger against Python beancount to ensure identical behavior.
 
 ## Test Fixtures
 
-### Parser Fixtures (`spec/fixtures/`)
+### Parser Fixtures (`tests/fixtures/`)
 
 | File | Purpose |
 |------|---------|
@@ -264,7 +264,7 @@ Per-crate test data:
 - `rustledger-loader/tests/fixtures/` - Include paths, cycles, errors
 - `rustledger/tests/fixtures/` - CLI integration test files
 
-### Compatibility Fixtures (`tests/compat/files/`)
+### Compatibility Fixtures (`tests/compatibility/files/`)
 
 Organized by category:
 - `parser/` - Parser edge cases (~25 files)
@@ -330,13 +330,13 @@ proptest! {
 ### Fixture File
 
 1. Determine the appropriate location:
-   - Parser/syntax: `spec/fixtures/`
-   - Compatibility: `tests/compat/files/<category>/`
+   - Parser/syntax: `tests/fixtures/`
+   - Compatibility: `tests/compatibility/files/<category>/`
    - Crate-specific: `crates/<crate>/tests/fixtures/`
 
 2. Create a minimal `.beancount` file that reproduces the case
 
-3. Update `tests/compat/sources.toml` if adding compatibility files
+3. Update `tests/compatibility/sources.toml` if adding compatibility files
 
 ### TLA+ Specification
 
@@ -413,4 +413,4 @@ cargo insta review
 - [BENCHMARKING.md](BENCHMARKING.md) - Performance benchmarks
 - [CONTRIBUTING.md](../CONTRIBUTING.md) - Development workflow
 - [spec/README.md](../spec/README.md) - Specification documents
-- [tests/compat/README.md](../tests/compat/README.md) - Compatibility test details
+- [tests/compatibility/README.md](../tests/compatibility/README.md) - Compatibility test details
