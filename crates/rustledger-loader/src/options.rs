@@ -35,7 +35,8 @@ const KNOWN_OPTIONS: &[&str] = &[
     "documents",
     "insert_pythonpath",
     "plugin_processing_mode",
-    "plugin", // Deprecated, but still known
+    "plugin",               // Deprecated, but still known
+    "tolerance_multiplier", // Renamed from inferred_tolerance_multiplier
 ];
 
 /// Options that can be specified multiple times.
@@ -292,10 +293,31 @@ impl Options {
                 self.account_unrealized_gains = Some(value.to_string());
             }
             "inferred_tolerance_multiplier" => {
+                // Deprecated: renamed to tolerance_multiplier in Python beancount
+                self.warnings.push(OptionWarning {
+                    code: "E7004",
+                    message: "Renamed to 'tolerance_multiplier'.".to_string(),
+                    option: key.to_string(),
+                    value: value.to_string(),
+                });
                 if let Ok(d) = Decimal::from_str(value) {
                     self.inferred_tolerance_multiplier = d;
                 } else {
                     // E7002: Invalid option value
+                    self.warnings.push(OptionWarning {
+                        code: "E7002",
+                        message: format!(
+                            "Invalid value \"{value}\" for option \"{key}\": expected decimal number"
+                        ),
+                        option: key.to_string(),
+                        value: value.to_string(),
+                    });
+                }
+            }
+            "tolerance_multiplier" => {
+                if let Ok(d) = Decimal::from_str(value) {
+                    self.inferred_tolerance_multiplier = d;
+                } else {
                     self.warnings.push(OptionWarning {
                         code: "E7002",
                         message: format!(
@@ -653,9 +675,32 @@ mod tests {
         let mut opts = Options::new();
         opts.set("inferred_tolerance_multiplier", "not_a_number");
 
+        // E7004 (deprecated name) + E7002 (invalid value)
+        assert_eq!(opts.warnings.len(), 2);
+        assert_eq!(opts.warnings[0].code, "E7004");
+        assert!(opts.warnings[0].message.contains("Renamed"));
+        assert_eq!(opts.warnings[1].code, "E7002");
+        assert!(opts.warnings[1].message.contains("expected decimal"));
+    }
+
+    #[test]
+    fn test_tolerance_multiplier_new_name() {
+        let mut opts = Options::new();
+        opts.set("tolerance_multiplier", "1.5");
+
+        assert!(opts.warnings.is_empty());
+        assert_eq!(opts.inferred_tolerance_multiplier, Decimal::new(15, 1));
+    }
+
+    #[test]
+    fn test_inferred_tolerance_multiplier_deprecated() {
+        let mut opts = Options::new();
+        opts.set("inferred_tolerance_multiplier", "1.01");
+
         assert_eq!(opts.warnings.len(), 1);
-        assert_eq!(opts.warnings[0].code, "E7002");
-        assert!(opts.warnings[0].message.contains("expected decimal"));
+        assert_eq!(opts.warnings[0].code, "E7004");
+        assert!(opts.warnings[0].message.contains("Renamed to 'tolerance_multiplier'"));
+        assert_eq!(opts.inferred_tolerance_multiplier, Decimal::from_str("1.01").unwrap());
     }
 
     #[test]

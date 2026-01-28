@@ -252,8 +252,11 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             .load(file)
             .with_context(|| format!("failed to load {}", file.display()))?;
 
-        // Save to cache (unless --no-cache or there are parse errors)
-        if !args.no_cache && result.errors.is_empty() {
+        // Save to cache (unless --no-cache, parse errors, or option warnings)
+        // Option warnings (E7001-E7006) are not stored in the cache, so we must
+        // avoid caching files that have them — otherwise the warnings are silently
+        // lost on subsequent loads.
+        if !args.no_cache && result.errors.is_empty() && result.options.warnings.is_empty() {
             // Collect all loaded file paths for cache (as strings for serialization)
             let files: Vec<String> = result
                 .source_map

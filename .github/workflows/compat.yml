@@ -278,7 +278,7 @@ jobs:
               # === Rust parsing - check ===
               try:
                   proc = subprocess.run(
-                      [*RLEDGER_CHECK, "--format", "json", str(file_path)],
+                      [*RLEDGER_CHECK, "--no-cache", "--format", "json", str(file_path)],
                       capture_output=True, text=True, timeout=30
                   )
                   result.rust_ok = (proc.returncode == 0)
