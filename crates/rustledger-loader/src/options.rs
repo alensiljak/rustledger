@@ -194,7 +194,7 @@ impl Options {
             conversion_currency: None,
             inferred_tolerance_default: HashMap::new(),
             inferred_tolerance_multiplier: Decimal::new(5, 1), // 0.5
-            infer_tolerance_from_cost: true,
+            infer_tolerance_from_cost: false,
             use_legacy_fixed_tolerances: false,
             experiment_explicit_tolerances: false,
             booking_method: "STRICT".to_string(),
@@ -609,7 +609,7 @@ mod tests {
         let opts = Options::new();
         assert_eq!(opts.name_assets, "Assets");
         assert_eq!(opts.booking_method, "STRICT");
-        assert!(opts.infer_tolerance_from_cost);
+        assert!(!opts.infer_tolerance_from_cost);
     }
 
     #[test]

@@ -117,7 +117,7 @@ impl Default for ValidationOptions {
                 "Expenses".to_string(),
             ],
             // Match Python beancount defaults
-            infer_tolerance_from_cost: true,
+            infer_tolerance_from_cost: false,
             tolerance_multiplier: Decimal::new(5, 1), // 0.5
         }
     }

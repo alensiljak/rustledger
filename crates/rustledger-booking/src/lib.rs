@@ -30,6 +30,7 @@ pub use book::{BookedTransaction, BookingEngine, BookingError, CapitalGain, book
 pub use interpolate::{InterpolationError, InterpolationResult, interpolate};
 pub use pad::{PadError, PadResult, expand_pads, merge_with_padding, process_pads};
 
+use bigdecimal::BigDecimal;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::Signed;
 use rustledger_core::{Amount, IncompleteAmount, InternedStr, Transaction};
@@ -232,6 +233,118 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Dec
     residuals
 }
 
+/// Convert a `rust_decimal::Decimal` to `BigDecimal` for arbitrary-precision arithmetic.
+///
+/// Individual `Decimal` values are representable exactly (≤28 significant digits).
+/// The precision loss only occurs during arithmetic, so converting before operations
+/// preserves full precision.
+fn to_big(d: Decimal) -> BigDecimal {
+    use std::str::FromStr;
+    // rust_decimal Display is exact; BigDecimal FromStr handles any decimal string
+    BigDecimal::from_str(&d.to_string()).expect("Decimal always produces valid decimal string")
+}
+
+/// Calculate the residual of a transaction using arbitrary-precision arithmetic.
+///
+/// This mirrors [`calculate_residual`] but uses `BigDecimal` to avoid precision loss
+/// when amounts have near-28-digit precision. `rust_decimal` is limited to 28-29
+/// significant digits; this function handles arbitrary precision correctly.
+#[must_use]
+pub fn calculate_residual_precise(transaction: &Transaction) -> HashMap<InternedStr, BigDecimal> {
+    let mut residuals: HashMap<InternedStr, BigDecimal> =
+        HashMap::with_capacity(transaction.postings.len().min(4));
+
+    let mut inferred_cost_currency: Option<Option<InternedStr>> = None;
+    let get_inferred_currency = |cache: &mut Option<Option<InternedStr>>| -> Option<InternedStr> {
+        cache
+            .get_or_insert_with(|| infer_cost_currency_from_postings(transaction))
+            .clone()
+    };
+
+    for posting in &transaction.postings {
+        if let Some(IncompleteAmount::Complete(units)) = &posting.units {
+            let units_number = to_big(units.number);
+
+            let cost_contribution = posting.cost.as_ref().and_then(|cost_spec| {
+                let price_currency = posting.price.as_ref().and_then(|p| match p {
+                    rustledger_core::PriceAnnotation::Unit(a)
+                    | rustledger_core::PriceAnnotation::Total(a) => Some(a.currency.clone()),
+                    rustledger_core::PriceAnnotation::UnitIncomplete(inc)
+                    | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                        inc.as_amount().map(|a| a.currency.clone())
+                    }
+                    _ => None,
+                });
+
+                let inferred_currency = cost_spec
+                    .currency
+                    .clone()
+                    .or(price_currency)
+                    .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
+
+                if let (Some(per_unit), Some(cost_curr)) =
+                    (&cost_spec.number_per, &inferred_currency)
+                {
+                    let cost_amount = &units_number * to_big(*per_unit);
+                    Some((cost_curr.clone(), cost_amount))
+                } else if let (Some(total), Some(cost_curr)) =
+                    (&cost_spec.number_total, &inferred_currency)
+                {
+                    Some((cost_curr.clone(), to_big(*total) * to_big(units.number.signum())))
+                } else {
+                    None
+                }
+            });
+
+            if let Some((currency, amount)) = cost_contribution {
+                *residuals.entry(currency).or_default() += amount;
+            } else if let Some(price) = &posting.price {
+                match price {
+                    rustledger_core::PriceAnnotation::Unit(price_amt) => {
+                        let converted = units_number.abs() * to_big(price_amt.number);
+                        *residuals.entry(price_amt.currency.clone()).or_default() +=
+                            converted * to_big(units.number.signum());
+                    }
+                    rustledger_core::PriceAnnotation::Total(price_amt) => {
+                        *residuals.entry(price_amt.currency.clone()).or_default() +=
+                            to_big(price_amt.number) * to_big(units.number.signum());
+                    }
+                    rustledger_core::PriceAnnotation::UnitIncomplete(inc) => {
+                        if let Some(price_amt) = inc.as_amount() {
+                            let converted = units_number.abs() * to_big(price_amt.number);
+                            *residuals.entry(price_amt.currency.clone()).or_default() +=
+                                converted * to_big(units.number.signum());
+                        } else {
+                            *residuals.entry(units.currency.clone()).or_default() +=
+                                units_number.clone();
+                        }
+                    }
+                    rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                        if let Some(price_amt) = inc.as_amount() {
+                            *residuals.entry(price_amt.currency.clone()).or_default() +=
+                                to_big(price_amt.number) * to_big(units.number.signum());
+                        } else {
+                            *residuals.entry(units.currency.clone()).or_default() +=
+                                units_number.clone();
+                        }
+                    }
+                    rustledger_core::PriceAnnotation::UnitEmpty
+                    | rustledger_core::PriceAnnotation::TotalEmpty => {
+                        *residuals.entry(units.currency.clone()).or_default() +=
+                            units_number.clone();
+                    }
+                }
+            } else if posting.cost.is_some() {
+                // Empty cost spec — don't contribute to residual
+            } else {
+                *residuals.entry(units.currency.clone()).or_default() += units_number;
+            }
+        }
+    }
+
+    residuals
+}
+
 /// Check if a transaction is balanced within tolerance.
 #[must_use]
 #[allow(clippy::implicit_hasher)]
@@ -242,7 +355,7 @@ pub fn is_balanced(transaction: &Transaction, tolerances: &HashMap<InternedStr, 
         let tolerance = tolerances
             .get(&currency)
             .copied()
-            .unwrap_or(Decimal::new(5, 3)); // Default 0.005
+            .unwrap_or(Decimal::ZERO); // Default 0 (exact balance for integer-only currencies)
 
         if residual.abs() > tolerance {
             return false;

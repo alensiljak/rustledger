@@ -182,17 +182,25 @@ pub fn validate_transaction_balance(
         return; // Lot matching will validate this transaction
     }
 
-    let residuals = rustledger_booking::calculate_residual(txn);
+    // Use arbitrary-precision arithmetic for balance checking.
+    // rust_decimal is limited to 28-29 significant digits, which can miss tiny
+    // residuals when amounts have near-maximum precision (e.g., 28 decimal places).
+    let residuals = rustledger_booking::calculate_residual_precise(txn);
 
     // Calculate per-currency tolerance based on postings
     let tolerances = calculate_tolerances(txn, options);
 
-    for (currency, residual) in residuals {
-        // Get the tolerance for this currency, defaulting to 0.005
-        let tolerance = tolerances
-            .get(&currency)
-            .copied()
-            .unwrap_or_else(|| Decimal::new(5, 3));
+    for (currency, residual) in &residuals {
+        // Get the tolerance for this currency, defaulting to 0 (exact balance).
+        // Python beancount uses 0 as default when no posting contributes decimal
+        // precision for a currency (all integer amounts → exact balance required).
+        let tolerance: bigdecimal::BigDecimal = tolerances
+            .get(currency)
+            .map(|d| {
+                use std::str::FromStr;
+                bigdecimal::BigDecimal::from_str(&d.to_string()).unwrap_or_default()
+            })
+            .unwrap_or_default();
 
         if residual.abs() > tolerance {
             errors.push(ValidationError::new(
@@ -230,9 +238,14 @@ pub fn calculate_tolerances(
     let mut tolerances: HashMap<InternedStr, Decimal> =
         HashMap::with_capacity(txn.postings.len().min(4));
 
-    // Default tolerance based on quantum of amounts in postings
+    // Default tolerance based on quantum of amounts in postings.
+    // Only amounts with decimal places contribute (Python's `if expo < 0:` guard).
+    // Integer amounts (scale=0) don't contribute — if all amounts for a currency
+    // are integers, the tolerance for that currency stays at 0 (exact balance required).
     for posting in &txn.postings {
-        if let Some(units) = posting.amount() {
+        if let Some(units) = posting.amount()
+            && units.number.scale() > 0
+        {
             let quantum = decimal_quantum(units.number);
             // Use half the quantum as base tolerance (like Python beancount)
             let base_tolerance = quantum * options.tolerance_multiplier;
@@ -244,27 +257,58 @@ pub fn calculate_tolerances(
         }
     }
 
-    // Calculate cost-inferred tolerance if enabled
+    // Calculate cost-inferred tolerance if enabled.
+    // In Python, cost/price tolerance is only computed for postings where units
+    // have decimal places (expo < 0). The cost tolerance is ACCUMULATED (summed)
+    // across postings, then max'd with the existing tolerance per currency.
     if options.infer_tolerance_from_cost {
-        for posting in &txn.postings {
-            if let (Some(units), Some(cost_spec)) = (posting.amount(), &posting.cost) {
-                // Get the cost per unit
-                if let Some(cost_per_unit) = cost_spec.number_per {
-                    // Get the cost currency
-                    if let Some(cost_currency) = &cost_spec.currency {
-                        // Calculate: units_quantum * cost_per_unit * multiplier
-                        let units_quantum = decimal_quantum(units.number);
-                        let cost_tolerance =
-                            units_quantum * cost_per_unit * options.tolerance_multiplier;
+        // Accumulated cost/price tolerances per currency
+        let mut cost_tolerances: HashMap<InternedStr, Decimal> = HashMap::new();
 
-                        // Update tolerance for the cost currency (take max)
-                        tolerances
-                            .entry(cost_currency.clone())
-                            .and_modify(|t| *t = (*t).max(cost_tolerance))
-                            .or_insert(cost_tolerance);
+        for posting in &txn.postings {
+            if let Some(units) = posting.amount() {
+                // Only process postings with decimal amounts (Python: if expo < 0)
+                if units.number.scale() == 0 {
+                    continue;
+                }
+                let units_quantum = decimal_quantum(units.number);
+                let tolerance = units_quantum * options.tolerance_multiplier;
+
+                // Cost contribution
+                if let Some(cost_spec) = &posting.cost
+                    && let Some(cost_per_unit) = cost_spec.number_per
+                    && let Some(cost_currency) = &cost_spec.currency
+                {
+                    let cost_tolerance = tolerance * cost_per_unit;
+                    *cost_tolerances.entry(cost_currency.clone()).or_default() +=
+                        cost_tolerance;
+                }
+
+                // Price contribution
+                if let Some(price) = &posting.price {
+                    match price {
+                        rustledger_core::PriceAnnotation::Unit(price_amt) => {
+                            let price_tolerance = tolerance * price_amt.number;
+                            *cost_tolerances.entry(price_amt.currency.clone()).or_default() +=
+                                price_tolerance;
+                        }
+                        rustledger_core::PriceAnnotation::Total(price_amt) => {
+                            let price_tolerance = tolerance * price_amt.number;
+                            *cost_tolerances.entry(price_amt.currency.clone()).or_default() +=
+                                price_tolerance;
+                        }
+                        _ => {}
                     }
                 }
             }
+        }
+
+        // Merge cost tolerances: take max of existing and cost-inferred
+        for (currency, cost_tol) in cost_tolerances {
+            tolerances
+                .entry(currency)
+                .and_modify(|t| *t = (*t).max(cost_tol))
+                .or_insert(cost_tol);
         }
     }
 
