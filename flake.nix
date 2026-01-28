@@ -261,6 +261,34 @@
                 pass_filenames = false;
               };
 
+              # Code quality (all fast, ~instant)
+              check-merge-conflict = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-merge-conflict";
+              };
+              trailing-whitespace = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/trailing-whitespace-fixer";
+                types = [ "text" ];
+              };
+              end-of-file-fixer = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/end-of-file-fixer";
+                types = [ "text" ];
+              };
+              check-toml = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-toml";
+                types = [ "toml" ];
+              };
+
+              # Typo checker - catches spelling mistakes in code/docs
+              typos = {
+                enable = true;
+                entry = "${pkgs.typos}/bin/typos --locale en-us";
+                types = [ "text" ];
+              };
+
               # Commit message
               commitizen.enable = true;
 
