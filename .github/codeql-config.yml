@@ -1,0 +1,11 @@
+# CodeQL Configuration
+# Excludes upstream test fixtures from analysis
+
+name: "rustledger CodeQL config"
+
+# Exclude paths from analysis
+paths-ignore:
+  # Upstream beancount example files (not our code)
+  - tests/fixtures/examples/**
+  # Downloaded compatibility test files (external code)
+  - tests/compatibility/files/**
