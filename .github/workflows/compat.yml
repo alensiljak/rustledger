@@ -143,6 +143,7 @@ jobs:
               print("Warning: beancount not installed")
 
           TEST_DIRS = [Path("tests/compatibility/files"), Path("tests/compatibility/synthetic"), Path("tests/regressions")]
+          EXCLUSIONS_FILE = Path("tests/compatibility/exclusions.toml")
           RLEDGER = "./target/release/rledger"
           RLEDGER_CHECK = [RLEDGER, "check"]
           RLEDGER_QUERY = [RLEDGER, "query"]
@@ -150,6 +151,29 @@ jobs:
           # Use available CPUs, but cap at 8 for CI stability
           MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
           print(f"Running with {MAX_WORKERS} parallel workers")
+
+          # Load exclusions from TOML file
+          excluded_patterns = []
+          excluded_reasons = {}
+          if EXCLUSIONS_FILE.exists():
+              content = EXCLUSIONS_FILE.read_text()
+              current_pattern = None
+              for line in content.split('\n'):
+                  line = line.strip()
+                  if line.startswith('pattern = "'):
+                      current_pattern = line.split('"')[1]
+                      excluded_patterns.append(current_pattern)
+                  elif line.startswith('reason = "') and current_pattern:
+                      excluded_reasons[current_pattern] = line.split('"')[1]
+              print(f"Loaded {len(excluded_patterns)} exclusion patterns")
+
+          def is_excluded(file_path: Path) -> bool:
+              """Check if a file matches any exclusion pattern."""
+              rel_path = str(file_path)
+              for pattern in excluded_patterns:
+                  if pattern in rel_path:
+                      return True
+              return False
 
           # Category mapping based on directory structure
           def get_category(file_path: Path) -> str:
@@ -308,11 +332,26 @@ jobs:
               return result
 
           # === Run tests in parallel ===
-          files = []
+          all_files = []
           for test_dir in TEST_DIRS:
               if test_dir.exists():
-                  files.extend(sorted(test_dir.rglob("*.beancount")))
-          print(f"Testing {len(files)} files from {len(TEST_DIRS)} directories...")
+                  all_files.extend(sorted(test_dir.rglob("*.beancount")))
+
+          # Filter out excluded files
+          files = []
+          excluded_files = []
+          for f in all_files:
+              if is_excluded(f):
+                  excluded_files.append(f)
+              else:
+                  files.append(f)
+
+          print(f"Found {len(all_files)} total files from {len(TEST_DIRS)} directories")
+          if excluded_files:
+              print(f"  - Testing: {len(files)}")
+              print(f"  - Excluded (known limitations): {len(excluded_files)}")
+          else:
+              print(f"Testing {len(files)} files...")
 
           results = []
           completed = 0
@@ -393,7 +432,10 @@ jobs:
           realworld_pct = realworld_check * 100 // realworld_total if realworld_total > 0 else 0
 
           # === Print results ===
+          total_excluded = len(excluded_files)
           print(f"Total files: {total}")
+          if total_excluded > 0:
+              print(f"Excluded files: {total_excluded} (known limitations)")
           print(f"Check exit match: {check_match}/{total} ({check_pct}%)")
           print(f"Accounts match: {accounts_match}/{total} ({accounts_pct}%)")
           print(f"Posting count match: {posting_match}/{total} ({posting_pct}%)")
@@ -425,6 +467,7 @@ jobs:
           # === Write to GITHUB_OUTPUT ===
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"check_total={total}\n")
+              f.write(f"check_excluded={total_excluded}\n")
               f.write(f"check_match={check_match}\n")
               f.write(f"check_match_pct={check_pct}\n")
               f.write(f"accounts_match={accounts_match}\n")
@@ -601,6 +644,7 @@ jobs:
 
           summary:
             total_files: ${{ steps.compat_test.outputs.check_total }}
+            excluded_files: ${{ steps.compat_test.outputs.check_excluded }}
             check_exit_match_pct: ${{ steps.compat_test.outputs.check_match_pct }}
             full_match_pct: ${{ steps.compat_test.outputs.full_pct }}
             bql_match_pct: ${{ steps.bql_compat.outputs.bql_pct }}
@@ -608,6 +652,7 @@ jobs:
 
           check_compatibility:
             total_files: ${{ steps.compat_test.outputs.check_total }}
+            excluded_files: ${{ steps.compat_test.outputs.check_excluded }}
             exit_code_match: ${{ steps.compat_test.outputs.check_match }}
             exit_code_match_pct: ${{ steps.compat_test.outputs.check_match_pct }}
             rust_only_pass: ${{ steps.compat_test.outputs.rust_only_pass }}

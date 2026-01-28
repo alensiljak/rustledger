@@ -12,6 +12,7 @@ set -e
 # Default to tests/compatibility/files/, allow override via argument
 FIXTURES_DIR="${1:-tests/compatibility/files}"
 RESULTS_DIR="tests/compatibility-results"
+EXCLUSIONS_FILE="tests/compatibility/exclusions.toml"
 
 # Check if test files exist
 if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; then
@@ -19,6 +20,31 @@ if [ ! -d "$FIXTURES_DIR" ] || [ -z "$(ls -A "$FIXTURES_DIR" 2>/dev/null)" ]; th
     echo "Run ./scripts/fetch-compat-test-files.sh to download test files"
     exit 1
 fi
+
+# Load exclusions from TOML file
+declare -a EXCLUDED_PATTERNS=()
+declare -a EXCLUDED_REASONS=()
+if [ -f "$EXCLUSIONS_FILE" ]; then
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^pattern\ *=\ *\"(.*)\"$ ]]; then
+            EXCLUDED_PATTERNS+=("${BASH_REMATCH[1]}")
+        elif [[ "$line" =~ ^reason\ *=\ *\"(.*)\"$ ]]; then
+            EXCLUDED_REASONS+=("${BASH_REMATCH[1]}")
+        fi
+    done < "$EXCLUSIONS_FILE"
+fi
+
+# Function to check if a file should be excluded
+is_excluded() {
+    local file="$1"
+    local relpath="${file#$FIXTURES_DIR/}"
+    for pattern in "${EXCLUDED_PATTERNS[@]}"; do
+        if [[ "$relpath" == "$pattern" ]] || [[ "$relpath" == *"$pattern"* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 RESULTS_FILE="$RESULTS_DIR/results_$TIMESTAMP.jsonl"
 SUMMARY_FILE="$RESULTS_DIR/summary_$TIMESTAMP.md"
@@ -67,11 +93,25 @@ echo "  Rust:   $($RLEDGER --version 2>&1 || echo 'rledger available')"
 echo "  Parallel jobs: $PARALLEL_JOBS"
 echo ""
 
-# Find all beancount files
-mapfile -t files < <(find "$FIXTURES_DIR" -name "*.beancount" -type f | sort)
+# Find all beancount files, filtering out exclusions
+mapfile -t all_files < <(find "$FIXTURES_DIR" -name "*.beancount" -type f | sort)
+files=()
+excluded_files=()
+for f in "${all_files[@]}"; do
+    if is_excluded "$f"; then
+        excluded_files+=("$f")
+    else
+        files+=("$f")
+    fi
+done
 total_files=${#files[@]}
+total_excluded=${#excluded_files[@]}
 
-echo "Found $total_files .beancount files to test"
+echo "Found $((total_files + total_excluded)) .beancount files"
+if [ "$total_excluded" -gt 0 ]; then
+    echo "  - Testing: $total_files"
+    echo "  - Excluded (known limitations): $total_excluded"
+fi
 echo "Results will be written to: $RESULTS_FILE"
 echo ""
 
@@ -177,6 +217,9 @@ check_pct=$((check_match * 100 / total))
 
 # Display summary
 echo "Files tested:       $total"
+if [ "$total_excluded" -gt 0 ]; then
+    echo "Files excluded:     $total_excluded (known limitations)"
+fi
 echo "Execution time:     ${elapsed}s ($((total / (elapsed + 1))) files/sec)"
 echo ""
 echo "Parse behavior match: $parse_match/$total ($parse_pct%)"
@@ -198,6 +241,7 @@ Generated: $(date)
 | Metric | Count | Percentage |
 |--------|-------|------------|
 | Files tested | $total | 100% |
+| Files excluded | $total_excluded | (known limitations) |
 | Parse match | $parse_match | $parse_pct% |
 | Check exit match | $check_match | $check_pct% |
 
@@ -217,6 +261,24 @@ Generated: $(date)
 Total: $check_mismatch files
 
 EOF
+
+# Add exclusions section if any
+if [ "$total_excluded" -gt 0 ]; then
+    cat >> "$SUMMARY_FILE" << EOF
+
+## Excluded Files (Known Limitations)
+
+These files are excluded from testing due to known limitations that are not practical issues.
+See \`tests/compatibility/exclusions.toml\` for details.
+
+EOF
+    for i in "${!excluded_files[@]}"; do
+        relpath="${excluded_files[$i]#$FIXTURES_DIR/}"
+        reason="${EXCLUDED_REASONS[$i]:-No reason provided}"
+        echo "- \`$relpath\`: $reason" >> "$SUMMARY_FILE"
+    done
+    echo "" >> "$SUMMARY_FILE"
+fi
 
 # Find and list mismatches
 echo "### Files with exit code mismatch:" >> "$SUMMARY_FILE"

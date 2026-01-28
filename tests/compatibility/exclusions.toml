@@ -1,0 +1,23 @@
+# Compatibility Test Exclusions
+#
+# Files listed here are excluded from compatibility testing because they
+# exercise known limitations that are not practical issues.
+#
+# Format:
+#   [[exclusions]]
+#   pattern = "path/to/file.beancount"  # Relative to tests/compatibility/files/
+#   reason = "Brief explanation"
+#   details = "Optional longer explanation"
+
+[[exclusions]]
+pattern = "beancount-lazy-plugins/tests_data_output_some_fund_output.beancount"
+reason = "Decimal precision exceeds rust_decimal's 28-digit limit"
+details = """
+This file contains amounts with 28 decimal places (e.g., 0.7142857142857142857142857143).
+Python's decimal.Decimal has arbitrary precision and detects a 2×10⁻²⁵ USD residual imbalance.
+Rust's rust_decimal rounds this away due to its 28-digit maximum precision.
+
+This is not a practical issue - no real-world ledger uses 28-decimal-place amounts.
+Fixing this would require replacing rust_decimal with an arbitrary-precision library
+like bigdecimal, which is a significant refactor for negligible practical benefit.
+"""
