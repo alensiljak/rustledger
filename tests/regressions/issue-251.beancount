@@ -1,0 +1,12 @@
+; Issue: https://github.com/rustledger/rustledger/issues/251
+; Description: Tolerance handling should match beancount's more lenient behavior
+; Expected: No errors - beancount tolerates larger discrepancies in some cases
+
+option "operating_currency" "USD"
+
+2000-01-01 open Assets:Abc ABC
+2000-01-01 open Expenses:Abc USD
+
+2026-01-01 * "Transaction with cost basis rounding"
+  Assets:Abc    70.538 ABC {100 USD}
+  Expenses:Abc

@@ -1,0 +1,98 @@
+# Quality checks - API compatibility, MSRV, security, coverage
+name: Quality
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Semver check - detect breaking API changes
+  semver:
+    name: Semver Check
+    runs-on: ubuntu-latest
+    # Only run on PRs to catch breaking changes before merge
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - name: Check for Rust changes
+        id: changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        with:
+          filters: |
+            rust:
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'Cargo.lock'
+      - name: Check semver compatibility
+        if: steps.changes.outputs.rust == 'true'
+        uses: obi1kenobi/cargo-semver-checks-action@5b298c9520f7096a4683c0bd981a7ac5a7e249ae # v2
+        with:
+          feature-group: all-features
+          exclude: rustledger-lsp,rustledger-wasm
+          rust-toolchain: "1.92.0"
+      - name: Skip semver check
+        if: steps.changes.outputs.rust != 'true'
+        run: echo "No Rust changes detected, skipping semver check"
+
+  # MSRV check - verify minimum supported Rust version
+  msrv:
+    name: MSRV (1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: dtolnay/rust-toolchain@9710f9012180ecfb08dcfc878269be6dc6f1d80e # 1.89
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Check MSRV compatibility
+        run: cargo check --workspace --all-features
+
+  # Security and license audit
+  deny:
+    name: Cargo Deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: taiki-e/install-action@0fc09cf1c2f18a9f700d18b3d6eb8f7ee877c7a2 # cargo-deny
+      - name: Check advisories, licenses, and bans
+        run: cargo deny check
+
+  # Code coverage
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+    env:
+      RUST_MIN_STACK: 8388608
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@fb03c6692ef8fff8e8e84e2aa701f168d7ed3811 # cargo-llvm-cov
+      - name: Generate coverage report
+        run: |
+          cargo llvm-cov --all-features --lcov --output-path lcov.info \
+            --package rustledger-core \
+            --package rustledger-parser \
+            --package rustledger-booking \
+            --package rustledger-loader \
+            --package rustledger-validate \
+            --package rustledger-query \
+            --package rustledger-plugin \
+            --package rustledger-importer
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          files: lcov.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

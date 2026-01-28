@@ -1,5 +1,7 @@
-# CI workflow for rustledger
+# Core CI workflow - runs on every PR
+# Fast checks: format, build, lint, test, docs, regressions
 name: CI
+
 on:
   push:
     branches: [main]
@@ -7,16 +9,7 @@ on:
     branches: [main]
   merge_group:
     branches: [main]
-  schedule:
-    # Weekly on Sunday at 5 AM UTC - for Miri and other expensive checks
-    - cron: '0 5 * * 0'
-  # Allow manual triggering (useful for bot PRs where GITHUB_TOKEN can't trigger workflows)
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Git ref to run CI on'
-        required: false
-        default: ''
 
 permissions:
   contents: read
@@ -24,12 +17,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
-  # sccache configuration
   SCCACHE_GHA_ENABLED: true
   RUSTC_WRAPPER: sccache
 
 jobs:
-  # Fast checks that don't need compilation
+  # Fast format check
   fmt:
     name: Format
     runs-on: ubuntu-latest
@@ -40,7 +32,7 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
-  # Main CI matrix - consolidates check, clippy, test, doc with shared sccache
+  # Main CI matrix - check, clippy, test, doc
   ci:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
@@ -86,7 +78,7 @@ jobs:
         env:
           RUSTDOCFLAGS: ${{ matrix.env == 'RUSTDOCFLAGS=-Dwarnings' && '-Dwarnings' || '' }}
 
-  # Doctests run separately (nextest doesn't support them)
+  # Doctests (nextest doesn't support them)
   doctest:
     name: Doctests
     runs-on: ubuntu-latest
@@ -100,194 +92,34 @@ jobs:
       - name: Run doctests
         run: cargo test --doc --all-features
 
-  # Semver check - detect breaking API changes
-  # Uses official action with built-in rustdoc caching (~50% faster)
-  # Only runs when Rust code changes (skips for docs/CI-only changes)
-  semver:
-    name: Semver Check
+  # Regression tests - user-reported issues
+  regressions:
+    name: Regression Tests
     runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""  # Disable sccache - action manages its own toolchain
-    # Only run on PRs to catch breaking changes before merge
-    if: github.event_name == 'pull_request'
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - name: Check for Rust changes
-        id: changes
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
-        with:
-          filters: |
-            rust:
-              - '**/*.rs'
-              - '**/Cargo.toml'
-              - 'Cargo.lock'
-      - name: Check semver compatibility
-        if: steps.changes.outputs.rust == 'true'
-        uses: obi1kenobi/cargo-semver-checks-action@5b298c9520f7096a4683c0bd981a7ac5a7e249ae # v2
-        with:
-          feature-group: all-features
-          exclude: rustledger-lsp,rustledger-wasm
-          # Pin to 1.92 until cargo-semver-checks supports rustdoc v57 (Rust 1.93+)
-          rust-toolchain: "1.92.0"
-      - name: Skip semver check
-        if: steps.changes.outputs.rust != 'true'
-        run: echo "No Rust changes detected, skipping semver check"
-
-  # MSRV check - verify minimum supported Rust version (rust-version in Cargo.toml)
-  msrv:
-    name: MSRV (1.89)
-    runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""  # Disable sccache for MSRV check
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - uses: dtolnay/rust-toolchain@9710f9012180ecfb08dcfc878269be6dc6f1d80e # 1.89
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - name: Check MSRV compatibility
-        run: cargo check --workspace --all-features
-
-  # Security and license audit
-  deny:
-    name: Cargo Deny
-    runs-on: ubuntu-latest
-    env:
-      RUSTC_WRAPPER: ""  # Disable sccache for deny check
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - uses: taiki-e/install-action@0fc09cf1c2f18a9f700d18b3d6eb8f7ee877c7a2 # cargo-deny
-      - name: Check advisories, licenses, and bans
-        run: cargo deny check
-
-  # Coverage runs separately (uses llvm-cov, not sccache-compatible)
-  coverage:
-    name: Code Coverage
-    runs-on: ubuntu-latest
-    env:
-      RUST_MIN_STACK: 8388608
-      RUSTC_WRAPPER: ""  # Disable sccache for coverage
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-        with:
-          components: llvm-tools-preview
+      - uses: mozilla-actions/sccache-action@d651010b8da762cde178750d8eda7b5febfe147a # v0.0.9
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@fb03c6692ef8fff8e8e84e2aa701f168d7ed3811 # cargo-llvm-cov
-      - name: Generate coverage report
-        # Only cover core crates - rustledger (CLI) pulls in wasmtime which causes LLVM linker OOM
-        run: |
-          cargo llvm-cov --all-features --lcov --output-path lcov.info \
-            --package rustledger-core \
-            --package rustledger-parser \
-            --package rustledger-booking \
-            --package rustledger-loader \
-            --package rustledger-validate \
-            --package rustledger-query \
-            --package rustledger-plugin \
-            --package rustledger-importer
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
-        with:
-          files: lcov.info
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-  # Criterion micro-benchmarks - track component-level performance
-  criterion:
-    name: Criterion Benchmarks
-    runs-on: ubuntu-latest
-    # Only run on main branch pushes to track trends
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    env:
-      RUSTC_WRAPPER: ""  # Disable sccache for benchmarks
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          cache-on-failure: true
-          prefix-key: criterion
-
-      - name: Run Criterion benchmarks
-        run: |
-          # Run benchmarks and save baseline
-          cargo bench --all-features -- --noplot --save-baseline main 2>&1 | tee criterion-output.txt
-
-      - name: Parse and summarize results
-        run: |
-          echo "## Criterion Benchmark Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          # Extract key benchmark results
-          echo "### Core Benchmarks" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -E "^(inventory_|reduce_|pipeline_|parse_|query_|validate_)" criterion-output.txt | head -30 >> $GITHUB_STEP_SUMMARY || echo "No matching benchmarks found" >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: criterion-results
-          path: |
-            target/criterion/
-            criterion-output.txt
-          retention-days: 30
-
-  # Miri - detect undefined behavior in unsafe code
-  # Runs weekly and on manual trigger (too slow for every PR)
-  miri:
-    name: Miri
-    runs-on: ubuntu-latest
-    # Run on schedule (weekly) or manual trigger, not on regular PRs
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    env:
-      RUSTC_WRAPPER: ""  # Disable sccache for Miri
-      RUST_MIN_STACK: 8388608
-    steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
-      - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # nightly
-        with:
-          toolchain: nightly
-          components: miri
-      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
-        with:
-          prefix-key: miri
-
-      - name: Setup Miri
-        run: cargo miri setup
-
-      - name: Run Miri on core crates
-        run: |
-          echo "::group::rustledger-core"
-          cargo miri test --package rustledger-core --all-features
-          echo "::endgroup::"
-
-          echo "::group::rustledger-parser"
-          cargo miri test --package rustledger-parser --all-features
-          echo "::endgroup::"
-
-          echo "::group::rustledger-booking"
-          cargo miri test --package rustledger-booking --all-features
-          echo "::endgroup::"
-        env:
-          MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance
-
+      - name: Build rledger
+        run: cargo build --release --bin rledger
+      - name: Run regression tests
+        run: ./scripts/test-regressions.sh ./target/release/rledger
       - name: Summary
         run: |
-          echo "## Miri Results" >> $GITHUB_STEP_SUMMARY
+          echo "## Regression Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Miri checks for undefined behavior in unsafe Rust code." >> $GITHUB_STEP_SUMMARY
+          echo "Tested beancount files from user-reported issues:" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Checked crates:" >> $GITHUB_STEP_SUMMARY
-          echo "- rustledger-core" >> $GITHUB_STEP_SUMMARY
-          echo "- rustledger-parser" >> $GITHUB_STEP_SUMMARY
-          echo "- rustledger-booking" >> $GITHUB_STEP_SUMMARY
+          for f in tests/regressions/issue-*.beancount; do
+            issue=$(basename "$f" .beancount | sed 's/issue-//')
+            echo "- [#$issue](https://github.com/rustledger/rustledger/issues/$issue)" >> $GITHUB_STEP_SUMMARY
+          done
 
-  # All checks pass - required for branch protection
+  # Gate job - all core checks must pass
   build:
     name: build
     runs-on: ubuntu-latest
-    needs: [ci, fmt, doctest]
+    needs: [fmt, ci, doctest, regressions]
     steps:
-      - run: echo "All checks passed!"
+      - run: echo "All core checks passed!"

@@ -1,0 +1,10 @@
+; Issue: https://github.com/rustledger/rustledger/issues/203
+; Description: Costs without currencies should infer the currency from context
+; Expected: No errors - currency should be inferred as USD from the balancing posting
+
+2026-01-01 open Equity:Opening-Balances USD
+2026-01-01 open Assets:Vanguard:IRA:Trad:VFIFX VFIFX
+
+2026-01-01 * "Opening balance for Vanguard traditional IRA"
+  Assets:Vanguard:IRA:Trad:VFIFX  10 VFIFX {100}
+  Equity:Opening-Balances      -1000 USD

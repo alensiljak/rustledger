@@ -1,0 +1,15 @@
+; Issue: https://github.com/rustledger/rustledger/issues/230
+; Description: Omitting currency from cost should not break lot matching
+; Expected: No errors - cost currency should be inferred
+
+2000-01-01 open Assets:Abc ABC
+2000-01-01 open Equity:Opening-Balances USD
+2000-01-01 open Expenses:Abc USD
+
+2026-01-02 * "Sale"
+  Assets:Abc                                              -1 ABC {1 USD}
+  Expenses:Abc
+
+2026-01-01 * "Opening balance"
+  Assets:Abc                                               1 ABC {1}
+  Equity:Opening-Balances -1 USD

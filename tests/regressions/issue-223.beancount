@@ -1,0 +1,16 @@
+; Issue: https://github.com/rustledger/rustledger/issues/223
+; Description: Lot matching should work regardless of source file ordering
+; Expected: No errors - lots should match even in reverse-chronological order
+
+2000-01-01 open Assets:Abc ABC
+2000-01-01 open Equity:Opening-Balances USD
+2000-01-01 open Expenses:Abc USD
+
+; Sale comes before purchase in file (reverse-chronological)
+2026-01-02 * "Sale"
+  Assets:Abc                                              -1 ABC {1 USD}
+  Expenses:Abc
+
+2026-01-01 * "Opening balance"
+  Assets:Abc                                               1 ABC {1 USD, 2026-01-01}
+  Equity:Opening-Balances
