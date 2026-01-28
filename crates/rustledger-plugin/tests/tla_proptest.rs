@@ -21,7 +21,7 @@ fn date_strategy() -> impl Strategy<Value = String> {
 }
 
 fn amount_strategy() -> impl Strategy<Value = String> {
-    (1i64..1000).prop_map(|n| format!("{}.00", n))
+    (1i64..1000).prop_map(|n| format!("{n}.00"))
 }
 
 // ============================================================================
@@ -347,8 +347,8 @@ proptest! {
     ) {
         let registry = NativePluginRegistry::new();
 
-        let plugin1 = registry.find(&plugin_name);
-        let plugin2 = registry.find(&plugin_name);
+        let plugin1 = registry.find(plugin_name);
+        let plugin2 = registry.find(plugin_name);
 
         match (plugin1, plugin2) {
             (Some(p1), Some(p2)) => {
@@ -379,11 +379,11 @@ proptest! {
         let registry = NativePluginRegistry::new();
 
         // With prefix
-        let prefixed = format!("beancount.plugins.{}", plugin_name);
+        let prefixed = format!("beancount.plugins.{plugin_name}");
         let with_prefix = registry.find(&prefixed);
 
         // Without prefix
-        let without_prefix = registry.find(&plugin_name);
+        let without_prefix = registry.find(plugin_name);
 
         match (with_prefix, without_prefix) {
             (Some(p1), Some(p2)) => {
@@ -415,7 +415,7 @@ proptest! {
         // All plugins should have unique names
         let names: Vec<&str> = plugins.iter().map(|p| p.name()).collect();
         let mut sorted_names = names.clone();
-        sorted_names.sort();
+        sorted_names.sort_unstable();
         sorted_names.dedup();
 
         prop_assert_eq!(

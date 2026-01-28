@@ -408,7 +408,7 @@ proptest! {
                 links: vec![],
                 postings: vec![
                     Posting {
-                        account: account.clone().into(),
+                        account: account.into(),
                         units: complete(Decimal::from(balance_amount), "USD"),
                         cost: None,
                         price: None,
@@ -660,13 +660,13 @@ proptest! {
         let errors = validate(&directives);
 
         // Should have two balance assertion errors
-        let balance_errors: Vec<_> = errors
+        let balance_error_count = errors
             .iter()
             .filter(|e| e.code == ErrorCode::BalanceAssertionFailed)
-            .collect();
+            .count();
 
         prop_assert_eq!(
-            balance_errors.len(),
+            balance_error_count,
             2,
             "Should report two balance assertion errors, got: {:?}",
             errors

@@ -10,8 +10,10 @@
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use rustledger_core::{Amount, Directive, NaiveDate, Posting, Price as PriceDirective, Transaction};
-use rustledger_query::{parse, price::PriceDatabase, Executor};
+use rustledger_core::{
+    Amount, Directive, NaiveDate, Posting, Price as PriceDirective, Transaction,
+};
+use rustledger_query::{Executor, parse, price::PriceDatabase};
 
 // ============================================================================
 // Test Strategies
@@ -342,9 +344,6 @@ proptest! {
     fn prop_order_by_sorted(
         dates in prop::collection::vec(date_strategy(), 2..5),
     ) {
-        let mut sorted_dates = dates.clone();
-        sorted_dates.sort();
-
         let directives: Vec<Directive> = dates
             .iter()
             .enumerate()
@@ -482,7 +481,7 @@ proptest! {
 
         let mut executor = Executor::new(&directives);
 
-        let query = parse(&format!("SELECT account LIMIT {}", limit)).unwrap();
+        let query = parse(&format!("SELECT account LIMIT {limit}")).unwrap();
         let result = executor.execute(&query).unwrap();
 
         prop_assert!(

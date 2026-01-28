@@ -23,16 +23,17 @@ fn date_strategy() -> impl Strategy<Value = NaiveDate> {
 
 fn amount_strategy(currency: &'static str) -> impl Strategy<Value = Amount> {
     // Non-zero amounts for meaningful tests
-    prop::sample::select(vec![-1000i64, -100, -50, -10, -1, 1, 10, 50, 100, 1000])
-        .prop_filter_map("non-zero", move |n| {
+    prop::sample::select(vec![-1000i64, -100, -50, -10, -1, 1, 10, 50, 100, 1000]).prop_filter_map(
+        "non-zero",
+        move |n| {
             if n != 0 {
                 Some(Amount::new(Decimal::from(n), currency))
             } else {
                 None
             }
-        })
+        },
+    )
 }
-
 
 // ============================================================================
 // Interpolation Tests (from Interpolation.tla)
@@ -210,8 +211,8 @@ proptest! {
         date in date_strategy(),
     ) {
         let txn = Transaction::new(date, "Test")
-            .with_posting(Posting::new("Expenses:USD", amount_usd.clone()))
-            .with_posting(Posting::new("Expenses:EUR", amount_eur.clone()))
+            .with_posting(Posting::new("Expenses:USD", amount_usd))
+            .with_posting(Posting::new("Expenses:EUR", amount_eur))
             .with_posting(Posting::auto("Assets:Cash")); // Single auto posting
 
         let result = interpolate(&txn);
@@ -265,7 +266,7 @@ proptest! {
         // Transaction should balance
         let residuals = calculate_residual(&result.transaction);
         prop_assert!(
-            residuals.get("USD").map_or(true, |r| r.abs() < dec!(0.01)),
+            residuals.get("USD").is_none_or(|r| r.abs() < dec!(0.01)),
             "Should balance"
         );
     }
