@@ -1,0 +1,28 @@
+# Documentation
+
+This directory contains developer documentation for rustledger.
+
+## Contents
+
+| Document | Description |
+|----------|-------------|
+| [BENCHMARKING.md](BENCHMARKING.md) | How to run benchmarks and interpret results |
+| [COMPATIBILITY_REPORT.md](COMPATIBILITY_REPORT.md) | Test results comparing rustledger to Python beancount |
+| [PERFORMANCE_ROADMAP.md](PERFORMANCE_ROADMAP.md) | Performance optimization phases and measured results |
+| [TESTING.md](TESTING.md) | Testing guide and best practices |
+| [TESTING_ROADMAP.md](TESTING_ROADMAP.md) | Testing infrastructure improvement plan |
+
+## Architecture Decision Records
+
+The [adr/](adr/) directory contains Architecture Decision Records documenting key design decisions:
+
+- [ADR-0001: Crate Organization](adr/0001-crate-organization.md)
+- [ADR-0002: Error Handling](adr/0002-error-handling.md)
+- [ADR-0003: Parser Design](adr/0003-parser-design.md)
+
+## Related Documentation
+
+- **[spec/](../spec/)** - Technical specifications (syntax, algorithms, validation)
+- **[spec/tla/](../spec/tla/)** - TLA+ formal specifications
+- **[CONTRIBUTING.md](../CONTRIBUTING.md)** - Contribution guidelines
+- **[ROADMAP.md](../ROADMAP.md)** - Project roadmap

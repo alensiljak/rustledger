@@ -37,9 +37,12 @@ jobs:
       - name: Fetch PR's Cargo.lock
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # SECURITY: Pass via env vars to prevent potential shell injection
+          REPO: ${{ github.repository }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           # Fetch only Cargo.lock from the PR branch (not arbitrary code)
-          gh api "repos/${{ github.repository }}/contents/Cargo.lock?ref=${{ github.event.pull_request.head.sha }}" \
+          gh api "repos/$REPO/contents/Cargo.lock?ref=$PR_SHA" \
             --jq '.content' | base64 -d > Cargo.lock
 
       - name: Install Rust toolchain
@@ -56,6 +59,9 @@ jobs:
       - name: Commit and push changes
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # SECURITY: Pass via env vars to prevent shell injection from branch names
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
         run: |
           git add supply-chain/
           if git diff --staged --quiet; then
@@ -63,8 +69,6 @@ jobs:
           else
             # Use GitHub API to create commits (signed by GitHub)
             # This is required because branch protection requires signed commits
-            REPO="${{ github.repository }}"
-            BRANCH="${{ github.event.pull_request.head.ref }}"
             COMMIT_MSG="chore: regenerate cargo-vet exemptions"
 
             # Get the current commit SHA

@@ -61,6 +61,17 @@ pub struct InterpolationResult {
 /// - If a posting has a cost spec with a currency, that currency is used
 /// - Otherwise, the posting gets the residual that makes the transaction balance
 ///
+/// # TLA+ Specification
+///
+/// Implements invariants from `Interpolation.tla`:
+/// - `AtMostOneNull`: At most one posting per currency can have a missing amount
+///   (returns `MultipleMissing` error if violated)
+/// - `CompleteImpliesBalanced`: After interpolation, `sum(postings) = 0` for each currency
+/// - `HasNullAccurate`: `filled_indices` contains exactly the indices of postings
+///   that were originally missing amounts
+///
+/// See: `spec/tla/Interpolation.tla`
+///
 /// # Example
 ///
 /// ```ignore

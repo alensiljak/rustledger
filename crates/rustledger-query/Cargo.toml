@@ -30,6 +30,7 @@ regex = "1"
 rust_decimal_macros.workspace = true
 insta.workspace = true
 criterion.workspace = true
+proptest.workspace = true
 
 [[bench]]
 name = "query_bench"

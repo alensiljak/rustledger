@@ -1,0 +1,195 @@
+# Mutation Testing with cargo-mutants
+#
+# Mutation testing injects bugs into the code and checks if tests catch them.
+# This finds undertested code that coverage metrics miss.
+#
+# Runs on:
+# - Monthly schedule (1st of each month)
+# - PR changes to core crates (TLA+-verified modules)
+# - Manual trigger with configurable packages
+#
+# See: https://mutants.rs/
+#
+name: Mutation Testing
+
+on:
+  schedule:
+    # Monthly on 1st at 6 AM UTC
+    - cron: '0 6 1 * *'
+  pull_request:
+    paths:
+      # TLA+-verified modules (inventory, booking, validation)
+      - 'crates/rustledger-core/src/inventory/**'
+      - 'crates/rustledger-booking/src/**'
+      - 'crates/rustledger-validate/src/**'
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Packages to test (comma-separated, or "all")'
+        required: false
+        default: 'rustledger-core'
+        type: string
+      timeout:
+        description: 'Timeout per mutant in seconds'
+        required: false
+        default: '300'
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: Mutation Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+
+      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
+        with:
+          prefix-key: mutants
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: Determine packages
+        id: packages
+        run: |
+          INPUT="${{ github.event.inputs.packages || 'rustledger-core' }}"
+          TIMEOUT="${{ github.event.inputs.timeout || '300' }}"
+
+          if [ "$INPUT" = "all" ]; then
+            # Test core packages (skip CLI and WASM which are slow)
+            PACKAGES="rustledger-core,rustledger-parser,rustledger-booking,rustledger-validate"
+          else
+            PACKAGES="$INPUT"
+          fi
+
+          echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
+          echo "timeout=$TIMEOUT" >> $GITHUB_OUTPUT
+
+      - name: Run mutation testing
+        run: |
+          PACKAGES="${{ steps.packages.outputs.packages }}"
+          TIMEOUT="${{ steps.packages.outputs.timeout }}"
+
+          echo "Testing packages: $PACKAGES"
+          echo "Timeout per mutant: ${TIMEOUT}s"
+          echo ""
+
+          # Convert comma-separated to --package flags
+          PACKAGE_FLAGS=""
+          IFS=',' read -ra PKG_ARRAY <<< "$PACKAGES"
+          for pkg in "${PKG_ARRAY[@]}"; do
+            PACKAGE_FLAGS="$PACKAGE_FLAGS --package $pkg"
+          done
+
+          # Run mutants with timeout and parallel jobs
+          cargo mutants \
+            --timeout "$TIMEOUT" \
+            --jobs 4 \
+            $PACKAGE_FLAGS \
+            -- --all-features \
+            2>&1 | tee mutants-output.txt
+
+      - name: Parse results
+        id: results
+        run: |
+          # Extract summary statistics
+          if [ -f "mutants.out/caught.txt" ]; then
+            CAUGHT=$(wc -l < mutants.out/caught.txt | tr -d ' ')
+          else
+            CAUGHT=0
+          fi
+
+          if [ -f "mutants.out/missed.txt" ]; then
+            MISSED=$(wc -l < mutants.out/missed.txt | tr -d ' ')
+          else
+            MISSED=0
+          fi
+
+          if [ -f "mutants.out/timeout.txt" ]; then
+            TIMEOUT=$(wc -l < mutants.out/timeout.txt | tr -d ' ')
+          else
+            TIMEOUT=0
+          fi
+
+          TOTAL=$((CAUGHT + MISSED + TIMEOUT))
+          if [ "$TOTAL" -gt 0 ]; then
+            SCORE=$((CAUGHT * 100 / TOTAL))
+          else
+            SCORE=0
+          fi
+
+          echo "caught=$CAUGHT" >> $GITHUB_OUTPUT
+          echo "missed=$MISSED" >> $GITHUB_OUTPUT
+          echo "timeout=$TIMEOUT" >> $GITHUB_OUTPUT
+          echo "total=$TOTAL" >> $GITHUB_OUTPUT
+          echo "score=$SCORE" >> $GITHUB_OUTPUT
+
+      - name: Summary
+        run: |
+          echo "## Mutation Testing Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Mutation testing injects bugs and checks if tests catch them." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Packages Tested" >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.packages.outputs.packages }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Count |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Mutants caught (good) | ${{ steps.results.outputs.caught }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mutants missed (bad) | ${{ steps.results.outputs.missed }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Mutants timeout | ${{ steps.results.outputs.timeout }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Total** | ${{ steps.results.outputs.total }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Mutation Score** | **${{ steps.results.outputs.score }}%** |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ -f "mutants.out/missed.txt" ] && [ -s "mutants.out/missed.txt" ]; then
+            echo "### Missed Mutants (need better tests)" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            head -20 mutants.out/missed.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload mutation results
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-results
+          path: |
+            mutants.out/
+            mutants-output.txt
+          retention-days: 30
+
+      - name: Check mutation score threshold
+        run: |
+          SCORE="${{ steps.results.outputs.score }}"
+          MISSED="${{ steps.results.outputs.missed }}"
+          # PR runs require 70% for TLA+-verified modules
+          # Scheduled runs are informational at 60%
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            THRESHOLD=70
+          else
+            THRESHOLD=60
+          fi
+
+          if [ "$SCORE" -lt "$THRESHOLD" ]; then
+            echo "::warning::Mutation score ($SCORE%) is below threshold ($THRESHOLD%)"
+            echo "Consider adding more tests for the $MISSED missed mutants."
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              echo ""
+              echo "TLA+-verified modules require a minimum 70% mutation score."
+              echo "Please add tests that catch the missed mutants."
+              # Don't fail the workflow, just warn
+            fi
+          else
+            echo "Mutation score ($SCORE%) meets threshold ($THRESHOLD%)"
+          fi

@@ -1,7 +1,7 @@
-# PR Benchmark workflow - quick benchmarks with PR comments
+# PR Benchmark workflow - benchmarks with PR comments
 #
-# Runs a lightweight benchmark on PRs and posts results as a comment.
-# Uses fewer iterations and a smaller dataset for speed.
+# Runs a benchmark on PRs (10K transactions) and posts results as a comment.
+# Uses same dataset size as nightly for accurate "vs main" comparison.
 #
 name: PR Benchmarks
 
@@ -52,7 +52,7 @@ jobs:
       - name: Build rustledger
         run: cargo build --release -p rustledger --no-default-features
 
-      - name: Generate test ledger (1K transactions)
+      - name: Generate test ledger (10K transactions)
         run: |
           python3 << 'EOF'
           import random
@@ -73,21 +73,21 @@ jobs:
               f.write("\n")
 
               start_date = date(2020, 1, 1)
-              for i in range(1000):
-                  d = start_date + timedelta(days=i // 5)
+              for i in range(10000):
+                  d = start_date + timedelta(days=i // 50)
                   amount = round(random.uniform(5, 500), 2)
                   expense = random.choice([a for a in accounts if a.startswith("Expenses:")])
-                  f.write(f'{d} * "Payee {i % 50}" "Transaction {i}"\n')
+                  f.write(f'{d} * "Payee {i % 100}" "Transaction {i}"\n')
                   f.write(f"  {expense}  {amount} USD\n")
                   f.write(f"  Assets:Bank:Checking\n\n")
 
-          print("Generated benchmark.beancount (1K transactions)")
+          print("Generated benchmark.beancount (10K transactions)")
           EOF
 
       - name: Run PR benchmark
         id: benchmark
         run: |
-          echo "=== PR Benchmark (1K transactions) ==="
+          echo "=== PR Benchmark (10K transactions) ==="
 
           # Quick benchmark: 5 runs, 2 warmup
           hyperfine \
@@ -152,45 +152,80 @@ jobs:
         id: baseline
         run: |
           # Try to get baseline from benchmarks branch
-          baseline=$(curl -sSf "https://raw.githubusercontent.com/${{ github.repository }}/benchmarks/.github/badges/validation-history.json" 2>/dev/null | jq -r '.[-1].rustledger_ms // 0') || baseline=0
-          echo "baseline_ms=$baseline" >> $GITHUB_OUTPUT
+          HISTORY_URL="https://raw.githubusercontent.com/${{ github.repository }}/benchmarks/.github/badges/validation-history.json"
+          if curl -sSf "$HISTORY_URL" -o /tmp/history.json 2>/dev/null; then
+            baseline=$(jq -r '.[-1].rustledger_ms // empty' /tmp/history.json)
+            baseline_date=$(jq -r '.[-1].date // empty' /tmp/history.json)
+            if [ -n "$baseline" ] && [ "$baseline" != "null" ] && [ "$baseline" != "0" ]; then
+              echo "baseline_ms=$baseline" >> $GITHUB_OUTPUT
+              echo "baseline_date=$baseline_date" >> $GITHUB_OUTPUT
+              echo "has_baseline=true" >> $GITHUB_OUTPUT
+              echo "Found baseline: ${baseline}ms from $baseline_date"
+            else
+              echo "has_baseline=false" >> $GITHUB_OUTPUT
+              echo "No valid baseline in history"
+            fi
+          else
+            echo "has_baseline=false" >> $GITHUB_OUTPUT
+            echo "Could not fetch baseline history"
+          fi
 
       - name: Post PR comment
         uses: actions/github-script@v8
         with:
           script: |
-            const rustledger_ms = '${{ steps.benchmark.outputs.rustledger_ms }}';
-            const beancount_ms = '${{ steps.benchmark.outputs.beancount_ms }}';
-            const speedup = '${{ steps.benchmark.outputs.speedup }}';
-            const rustledger_mem = '${{ steps.memory.outputs.rustledger_mem_mb }}';
-            const beancount_mem = '${{ steps.memory.outputs.beancount_mem_mb }}';
-            const baseline_ms = '${{ steps.baseline.outputs.baseline_ms }}';
+            const rustledger_ms = parseFloat('${{ steps.benchmark.outputs.rustledger_ms }}');
+            const rustledger_stddev = parseFloat('${{ steps.benchmark.outputs.rustledger_stddev }}');
+            const beancount_ms = parseFloat('${{ steps.benchmark.outputs.beancount_ms }}');
+            const beancount_stddev = parseFloat('${{ steps.benchmark.outputs.beancount_stddev }}');
+            const speedup = parseFloat('${{ steps.benchmark.outputs.speedup }}');
+            const rustledger_mem = parseFloat('${{ steps.memory.outputs.rustledger_mem_mb }}');
+            const beancount_mem = parseFloat('${{ steps.memory.outputs.beancount_mem_mb }}');
+            const has_baseline = '${{ steps.baseline.outputs.has_baseline }}' === 'true';
+            const baseline_ms = parseFloat('${{ steps.baseline.outputs.baseline_ms }}') || 0;
+            const baseline_date = '${{ steps.baseline.outputs.baseline_date }}' || '';
 
-            // Calculate change vs baseline
-            let changeText = '';
-            if (baseline_ms && parseFloat(baseline_ms) > 0) {
-              const change = ((parseFloat(rustledger_ms) - parseFloat(baseline_ms)) / parseFloat(baseline_ms) * 100).toFixed(1);
-              const emoji = parseFloat(change) > 5 ? '⚠️' : parseFloat(change) < -5 ? '🚀' : '✅';
-              changeText = `\n\n**vs main:** ${change > 0 ? '+' : ''}${change}% ${emoji}`;
+            // Calculate memory ratio
+            const mem_ratio = (beancount_mem / rustledger_mem).toFixed(1);
+
+            // Build comparison with main section
+            let baselineSection = '';
+            if (has_baseline && baseline_ms > 0) {
+              const change = ((rustledger_ms - baseline_ms) / baseline_ms * 100);
+              const changeStr = change.toFixed(1);
+              let status, emoji;
+              if (change > 10) {
+                status = 'regression'; emoji = '🔴';
+              } else if (change > 5) {
+                status = 'slower'; emoji = '🟡';
+              } else if (change < -5) {
+                status = 'faster'; emoji = '🟢';
+              } else {
+                status = 'unchanged'; emoji = '✅';
+              }
+              const sign = change >= 0 ? '+' : '';
+              baselineSection = '\n### vs main branch (' + baseline_date + ')\n' +
+                '| Metric | main | this PR | Change |\n' +
+                '|--------|------|---------|--------|\n' +
+                '| Time | ' + baseline_ms + 'ms | ' + rustledger_ms + 'ms | ' + sign + changeStr + '% ' + emoji + ' |\n';
+            } else {
+              baselineSection = '\n> ℹ️ *No baseline available yet. Comparison will appear after first merge to main.*\n';
             }
 
-            const body = `## 📊 Benchmark Results
-
-            | Metric | rustledger | beancount | Comparison |
-            |--------|------------|-----------|------------|
-            | **Time** | ${rustledger_ms}ms | ${beancount_ms}ms | **${speedup}x faster** |
-            | **Memory** | ${rustledger_mem}MB | ${beancount_mem}MB | - |
-
-            <sub>Measured on 1K transactions with hyperfine (5 runs, 2 warmup)</sub>${changeText}
-
-            <details>
-            <summary>What do these numbers mean?</summary>
-
-            - **Time**: Wall-clock time to parse and validate the ledger
-            - **Memory**: Peak resident set size (RSS)
-            - **vs main**: Change compared to the latest benchmark on main branch
-
-            </details>`;
+            const body = '## 📊 Benchmark Results\n\n' +
+              '| Tool | Time | Memory |\n' +
+              '|------|------|--------|\n' +
+              '| **rustledger** | ' + rustledger_ms + 'ms ± ' + rustledger_stddev + 'ms | ' + rustledger_mem + ' MB |\n' +
+              '| beancount | ' + beancount_ms + 'ms ± ' + beancount_stddev + 'ms | ' + beancount_mem + ' MB |\n' +
+              '| **Comparison** | **' + speedup + 'x faster** | **' + mem_ratio + 'x less** |\n' +
+              baselineSection +
+              '<sub>10K transactions · 5 runs, 2 warmup · <a href="https://github.com/sharkdp/hyperfine">hyperfine</a></sub>\n\n' +
+              '<details>\n' +
+              '<summary>What do these numbers mean?</summary>\n\n' +
+              '- **Time**: Wall-clock time to parse and validate the ledger (± std dev)\n' +
+              '- **Memory**: Peak resident set size (RSS)\n' +
+              '- **vs main**: Compared to latest nightly benchmark on main branch\n\n' +
+              '</details>';
 
             // Find existing comment
             const { data: comments } = await github.rest.issues.listComments({

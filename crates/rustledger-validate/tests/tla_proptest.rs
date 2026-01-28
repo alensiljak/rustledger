@@ -372,3 +372,304 @@ proptest! {
         );
     }
 }
+
+// ============================================================================
+// Additional Validation Invariants (from ValidationCorrect.tla)
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// TLA+ ValidationCorrect: Validation is deterministic.
+    ///
+    /// Running validate() twice on the same directives should produce
+    /// identical error sets.
+    #[test]
+    fn prop_validation_deterministic(
+        open_date in date_strategy(),
+        balance_amount in 1i64..1000,
+    ) {
+        let account = "Assets:Bank:Checking".to_string();
+
+        let directives = vec![
+            Directive::Open(Open {
+                date: open_date,
+                account: account.clone().into(),
+                currencies: vec!["USD".into()],
+                booking: None,
+                meta: Default::default(),
+            }),
+            Directive::Transaction(Transaction {
+                date: open_date,
+                flag: '*',
+                payee: None,
+                narration: "Initial deposit".into(),
+                tags: vec![],
+                links: vec![],
+                postings: vec![
+                    Posting {
+                        account: account.into(),
+                        units: complete(Decimal::from(balance_amount), "USD"),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                    Posting {
+                        account: "Equity:Opening".into(),
+                        units: complete(Decimal::from(-balance_amount), "USD"),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                ],
+                meta: Default::default(),
+            }),
+        ];
+
+        let errors1 = validate(&directives);
+        let errors2 = validate(&directives);
+
+        // Same number of errors
+        prop_assert_eq!(
+            errors1.len(),
+            errors2.len(),
+            "Validation should be deterministic"
+        );
+
+        // Same error codes
+        for (e1, e2) in errors1.iter().zip(errors2.iter()) {
+            prop_assert_eq!(
+                e1.code,
+                e2.code,
+                "Error codes should match"
+            );
+        }
+    }
+
+    /// TLA+ ValidationCorrect: Tolerance bounds are respected.
+    ///
+    /// Balance assertions within tolerance should pass.
+    /// Balance assertions outside tolerance should fail.
+    #[test]
+    fn prop_tolerance_bounds_respected(
+        open_date in date_strategy(),
+        actual_balance in 100i64..1000,
+    ) {
+        let balance_date = open_date + chrono::Duration::days(1);
+        let account = "Assets:Bank:Checking".to_string();
+
+        // Use decimal amounts to get smaller tolerance
+        let actual_dec = Decimal::new(actual_balance, 2); // e.g., 1.00 to 10.00
+        let within_tol = actual_dec + Decimal::new(1, 3); // +0.001 (within 0.005 * 2 = 0.01)
+        let outside_tol = actual_dec + Decimal::new(2, 2); // +0.02 (outside tolerance)
+
+        // Test within tolerance
+        let directives_within = vec![
+            Directive::Open(Open {
+                date: open_date,
+                account: account.clone().into(),
+                currencies: vec!["USD".into()],
+                booking: None,
+                meta: Default::default(),
+            }),
+            Directive::Transaction(Transaction {
+                date: open_date,
+                flag: '*',
+                payee: None,
+                narration: "Initial deposit".into(),
+                tags: vec![],
+                links: vec![],
+                postings: vec![
+                    Posting {
+                        account: account.clone().into(),
+                        units: Some(IncompleteAmount::Complete(Amount::new(actual_dec, "USD"))),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                    Posting {
+                        account: "Equity:Opening".into(),
+                        units: Some(IncompleteAmount::Complete(Amount::new(-actual_dec, "USD"))),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                ],
+                meta: Default::default(),
+            }),
+            Directive::Balance(Balance {
+                date: balance_date,
+                account: account.clone().into(),
+                amount: Amount::new(within_tol, "USD"),
+                tolerance: None,
+                meta: Default::default(),
+            }),
+        ];
+
+        let errors_within = validate(&directives_within);
+        let has_error_within = errors_within.iter().any(|e| e.code == ErrorCode::BalanceAssertionFailed);
+
+        prop_assert!(
+            !has_error_within,
+            "Balance within tolerance should pass: actual={}, expected={}",
+            actual_dec, within_tol
+        );
+
+        // Test outside tolerance
+        let directives_outside = vec![
+            Directive::Open(Open {
+                date: open_date,
+                account: account.clone().into(),
+                currencies: vec!["USD".into()],
+                booking: None,
+                meta: Default::default(),
+            }),
+            Directive::Transaction(Transaction {
+                date: open_date,
+                flag: '*',
+                payee: None,
+                narration: "Initial deposit".into(),
+                tags: vec![],
+                links: vec![],
+                postings: vec![
+                    Posting {
+                        account: account.clone().into(),
+                        units: Some(IncompleteAmount::Complete(Amount::new(actual_dec, "USD"))),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                    Posting {
+                        account: "Equity:Opening".into(),
+                        units: Some(IncompleteAmount::Complete(Amount::new(-actual_dec, "USD"))),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                ],
+                meta: Default::default(),
+            }),
+            Directive::Balance(Balance {
+                date: balance_date,
+                account: account.into(),
+                amount: Amount::new(outside_tol, "USD"),
+                tolerance: None,
+                meta: Default::default(),
+            }),
+        ];
+
+        let errors_outside = validate(&directives_outside);
+        let has_error_outside = errors_outside.iter().any(|e| e.code == ErrorCode::BalanceAssertionFailed);
+
+        prop_assert!(
+            has_error_outside,
+            "Balance outside tolerance should fail: actual={}, expected={}",
+            actual_dec, outside_tol
+        );
+    }
+
+    /// TLA+ ValidationCorrect: First error detected is accurate.
+    ///
+    /// Multiple balance assertion failures should all be reported with
+    /// accurate expected vs actual values.
+    #[test]
+    fn prop_multiple_balance_errors_reported(
+        open_date in date_strategy(),
+        actual_balance in 100i64..500,
+    ) {
+        let account1 = "Assets:Bank:Checking".to_string();
+        let account2 = "Assets:Bank:Savings".to_string();
+        let balance_date = open_date + chrono::Duration::days(1);
+
+        // Wrong expected values (differ by more than tolerance)
+        let wrong_expected1 = actual_balance + 100;
+        let wrong_expected2 = actual_balance + 200;
+
+        let directives = vec![
+            Directive::Open(Open {
+                date: open_date,
+                account: account1.clone().into(),
+                currencies: vec!["USD".into()],
+                booking: None,
+                meta: Default::default(),
+            }),
+            Directive::Open(Open {
+                date: open_date,
+                account: account2.clone().into(),
+                currencies: vec!["USD".into()],
+                booking: None,
+                meta: Default::default(),
+            }),
+            Directive::Transaction(Transaction {
+                date: open_date,
+                flag: '*',
+                payee: None,
+                narration: "Initial deposits".into(),
+                tags: vec![],
+                links: vec![],
+                postings: vec![
+                    Posting {
+                        account: account1.clone().into(),
+                        units: complete(Decimal::from(actual_balance), "USD"),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                    Posting {
+                        account: account2.clone().into(),
+                        units: complete(Decimal::from(actual_balance), "USD"),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                    Posting {
+                        account: "Equity:Opening".into(),
+                        units: complete(Decimal::from(-actual_balance * 2), "USD"),
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                    },
+                ],
+                meta: Default::default(),
+            }),
+            Directive::Balance(Balance {
+                date: balance_date,
+                account: account1.into(),
+                amount: Amount::new(Decimal::from(wrong_expected1), "USD"),
+                tolerance: None,
+                meta: Default::default(),
+            }),
+            Directive::Balance(Balance {
+                date: balance_date,
+                account: account2.into(),
+                amount: Amount::new(Decimal::from(wrong_expected2), "USD"),
+                tolerance: None,
+                meta: Default::default(),
+            }),
+        ];
+
+        let errors = validate(&directives);
+
+        // Should have two balance assertion errors
+        let balance_error_count = errors
+            .iter()
+            .filter(|e| e.code == ErrorCode::BalanceAssertionFailed)
+            .count();
+
+        prop_assert_eq!(
+            balance_error_count,
+            2,
+            "Should report two balance assertion errors, got: {:?}",
+            errors
+        );
+    }
+}

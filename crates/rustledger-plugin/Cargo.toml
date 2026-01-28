@@ -38,6 +38,7 @@ tempfile = { workspace = true, optional = true }
 [dev-dependencies]
 rust_decimal_macros.workspace = true
 wat.workspace = true
+proptest.workspace = true
 
 [lints]
 workspace = true
