@@ -32,6 +32,8 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+// wasm_bindgen doesn't support const fn on exported methods
+#![allow(clippy::missing_const_for_fn)]
 
 // Internal modules
 mod convert;

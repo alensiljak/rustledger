@@ -210,13 +210,12 @@ fn handle_show_account_balance(
     for spanned in &parse_result.directives {
         if let Directive::Transaction(txn) = &spanned.value {
             for posting in &txn.postings {
-                if posting.account.as_ref() == account {
-                    if let Some(units) = &posting.units {
-                        if let Some(number) = units.number() {
-                            let currency = units.currency().unwrap_or("???").to_string();
-                            *balances.entry(currency).or_default() += number;
-                        }
-                    }
+                if posting.account.as_ref() == account
+                    && let Some(units) = &posting.units
+                    && let Some(number) = units.number()
+                {
+                    let currency = units.currency().unwrap_or("???").to_string();
+                    *balances.entry(currency).or_default() += number;
                 }
             }
         }

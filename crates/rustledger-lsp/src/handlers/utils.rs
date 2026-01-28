@@ -247,26 +247,23 @@ pub fn is_currency_like(s: &str, parse_result: &ParseResult) -> bool {
             }
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(units) = &posting.units {
-                        if let Some(currency) = units.currency() {
-                            if currency == s {
-                                return true;
-                            }
-                        }
+                    if let Some(units) = &posting.units
+                        && let Some(currency) = units.currency()
+                        && currency == s
+                    {
+                        return true;
                     }
-                    if let Some(cost) = &posting.cost {
-                        if let Some(currency) = &cost.currency {
-                            if currency.as_ref() == s {
-                                return true;
-                            }
-                        }
+                    if let Some(cost) = &posting.cost
+                        && let Some(currency) = &cost.currency
+                        && currency.as_ref() == s
+                    {
+                        return true;
                     }
-                    if let Some(price) = &posting.price {
-                        if let Some(amount) = price.amount() {
-                            if amount.currency.as_ref() == s {
-                                return true;
-                            }
-                        }
+                    if let Some(price) = &posting.price
+                        && let Some(amount) = price.amount()
+                        && amount.currency.as_ref() == s
+                    {
+                        return true;
                     }
                 }
             }

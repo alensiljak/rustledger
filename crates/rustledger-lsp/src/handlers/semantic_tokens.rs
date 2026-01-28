@@ -185,15 +185,15 @@ pub fn handle_semantic_tokens_delta(
     }
 
     // If we have previous tokens and they match, return empty delta
-    if let Some(prev) = previous_tokens {
-        if tokens_equal(prev, &current_tokens) {
-            return Some(SemanticTokensFullDeltaResult::TokensDelta(
-                SemanticTokensDelta {
-                    result_id: Some(generate_result_id()),
-                    edits: vec![], // No changes
-                },
-            ));
-        }
+    if let Some(prev) = previous_tokens
+        && tokens_equal(prev, &current_tokens)
+    {
+        return Some(SemanticTokensFullDeltaResult::TokensDelta(
+            SemanticTokensDelta {
+                result_id: Some(generate_result_id()),
+                edits: vec![], // No changes
+            },
+        ));
     }
 
     // Tokens changed - return full replacement as a single edit
@@ -404,29 +404,29 @@ fn collect_directive_tokens(
                 });
 
                 // Amount if present
-                if let Some(ref units) = posting.units {
-                    if let Some(num) = units.number() {
-                        let num_str = num.to_string();
-                        let num_start = 2 + account_str.len() as u32 + 2;
+                if let Some(ref units) = posting.units
+                    && let Some(num) = units.number()
+                {
+                    let num_str = num.to_string();
+                    let num_start = 2 + account_str.len() as u32 + 2;
+                    tokens.push(RawToken {
+                        line: posting_line,
+                        start: num_start,
+                        length: num_str.len() as u32,
+                        token_type: token_type::NUMBER,
+                        modifiers: 0,
+                    });
+
+                    // Currency
+                    if let Some(curr) = units.currency() {
+                        let curr_str = curr.to_string();
                         tokens.push(RawToken {
                             line: posting_line,
-                            start: num_start,
-                            length: num_str.len() as u32,
-                            token_type: token_type::NUMBER,
+                            start: num_start + num_str.len() as u32 + 1,
+                            length: curr_str.len() as u32,
+                            token_type: token_type::TYPE,
                             modifiers: 0,
                         });
-
-                        // Currency
-                        if let Some(curr) = units.currency() {
-                            let curr_str = curr.to_string();
-                            tokens.push(RawToken {
-                                line: posting_line,
-                                start: num_start + num_str.len() as u32 + 1,
-                                length: curr_str.len() as u32,
-                                token_type: token_type::TYPE,
-                                modifiers: 0,
-                            });
-                        }
                     }
                 }
             }

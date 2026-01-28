@@ -38,7 +38,7 @@ impl SyntheticManifest {
     }
 
     /// Get the total number of files.
-    pub fn file_count(&self) -> usize {
+    pub const fn file_count(&self) -> usize {
         self.files.len()
     }
 

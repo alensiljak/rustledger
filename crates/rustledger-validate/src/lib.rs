@@ -100,6 +100,9 @@ pub struct ValidationOptions {
     /// Tolerance multiplier (matches Python beancount's `inferred_tolerance_multiplier`).
     /// Default is 0.5.
     pub tolerance_multiplier: Decimal,
+    /// Per-currency default tolerances (matches Python beancount's `inferred_tolerance_default`).
+    /// e.g., `{"GBP": 0.004}` means GBP transactions tolerate up to 0.004 residual.
+    pub inferred_tolerance_default: HashMap<String, Decimal>,
 }
 
 impl Default for ValidationOptions {
@@ -117,8 +120,9 @@ impl Default for ValidationOptions {
                 "Expenses".to_string(),
             ],
             // Match Python beancount defaults
-            infer_tolerance_from_cost: true,
+            infer_tolerance_from_cost: false,
             tolerance_multiplier: Decimal::new(5, 1), // 0.5
+            inferred_tolerance_default: HashMap::new(),
         }
     }
 }
@@ -240,14 +244,14 @@ pub fn validate_with_options(
         let date = directive.date();
 
         // Check for date ordering (info only - we sort anyway)
-        if let Some(last) = state.last_date {
-            if date < last {
-                errors.push(ValidationError::new(
-                    ErrorCode::DateOutOfOrder,
-                    format!("Directive date {date} is before previous directive {last}"),
-                    date,
-                ));
-            }
+        if let Some(last) = state.last_date
+            && date < last
+        {
+            errors.push(ValidationError::new(
+                ErrorCode::DateOutOfOrder,
+                format!("Directive date {date} is before previous directive {last}"),
+                date,
+            ));
         }
         state.last_date = Some(date);
 
@@ -348,15 +352,15 @@ pub fn validate_spanned_with_options(
         let date = directive.date();
 
         // Check for date ordering (info only - we sort anyway)
-        if let Some(last) = state.last_date {
-            if date < last {
-                errors.push(ValidationError::with_location(
-                    ErrorCode::DateOutOfOrder,
-                    format!("Directive date {date} is before previous directive {last}"),
-                    date,
-                    spanned,
-                ));
-            }
+        if let Some(last) = state.last_date
+            && date < last
+        {
+            errors.push(ValidationError::with_location(
+                ErrorCode::DateOutOfOrder,
+                format!("Directive date {date} is before previous directive {last}"),
+                date,
+                spanned,
+            ));
         }
         state.last_date = Some(date);
 

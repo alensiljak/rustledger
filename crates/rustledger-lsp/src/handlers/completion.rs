@@ -126,10 +126,10 @@ fn detect_context(source: &str, position: Position) -> CompletionContext {
             let parts: Vec<&str> = posting_content.split_whitespace().collect();
             if parts.len() >= 2 {
                 // Check if last part looks like a number
-                if let Some(last) = parts.last() {
-                    if last.parse::<f64>().is_ok() || last.ends_with('.') {
-                        return CompletionContext::ExpectingCurrency;
-                    }
+                if let Some(last) = parts.last()
+                    && (last.parse::<f64>().is_ok() || last.ends_with('.'))
+                {
+                    return CompletionContext::ExpectingCurrency;
                 }
             }
             return CompletionContext::Unknown;
@@ -423,10 +423,10 @@ fn extract_currencies(parse_result: &ParseResult) -> Vec<String> {
             }
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(ref units) = posting.units {
-                        if let Some(currency) = units.currency() {
-                            currencies.push(currency.to_string());
-                        }
+                    if let Some(ref units) = posting.units
+                        && let Some(currency) = units.currency()
+                    {
+                        currencies.push(currency.to_string());
                     }
                 }
             }
@@ -449,10 +449,10 @@ fn extract_payees(parse_result: &ParseResult) -> Vec<String> {
     let mut payees = Vec::new();
 
     for spanned_directive in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned_directive.value {
-            if let Some(ref payee) = txn.payee {
-                payees.push(payee.to_string());
-            }
+        if let Directive::Transaction(txn) = &spanned_directive.value
+            && let Some(ref payee) = txn.payee
+        {
+            payees.push(payee.to_string());
         }
     }
 

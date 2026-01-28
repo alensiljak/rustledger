@@ -118,6 +118,8 @@ pub fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
                 Ok(result) => {
                     booking_engine.apply(&result.transaction);
                     *txn = result.transaction;
+                    // Normalize total prices (@@→@) for downstream consumers
+                    rustledger_booking::normalize_prices(txn);
                 }
                 Err(e) => {
                     errors.push(Error::new(e.to_string()).with_line(directive_lines[i]));

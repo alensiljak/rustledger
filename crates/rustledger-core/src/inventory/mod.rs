@@ -231,7 +231,7 @@ impl Inventory {
 
     /// Get the number of positions (including empty ones).
     #[must_use]
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.positions.len()
     }
 
@@ -290,10 +290,10 @@ impl Inventory {
         let mut totals: HashMap<InternedStr, Decimal> = HashMap::new();
 
         for pos in &self.positions {
-            if pos.units.currency == units_currency {
-                if let Some(book) = pos.book_value() {
-                    *totals.entry(book.currency.clone()).or_default() += book.number;
-                }
+            if pos.units.currency == units_currency
+                && let Some(book) = pos.book_value()
+            {
+                *totals.entry(book.currency.clone()).or_default() += book.number;
             }
         }
 

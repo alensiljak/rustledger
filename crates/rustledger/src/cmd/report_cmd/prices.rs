@@ -16,10 +16,10 @@ pub(super) fn report_prices<W: Write>(
         .iter()
         .filter_map(|d| {
             if let Directive::Price(p) = d {
-                if let Some(filter) = commodity_filter {
-                    if p.currency != filter {
-                        return None;
-                    }
+                if let Some(filter) = commodity_filter
+                    && p.currency != filter
+                {
+                    return None;
                 }
                 Some(p)
             } else {

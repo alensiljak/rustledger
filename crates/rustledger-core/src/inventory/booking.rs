@@ -592,10 +592,10 @@ impl Inventory {
         }
 
         // Get cost currency from first lot (all lots of same commodity have same cost currency)
-        if let Some(&first_idx) = indices.first() {
-            if let Some(cost) = &self.positions[first_idx].cost {
-                cost_currency = Some(cost.currency.clone());
-            }
+        if let Some(&first_idx) = indices.first()
+            && let Some(cost) = &self.positions[first_idx].cost
+        {
+            cost_currency = Some(cost.currency.clone());
         }
 
         for idx in indices {

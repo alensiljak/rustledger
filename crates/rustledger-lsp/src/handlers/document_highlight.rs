@@ -63,43 +63,43 @@ fn collect_account_highlights(
 
         match &spanned.value {
             Directive::Open(open) => {
-                if open.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::WRITE), // Definition
-                        });
-                    }
+                if open.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::WRITE), // Definition
+                    });
                 }
             }
             Directive::Close(close) => {
-                if close.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::WRITE),
-                        });
-                    }
+                if close.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::WRITE),
+                    });
                 }
             }
             Directive::Balance(bal) => {
-                if bal.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::READ),
-                        });
-                    }
+                if bal.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::READ),
+                    });
                 }
             }
             Directive::Pad(pad) => {
-                if pad.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::READ),
-                        });
-                    }
+                if pad.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::READ),
+                    });
                 }
                 if pad.source_account.as_ref() == account {
                     // Find second occurrence
@@ -123,23 +123,23 @@ fn collect_account_highlights(
                 }
             }
             Directive::Note(note) => {
-                if note.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::READ),
-                        });
-                    }
+                if note.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::READ),
+                    });
                 }
             }
             Directive::Document(doc) => {
-                if doc.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        highlights.push(DocumentHighlight {
-                            range,
-                            kind: Some(DocumentHighlightKind::READ),
-                        });
-                    }
+                if doc.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    highlights.push(DocumentHighlight {
+                        range,
+                        kind: Some(DocumentHighlightKind::READ),
+                    });
                 }
             }
             Directive::Transaction(txn) => {
@@ -233,22 +233,21 @@ fn collect_payee_highlights(
     highlights: &mut Vec<DocumentHighlight>,
 ) {
     for spanned in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned.value {
-            if let Some(ref txn_payee) = txn.payee {
-                if txn_payee.as_ref() == payee {
-                    let (line, _) = byte_offset_to_position(source, spanned.span.start);
-                    let line_text = source.lines().nth(line as usize).unwrap_or("");
+        if let Directive::Transaction(txn) = &spanned.value
+            && let Some(ref txn_payee) = txn.payee
+            && txn_payee.as_ref() == payee
+        {
+            let (line, _) = byte_offset_to_position(source, spanned.span.start);
+            let line_text = source.lines().nth(line as usize).unwrap_or("");
 
-                    if let Some(start) = line_text.find(&format!("\"{}\"", payee)) {
-                        highlights.push(DocumentHighlight {
-                            range: Range {
-                                start: Position::new(line, (start + 1) as u32),
-                                end: Position::new(line, (start + 1 + payee.len()) as u32),
-                            },
-                            kind: Some(DocumentHighlightKind::READ),
-                        });
-                    }
-                }
+            if let Some(start) = line_text.find(&format!("\"{}\"", payee)) {
+                highlights.push(DocumentHighlight {
+                    range: Range {
+                        start: Position::new(line, (start + 1) as u32),
+                        end: Position::new(line, (start + 1 + payee.len()) as u32),
+                    },
+                    kind: Some(DocumentHighlightKind::READ),
+                });
             }
         }
     }

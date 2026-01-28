@@ -27,17 +27,17 @@ pub fn handle_goto_definition(
     tracing::debug!("Go-to-definition for word: {:?}", word);
 
     // Check if it's an account name
-    if word.contains(':') || is_account_type(&word) {
-        if let Some(location) = find_account_definition(&word, parse_result, source, uri) {
-            return Some(GotoDefinitionResponse::Scalar(location));
-        }
+    if (word.contains(':') || is_account_type(&word))
+        && let Some(location) = find_account_definition(&word, parse_result, source, uri)
+    {
+        return Some(GotoDefinitionResponse::Scalar(location));
     }
 
     // Check if it's a currency
-    if is_currency_like_simple(&word) {
-        if let Some(location) = find_currency_definition(&word, parse_result, source, uri) {
-            return Some(GotoDefinitionResponse::Scalar(location));
-        }
+    if is_currency_like_simple(&word)
+        && let Some(location) = find_currency_definition(&word, parse_result, source, uri)
+    {
+        return Some(GotoDefinitionResponse::Scalar(location));
     }
 
     None
@@ -81,21 +81,20 @@ fn find_currency_definition(
     uri: &Uri,
 ) -> Option<Location> {
     for spanned_directive in &parse_result.directives {
-        if let Directive::Commodity(comm) = &spanned_directive.value {
-            if comm.currency.as_ref() == currency {
-                let (start_line, start_col) =
-                    byte_offset_to_position(source, spanned_directive.span.start);
-                let (end_line, end_col) =
-                    byte_offset_to_position(source, spanned_directive.span.end);
+        if let Directive::Commodity(comm) = &spanned_directive.value
+            && comm.currency.as_ref() == currency
+        {
+            let (start_line, start_col) =
+                byte_offset_to_position(source, spanned_directive.span.start);
+            let (end_line, end_col) = byte_offset_to_position(source, spanned_directive.span.end);
 
-                return Some(Location {
-                    uri: uri.clone(),
-                    range: Range {
-                        start: Position::new(start_line, start_col),
-                        end: Position::new(end_line, end_col),
-                    },
-                });
-            }
+            return Some(Location {
+                uri: uri.clone(),
+                range: Range {
+                    start: Position::new(start_line, start_col),
+                    end: Position::new(end_line, end_col),
+                },
+            });
         }
     }
     None

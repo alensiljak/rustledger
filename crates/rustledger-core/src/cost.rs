@@ -265,28 +265,28 @@ impl CostSpec {
     #[must_use]
     pub fn matches(&self, cost: &Cost) -> bool {
         // Check per-unit cost
-        if let Some(n) = &self.number_per {
-            if n != &cost.number {
-                return false;
-            }
+        if let Some(n) = &self.number_per
+            && n != &cost.number
+        {
+            return false;
         }
         // Check currency
-        if let Some(c) = &self.currency {
-            if c != &cost.currency {
-                return false;
-            }
+        if let Some(c) = &self.currency
+            && c != &cost.currency
+        {
+            return false;
         }
         // Check date
-        if let Some(d) = &self.date {
-            if cost.date.as_ref() != Some(d) {
-                return false;
-            }
+        if let Some(d) = &self.date
+            && cost.date.as_ref() != Some(d)
+        {
+            return false;
         }
         // Check label
-        if let Some(l) = &self.label {
-            if cost.label.as_ref() != Some(l) {
-                return false;
-            }
+        if let Some(l) = &self.label
+            && cost.label.as_ref() != Some(l)
+        {
+            return false;
         }
         true
     }

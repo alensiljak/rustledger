@@ -33,23 +33,23 @@ pub fn get_hover_info(
     let word = get_word_at_position(source, line, character)?;
 
     // Check if it's an account name
-    if word.contains(':') || is_account_type(&word) {
-        if let Some(info) = get_account_hover_info(&word, parse_result) {
-            return Some(EditorHoverInfo {
-                contents: info,
-                range: None,
-            });
-        }
+    if (word.contains(':') || is_account_type(&word))
+        && let Some(info) = get_account_hover_info(&word, parse_result)
+    {
+        return Some(EditorHoverInfo {
+            contents: info,
+            range: None,
+        });
     }
 
     // Check if it's a currency
-    if is_currency_like(&word) {
-        if let Some(info) = get_currency_hover_info(&word, parse_result) {
-            return Some(EditorHoverInfo {
-                contents: info,
-                range: None,
-            });
-        }
+    if is_currency_like(&word)
+        && let Some(info) = get_currency_hover_info(&word, parse_result)
+    {
+        return Some(EditorHoverInfo {
+            contents: info,
+            range: None,
+        });
     }
 
     // Check if it's a directive keyword
@@ -105,17 +105,17 @@ fn get_account_hover_info(account: &str, parse_result: &ParseResult) -> Option<S
 /// Get hover information about a currency.
 fn get_currency_hover_info(currency: &str, parse_result: &ParseResult) -> Option<String> {
     for spanned_directive in &parse_result.directives {
-        if let Directive::Commodity(comm) = &spanned_directive.value {
-            if comm.currency.as_ref() == currency {
-                let mut info = format!("## Currency: `{currency}`\n\n");
-                let date = comm.date;
-                info.push_str(&format!("**Defined:** {date}\n"));
+        if let Directive::Commodity(comm) = &spanned_directive.value
+            && comm.currency.as_ref() == currency
+        {
+            let mut info = format!("## Currency: `{currency}`\n\n");
+            let date = comm.date;
+            info.push_str(&format!("**Defined:** {date}\n"));
 
-                let usage_count = count_currency_usages(currency, parse_result);
-                info.push_str(&format!("\n**Used in:** {usage_count} amounts"));
+            let usage_count = count_currency_usages(currency, parse_result);
+            info.push_str(&format!("\n**Used in:** {usage_count} amounts"));
 
-                return Some(info);
-            }
+            return Some(info);
         }
     }
 

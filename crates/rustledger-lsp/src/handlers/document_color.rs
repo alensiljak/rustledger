@@ -52,26 +52,25 @@ pub fn handle_document_color(
                 let (start_line, _) = byte_offset_to_position(source, spanned.span.start);
 
                 for (i, posting) in txn.postings.iter().enumerate() {
-                    if let Some(units) = &posting.units {
-                        if let Some(number) = units.number() {
-                            let posting_line = start_line + 1 + i as u32;
-                            let line_text = source.lines().nth(posting_line as usize).unwrap_or("");
+                    if let Some(units) = &posting.units
+                        && let Some(number) = units.number()
+                    {
+                        let posting_line = start_line + 1 + i as u32;
+                        let line_text = source.lines().nth(posting_line as usize).unwrap_or("");
 
-                            // Find the amount in the line
-                            let amount_str = number.to_string();
-                            if let Some(range) =
-                                find_amount_range(line_text, &amount_str, posting_line)
-                            {
-                                let color = if number.is_sign_negative() {
-                                    COLOR_NEGATIVE
-                                } else if number.is_zero() {
-                                    COLOR_ZERO
-                                } else {
-                                    COLOR_POSITIVE
-                                };
+                        // Find the amount in the line
+                        let amount_str = number.to_string();
+                        if let Some(range) = find_amount_range(line_text, &amount_str, posting_line)
+                        {
+                            let color = if number.is_sign_negative() {
+                                COLOR_NEGATIVE
+                            } else if number.is_zero() {
+                                COLOR_ZERO
+                            } else {
+                                COLOR_POSITIVE
+                            };
 
-                                colors.push(ColorInformation { range, color });
-                            }
+                            colors.push(ColorInformation { range, color });
                         }
                     }
                 }

@@ -224,10 +224,8 @@ jobs:
 
               @property
               def full_match(self) -> bool:
-                  # Note: accounts_match excluded until Issue #260 (rledger accounts command)
-                  # Currently compares Python API (all directives) vs Rust BQL (postings only)
-                  return (self.check_match and self.posting_count_match and
-                          self.error_presence_match)
+                  return (self.check_match and self.accounts_match and
+                          self.posting_count_match and self.error_presence_match)
 
           def test_file(file_path: Path) -> FileResult:
               """Test a single file - designed to run in parallel."""
@@ -255,24 +253,32 @@ jobs:
                           type_name = type(entry).__name__
                           python_directive_counts[type_name] += 1
 
-                          if isinstance(entry, data.Open):
-                              python_accounts.add(entry.account)
-                          elif isinstance(entry, data.Transaction):
+                          if isinstance(entry, data.Transaction):
                               result.python_posting_count += len(entry.postings)
-                              for posting in entry.postings:
-                                  python_accounts.add(posting.account)
-                          elif isinstance(entry, data.Balance):
-                              python_accounts.add(entry.account)
 
                       result.python_directives = dict(python_directive_counts)
                   except Exception as e:
                       result.python_error_count = 1
                       result.python_error_types = [type(e).__name__]
 
+              # === Python accounts via BQL (fair comparison with Rust) ===
+              try:
+                  proc = subprocess.run(
+                      ["bean-query", str(file_path), "SELECT DISTINCT account ORDER BY account"],
+                      capture_output=True, text=True, timeout=30
+                  )
+                  if proc.returncode == 0:
+                      for line in proc.stdout.strip().split('\n')[2:]:
+                          line = line.strip()
+                          if line and not line.startswith('-') and 'row(s)' not in line:
+                              python_accounts.add(line)
+              except Exception:
+                  pass
+
               # === Rust parsing - check ===
               try:
                   proc = subprocess.run(
-                      [*RLEDGER_CHECK, "--format", "json", str(file_path)],
+                      [*RLEDGER_CHECK, "--no-cache", "--format", "json", str(file_path)],
                       capture_output=True, text=True, timeout=30
                   )
                   result.rust_ok = (proc.returncode == 0)
@@ -309,10 +315,13 @@ jobs:
               except Exception:
                   pass
 
-              # Note: This comparison is unfair until Issue #260 is implemented
-              # Python: accounts from Open/Transaction/Balance directives (via loader API)
-              # Rust: accounts from postings only (via BQL SELECT DISTINCT account)
-              result.accounts_match = (python_accounts == rust_accounts)
+              # Only compare accounts when both tools report no errors.
+              # On error files, BQL results differ because Rust has better error recovery
+              # and interpolation (handles "too many missing numbers" cases Python rejects).
+              if result.python_ok and result.rust_ok:
+                  result.accounts_match = (python_accounts == rust_accounts)
+              else:
+                  result.accounts_match = True
 
               # === Rust posting count via BQL ===
               try:

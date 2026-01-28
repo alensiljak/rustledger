@@ -275,12 +275,12 @@ impl PluginManager {
     }
 
     /// Get the number of loaded plugins.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.plugins.len()
     }
 
     /// Check if any plugins are loaded.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.plugins.is_empty()
     }
 }
@@ -480,12 +480,12 @@ impl WatchingPluginManager {
     }
 
     /// Get the number of loaded plugins.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.plugins.len()
     }
 
     /// Check if any plugins are loaded.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.plugins.is_empty()
     }
 

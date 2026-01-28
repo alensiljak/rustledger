@@ -167,14 +167,14 @@ pub fn json_to_meta_value(value: &serde_json::Value) -> MetaValue {
         serde_json::Value::Null => MetaValue::None,
         serde_json::Value::Object(obj) => {
             // Handle Amount objects
-            if let (Some(number), Some(currency)) = (obj.get("number"), obj.get("currency")) {
-                if let (Some(n), Some(c)) = (number.as_str(), currency.as_str()) {
-                    return MetaValue::Amount(rustledger_core::Amount {
-                        number: rustledger_core::Decimal::from_str_exact(n)
-                            .unwrap_or_else(|_| rustledger_core::Decimal::from(0)),
-                        currency: c.into(),
-                    });
-                }
+            if let (Some(number), Some(currency)) = (obj.get("number"), obj.get("currency"))
+                && let (Some(n), Some(c)) = (number.as_str(), currency.as_str())
+            {
+                return MetaValue::Amount(rustledger_core::Amount {
+                    number: rustledger_core::Decimal::from_str_exact(n)
+                        .unwrap_or_else(|_| rustledger_core::Decimal::from(0)),
+                    currency: c.into(),
+                });
             }
             MetaValue::None
         }

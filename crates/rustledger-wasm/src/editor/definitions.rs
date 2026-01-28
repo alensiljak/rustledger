@@ -19,21 +19,19 @@ pub fn get_definition_cached(
     let word = get_word_at_position(source, line, character)?;
 
     // Check if it's an account name
-    if word.contains(':') || is_account_type(&word) {
-        if let Some(location) =
+    if (word.contains(':') || is_account_type(&word))
+        && let Some(location) =
             find_account_definition_cached(&word, parse_result, &cache.line_index)
-        {
-            return Some(location);
-        }
+    {
+        return Some(location);
     }
 
     // Check if it's a currency
-    if is_currency_like(&word) {
-        if let Some(location) =
+    if is_currency_like(&word)
+        && let Some(location) =
             find_currency_definition_cached(&word, parse_result, &cache.line_index)
-        {
-            return Some(location);
-        }
+    {
+        return Some(location);
     }
 
     None
@@ -76,11 +74,11 @@ fn find_currency_definition_cached(
     line_index: &LineIndex,
 ) -> Option<EditorLocation> {
     for spanned_directive in &parse_result.directives {
-        if let Directive::Commodity(comm) = &spanned_directive.value {
-            if comm.currency.as_ref() == currency {
-                let (line, character) = line_index.offset_to_position(spanned_directive.span.start);
-                return Some(EditorLocation { line, character });
-            }
+        if let Directive::Commodity(comm) = &spanned_directive.value
+            && comm.currency.as_ref() == currency
+        {
+            let (line, character) = line_index.offset_to_position(spanned_directive.span.start);
+            return Some(EditorLocation { line, character });
         }
     }
     None

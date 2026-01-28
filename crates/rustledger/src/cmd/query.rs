@@ -122,12 +122,13 @@ pub fn run(args: &Args) -> Result<()> {
         .load(file)
         .with_context(|| format!("failed to load {}", file.display()))?;
 
-    // Check for parse errors (unless --no-errors is set)
+    // Report parse errors to stderr (matching bean-query behavior)
+    // Continue with successfully parsed directives rather than bailing
     if !load_result.errors.is_empty() && !args.no_errors {
         for err in &load_result.errors {
-            eprintln!("error: {err}");
+            eprintln!("{err}");
         }
-        anyhow::bail!("file has parse errors");
+        eprintln!();
     }
 
     // Get directives, book transactions, then expand pads
@@ -152,7 +153,10 @@ pub fn run(args: &Args) -> Result<()> {
                 if let Ok(result) = booking_engine.book_and_interpolate(txn) {
                     // Apply the booked transaction to update inventory
                     booking_engine.apply(&result.transaction);
-                    return Directive::Transaction(result.transaction);
+                    let mut txn = result.transaction;
+                    // Normalize total prices (@@→@) for downstream consumers
+                    rustledger_booking::normalize_prices(&mut txn);
+                    return Directive::Transaction(txn);
                 }
             }
             d
@@ -636,15 +640,14 @@ fn run_interactive(
     }
 
     // Run init file if it exists
-    if let Some(init_path) = get_init_path() {
-        if init_path.exists() {
-            if let Ok(init_contents) = fs::read_to_string(&init_path) {
-                for line in init_contents.lines() {
-                    let line = line.trim();
-                    if !line.is_empty() && !line.starts_with('#') {
-                        // Process init commands silently
-                    }
-                }
+    if let Some(init_path) = get_init_path()
+        && init_path.exists()
+        && let Ok(init_contents) = fs::read_to_string(&init_path)
+    {
+        for line in init_contents.lines() {
+            let line = line.trim();
+            if !line.is_empty() && !line.starts_with('#') {
+                // Process init commands silently
             }
         }
     }

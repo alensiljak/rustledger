@@ -24,22 +24,22 @@ pub fn handle_folding_ranges(
 
     // Add folding ranges for transactions (multi-line)
     for spanned in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned.value {
-            if !txn.postings.is_empty() {
-                let (start_line, _) = line_index.offset_to_position(spanned.span.start);
-                let (end_line, _) = line_index.offset_to_position(spanned.span.end);
+        if let Directive::Transaction(txn) = &spanned.value
+            && !txn.postings.is_empty()
+        {
+            let (start_line, _) = line_index.offset_to_position(spanned.span.start);
+            let (end_line, _) = line_index.offset_to_position(spanned.span.end);
 
-                // Only fold if spans multiple lines
-                if end_line > start_line {
-                    ranges.push(FoldingRange {
-                        start_line,
-                        start_character: None,
-                        end_line,
-                        end_character: None,
-                        kind: Some(FoldingRangeKind::Region),
-                        collapsed_text: Some(format_transaction_summary(txn)),
-                    });
-                }
+            // Only fold if spans multiple lines
+            if end_line > start_line {
+                ranges.push(FoldingRange {
+                    start_line,
+                    start_character: None,
+                    end_line,
+                    end_character: None,
+                    kind: Some(FoldingRangeKind::Region),
+                    collapsed_text: Some(format_transaction_summary(txn)),
+                });
             }
         }
     }
@@ -54,17 +54,17 @@ pub fn handle_folding_ranges(
         // Check for section headers (e.g., "; === Section ===" or ";; Section")
         if is_section_header(trimmed) {
             // End previous section
-            if let Some((start, _title)) = section_start {
-                if line_num as u32 > start + 1 {
-                    ranges.push(FoldingRange {
-                        start_line: start,
-                        start_character: None,
-                        end_line: line_num as u32 - 1,
-                        end_character: None,
-                        kind: Some(FoldingRangeKind::Region),
-                        collapsed_text: None,
-                    });
-                }
+            if let Some((start, _title)) = section_start
+                && line_num as u32 > start + 1
+            {
+                ranges.push(FoldingRange {
+                    start_line: start,
+                    start_character: None,
+                    end_line: line_num as u32 - 1,
+                    end_character: None,
+                    kind: Some(FoldingRangeKind::Region),
+                    collapsed_text: None,
+                });
             }
             section_start = Some((line_num as u32, trimmed));
         }

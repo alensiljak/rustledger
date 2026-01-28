@@ -409,16 +409,15 @@ impl Loader {
             let canonical = normalize_path(&full_path);
 
             // Path traversal protection: ensure include stays within root directory
-            if self.enforce_path_security {
-                if let Some(ref root) = self.root_dir {
-                    if !canonical.starts_with(root) {
-                        errors.push(LoadError::PathTraversal {
-                            include_path: include_path.clone(),
-                            base_dir: root.clone(),
-                        });
-                        continue;
-                    }
-                }
+            if self.enforce_path_security
+                && let Some(ref root) = self.root_dir
+                && !canonical.starts_with(root)
+            {
+                errors.push(LoadError::PathTraversal {
+                    include_path: include_path.clone(),
+                    base_dir: root.clone(),
+                });
+                continue;
             }
 
             if let Err(e) =
@@ -462,24 +461,23 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
                     // Units (IncompleteAmount)
-                    if let Some(ref units) = posting.units {
-                        if let (Some(number), Some(currency)) = (units.number(), units.currency()) {
-                            ctx.update(number, currency);
-                        }
+                    if let Some(ref units) = posting.units
+                        && let (Some(number), Some(currency)) = (units.number(), units.currency())
+                    {
+                        ctx.update(number, currency);
                     }
                     // Cost (CostSpec)
-                    if let Some(ref cost) = posting.cost {
-                        if let (Some(number), Some(currency)) =
+                    if let Some(ref cost) = posting.cost
+                        && let (Some(number), Some(currency)) =
                             (cost.number_per.or(cost.number_total), &cost.currency)
-                        {
-                            ctx.update(number, currency.as_str());
-                        }
+                    {
+                        ctx.update(number, currency.as_str());
                     }
                     // Price (PriceAnnotation)
-                    if let Some(ref price) = posting.price {
-                        if let Some(amount) = price.amount() {
-                            ctx.update(amount.number, amount.currency.as_str());
-                        }
+                    if let Some(ref price) = posting.price
+                        && let Some(amount) = price.amount()
+                    {
+                        ctx.update(amount.number, amount.currency.as_str());
                     }
                 }
             }

@@ -17,10 +17,10 @@ pub(super) fn report_journal<W: Write>(
         .iter()
         .filter_map(|d| {
             if let Directive::Transaction(txn) = d {
-                if let Some(filter) = account_filter {
-                    if !txn.postings.iter().any(|p| p.account.starts_with(filter)) {
-                        return None;
-                    }
+                if let Some(filter) = account_filter
+                    && !txn.postings.iter().any(|p| p.account.starts_with(filter))
+                {
+                    return None;
                 }
                 Some(txn)
             } else {

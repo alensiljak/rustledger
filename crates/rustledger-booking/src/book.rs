@@ -9,7 +9,7 @@
 use rust_decimal::Decimal;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
-    Posting, PriceAnnotation, Transaction,
+    Posting, Transaction,
 };
 use std::collections::HashMap;
 use thiserror::Error;
@@ -126,145 +126,139 @@ impl BookingEngine {
         // First pass: identify postings that need lot matching (reductions)
         for (idx, posting) in txn.postings.iter().enumerate() {
             // Check if this is a reduction with a cost spec
-            if let Some(IncompleteAmount::Complete(units)) = &posting.units {
-                if let Some(cost_spec) = &posting.cost {
-                    // Check if this is a reduction (units have opposite sign of inventory)
-                    // This handles both:
-                    // - Selling long positions (negative units, positive inventory)
-                    // - Closing short positions (positive units, negative inventory)
-                    if let Some(inv) = self.inventories.get(&posting.account) {
-                        // Check if inventory is_reduced_by these units
-                        // (signs differ for the same currency)
-                        let is_reduction = inv.is_reduced_by(units);
+            if let Some(IncompleteAmount::Complete(units)) = &posting.units
+                && let Some(cost_spec) = &posting.cost
+            {
+                // Check if this is a reduction (units have opposite sign of inventory)
+                // This handles both:
+                // - Selling long positions (negative units, positive inventory)
+                // - Closing short positions (positive units, negative inventory)
+                if let Some(inv) = self.inventories.get(&posting.account) {
+                    // Check if inventory is_reduced_by these units
+                    // (signs differ for the same currency)
+                    let is_reduction = inv.is_reduced_by(units);
 
-                        if is_reduction {
-                            // Use try_reduce to preview booking without cloning inventory
-                            if let Ok(booking_result) =
-                                inv.try_reduce(units, Some(cost_spec), self.booking_method)
-                            {
-                                // Check if multiple lots were matched
-                                if booking_result.matched.len() > 1 {
-                                    // Expand single posting into multiple postings
-                                    let mut expanded = Vec::new();
-                                    for matched_pos in &booking_result.matched {
-                                        let mut new_posting = posting.clone();
-                                        // Set units to the matched portion with NEGATED sign
-                                        // (matched_pos.units has the inventory sign, but we need
-                                        // the reduction sign which is opposite)
-                                        let expanded_units = rustledger_core::Amount::new(
-                                            -matched_pos.units.number, // Negate: inventory→reduction
-                                            matched_pos.units.currency.clone(),
-                                        );
-                                        new_posting.units =
-                                            Some(IncompleteAmount::Complete(expanded_units));
-                                        // Set cost from the matched lot
-                                        if let Some(cost) = &matched_pos.cost {
-                                            new_posting.cost = Some(CostSpec {
-                                                number_per: Some(cost.number),
-                                                number_total: None,
-                                                currency: Some(cost.currency.clone()),
-                                                date: cost.date,
-                                                label: cost.label.clone(),
-                                                merge: false,
-                                            });
-                                        }
-                                        expanded.push(new_posting);
-                                    }
-                                    expansions.push((idx, expanded));
-                                    booked_indices.insert(idx);
-                                } else if let Some(cost_basis) = &booking_result.cost_basis {
-                                    // Single lot match - update posting in place
-                                    let per_unit = cost_basis.number / units.number.abs();
-                                    // Use new_calculated since per_unit is computed from total/units
-                                    let matched_cost =
-                                        Cost::new_calculated(per_unit, cost_basis.currency.clone())
-                                            .with_date_opt(
-                                                booking_result
-                                                    .matched
-                                                    .first()
-                                                    .and_then(|p| p.cost.as_ref())
-                                                    .and_then(|c| c.date),
-                                            );
-
-                                    // Update posting with filled cost
-                                    result.postings[idx].cost = Some(CostSpec {
-                                        number_per: Some(matched_cost.number),
-                                        number_total: None,
-                                        currency: Some(matched_cost.currency.clone()),
-                                        date: matched_cost.date,
-                                        label: None,
-                                        merge: false,
-                                    });
-                                    booked_indices.insert(idx);
-                                }
-
-                                // Calculate capital gain if there's a price
-                                if let Some(cost_basis) = &booking_result.cost_basis {
-                                    if let Some(price) = &posting.price {
-                                        let sale_price = match price {
-                                            rustledger_core::PriceAnnotation::Unit(a) => {
-                                                a.number * units.number.abs()
-                                            }
-                                            rustledger_core::PriceAnnotation::Total(a) => a.number,
-                                            _ => continue,
-                                        };
-
-                                        let gain_amount = sale_price - cost_basis.number;
-                                        if !gain_amount.is_zero() {
-                                            gains.push(CapitalGain {
-                                                account: posting.account.clone(),
-                                                currency: units.currency.clone(),
-                                                amount: Amount::new(
-                                                    gain_amount,
-                                                    &cost_basis.currency,
-                                                ),
-                                                cost_basis: cost_basis.clone(),
-                                                proceeds: Amount::new(
-                                                    sale_price,
-                                                    &cost_basis.currency,
-                                                ),
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        // If not a reduction: fall through to augmentation code below
-                    }
-
-                    if cost_spec.number_total.is_some() && cost_spec.number_per.is_none() {
-                        // This is an augmentation with total cost - convert to per-unit
-                        // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.165... USD}`
-                        // Preserve full precision to avoid cost basis errors when selling.
-                        if let (Some(total), Some(currency)) =
-                            (&cost_spec.number_total, &cost_spec.currency)
+                    if is_reduction {
+                        // Use try_reduce to preview booking without cloning inventory
+                        if let Ok(booking_result) =
+                            inv.try_reduce(units, Some(cost_spec), self.booking_method)
                         {
-                            if !units.number.is_zero() {
-                                // Calculate per-unit cost - preserve full precision
-                                let per_unit = *total / units.number.abs();
+                            // Check if multiple lots were matched
+                            if booking_result.matched.len() > 1 {
+                                // Expand single posting into multiple postings
+                                let mut expanded = Vec::new();
+                                for matched_pos in &booking_result.matched {
+                                    let mut new_posting = posting.clone();
+                                    // Set units to the matched portion with NEGATED sign
+                                    // (matched_pos.units has the inventory sign, but we need
+                                    // the reduction sign which is opposite)
+                                    let expanded_units = rustledger_core::Amount::new(
+                                        -matched_pos.units.number, // Negate: inventory→reduction
+                                        matched_pos.units.currency.clone(),
+                                    );
+                                    new_posting.units =
+                                        Some(IncompleteAmount::Complete(expanded_units));
+                                    // Set cost from the matched lot
+                                    if let Some(cost) = &matched_pos.cost {
+                                        new_posting.cost = Some(CostSpec {
+                                            number_per: Some(cost.number),
+                                            number_total: None,
+                                            currency: Some(cost.currency.clone()),
+                                            date: cost.date,
+                                            label: cost.label.clone(),
+                                            merge: false,
+                                        });
+                                    }
+                                    expanded.push(new_posting);
+                                }
+                                expansions.push((idx, expanded));
+                                booked_indices.insert(idx);
+                            } else if let Some(cost_basis) = &booking_result.cost_basis {
+                                // Single lot match - update posting in place
+                                let per_unit = cost_basis.number / units.number.abs();
+                                // Use new_calculated since per_unit is computed from total/units
+                                let matched_cost =
+                                    Cost::new_calculated(per_unit, cost_basis.currency.clone())
+                                        .with_date_opt(
+                                            booking_result
+                                                .matched
+                                                .first()
+                                                .and_then(|p| p.cost.as_ref())
+                                                .and_then(|c| c.date),
+                                        );
+
+                                // Update posting with filled cost
                                 result.postings[idx].cost = Some(CostSpec {
-                                    number_per: Some(per_unit),
-                                    number_total: None, // Clear total cost
-                                    currency: Some(currency.clone()),
-                                    // Fill in transaction date if no date specified
-                                    date: cost_spec.date.or(Some(txn.date)),
-                                    label: cost_spec.label.clone(),
-                                    merge: cost_spec.merge,
+                                    number_per: Some(matched_cost.number),
+                                    number_total: None,
+                                    currency: Some(matched_cost.currency.clone()),
+                                    date: matched_cost.date,
+                                    label: None,
+                                    merge: false,
                                 });
                                 booked_indices.insert(idx);
                             }
+
+                            // Calculate capital gain if there's a price
+                            if let Some(cost_basis) = &booking_result.cost_basis
+                                && let Some(price) = &posting.price
+                            {
+                                let sale_price = match price {
+                                    rustledger_core::PriceAnnotation::Unit(a) => {
+                                        a.number * units.number.abs()
+                                    }
+                                    rustledger_core::PriceAnnotation::Total(a) => a.number,
+                                    _ => continue,
+                                };
+
+                                let gain_amount = sale_price - cost_basis.number;
+                                if !gain_amount.is_zero() {
+                                    gains.push(CapitalGain {
+                                        account: posting.account.clone(),
+                                        currency: units.currency.clone(),
+                                        amount: Amount::new(gain_amount, &cost_basis.currency),
+                                        cost_basis: cost_basis.clone(),
+                                        proceeds: Amount::new(sale_price, &cost_basis.currency),
+                                    });
+                                }
+                            }
                         }
                     }
+                    // If not a reduction: fall through to augmentation code below
+                }
 
-                    // Fill in dates and currencies for augmentations (not already booked)
-                    if !booked_indices.contains(&idx)
-                        && (cost_spec.number_per.is_some() || cost_spec.number_total.is_some())
+                if cost_spec.number_total.is_some() && cost_spec.number_per.is_none() {
+                    // This is an augmentation with total cost - convert to per-unit
+                    // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.165... USD}`
+                    // Preserve full precision to avoid cost basis errors when selling.
+                    if let (Some(total), Some(currency)) =
+                        (&cost_spec.number_total, &cost_spec.currency)
+                        && !units.number.is_zero()
                     {
-                        // Cost spec has a number but may be missing date or currency
-                        // Fill in missing parts from price annotation, other postings, and transaction date
-                        let inferred_currency = cost_spec.currency.clone().or_else(|| {
-                            // First try price annotation on this posting
-                            posting
+                        // Calculate per-unit cost - preserve full precision
+                        let per_unit = *total / units.number.abs();
+                        result.postings[idx].cost = Some(CostSpec {
+                            number_per: Some(per_unit),
+                            number_total: cost_spec.number_total, // Preserve for precise residual calculation
+                            currency: Some(currency.clone()),
+                            // Fill in transaction date if no date specified
+                            date: cost_spec.date.or(Some(txn.date)),
+                            label: cost_spec.label.clone(),
+                            merge: cost_spec.merge,
+                        });
+                        booked_indices.insert(idx);
+                    }
+                }
+
+                // Fill in dates and currencies for augmentations (not already booked)
+                if !booked_indices.contains(&idx)
+                    && (cost_spec.number_per.is_some() || cost_spec.number_total.is_some())
+                {
+                    // Cost spec has a number but may be missing date or currency
+                    // Fill in missing parts from price annotation, other postings, and transaction date
+                    let inferred_currency = cost_spec.currency.clone().or_else(|| {
+                        // First try price annotation on this posting
+                        posting
                                 .price
                                 .as_ref()
                                 .and_then(|p| match p {
@@ -280,33 +274,32 @@ impl BookingEngine {
                                 })
                                 // Then try inferring from other postings in the transaction
                                 .or_else(|| crate::infer_cost_currency_from_postings(txn))
+                    });
+
+                    // Check if this is a reduction (opposite sign exists in inventory)
+                    // Reductions get their date from matched lot, augmentations get txn date
+                    let is_reduction = self
+                        .inventories
+                        .get(&posting.account)
+                        .is_some_and(|inv| inv.is_reduced_by(units));
+
+                    // Fill in date for augmentations only (not reductions)
+                    let inferred_date = if is_reduction {
+                        None // Reductions get their date from matched lot
+                    } else {
+                        cost_spec.date.or(Some(txn.date))
+                    };
+
+                    // Only update if we actually inferred something
+                    if inferred_currency.is_some() || inferred_date.is_some() {
+                        result.postings[idx].cost = Some(CostSpec {
+                            number_per: cost_spec.number_per,
+                            number_total: cost_spec.number_total,
+                            currency: inferred_currency.or_else(|| cost_spec.currency.clone()),
+                            date: inferred_date.or(cost_spec.date),
+                            label: cost_spec.label.clone(),
+                            merge: cost_spec.merge,
                         });
-
-                        // Check if this is a reduction (opposite sign exists in inventory)
-                        // Reductions get their date from matched lot, augmentations get txn date
-                        let is_reduction = self
-                            .inventories
-                            .get(&posting.account)
-                            .is_some_and(|inv| inv.is_reduced_by(units));
-
-                        // Fill in date for augmentations only (not reductions)
-                        let inferred_date = if is_reduction {
-                            None // Reductions get their date from matched lot
-                        } else {
-                            cost_spec.date.or(Some(txn.date))
-                        };
-
-                        // Only update if we actually inferred something
-                        if inferred_currency.is_some() || inferred_date.is_some() {
-                            result.postings[idx].cost = Some(CostSpec {
-                                number_per: cost_spec.number_per,
-                                number_total: cost_spec.number_total,
-                                currency: inferred_currency.or_else(|| cost_spec.currency.clone()),
-                                date: inferred_date.or(cost_spec.date),
-                                label: cost_spec.label.clone(),
-                                merge: cost_spec.merge,
-                            });
-                        }
                     }
                 }
             }
@@ -339,41 +332,9 @@ impl BookingEngine {
             result.postings = new_postings;
         }
 
-        // Normalize total prices (@@) to per-unit prices (@)
-        // This matches Python beancount behavior where @@ is converted to @
-        for posting in &mut result.postings {
-            if let (Some(IncompleteAmount::Complete(units)), Some(price)) =
-                (&posting.units, &posting.price)
-            {
-                let normalized = match price {
-                    PriceAnnotation::Total(total_amount) if !units.number.is_zero() => {
-                        // Convert total price to per-unit: @@ 15000 USD for 100 units -> @ 150 USD
-                        let per_unit = total_amount.number / units.number.abs();
-                        Some(PriceAnnotation::Unit(Amount::new(
-                            per_unit,
-                            &total_amount.currency,
-                        )))
-                    }
-                    PriceAnnotation::TotalIncomplete(inc) if !units.number.is_zero() => {
-                        // Convert incomplete total to incomplete unit
-                        if let Some(total_amount) = inc.as_amount() {
-                            let per_unit = total_amount.number / units.number.abs();
-                            Some(PriceAnnotation::Unit(Amount::new(
-                                per_unit,
-                                &total_amount.currency,
-                            )))
-                        } else {
-                            None
-                        }
-                    }
-                    PriceAnnotation::TotalEmpty => Some(PriceAnnotation::UnitEmpty),
-                    _ => None, // Already per-unit or can't normalize
-                };
-                if let Some(normalized_price) = normalized {
-                    posting.price = Some(normalized_price);
-                }
-            }
-        }
+        // NOTE: Price normalization (@@→@) is NOT done here to preserve exact
+        // total prices for precise residual calculation. Call `normalize_prices()`
+        // on the transaction after validation to convert total prices to per-unit.
 
         Ok(BookedTransaction {
             transaction: result,
@@ -643,8 +604,8 @@ mod tests {
         let buy_posting = &booked_buy.transaction.postings[0];
         assert!(buy_posting.cost.is_some());
         let cost_spec = buy_posting.cost.as_ref().unwrap();
-        // Total cost should be cleared, per-unit should be set
-        assert!(cost_spec.number_total.is_none());
+        // Both total and per-unit should be set (total preserved for precise residual calc)
+        assert!(cost_spec.number_total.is_some());
         assert!(cost_spec.number_per.is_some());
 
         // Sell all shares at $191 per unit

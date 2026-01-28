@@ -132,17 +132,17 @@ pub fn load_source(source: &str) -> LoadResult {
             }
             Directive::Transaction(t) => {
                 for p in &t.postings {
-                    if let Some(units) = &p.units {
-                        if let Some(amt) = units.as_amount() {
-                            commodities.insert(amt.currency.to_string());
-                            precision_tracker.observe(amt.currency.as_ref(), amt.number);
-                        }
+                    if let Some(units) = &p.units
+                        && let Some(amt) = units.as_amount()
+                    {
+                        commodities.insert(amt.currency.to_string());
+                        precision_tracker.observe(amt.currency.as_ref(), amt.number);
                     }
-                    if let Some(price) = &p.price {
-                        if let Some(amt) = price.amount() {
-                            commodities.insert(amt.currency.to_string());
-                            precision_tracker.observe(amt.currency.as_ref(), amt.number);
-                        }
+                    if let Some(price) = &p.price
+                        && let Some(amt) = price.amount()
+                    {
+                        commodities.insert(amt.currency.to_string());
+                        precision_tracker.observe(amt.currency.as_ref(), amt.number);
                     }
                 }
             }
@@ -179,6 +179,8 @@ pub fn load_source(source: &str) -> LoadResult {
                         // Apply the booked transaction to update inventory for subsequent lot matching
                         booking_engine.apply(&result.transaction);
                         *txn = result.transaction;
+                        // Normalize total prices (@@→@) for downstream consumers
+                        rustledger_booking::normalize_prices(txn);
                     }
                     Err(e) => {
                         errors.push(Error::new(e.to_string()).with_line(directive_lines[i]));

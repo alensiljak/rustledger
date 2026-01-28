@@ -21,10 +21,10 @@ pub(super) fn report_holdings<W: Write>(
     for directive in directives {
         if let Directive::Transaction(txn) = directive {
             for posting in &txn.postings {
-                if let Some(filter) = account_filter {
-                    if !posting.account.starts_with(filter) {
-                        continue;
-                    }
+                if let Some(filter) = account_filter
+                    && !posting.account.starts_with(filter)
+                {
+                    continue;
                 }
 
                 let account_str: &str = &posting.account;

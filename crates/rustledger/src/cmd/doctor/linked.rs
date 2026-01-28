@@ -49,10 +49,11 @@ pub(super) fn cmd_linked<W: Write>(file: &PathBuf, location: &str, writer: &mut 
         let mut links_to_find: HashSet<String> = HashSet::new();
 
         for spanned in &load_result.directives {
-            if spanned.span.start <= line && spanned.span.end >= line {
-                if let Directive::Transaction(txn) = &spanned.value {
-                    links_to_find.extend(txn.links.iter().map(ToString::to_string));
-                }
+            if spanned.span.start <= line
+                && spanned.span.end >= line
+                && let Directive::Transaction(txn) = &spanned.value
+            {
+                links_to_find.extend(txn.links.iter().map(ToString::to_string));
             }
         }
 

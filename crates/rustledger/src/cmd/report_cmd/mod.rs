@@ -192,10 +192,10 @@ pub fn run(file: &PathBuf, report: &Report, verbose: bool, format: &OutputFormat
 
     // Interpolate transactions
     for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive {
-            if let Ok(result) = interpolate(txn) {
-                *txn = result.transaction;
-            }
+        if let Directive::Transaction(txn) = directive
+            && let Ok(result) = interpolate(txn)
+        {
+            *txn = result.transaction;
         }
     }
 

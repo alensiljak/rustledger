@@ -156,10 +156,10 @@ impl MainLoopState {
     /// Get document text and cached parse result for a URI.
     /// Uses cached parse result if available, avoiding re-parsing.
     fn get_document_data(&self, uri: &Uri) -> (String, Arc<ParseResult>) {
-        if let Some(path) = uri_to_path(uri) {
-            if let Some((text, parse_result)) = self.vfs.write().get_document_data(&path) {
-                return (text, parse_result);
-            }
+        if let Some(path) = uri_to_path(uri)
+            && let Some((text, parse_result)) = self.vfs.write().get_document_data(&path)
+        {
+            return (text, parse_result);
         }
         (String::new(), empty_parse_result())
     }

@@ -96,92 +96,92 @@ fn collect_account_rename_edits(
     for spanned in &parse_result.directives {
         match &spanned.value {
             Directive::Open(open) => {
-                if open.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if open.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Close(close) => {
-                if close.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if close.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Balance(bal) => {
-                if bal.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if bal.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Pad(pad) => {
-                if pad.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if pad.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
-                if pad.source_account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if pad.source_account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Note(note) => {
-                if note.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if note.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Document(doc) => {
-                if doc.account.as_ref() == old_name {
-                    if let Some(edit) = find_and_create_edit(
+                if doc.account.as_ref() == old_name
+                    && let Some(edit) = find_and_create_edit(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         old_name,
                         new_name,
-                    ) {
-                        edits.push(edit);
-                    }
+                    )
+                {
+                    edits.push(edit);
                 }
             }
             Directive::Transaction(txn) => {

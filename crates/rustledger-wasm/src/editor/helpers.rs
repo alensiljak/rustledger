@@ -141,10 +141,10 @@ pub fn extract_currencies(parse_result: &ParseResult) -> Vec<String> {
             Directive::Balance(bal) => currencies.push(bal.amount.currency.to_string()),
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(ref units) = posting.units {
-                        if let Some(currency) = units.currency() {
-                            currencies.push(currency.to_string());
-                        }
+                    if let Some(ref units) = posting.units
+                        && let Some(currency) = units.currency()
+                    {
+                        currencies.push(currency.to_string());
                     }
                 }
             }
@@ -167,10 +167,10 @@ pub fn extract_payees(parse_result: &ParseResult) -> Vec<String> {
     let mut payees = Vec::new();
 
     for spanned_directive in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned_directive.value {
-            if let Some(ref payee) = txn.payee {
-                payees.push(payee.to_string());
-            }
+        if let Directive::Transaction(txn) = &spanned_directive.value
+            && let Some(ref payee) = txn.payee
+        {
+            payees.push(payee.to_string());
         }
     }
 
@@ -202,12 +202,11 @@ pub fn count_currency_usages(currency: &str, parse_result: &ParseResult) -> usiz
         match &spanned_directive.value {
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(ref units) = posting.units {
-                        if let Some(c) = units.currency() {
-                            if c.to_string() == currency {
-                                count += 1;
-                            }
-                        }
+                    if let Some(ref units) = posting.units
+                        && let Some(c) = units.currency()
+                        && c.to_string() == currency
+                    {
+                        count += 1;
                     }
                 }
             }
@@ -358,10 +357,10 @@ mod tests {
 
     #[test]
     fn test_extract_currencies() {
-        let source = r#"2024-01-01 open Assets:Bank USD
+        let source = r"2024-01-01 open Assets:Bank USD
 2024-01-01 commodity EUR
 2024-01-15 balance Assets:Bank 100.00 GBP
-"#;
+";
         let result = parse(source);
         let currencies = extract_currencies(&result);
 

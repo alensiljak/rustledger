@@ -57,28 +57,25 @@ impl NativePlugin for ImplicitPricesPlugin {
                         }
 
                         // Check for cost with price info
-                        if let Some(ref cost) = posting.cost {
-                            if let (Some(number), Some(currency)) =
+                        if let Some(ref cost) = posting.cost
+                            && let (Some(number), Some(currency)) =
                                 (&cost.number_per, &cost.currency)
-                            {
-                                let price_wrapper = DirectiveWrapper {
-                                    directive_type: "price".to_string(),
-                                    date: wrapper.date.clone(),
-                                    filename: None, // Plugin-generated
-                                    lineno: None,
-                                    data: crate::types::DirectiveData::Price(
-                                        crate::types::PriceData {
-                                            currency: units.currency.clone(),
-                                            amount: crate::types::AmountData {
-                                                number: number.clone(),
-                                                currency: currency.clone(),
-                                            },
-                                            metadata: vec![],
-                                        },
-                                    ),
-                                };
-                                generated_prices.push(price_wrapper);
-                            }
+                        {
+                            let price_wrapper = DirectiveWrapper {
+                                directive_type: "price".to_string(),
+                                date: wrapper.date.clone(),
+                                filename: None, // Plugin-generated
+                                lineno: None,
+                                data: crate::types::DirectiveData::Price(crate::types::PriceData {
+                                    currency: units.currency.clone(),
+                                    amount: crate::types::AmountData {
+                                        number: number.clone(),
+                                        currency: currency.clone(),
+                                    },
+                                    metadata: vec![],
+                                }),
+                            };
+                            generated_prices.push(price_wrapper);
                         }
                     }
                 }

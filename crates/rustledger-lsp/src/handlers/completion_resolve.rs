@@ -22,29 +22,28 @@ pub fn handle_completion_resolve(
     let mut resolved = item.clone();
 
     // Check what kind of completion this is based on data field
-    if let Some(data) = &item.data {
-        if let Some(kind) = data.get("kind").and_then(|v| v.as_str()) {
-            match kind {
-                "account" => {
-                    if let Some(account) = data.get("account").and_then(|v| v.as_str()) {
-                        resolved.documentation =
-                            Some(resolve_account_documentation(account, parse_result));
-                    }
+    if let Some(data) = &item.data
+        && let Some(kind) = data.get("kind").and_then(|v| v.as_str())
+    {
+        match kind {
+            "account" => {
+                if let Some(account) = data.get("account").and_then(|v| v.as_str()) {
+                    resolved.documentation =
+                        Some(resolve_account_documentation(account, parse_result));
                 }
-                "currency" => {
-                    if let Some(currency) = data.get("currency").and_then(|v| v.as_str()) {
-                        resolved.documentation =
-                            Some(resolve_currency_documentation(currency, parse_result));
-                    }
-                }
-                "payee" => {
-                    if let Some(payee) = data.get("payee").and_then(|v| v.as_str()) {
-                        resolved.documentation =
-                            Some(resolve_payee_documentation(payee, parse_result));
-                    }
-                }
-                _ => {}
             }
+            "currency" => {
+                if let Some(currency) = data.get("currency").and_then(|v| v.as_str()) {
+                    resolved.documentation =
+                        Some(resolve_currency_documentation(currency, parse_result));
+                }
+            }
+            "payee" => {
+                if let Some(payee) = data.get("payee").and_then(|v| v.as_str()) {
+                    resolved.documentation = Some(resolve_payee_documentation(payee, parse_result));
+                }
+            }
+            _ => {}
         }
     }
 
@@ -87,11 +86,11 @@ fn resolve_account_documentation(account: &str, parse_result: &ParseResult) -> D
                     }
 
                     // Track balance
-                    if let Some(units) = &posting.units {
-                        if let Some(number) = units.number() {
-                            let currency = units.currency().unwrap_or("???").to_string();
-                            *balances.entry(currency).or_default() += number;
-                        }
+                    if let Some(units) = &posting.units
+                        && let Some(number) = units.number()
+                    {
+                        let currency = units.currency().unwrap_or("???").to_string();
+                        *balances.entry(currency).or_default() += number;
                     }
                 }
             }
@@ -141,10 +140,10 @@ fn resolve_currency_documentation(currency: &str, parse_result: &ParseResult) ->
             }
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(units) = &posting.units {
-                        if units.currency() == Some(currency) {
-                            usage_count += 1;
-                        }
+                    if let Some(units) = &posting.units
+                        && units.currency() == Some(currency)
+                    {
+                        usage_count += 1;
                     }
                 }
             }
@@ -182,16 +181,16 @@ fn resolve_payee_documentation(payee: &str, parse_result: &ParseResult) -> Docum
     let mut accounts_used: HashMap<String, usize> = HashMap::new();
 
     for spanned in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned.value {
-            if txn.payee.as_ref().map(|p| p.as_ref()) == Some(payee) {
-                let narration = txn.narration.to_string();
-                transactions.push((txn.date, narration));
+        if let Directive::Transaction(txn) = &spanned.value
+            && txn.payee.as_ref().map(|p| p.as_ref()) == Some(payee)
+        {
+            let narration = txn.narration.to_string();
+            transactions.push((txn.date, narration));
 
-                for posting in &txn.postings {
-                    *accounts_used
-                        .entry(posting.account.to_string())
-                        .or_default() += 1;
-                }
+            for posting in &txn.postings {
+                *accounts_used
+                    .entry(posting.account.to_string())
+                    .or_default() += 1;
             }
         }
     }
