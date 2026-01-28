@@ -71,6 +71,14 @@ These are explicitly **not** planned:
 - **Cloud service**: rustledger is local-first; no hosted version planned
 - **Breaking Beancount compatibility**: We follow beancount syntax strictly
 
+## Detailed Roadmaps
+
+For implementation details, see these focused roadmaps:
+
+- **[Performance Roadmap](docs/PERFORMANCE_ROADMAP.md)** - Optimization phases, benchmarks, cache implementation
+- **[Testing Roadmap](docs/TESTING_ROADMAP.md)** - Testing infrastructure, fuzzing, formal verification
+- **[TLA+ Status](spec/tla/ROADMAP.md)** - Formal specification coverage and verification status
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute. Priority areas:
