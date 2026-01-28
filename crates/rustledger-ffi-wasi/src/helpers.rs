@@ -132,17 +132,17 @@ pub fn load_source(source: &str) -> LoadResult {
             }
             Directive::Transaction(t) => {
                 for p in &t.postings {
-                    if let Some(units) = &p.units {
-                        if let Some(amt) = units.as_amount() {
-                            commodities.insert(amt.currency.to_string());
-                            precision_tracker.observe(amt.currency.as_ref(), amt.number);
-                        }
+                    if let Some(units) = &p.units
+                        && let Some(amt) = units.as_amount()
+                    {
+                        commodities.insert(amt.currency.to_string());
+                        precision_tracker.observe(amt.currency.as_ref(), amt.number);
                     }
-                    if let Some(price) = &p.price {
-                        if let Some(amt) = price.amount() {
-                            commodities.insert(amt.currency.to_string());
-                            precision_tracker.observe(amt.currency.as_ref(), amt.number);
-                        }
+                    if let Some(price) = &p.price
+                        && let Some(amt) = price.amount()
+                    {
+                        commodities.insert(amt.currency.to_string());
+                        precision_tracker.observe(amt.currency.as_ref(), amt.number);
                     }
                 }
             }

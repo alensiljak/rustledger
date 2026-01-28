@@ -41,10 +41,10 @@ pub fn handle_document_links(
     // (includes are typically parsed as options, not directives)
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
-        if trimmed.starts_with("include") {
-            if let Some(link) = parse_include_line(line, line_num as u32, &base_dir) {
-                links.push(link);
-            }
+        if trimmed.starts_with("include")
+            && let Some(link) = parse_include_line(line, line_num as u32, &base_dir)
+        {
+            links.push(link);
         }
     }
 
@@ -74,10 +74,10 @@ pub fn handle_document_link_resolve(link: DocumentLink) -> DocumentLink {
             .unwrap_or(false);
 
         // Set target URI
-        if let Some(ref full_path) = resolved_path {
-            if let Ok(uri) = format!("file://{}", full_path).parse::<Uri>() {
-                resolved.target = Some(uri);
-            }
+        if let Some(ref full_path) = resolved_path
+            && let Ok(uri) = format!("file://{}", full_path).parse::<Uri>()
+        {
+            resolved.target = Some(uri);
         }
 
         // Set tooltip based on existence

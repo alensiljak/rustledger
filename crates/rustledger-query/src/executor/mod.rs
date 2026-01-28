@@ -234,12 +234,11 @@ impl<'a> Executor<'a> {
         for directive in self.directives {
             if let Directive::Transaction(txn) = directive {
                 // Apply FROM filter if present
-                if let Some(from_clause) = from {
-                    if let Some(filter) = &from_clause.filter {
-                        if !self.evaluate_from_filter(filter, txn)? {
-                            continue;
-                        }
-                    }
+                if let Some(from_clause) = from
+                    && let Some(filter) = &from_clause.filter
+                    && !self.evaluate_from_filter(filter, txn)?
+                {
+                    continue;
                 }
 
                 for posting in &txn.postings {
@@ -291,30 +290,29 @@ impl<'a> Executor<'a> {
                 // Check FROM clause (transaction-level filter)
                 if let Some(from) = from {
                     // Apply date filters
-                    if let Some(open_date) = from.open_on {
-                        if txn.date < open_date {
-                            // Update balances but don't include in results
-                            for posting in &txn.postings {
-                                if let Some(units) = posting.amount() {
-                                    let balance = running_balances
-                                        .entry(posting.account.clone())
-                                        .or_default();
-                                    balance.add(Position::simple(units.clone()));
-                                }
+                    if let Some(open_date) = from.open_on
+                        && txn.date < open_date
+                    {
+                        // Update balances but don't include in results
+                        for posting in &txn.postings {
+                            if let Some(units) = posting.amount() {
+                                let balance =
+                                    running_balances.entry(posting.account.clone()).or_default();
+                                balance.add(Position::simple(units.clone()));
                             }
-                            continue;
                         }
+                        continue;
                     }
-                    if let Some(close_date) = from.close_on {
-                        if txn.date > close_date {
-                            continue;
-                        }
+                    if let Some(close_date) = from.close_on
+                        && txn.date > close_date
+                    {
+                        continue;
                     }
                     // Apply filter expression
-                    if let Some(filter) = &from.filter {
-                        if !self.evaluate_from_filter(filter, txn)? {
-                            continue;
-                        }
+                    if let Some(filter) = &from.filter
+                        && !self.evaluate_from_filter(filter, txn)?
+                    {
+                        continue;
                     }
                 }
 

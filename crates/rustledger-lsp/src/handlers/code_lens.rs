@@ -133,58 +133,58 @@ pub fn handle_code_lens(
 pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> CodeLens {
     let mut resolved = lens.clone();
 
-    if let Some(data) = &lens.data {
-        if data.get("kind").and_then(|v| v.as_str()) == Some("balance") {
-            let account = data.get("account").and_then(|v| v.as_str()).unwrap_or("");
-            let date_str = data.get("date").and_then(|v| v.as_str()).unwrap_or("");
-            let expected_amount = data
-                .get("expected_amount")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse::<Decimal>().ok())
-                .unwrap_or_default();
-            let expected_currency = data
-                .get("expected_currency")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
+    if let Some(data) = &lens.data
+        && data.get("kind").and_then(|v| v.as_str()) == Some("balance")
+    {
+        let account = data.get("account").and_then(|v| v.as_str()).unwrap_or("");
+        let date_str = data.get("date").and_then(|v| v.as_str()).unwrap_or("");
+        let expected_amount = data
+            .get("expected_amount")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<Decimal>().ok())
+            .unwrap_or_default();
+        let expected_currency = data
+            .get("expected_currency")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
-            // Parse the date
-            let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
+        // Parse the date
+        let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
 
-            // Calculate actual balance up to this date
-            let actual_balance = calculate_balance_at_date(parse_result, account, date);
-            let actual_amount = actual_balance
-                .get(expected_currency)
-                .copied()
-                .unwrap_or_default();
+        // Calculate actual balance up to this date
+        let actual_balance = calculate_balance_at_date(parse_result, account, date);
+        let actual_amount = actual_balance
+            .get(expected_currency)
+            .copied()
+            .unwrap_or_default();
 
-            // Check if balance matches
-            let (title, status) = if actual_amount == expected_amount {
-                (
-                    format!("✓ Balance: {} {}", expected_amount, expected_currency),
-                    "verified",
-                )
-            } else {
-                let diff = actual_amount - expected_amount;
-                (
-                    format!(
-                        "✗ Balance: expected {} {}, actual {} {} (diff: {})",
-                        expected_amount, expected_currency, actual_amount, expected_currency, diff
-                    ),
-                    "mismatch",
-                )
-            };
+        // Check if balance matches
+        let (title, status) = if actual_amount == expected_amount {
+            (
+                format!("✓ Balance: {} {}", expected_amount, expected_currency),
+                "verified",
+            )
+        } else {
+            let diff = actual_amount - expected_amount;
+            (
+                format!(
+                    "✗ Balance: expected {} {}, actual {} {} (diff: {})",
+                    expected_amount, expected_currency, actual_amount, expected_currency, diff
+                ),
+                "mismatch",
+            )
+        };
 
-            resolved.command = Some(Command {
-                title,
-                command: "rledger.showBalanceDetails".to_string(),
-                arguments: Some(vec![serde_json::json!({
-                    "account": account,
-                    "status": status,
-                    "expected": format!("{} {}", expected_amount, expected_currency),
-                    "actual": format!("{} {}", actual_amount, expected_currency),
-                })]),
-            });
-        }
+        resolved.command = Some(Command {
+            title,
+            command: "rledger.showBalanceDetails".to_string(),
+            arguments: Some(vec![serde_json::json!({
+                "account": account,
+                "status": status,
+                "expected": format!("{} {}", expected_amount, expected_currency),
+                "actual": format!("{} {}", actual_amount, expected_currency),
+            })]),
+        });
     }
 
     // If no data to resolve, return as-is (already has command)
@@ -202,20 +202,19 @@ fn calculate_balance_at_date(
     for spanned in &parse_result.directives {
         if let Directive::Transaction(txn) = &spanned.value {
             // Only include transactions before the balance date
-            if let Some(d) = date {
-                if txn.date >= d {
-                    continue;
-                }
+            if let Some(d) = date
+                && txn.date >= d
+            {
+                continue;
             }
 
             for posting in &txn.postings {
-                if posting.account.as_ref() == account {
-                    if let Some(units) = &posting.units {
-                        if let Some(number) = units.number() {
-                            let currency = units.currency().unwrap_or("???").to_string();
-                            *balances.entry(currency).or_default() += number;
-                        }
-                    }
+                if posting.account.as_ref() == account
+                    && let Some(units) = &posting.units
+                    && let Some(number) = units.number()
+                {
+                    let currency = units.currency().unwrap_or("???").to_string();
+                    *balances.entry(currency).or_default() += number;
                 }
             }
         }

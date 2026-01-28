@@ -55,16 +55,16 @@ impl NativePlugin for AutoTagPlugin {
             .directives
             .into_iter()
             .map(|mut wrapper| {
-                if wrapper.directive_type == "transaction" {
-                    if let DirectiveData::Transaction(ref mut txn) = wrapper.data {
-                        // Check each posting against rules
-                        for posting in &txn.postings {
-                            for (prefix, tag) in &self.rules {
-                                if posting.account.starts_with(prefix) {
-                                    // Add tag if not already present
-                                    if !txn.tags.contains(tag) {
-                                        txn.tags.push(tag.clone());
-                                    }
+                if wrapper.directive_type == "transaction"
+                    && let DirectiveData::Transaction(ref mut txn) = wrapper.data
+                {
+                    // Check each posting against rules
+                    for posting in &txn.postings {
+                        for (prefix, tag) in &self.rules {
+                            if posting.account.starts_with(prefix) {
+                                // Add tag if not already present
+                                if !txn.tags.contains(tag) {
+                                    txn.tags.push(tag.clone());
                                 }
                             }
                         }

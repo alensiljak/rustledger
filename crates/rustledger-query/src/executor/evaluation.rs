@@ -224,19 +224,18 @@ impl Executor<'_> {
             "position" => {
                 // Position includes both units and cost
                 if let Some(units) = posting.amount() {
-                    if let Some(cost_spec) = &posting.cost {
-                        if let (Some(number_per), Some(currency)) =
+                    if let Some(cost_spec) = &posting.cost
+                        && let (Some(number_per), Some(currency)) =
                             (&cost_spec.number_per, &cost_spec.currency)
-                        {
-                            // Use Cost::new() to auto-quantize the cost number
-                            let cost = Cost::new(*number_per, currency.clone())
-                                .with_date_opt(cost_spec.date)
-                                .with_label_opt(cost_spec.label.clone());
-                            return Ok(Value::Position(Box::new(Position::with_cost(
-                                units.clone(),
-                                cost,
-                            ))));
-                        }
+                    {
+                        // Use Cost::new() to auto-quantize the cost number
+                        let cost = Cost::new(*number_per, currency.clone())
+                            .with_date_opt(cost_spec.date)
+                            .with_label_opt(cost_spec.label.clone());
+                        return Ok(Value::Position(Box::new(Position::with_cost(
+                            units.clone(),
+                            cost,
+                        ))));
                     }
                     Ok(Value::Position(Box::new(Position::simple(units.clone()))))
                 } else {
@@ -248,15 +247,13 @@ impl Executor<'_> {
                 .map_or(Value::Null, |u| Value::Amount(u.clone()))),
             "cost" => {
                 // Get the cost of the posting
-                if let Some(units) = posting.amount() {
-                    if let Some(cost) = &posting.cost {
-                        if let Some(number_per) = &cost.number_per {
-                            if let Some(currency) = &cost.currency {
-                                let total = units.number.abs() * number_per;
-                                return Ok(Value::Amount(Amount::new(total, currency.clone())));
-                            }
-                        }
-                    }
+                if let Some(units) = posting.amount()
+                    && let Some(cost) = &posting.cost
+                    && let Some(number_per) = &cost.number_per
+                    && let Some(currency) = &cost.currency
+                {
+                    let total = units.number.abs() * number_per;
+                    return Ok(Value::Amount(Amount::new(total, currency.clone())));
                 }
                 Ok(Value::Null)
             }
@@ -265,13 +262,12 @@ impl Executor<'_> {
                 // With cost: units × cost currency
                 // Without cost: units amount
                 if let Some(units) = posting.amount() {
-                    if let Some(cost) = &posting.cost {
-                        if let Some(number_per) = &cost.number_per {
-                            if let Some(currency) = &cost.currency {
-                                let total = units.number * number_per;
-                                return Ok(Value::Amount(Amount::new(total, currency.clone())));
-                            }
-                        }
+                    if let Some(cost) = &posting.cost
+                        && let Some(number_per) = &cost.number_per
+                        && let Some(currency) = &cost.currency
+                    {
+                        let total = units.number * number_per;
+                        return Ok(Value::Amount(Amount::new(total, currency.clone())));
                     }
                     // No cost, use units
                     Ok(Value::Amount(units.clone()))

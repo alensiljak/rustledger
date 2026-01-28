@@ -25,29 +25,29 @@ pub fn handle_hover(
     tracing::debug!("Hover for word: {:?}", word);
 
     // Check if it's an account name
-    if word.contains(':') || is_account_type(&word) {
-        if let Some(info) = get_account_info(&word, parse_result) {
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: info,
-                }),
-                range: None,
-            });
-        }
+    if (word.contains(':') || is_account_type(&word))
+        && let Some(info) = get_account_info(&word, parse_result)
+    {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: info,
+            }),
+            range: None,
+        });
     }
 
     // Check if it's a currency
-    if is_currency_like_simple(&word) {
-        if let Some(info) = get_currency_info(&word, parse_result) {
-            return Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: info,
-                }),
-                range: None,
-            });
-        }
+    if is_currency_like_simple(&word)
+        && let Some(info) = get_currency_info(&word, parse_result)
+    {
+        return Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: info,
+            }),
+            range: None,
+        });
     }
 
     // Check if it's a directive keyword
@@ -123,17 +123,17 @@ fn count_account_usages(account: &str, parse_result: &ParseResult) -> usize {
 fn get_currency_info(currency: &str, parse_result: &ParseResult) -> Option<String> {
     // Find the commodity directive for this currency
     for spanned_directive in &parse_result.directives {
-        if let Directive::Commodity(comm) = &spanned_directive.value {
-            if comm.currency.as_ref() == currency {
-                let mut info = format!("## Currency: `{}`\n\n", currency);
-                info.push_str(&format!("**Defined:** {}\n", comm.date));
+        if let Directive::Commodity(comm) = &spanned_directive.value
+            && comm.currency.as_ref() == currency
+        {
+            let mut info = format!("## Currency: `{}`\n\n", currency);
+            info.push_str(&format!("**Defined:** {}\n", comm.date));
 
-                // Count usages
-                let usage_count = count_currency_usages(currency, parse_result);
-                info.push_str(&format!("\n**Used in:** {} amounts", usage_count));
+            // Count usages
+            let usage_count = count_currency_usages(currency, parse_result);
+            info.push_str(&format!("\n**Used in:** {} amounts", usage_count));
 
-                return Some(info);
-            }
+            return Some(info);
         }
     }
 
@@ -157,12 +157,11 @@ fn count_currency_usages(currency: &str, parse_result: &ParseResult) -> usize {
         match &spanned_directive.value {
             Directive::Transaction(txn) => {
                 for posting in &txn.postings {
-                    if let Some(ref units) = posting.units {
-                        if let Some(c) = units.currency() {
-                            if c.to_string() == currency {
-                                count += 1;
-                            }
-                        }
+                    if let Some(ref units) = posting.units
+                        && let Some(c) = units.currency()
+                        && c.to_string() == currency
+                    {
+                        count += 1;
                     }
                 }
             }

@@ -102,47 +102,46 @@ fn scan_documents(
             scan_documents(&entry_path, base_dir, existing, directives, errors)?;
         } else if entry_path.is_file() {
             // Try to parse filename as YYYY-MM-DD.description.ext
-            if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str()) {
-                if file_name.len() >= 10
-                    && file_name.chars().nth(4) == Some('-')
-                    && file_name.chars().nth(7) == Some('-')
+            if let Some(file_name) = entry_path.file_name().and_then(|n| n.to_str())
+                && file_name.len() >= 10
+                && file_name.chars().nth(4) == Some('-')
+                && file_name.chars().nth(7) == Some('-')
+            {
+                let date_str = &file_name[0..10];
+                // Validate date format
+                if date_str.chars().take(4).all(|c| c.is_ascii_digit())
+                    && date_str.chars().skip(5).take(2).all(|c| c.is_ascii_digit())
+                    && date_str.chars().skip(8).take(2).all(|c| c.is_ascii_digit())
                 {
-                    let date_str = &file_name[0..10];
-                    // Validate date format
-                    if date_str.chars().take(4).all(|c| c.is_ascii_digit())
-                        && date_str.chars().skip(5).take(2).all(|c| c.is_ascii_digit())
-                        && date_str.chars().skip(8).take(2).all(|c| c.is_ascii_digit())
+                    // Extract account from path relative to base_dir
+                    if let Ok(rel_path) = entry_path.strip_prefix(base_dir)
+                        && let Some(parent) = rel_path.parent()
                     {
-                        // Extract account from path relative to base_dir
-                        if let Ok(rel_path) = entry_path.strip_prefix(base_dir) {
-                            if let Some(parent) = rel_path.parent() {
-                                let account = parent
-                                    .components()
-                                    .map(|c| c.as_os_str().to_string_lossy().to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(":");
+                        let account = parent
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().to_string())
+                            .collect::<Vec<_>>()
+                            .join(":");
 
-                                if !account.is_empty() {
-                                    let full_path = entry_path.to_string_lossy().to_string();
+                        if !account.is_empty() {
+                            let full_path = entry_path.to_string_lossy().to_string();
 
-                                    // Skip if already exists
-                                    if existing.contains(&full_path) {
-                                        continue;
-                                    }
-
-                                    directives.push(DirectiveWrapper {
-                                        directive_type: "document".to_string(),
-                                        date: date_str.to_string(),
-                                        filename: None, // Plugin-generated
-                                        lineno: None,
-                                        data: DirectiveData::Document(DocumentData {
-                                            account,
-                                            path: full_path,
-                                            metadata: vec![],
-                                        }),
-                                    });
-                                }
+                            // Skip if already exists
+                            if existing.contains(&full_path) {
+                                continue;
                             }
+
+                            directives.push(DirectiveWrapper {
+                                directive_type: "document".to_string(),
+                                date: date_str.to_string(),
+                                filename: None, // Plugin-generated
+                                lineno: None,
+                                data: DirectiveData::Document(DocumentData {
+                                    account,
+                                    path: full_path,
+                                    metadata: vec![],
+                                }),
+                            });
                         }
                     }
                 }

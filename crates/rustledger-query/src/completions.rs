@@ -203,10 +203,11 @@ fn determine_context(tokens: &[String]) -> BqlContext {
     let upper_tokens: Vec<String> = tokens.iter().map(|t| t.to_uppercase()).collect();
 
     // Check for incomplete string
-    if let Some(last) = tokens.last() {
-        if last.starts_with('"') && !last.ends_with('"') {
-            return BqlContext::InString;
-        }
+    if let Some(last) = tokens.last()
+        && last.starts_with('"')
+        && !last.ends_with('"')
+    {
+        return BqlContext::InString;
     }
 
     // Find the main statement type
@@ -252,10 +253,10 @@ fn determine_select_context(tokens: &[String]) -> BqlContext {
     }
 
     // Determine context based on last keyword position
-    if let Some(pos) = limit_pos {
-        if last_idx == pos {
-            return BqlContext::AfterLimit;
-        }
+    if let Some(pos) = limit_pos
+        && last_idx == pos
+    {
+        return BqlContext::AfterLimit;
     }
 
     if let Some(pos) = order_pos {

@@ -31,10 +31,10 @@ pub fn handle_formatting(
             for (i, posting) in txn.postings.iter().enumerate() {
                 let posting_line = start_line + 1 + i as u32;
 
-                if let Some(line) = lines.get(posting_line as usize) {
-                    if let Some(edit) = format_posting_line(line, posting_line, posting) {
-                        edits.push(edit);
-                    }
+                if let Some(line) = lines.get(posting_line as usize)
+                    && let Some(edit) = format_posting_line(line, posting_line, posting)
+                {
+                    edits.push(edit);
                 }
             }
         }
@@ -112,23 +112,23 @@ fn format_posting_line(
     formatted.push_str(&account);
 
     // Add amount if present
-    if let Some(ref units) = posting.units {
-        if let (Some(num), Some(curr)) = (units.number(), units.currency()) {
-            let num_str = num.to_string();
-            let curr_str = curr.to_string();
-            let amount_str = format!("{} {}", num_str, curr_str);
+    if let Some(ref units) = posting.units
+        && let (Some(num), Some(curr)) = (units.number(), units.currency())
+    {
+        let num_str = num.to_string();
+        let curr_str = curr.to_string();
+        let amount_str = format!("{} {}", num_str, curr_str);
 
-            // Calculate padding to align amount at AMOUNT_COLUMN
-            let current_len = expected_indent + account.len();
-            let padding = if current_len < AMOUNT_COLUMN - amount_str.len() {
-                AMOUNT_COLUMN - amount_str.len() - current_len
-            } else {
-                2 // Minimum 2 spaces
-            };
+        // Calculate padding to align amount at AMOUNT_COLUMN
+        let current_len = expected_indent + account.len();
+        let padding = if current_len < AMOUNT_COLUMN - amount_str.len() {
+            AMOUNT_COLUMN - amount_str.len() - current_len
+        } else {
+            2 // Minimum 2 spaces
+        };
 
-            formatted.push_str(&" ".repeat(padding));
-            formatted.push_str(&amount_str);
-        }
+        formatted.push_str(&" ".repeat(padding));
+        formatted.push_str(&amount_str);
     }
 
     // Check if formatting changed anything significant

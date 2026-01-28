@@ -79,55 +79,56 @@ fn collect_account_references(
 
         match &spanned.value {
             Directive::Open(open) => {
-                if open.account.as_ref() == account && include_declaration {
-                    if let Some(loc) = find_in_directive(
+                if open.account.as_ref() == account
+                    && include_declaration
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
             }
             Directive::Close(close) => {
-                if close.account.as_ref() == account {
-                    if let Some(loc) = find_in_directive(
+                if close.account.as_ref() == account
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
             }
             Directive::Balance(bal) => {
-                if bal.account.as_ref() == account {
-                    if let Some(loc) = find_in_directive(
+                if bal.account.as_ref() == account
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
             }
             Directive::Pad(pad) => {
-                if pad.account.as_ref() == account {
-                    if let Some(loc) = find_in_directive(
+                if pad.account.as_ref() == account
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
                 if pad.source_account.as_ref() == account {
                     // Find the second account mention
@@ -149,48 +150,45 @@ fn collect_account_references(
                 }
             }
             Directive::Note(note) => {
-                if note.account.as_ref() == account {
-                    if let Some(loc) = find_in_directive(
+                if note.account.as_ref() == account
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
             }
             Directive::Document(doc) => {
-                if doc.account.as_ref() == account {
-                    if let Some(loc) = find_in_directive(
+                if doc.account.as_ref() == account
+                    && let Some(loc) = find_in_directive(
                         source,
                         spanned.span.start,
                         spanned.span.end,
                         account,
                         uri,
-                    ) {
-                        locations.push(loc);
-                    }
+                    )
+                {
+                    locations.push(loc);
                 }
             }
             Directive::Transaction(txn) => {
                 for (i, posting) in txn.postings.iter().enumerate() {
                     if posting.account.as_ref() == account {
                         let posting_line = start_line + 1 + i as u32;
-                        if let Some(line_text) = source.lines().nth(posting_line as usize) {
-                            if let Some(col) = line_text.find(account) {
-                                locations.push(Location {
-                                    uri: uri.clone(),
-                                    range: Range {
-                                        start: Position::new(posting_line, col as u32),
-                                        end: Position::new(
-                                            posting_line,
-                                            (col + account.len()) as u32,
-                                        ),
-                                    },
-                                });
-                            }
+                        if let Some(line_text) = source.lines().nth(posting_line as usize)
+                            && let Some(col) = line_text.find(account)
+                        {
+                            locations.push(Location {
+                                uri: uri.clone(),
+                                range: Range {
+                                    start: Position::new(posting_line, col as u32),
+                                    end: Position::new(posting_line, (col + account.len()) as u32),
+                                },
+                            });
                         }
                     }
                 }
@@ -277,23 +275,22 @@ fn collect_payee_references(
     locations: &mut Vec<Location>,
 ) {
     for spanned in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned.value {
-            if let Some(ref txn_payee) = txn.payee {
-                if txn_payee.as_ref() == payee {
-                    let (line, _) = byte_offset_to_position(source, spanned.span.start);
-                    let line_text = source.lines().nth(line as usize).unwrap_or("");
+        if let Directive::Transaction(txn) = &spanned.value
+            && let Some(ref txn_payee) = txn.payee
+            && txn_payee.as_ref() == payee
+        {
+            let (line, _) = byte_offset_to_position(source, spanned.span.start);
+            let line_text = source.lines().nth(line as usize).unwrap_or("");
 
-                    // Find the payee in quotes
-                    if let Some(start) = line_text.find(&format!("\"{}\"", payee)) {
-                        locations.push(Location {
-                            uri: uri.clone(),
-                            range: Range {
-                                start: Position::new(line, (start + 1) as u32),
-                                end: Position::new(line, (start + 1 + payee.len()) as u32),
-                            },
-                        });
-                    }
-                }
+            // Find the payee in quotes
+            if let Some(start) = line_text.find(&format!("\"{}\"", payee)) {
+                locations.push(Location {
+                    uri: uri.clone(),
+                    range: Range {
+                        start: Position::new(line, (start + 1) as u32),
+                        end: Position::new(line, (start + 1 + payee.len()) as u32),
+                    },
+                });
             }
         }
     }

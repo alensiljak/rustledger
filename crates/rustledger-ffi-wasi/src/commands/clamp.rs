@@ -129,65 +129,63 @@ pub fn cmd_clamp(
         let directive_date = directive.date();
 
         // Check if directive is before begin date
-        if let Some(begin) = begin {
-            if directive_date < begin {
-                // Accumulate transaction postings for opening balances
-                if let Directive::Transaction(txn) = directive {
-                    for posting in &txn.postings {
-                        if let Some(rustledger_core::IncompleteAmount::Complete(amount)) =
-                            &posting.units
-                        {
-                            let inv = account_balances
-                                .entry(posting.account.to_string())
-                                .or_default();
-                            let position = if let Some(cost_spec) = &posting.cost {
-                                let cost = Cost {
-                                    number: cost_spec.number_per.unwrap_or(amount.number),
-                                    currency: cost_spec
-                                        .currency
-                                        .clone()
-                                        .unwrap_or_else(|| amount.currency.clone()),
-                                    date: cost_spec.date.or(Some(txn.date)),
-                                    label: cost_spec.label.clone(),
-                                };
-                                rustledger_core::Position::with_cost(amount.clone(), cost)
-                            } else {
-                                rustledger_core::Position::simple(amount.clone())
+        if let Some(begin) = begin
+            && directive_date < begin
+        {
+            // Accumulate transaction postings for opening balances
+            if let Directive::Transaction(txn) = directive {
+                for posting in &txn.postings {
+                    if let Some(rustledger_core::IncompleteAmount::Complete(amount)) =
+                        &posting.units
+                    {
+                        let inv = account_balances
+                            .entry(posting.account.to_string())
+                            .or_default();
+                        let position = if let Some(cost_spec) = &posting.cost {
+                            let cost = Cost {
+                                number: cost_spec.number_per.unwrap_or(amount.number),
+                                currency: cost_spec
+                                    .currency
+                                    .clone()
+                                    .unwrap_or_else(|| amount.currency.clone()),
+                                date: cost_spec.date.or(Some(txn.date)),
+                                label: cost_spec.label.clone(),
                             };
-                            inv.add(position);
-                        }
+                            rustledger_core::Position::with_cost(amount.clone(), cost)
+                        } else {
+                            rustledger_core::Position::simple(amount.clone())
+                        };
+                        inv.add(position);
                     }
                 }
-
-                // Track most recent price per commodity before begin_date
-                if let Directive::Price(price) = directive {
-                    let key = (
-                        price.currency.to_string(),
-                        price.amount.currency.to_string(),
-                    );
-                    let should_update = latest_prices
-                        .get(&key)
-                        .map_or(true, |(existing_date, _, _)| {
-                            directive_date >= *existing_date
-                        });
-                    if should_update {
-                        latest_prices.insert(key, (directive_date, directive.clone(), line));
-                    }
-                }
-
-                // Keep Open directives before begin date
-                if let Directive::Open(_) = directive {
-                    filtered_directives.push((directive.clone(), line));
-                }
-                continue;
             }
+
+            // Track most recent price per commodity before begin_date
+            if let Directive::Price(price) = directive {
+                let key = (
+                    price.currency.to_string(),
+                    price.amount.currency.to_string(),
+                );
+                let should_update = latest_prices
+                    .get(&key)
+                    .is_none_or(|(existing_date, _, _)| directive_date >= *existing_date);
+                if should_update {
+                    latest_prices.insert(key, (directive_date, directive.clone(), line));
+                }
+            }
+
+            // Keep Open directives before begin date
+            if let Directive::Open(_) = directive {
+                filtered_directives.push((directive.clone(), line));
+            }
+            continue;
         }
 
         // Check if directive is after end date
-        if let Some(end) = end {
-            if directive_date >= end {
-                continue;
-            }
+        if let Some(end) = end
+            && directive_date >= end
+        {
+            continue;
         }
 
         // Exclude Commodity entries from output
@@ -279,8 +277,7 @@ pub fn cmd_clamp(
                 .collect();
 
             let hash_input = format!(
-                "S|{}|Opening balance for '{}' (Summarization)|{}",
-                summarize_date_str, account, index
+                "S|{summarize_date_str}|Opening balance for '{account}' (Summarization)|{index}"
             );
             let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 
@@ -288,7 +285,7 @@ pub fn cmd_clamp(
                 date: summarize_date_str.clone(),
                 flag: "S".to_string(),
                 payee: None,
-                narration: Some(format!("Opening balance for '{}' (Summarization)", account)),
+                narration: Some(format!("Opening balance for '{account}' (Summarization)")),
                 tags: vec![],
                 links: vec![],
                 postings,
@@ -326,9 +323,7 @@ pub fn cmd_clamp(
             opening_balances.push(OpeningBalance {
                 account: earnings_account.to_string(),
                 date: begin.to_string(),
-                balance: InventoryJson {
-                    positions: positions.clone(),
-                },
+                balance: InventoryJson { positions },
             });
 
             let postings: Vec<Posting> = retained_earnings
@@ -353,18 +348,16 @@ pub fn cmd_clamp(
                 .collect();
 
             let hash_input = format!(
-                "S|{}|Opening balance for '{}' (Summarization)|{}",
-                summarize_date_str, earnings_account, index
+                "S|{summarize_date_str}|Opening balance for '{earnings_account}' (Summarization)|{index}"
             );
             let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 
             summarization_entries.push(DirectiveJson::Transaction {
-                date: summarize_date_str.clone(),
+                date: summarize_date_str,
                 flag: "S".to_string(),
                 payee: None,
                 narration: Some(format!(
-                    "Opening balance for '{}' (Summarization)",
-                    earnings_account
+                    "Opening balance for '{earnings_account}' (Summarization)"
                 )),
                 tags: vec![],
                 links: vec![],
@@ -536,61 +529,57 @@ pub fn cmd_clamp_entries(json_str: &str) -> i32 {
         };
 
         if entry_date < begin {
-            if entry_type == "transaction" {
-                if let Some(postings) = entry.get("postings").and_then(|p| p.as_array()) {
-                    for posting in postings {
-                        let account = posting
-                            .get("account")
-                            .and_then(|a| a.as_str())
-                            .unwrap_or("");
-                        if account.is_empty() {
-                            continue;
-                        }
+            if entry_type == "transaction"
+                && let Some(postings) = entry.get("postings").and_then(|p| p.as_array())
+            {
+                for posting in postings {
+                    let account = posting
+                        .get("account")
+                        .and_then(|a| a.as_str())
+                        .unwrap_or("");
+                    if account.is_empty() {
+                        continue;
+                    }
 
-                        if let Some(units) = posting.get("units") {
-                            let number_str =
-                                units.get("number").and_then(|n| n.as_str()).unwrap_or("0");
-                            let currency =
-                                units.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+                    if let Some(units) = posting.get("units") {
+                        let number_str =
+                            units.get("number").and_then(|n| n.as_str()).unwrap_or("0");
+                        let currency = units.get("currency").and_then(|c| c.as_str()).unwrap_or("");
 
-                            if let Ok(number) = rustledger_core::Decimal::from_str_exact(number_str)
-                            {
-                                let amount = rustledger_core::Amount::new(number, currency);
-                                let inv = account_balances.entry(account.to_string()).or_default();
+                        if let Ok(number) = rustledger_core::Decimal::from_str_exact(number_str) {
+                            let amount = rustledger_core::Amount::new(number, currency);
+                            let inv = account_balances.entry(account.to_string()).or_default();
 
-                                let position = if let Some(cost) = posting.get("cost") {
-                                    let cost_number_str =
-                                        cost.get("number").and_then(|n| n.as_str()).unwrap_or("0");
-                                    let cost_currency =
-                                        cost.get("currency").and_then(|c| c.as_str()).unwrap_or("");
-                                    let cost_date_str = cost.get("date").and_then(|d| d.as_str());
-                                    let cost_label = cost
-                                        .get("label")
-                                        .and_then(|l| l.as_str())
-                                        .map(String::from);
+                            let position = if let Some(cost) = posting.get("cost") {
+                                let cost_number_str =
+                                    cost.get("number").and_then(|n| n.as_str()).unwrap_or("0");
+                                let cost_currency =
+                                    cost.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+                                let cost_date_str = cost.get("date").and_then(|d| d.as_str());
+                                let cost_label =
+                                    cost.get("label").and_then(|l| l.as_str()).map(String::from);
 
-                                    if let Ok(cost_number) =
-                                        rustledger_core::Decimal::from_str_exact(cost_number_str)
-                                    {
-                                        let cost_date = cost_date_str.and_then(|s| {
-                                            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
-                                        });
-                                        let cost = Cost {
-                                            number: cost_number,
-                                            currency: cost_currency.into(),
-                                            date: cost_date,
-                                            label: cost_label,
-                                        };
-                                        rustledger_core::Position::with_cost(amount, cost)
-                                    } else {
-                                        rustledger_core::Position::simple(amount)
-                                    }
+                                if let Ok(cost_number) =
+                                    rustledger_core::Decimal::from_str_exact(cost_number_str)
+                                {
+                                    let cost_date = cost_date_str.and_then(|s| {
+                                        NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()
+                                    });
+                                    let cost = Cost {
+                                        number: cost_number,
+                                        currency: cost_currency.into(),
+                                        date: cost_date,
+                                        label: cost_label,
+                                    };
+                                    rustledger_core::Position::with_cost(amount, cost)
                                 } else {
                                     rustledger_core::Position::simple(amount)
-                                };
+                                }
+                            } else {
+                                rustledger_core::Position::simple(amount)
+                            };
 
-                                inv.add(position);
-                            }
+                            inv.add(position);
                         }
                     }
                 }
@@ -608,7 +597,7 @@ pub fn cmd_clamp_entries(json_str: &str) -> i32 {
                     let key = (currency.to_string(), quote_currency.to_string());
                     let should_update = latest_prices
                         .get(&key)
-                        .map_or(true, |(existing_date, _)| entry_date >= *existing_date);
+                        .is_none_or(|(existing_date, _)| entry_date >= *existing_date);
                     if should_update {
                         latest_prices.insert(key, (entry_date, entry.clone()));
                     }
@@ -694,8 +683,7 @@ pub fn cmd_clamp_entries(json_str: &str) -> i32 {
             .collect();
 
         let hash_input = format!(
-            "S|{}|Opening balance for '{}' (Summarization)|{}",
-            summarize_date_str, account, index
+            "S|{summarize_date_str}|Opening balance for '{account}' (Summarization)|{index}"
         );
         let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 
@@ -747,8 +735,7 @@ pub fn cmd_clamp_entries(json_str: &str) -> i32 {
             .collect();
 
         let hash_input = format!(
-            "S|{}|Opening balance for '{}' (Summarization)|{}",
-            summarize_date_str, earnings_account, index
+            "S|{summarize_date_str}|Opening balance for '{earnings_account}' (Summarization)|{index}"
         );
         let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 

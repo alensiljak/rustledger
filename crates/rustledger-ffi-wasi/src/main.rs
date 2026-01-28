@@ -76,12 +76,11 @@ pub(crate) fn parse_json_error(e: &serde_json::Error) -> Error {
     }
     // Try to extract field name from error message
     let msg = e.to_string();
-    if msg.contains("missing field") || msg.contains("unknown field") {
-        if let Some(start) = msg.find('`') {
-            if let Some(end) = msg[start + 1..].find('`') {
-                err.field = Some(msg[start + 1..start + 1 + end].to_string());
-            }
-        }
+    if (msg.contains("missing field") || msg.contains("unknown field"))
+        && let Some(start) = msg.find('`')
+        && let Some(end) = msg[start + 1..].find('`')
+    {
+        err.field = Some(msg[start + 1..start + 1 + end].to_string());
     }
     err
 }

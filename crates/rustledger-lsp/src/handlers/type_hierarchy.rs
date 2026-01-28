@@ -207,16 +207,16 @@ fn account_exists(account: &str, parse_result: &ParseResult) -> bool {
 fn find_account_location(source: &str, parse_result: &ParseResult, account: &str) -> Option<Range> {
     // First try to find an open directive
     for spanned in &parse_result.directives {
-        if let Directive::Open(open) = &spanned.value {
-            if open.account.as_ref() == account {
-                let (line, _) = byte_offset_to_position(source, spanned.span.start);
-                let line_text = source.lines().nth(line as usize)?;
-                if let Some(col) = line_text.find(account) {
-                    return Some(Range {
-                        start: Position::new(line, col as u32),
-                        end: Position::new(line, (col + account.len()) as u32),
-                    });
-                }
+        if let Directive::Open(open) = &spanned.value
+            && open.account.as_ref() == account
+        {
+            let (line, _) = byte_offset_to_position(source, spanned.span.start);
+            let line_text = source.lines().nth(line as usize)?;
+            if let Some(col) = line_text.find(account) {
+                return Some(Range {
+                    start: Position::new(line, col as u32),
+                    end: Position::new(line, (col + account.len()) as u32),
+                });
             }
         }
     }

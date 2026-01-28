@@ -121,10 +121,10 @@ fn is_account_in_range(
 
     // Check a few lines around the selection
     for line_idx in start_line.saturating_sub(3)..=(start_line + 10).min(lines.len() - 1) {
-        if let Some(line) = lines.get(line_idx) {
-            if line.contains(account) {
-                return true;
-            }
+        if let Some(line) = lines.get(line_idx)
+            && line.contains(account)
+        {
+            return true;
         }
     }
 
@@ -181,17 +181,16 @@ pub fn handle_code_action_resolve(
 ) -> CodeAction {
     let mut resolved = action.clone();
 
-    if let Some(data) = &action.data {
-        if data.get("kind").and_then(|v| v.as_str()) == Some("add_open_directive") {
-            if let Some(account) = data.get("account").and_then(|v| v.as_str()) {
-                resolved.edit = Some(compute_open_directive_edit(
-                    uri,
-                    source,
-                    account,
-                    parse_result,
-                ));
-            }
-        }
+    if let Some(data) = &action.data
+        && data.get("kind").and_then(|v| v.as_str()) == Some("add_open_directive")
+        && let Some(account) = data.get("account").and_then(|v| v.as_str())
+    {
+        resolved.edit = Some(compute_open_directive_edit(
+            uri,
+            source,
+            account,
+            parse_result,
+        ));
     }
 
     resolved

@@ -68,25 +68,25 @@ pub fn validate_close(state: &mut LedgerState, close: &Close, errors: &mut Vec<V
                 ));
             } else {
                 // Check if account has non-zero balance (warning)
-                if let Some(inv) = state.inventories.get(&close.account) {
-                    if !inv.is_empty() {
-                        let positions: Vec<String> = inv
-                            .positions()
-                            .iter()
-                            .map(|p| format!("{} {}", p.units.number, p.units.currency))
-                            .collect();
-                        errors.push(
-                            ValidationError::new(
-                                ErrorCode::AccountCloseNotEmpty,
-                                format!(
-                                    "Cannot close account {} with non-zero balance",
-                                    close.account
-                                ),
-                                close.date,
-                            )
-                            .with_context(format!("balance: {}", positions.join(", "))),
-                        );
-                    }
+                if let Some(inv) = state.inventories.get(&close.account)
+                    && !inv.is_empty()
+                {
+                    let positions: Vec<String> = inv
+                        .positions()
+                        .iter()
+                        .map(|p| format!("{} {}", p.units.number, p.units.currency))
+                        .collect();
+                    errors.push(
+                        ValidationError::new(
+                            ErrorCode::AccountCloseNotEmpty,
+                            format!(
+                                "Cannot close account {} with non-zero balance",
+                                close.account
+                            ),
+                            close.date,
+                        )
+                        .with_context(format!("balance: {}", positions.join(", "))),
+                    );
                 }
                 account_state.closed = Some(close.date);
             }

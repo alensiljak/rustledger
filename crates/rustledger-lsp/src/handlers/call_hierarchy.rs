@@ -255,19 +255,19 @@ fn find_account_definition(
     account: &str,
 ) -> Option<(u32, Range)> {
     for spanned in &parse_result.directives {
-        if let Directive::Open(open) = &spanned.value {
-            if open.account.as_ref() == account {
-                let (line, _) = byte_offset_to_position(source, spanned.span.start);
-                let line_text = source.lines().nth(line as usize)?;
-                let col = line_text.find(account)?;
-                return Some((
-                    line,
-                    Range {
-                        start: Position::new(line, col as u32),
-                        end: Position::new(line, (col + account.len()) as u32),
-                    },
-                ));
-            }
+        if let Directive::Open(open) = &spanned.value
+            && open.account.as_ref() == account
+        {
+            let (line, _) = byte_offset_to_position(source, spanned.span.start);
+            let line_text = source.lines().nth(line as usize)?;
+            let col = line_text.find(account)?;
+            return Some((
+                line,
+                Range {
+                    start: Position::new(line, col as u32),
+                    end: Position::new(line, (col + account.len()) as u32),
+                },
+            ));
         }
     }
     None

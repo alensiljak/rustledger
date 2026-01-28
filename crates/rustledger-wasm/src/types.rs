@@ -256,7 +256,7 @@ pub enum CellValue {
     /// Set of strings.
     StringSet(Vec<String>),
     /// Object with key-value pairs (for `entry` and `meta` columns).
-    Object(std::collections::HashMap<String, Box<CellValue>>),
+    Object(std::collections::HashMap<String, Box<Self>>),
 }
 
 /// Amount value for serialization.

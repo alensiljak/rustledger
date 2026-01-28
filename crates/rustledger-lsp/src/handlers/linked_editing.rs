@@ -66,31 +66,31 @@ fn collect_account_ranges(
 
         match &spanned.value {
             Directive::Open(open) => {
-                if open.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if open.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
             }
             Directive::Close(close) => {
-                if close.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if close.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
             }
             Directive::Balance(bal) => {
-                if bal.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if bal.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
             }
             Directive::Pad(pad) => {
-                if pad.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if pad.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
                 if pad.source_account.as_ref() == account {
                     let line_text = source.lines().nth(start_line as usize).unwrap_or("");
@@ -107,17 +107,17 @@ fn collect_account_ranges(
                 }
             }
             Directive::Note(note) => {
-                if note.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if note.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
             }
             Directive::Document(doc) => {
-                if doc.account.as_ref() == account {
-                    if let Some(range) = find_in_line(source, start_line, account) {
-                        ranges.push(range);
-                    }
+                if doc.account.as_ref() == account
+                    && let Some(range) = find_in_line(source, start_line, account)
+                {
+                    ranges.push(range);
                 }
             }
             Directive::Transaction(txn) => {

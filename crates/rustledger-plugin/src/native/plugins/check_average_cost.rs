@@ -96,27 +96,28 @@ impl NativePlugin for CheckAverageCostPlugin {
                         // Reduction: check against average cost
                         let entry = inventory.get(&key);
 
-                        if let Some((total_units, total_cost)) = entry {
-                            if *total_units > Decimal::ZERO {
-                                let avg_cost = *total_cost / *total_units;
+                        if let Some((total_units, total_cost)) = entry
+                            && *total_units > Decimal::ZERO
+                        {
+                            let avg_cost = *total_cost / *total_units;
 
-                                // Get the cost used in this posting
-                                let used_cost = cost
-                                    .number_per
-                                    .as_ref()
-                                    .and_then(|s| Decimal::from_str(s).ok())
-                                    .unwrap_or_default();
+                            // Get the cost used in this posting
+                            let used_cost = cost
+                                .number_per
+                                .as_ref()
+                                .and_then(|s| Decimal::from_str(s).ok())
+                                .unwrap_or_default();
 
-                                // Calculate relative difference
-                                let diff = (used_cost - avg_cost).abs();
-                                let relative_diff = if avg_cost == Decimal::ZERO {
-                                    diff
-                                } else {
-                                    diff / avg_cost
-                                };
+                            // Calculate relative difference
+                            let diff = (used_cost - avg_cost).abs();
+                            let relative_diff = if avg_cost == Decimal::ZERO {
+                                diff
+                            } else {
+                                diff / avg_cost
+                            };
 
-                                if relative_diff > tolerance {
-                                    errors.push(PluginError::warning(format!(
+                            if relative_diff > tolerance {
+                                errors.push(PluginError::warning(format!(
                                         "Sale of {} {} in {} uses cost {} {} but average cost is {} {} (difference: {:.2}%)",
                                         units_num.abs(),
                                         units.currency,
@@ -127,15 +128,14 @@ impl NativePlugin for CheckAverageCostPlugin {
                                         cost_currency,
                                         relative_diff * Decimal::from(100)
                                     )));
-                                }
-
-                                // Update inventory
-                                let entry = inventory.get_mut(&key).unwrap();
-                                let units_sold = units_num.abs();
-                                let cost_removed = units_sold * avg_cost;
-                                entry.0 -= units_sold;
-                                entry.1 -= cost_removed;
                             }
+
+                            // Update inventory
+                            let entry = inventory.get_mut(&key).unwrap();
+                            let units_sold = units_num.abs();
+                            let cost_removed = units_sold * avg_cost;
+                            entry.0 -= units_sold;
+                            entry.1 -= cost_removed;
                         }
                     }
                 }

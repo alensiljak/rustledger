@@ -45,10 +45,10 @@ pub(super) fn report_balances<W: Write>(
     // Collect data for output
     let mut rows: Vec<(&str, Decimal, &str)> = Vec::new();
     for (account, inventory) in &balances {
-        if let Some(filter) = account_filter {
-            if !account.starts_with(filter) {
-                continue;
-            }
+        if let Some(filter) = account_filter
+            && !account.starts_with(filter)
+        {
+            continue;
         }
         if inventory.is_empty() {
             continue;

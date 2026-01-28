@@ -23,9 +23,8 @@ pub use symbols::get_document_symbols_cached;
 mod tests {
     use super::*;
     use completions::get_completions;
-    use definitions::get_definition;
+
     use rustledger_parser::parse;
-    use symbols::get_document_symbols;
 
     #[test]
     fn test_editor_cache_new() {

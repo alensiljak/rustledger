@@ -25,10 +25,10 @@ impl NativePlugin for CheckCommodityPlugin {
 
         // First pass: collect declared commodities
         for wrapper in &input.directives {
-            if wrapper.directive_type == "commodity" {
-                if let DirectiveData::Commodity(ref comm) = wrapper.data {
-                    declared_commodities.insert(comm.currency.clone());
-                }
+            if wrapper.directive_type == "commodity"
+                && let DirectiveData::Commodity(ref comm) = wrapper.data
+            {
+                declared_commodities.insert(comm.currency.clone());
             }
         }
 
@@ -40,10 +40,10 @@ impl NativePlugin for CheckCommodityPlugin {
                         if let Some(ref units) = posting.units {
                             used_commodities.insert(units.currency.clone());
                         }
-                        if let Some(ref cost) = posting.cost {
-                            if let Some(ref currency) = cost.currency {
-                                used_commodities.insert(currency.clone());
-                            }
+                        if let Some(ref cost) = posting.cost
+                            && let Some(ref currency) = cost.currency
+                        {
+                            used_commodities.insert(currency.clone());
                         }
                     }
                 }

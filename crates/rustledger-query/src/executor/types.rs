@@ -264,12 +264,12 @@ impl QueryResult {
     }
 
     /// Number of rows.
-    pub fn len(&self) -> usize {
+    pub const fn len(&self) -> usize {
         self.rows.len()
     }
 
     /// Whether the result is empty.
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         self.rows.is_empty()
     }
 }

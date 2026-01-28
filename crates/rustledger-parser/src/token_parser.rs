@@ -1687,53 +1687,52 @@ pub fn parse(source: &str) -> ParseResult {
             if let Some(Token::Date(date_str)) = found_token {
                 // Try to parse the date to see if it's invalid
                 let parts: Vec<&str> = date_str.split(['-', '/']).collect();
-                if parts.len() == 3 {
-                    if let (Ok(y), Ok(m), Ok(d)) = (
+                if parts.len() == 3
+                    && let (Ok(y), Ok(m), Ok(d)) = (
                         parts[0].parse::<i32>(),
                         parts[1].parse::<u32>(),
                         parts[2].parse::<u32>(),
-                    ) {
-                        // Check for invalid month
-                        if !(1..=12).contains(&m) {
-                            return ParseError::new(
-                                ParseErrorKind::InvalidDateValue(format!(
-                                    "month must be 1-12 (got {m})"
-                                )),
-                                span,
-                            )
-                            .with_hint("dates use YYYY-MM-DD format");
-                        }
-                        // Check for invalid day
-                        if !(1..=31).contains(&d) {
-                            return ParseError::new(
-                                ParseErrorKind::InvalidDateValue(format!(
-                                    "day must be 1-31 (got {d})"
-                                )),
-                                span,
-                            )
-                            .with_hint("dates use YYYY-MM-DD format");
-                        }
-                        // Check if the date is actually valid (e.g., Feb 30)
-                        if chrono::NaiveDate::from_ymd_opt(y, m, d).is_none() {
-                            return ParseError::new(
-                                ParseErrorKind::InvalidDateValue(format!(
-                                    "day {d} is invalid for month {m}"
-                                )),
-                                span,
-                            )
-                            .with_hint("dates use YYYY-MM-DD format");
-                        }
+                    )
+                {
+                    // Check for invalid month
+                    if !(1..=12).contains(&m) {
+                        return ParseError::new(
+                            ParseErrorKind::InvalidDateValue(format!(
+                                "month must be 1-12 (got {m})"
+                            )),
+                            span,
+                        )
+                        .with_hint("dates use YYYY-MM-DD format");
+                    }
+                    // Check for invalid day
+                    if !(1..=31).contains(&d) {
+                        return ParseError::new(
+                            ParseErrorKind::InvalidDateValue(format!("day must be 1-31 (got {d})")),
+                            span,
+                        )
+                        .with_hint("dates use YYYY-MM-DD format");
+                    }
+                    // Check if the date is actually valid (e.g., Feb 30)
+                    if chrono::NaiveDate::from_ymd_opt(y, m, d).is_none() {
+                        return ParseError::new(
+                            ParseErrorKind::InvalidDateValue(format!(
+                                "day {d} is invalid for month {m}"
+                            )),
+                            span,
+                        )
+                        .with_hint("dates use YYYY-MM-DD format");
                     }
                 }
             }
 
             // Check for unclosed string literal
             // This is detected when an error token starts with " but doesn't end with "
-            if let Some(Token::Error(text)) = found_token {
-                if text.starts_with('"') && !text.ends_with('"') {
-                    return ParseError::new(ParseErrorKind::UnclosedString, span)
-                        .with_hint("add closing '\"' to complete the string");
-                }
+            if let Some(Token::Error(text)) = found_token
+                && text.starts_with('"')
+                && !text.ends_with('"')
+            {
+                return ParseError::new(ParseErrorKind::UnclosedString, span)
+                    .with_hint("add closing '\"' to complete the string");
             }
 
             // Check for lowercase account type (e.g., "assets:" instead of "Assets:")
@@ -1798,36 +1797,31 @@ pub fn parse(source: &str) -> ParseResult {
                     ))
             {
                 // We're at the start of a line - check if this looks like MM-DD-YYYY
-                if let Some(Token::Number(num_str)) = found_token {
-                    if let Ok(num) = num_str.parse::<u32>() {
-                        if (1..=12).contains(&num) && num_str.len() <= 2 {
-                            // Looks like a month number - could be MM-DD-YYYY format
-                            return ParseError::new(
-                                ParseErrorKind::InvalidDate(format!("{num_str}-...")),
-                                span,
-                            )
-                            .with_context("wrong date format")
-                            .with_hint(
-                                "use YYYY-MM-DD format (e.g., '2024-01-15' not '01-15-2024')",
-                            );
-                        }
-                    }
+                if let Some(Token::Number(num_str)) = found_token
+                    && let Ok(num) = num_str.parse::<u32>()
+                    && (1..=12).contains(&num)
+                    && num_str.len() <= 2
+                {
+                    // Looks like a month number - could be MM-DD-YYYY format
+                    return ParseError::new(
+                        ParseErrorKind::InvalidDate(format!("{num_str}-...")),
+                        span,
+                    )
+                    .with_context("wrong date format")
+                    .with_hint("use YYYY-MM-DD format (e.g., '2024-01-15' not '01-15-2024')");
                 }
                 // Also check error tokens that look like two-digit numbers
                 let text = found_str.trim_matches('\'');
-                if text.len() == 2 {
-                    if let Ok(num) = text.parse::<u32>() {
-                        if (1..=12).contains(&num) {
-                            return ParseError::new(
-                                ParseErrorKind::InvalidDate(format!("{text}-...")),
-                                span,
-                            )
-                            .with_context("wrong date format")
-                            .with_hint(
-                                "use YYYY-MM-DD format (e.g., '2024-01-15' not '01-15-2024')",
-                            );
-                        }
-                    }
+                if text.len() == 2
+                    && let Ok(num) = text.parse::<u32>()
+                    && (1..=12).contains(&num)
+                {
+                    return ParseError::new(
+                        ParseErrorKind::InvalidDate(format!("{text}-...")),
+                        span,
+                    )
+                    .with_context("wrong date format")
+                    .with_hint("use YYYY-MM-DD format (e.g., '2024-01-15' not '01-15-2024')");
                 }
             }
 

@@ -64,14 +64,14 @@ pub fn handle_range_formatting(
                 let posting_line = start_line + 1 + i as u32;
 
                 // Check if posting is within range
-                if posting_line >= range.start.line && posting_line <= range.end.line {
-                    if let Some(line) = lines.get(posting_line as usize) {
-                        if let Some(edit) = format_posting_line(line, posting_line, posting) {
-                            // Don't duplicate edits
-                            if !edits.iter().any(|e| e.range.start.line == posting_line) {
-                                edits.push(edit);
-                            }
-                        }
+                if posting_line >= range.start.line
+                    && posting_line <= range.end.line
+                    && let Some(line) = lines.get(posting_line as usize)
+                    && let Some(edit) = format_posting_line(line, posting_line, posting)
+                {
+                    // Don't duplicate edits
+                    if !edits.iter().any(|e| e.range.start.line == posting_line) {
+                        edits.push(edit);
                     }
                 }
             }

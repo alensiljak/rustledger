@@ -238,14 +238,14 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             }
             None => {
                 // Missing amount - try to determine currency from cost
-                if let Some(cost_spec) = &posting.cost {
-                    if let Some(currency) = &cost_spec.currency {
-                        missing_by_currency
-                            .entry(currency.clone())
-                            .or_default()
-                            .push(i);
-                        continue;
-                    }
+                if let Some(cost_spec) = &posting.cost
+                    && let Some(currency) = &cost_spec.currency
+                {
+                    missing_by_currency
+                        .entry(currency.clone())
+                        .or_default()
+                        .push(i);
+                    continue;
                 }
                 // Can't determine currency yet
                 unassigned_missing.push(i);
@@ -724,13 +724,13 @@ mod tests {
         let mut found_cad = false;
         let mut found_usd = false;
         for posting in &result.transaction.postings {
-            if let Some(amount) = get_amount(posting) {
-                if posting.account.as_str() == "Assets:Cash" {
-                    if amount.currency == "CAD" && amount.number == dec!(-440.00) {
-                        found_cad = true;
-                    } else if amount.currency == "USD" && amount.number == dec!(431.92) {
-                        found_usd = true;
-                    }
+            if let Some(amount) = get_amount(posting)
+                && posting.account.as_str() == "Assets:Cash"
+            {
+                if amount.currency == "CAD" && amount.number == dec!(-440.00) {
+                    found_cad = true;
+                } else if amount.currency == "USD" && amount.number == dec!(431.92) {
+                    found_usd = true;
                 }
             }
         }

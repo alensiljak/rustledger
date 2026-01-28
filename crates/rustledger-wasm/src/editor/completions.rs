@@ -104,12 +104,11 @@ pub fn detect_context(source: &str, line: u32, character: u32) -> CompletionCont
         // Check if there's already an account (contains colon and space after)
         if posting_content.contains(':') && posting_content.contains(' ') {
             let parts: Vec<&str> = posting_content.split_whitespace().collect();
-            if parts.len() >= 2 {
-                if let Some(last) = parts.last() {
-                    if last.parse::<f64>().is_ok() || last.ends_with('.') {
-                        return CompletionContext::ExpectingCurrency;
-                    }
-                }
+            if parts.len() >= 2
+                && let Some(last) = parts.last()
+                && (last.parse::<f64>().is_ok() || last.ends_with('.'))
+            {
+                return CompletionContext::ExpectingCurrency;
             }
             return CompletionContext::Unknown;
         }

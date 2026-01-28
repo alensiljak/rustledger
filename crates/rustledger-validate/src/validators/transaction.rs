@@ -107,17 +107,17 @@ pub fn validate_account_lifecycle(
         ));
     }
 
-    if let Some(closed) = account_state.closed {
-        if txn.date >= closed {
-            errors.push(ValidationError::new(
-                ErrorCode::AccountClosed,
-                format!(
-                    "Account {} used on {} but was closed on {}",
-                    posting.account, txn.date, closed
-                ),
-                txn.date,
-            ));
-        }
+    if let Some(closed) = account_state.closed
+        && txn.date >= closed
+    {
+        errors.push(ValidationError::new(
+            ErrorCode::AccountClosed,
+            format!(
+                "Account {} used on {} but was closed on {}",
+                posting.account, txn.date, closed
+            ),
+            txn.date,
+        ));
     }
 }
 
@@ -342,42 +342,41 @@ pub fn process_inventory_reduction(
                 .iter()
                 .any(|p| p.units.currency == units.currency && p.units.number > Decimal::ZERO);
 
-            if booking_method == BookingMethod::Strict && !has_positive_lots {
-                if let Some(cost_spec) = &posting.cost {
-                    // Need cost per unit (or total) and currency to create a new lot
-                    let cost_number = cost_spec
-                        .number_per
-                        .or_else(|| cost_spec.number_total.map(|t| t / units.number.abs()));
+            if booking_method == BookingMethod::Strict
+                && !has_positive_lots
+                && let Some(cost_spec) = &posting.cost
+            {
+                // Need cost per unit (or total) and currency to create a new lot
+                let cost_number = cost_spec
+                    .number_per
+                    .or_else(|| cost_spec.number_total.map(|t| t / units.number.abs()));
 
-                    // Infer currency from cost spec, price annotation, or fall back
-                    let cost_currency = cost_spec.currency.clone().or_else(|| {
-                        // Try to get currency from price annotation
-                        posting.price.as_ref().and_then(|p| match p {
-                            rustledger_core::PriceAnnotation::Unit(a)
-                            | rustledger_core::PriceAnnotation::Total(a) => {
-                                Some(a.currency.clone())
-                            }
-                            rustledger_core::PriceAnnotation::UnitIncomplete(inc)
-                            | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                                inc.as_amount().map(|a| a.currency.clone())
-                            }
-                            _ => None,
-                        })
-                    });
+                // Infer currency from cost spec, price annotation, or fall back
+                let cost_currency = cost_spec.currency.clone().or_else(|| {
+                    // Try to get currency from price annotation
+                    posting.price.as_ref().and_then(|p| match p {
+                        rustledger_core::PriceAnnotation::Unit(a)
+                        | rustledger_core::PriceAnnotation::Total(a) => Some(a.currency.clone()),
+                        rustledger_core::PriceAnnotation::UnitIncomplete(inc)
+                        | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
+                            inc.as_amount().map(|a| a.currency.clone())
+                        }
+                        _ => None,
+                    })
+                });
 
-                    if let (Some(number), Some(curr)) = (cost_number, cost_currency) {
-                        // Create a new position with negative units (sell to open)
-                        let cost = rustledger_core::Cost::new(number, curr)
-                            .with_date(cost_spec.date.unwrap_or(txn.date));
-                        let cost = if let Some(label) = &cost_spec.label {
-                            cost.with_label(label.clone())
-                        } else {
-                            cost
-                        };
-                        let position = rustledger_core::Position::with_cost(units.clone(), cost);
-                        inv.add(position);
-                        return; // Successfully created sell-to-open position
-                    }
+                if let (Some(number), Some(curr)) = (cost_number, cost_currency) {
+                    // Create a new position with negative units (sell to open)
+                    let cost = rustledger_core::Cost::new(number, curr)
+                        .with_date(cost_spec.date.unwrap_or(txn.date));
+                    let cost = if let Some(label) = &cost_spec.label {
+                        cost.with_label(label.clone())
+                    } else {
+                        cost
+                    };
+                    let position = rustledger_core::Position::with_cost(units.clone(), cost);
+                    inv.add(position);
+                    return; // Successfully created sell-to-open position
                 }
             }
             // Couldn't create sell-to-open (or has existing lots that don't match), report error

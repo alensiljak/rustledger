@@ -29,10 +29,10 @@ impl Server {
     pub fn run(self) {
         tracing::info!("Starting Beancount Language Server v{}", crate::VERSION);
 
-        if let Some(folders) = &self.init_params.workspace_folders {
-            if let Some(folder) = folders.first() {
-                tracing::info!("Workspace root: {}", folder.uri.as_str());
-            }
+        if let Some(folders) = &self.init_params.workspace_folders
+            && let Some(folder) = folders.first()
+        {
+            tracing::info!("Workspace root: {}", folder.uri.as_str());
         }
 
         // Run the main event loop

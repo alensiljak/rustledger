@@ -85,10 +85,10 @@ impl PriceDatabase {
         }
 
         // Try inverse price lookup
-        if let Some(price) = self.get_direct_price(quote, base, date) {
-            if price != Decimal::ZERO {
-                return Some(Decimal::ONE / price);
-            }
+        if let Some(price) = self.get_direct_price(quote, base, date)
+            && price != Decimal::ZERO
+        {
+            return Some(Decimal::ONE / price);
         }
 
         // Try chained lookup (A→B→C where B is an intermediate currency)
@@ -134,10 +134,10 @@ impl PriceDatabase {
                     return Some(price1 * price2);
                 }
                 // Try inverse for second leg
-                if let Some(price2) = self.get_direct_price(quote, &intermediate, date) {
-                    if price2 != Decimal::ZERO {
-                        return Some(price1 / price2);
-                    }
+                if let Some(price2) = self.get_direct_price(quote, &intermediate, date)
+                    && price2 != Decimal::ZERO
+                {
+                    return Some(price1 / price2);
                 }
             }
         }
@@ -153,10 +153,10 @@ impl PriceDatabase {
                     if let Some(price2) = self.get_direct_price(currency, quote, date) {
                         return Some(price1 * price2);
                     }
-                    if let Some(price2) = self.get_direct_price(quote, currency, date) {
-                        if price2 != Decimal::ZERO {
-                            return Some(price1 / price2);
-                        }
+                    if let Some(price2) = self.get_direct_price(quote, currency, date)
+                        && price2 != Decimal::ZERO
+                    {
+                        return Some(price1 / price2);
                     }
                 }
             }

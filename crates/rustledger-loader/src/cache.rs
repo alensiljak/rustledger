@@ -243,11 +243,11 @@ fn compute_hash(files: &[&Path]) -> [u8; 32] {
 
         // Hash the modification time
         if let Ok(metadata) = fs::metadata(file) {
-            if let Ok(mtime) = metadata.modified() {
-                if let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH) {
-                    hasher.update(duration.as_secs().to_le_bytes());
-                    hasher.update(duration.subsec_nanos().to_le_bytes());
-                }
+            if let Ok(mtime) = metadata.modified()
+                && let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH)
+            {
+                hasher.update(duration.as_secs().to_le_bytes());
+                hasher.update(duration.subsec_nanos().to_le_bytes());
             }
             // Hash the file size
             hasher.update(metadata.len().to_le_bytes());
@@ -403,12 +403,11 @@ pub fn reintern_directives(directives: &mut [Spanned<Directive>]) -> usize {
                         }
                     }
                     // Cost spec
-                    if let Some(ref mut cost) = posting.cost {
-                        if let Some(ref mut cur) = cost.currency {
-                            if do_intern(cur, &mut interner) {
-                                dedup_count += 1;
-                            }
-                        }
+                    if let Some(ref mut cost) = posting.cost
+                        && let Some(ref mut cur) = cost.currency
+                        && do_intern(cur, &mut interner)
+                    {
+                        dedup_count += 1;
                     }
                     // Price annotation
                     if let Some(ref mut price) = posting.price {

@@ -539,11 +539,11 @@ fn test_implicit_prices_from_cost() {
         .find(|d| d.directive_type == "price");
     assert!(price.is_some(), "should have a price directive");
 
-    if let Some(p) = price {
-        if let DirectiveData::Price(price_data) = &p.data {
-            assert_eq!(price_data.currency, "HOOL");
-            assert_eq!(price_data.amount.currency, "USD");
-        }
+    if let Some(p) = price
+        && let DirectiveData::Price(price_data) = &p.data
+    {
+        assert_eq!(price_data.currency, "HOOL");
+        assert_eq!(price_data.amount.currency, "USD");
     }
 }
 

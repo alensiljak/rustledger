@@ -198,20 +198,18 @@ impl CsvImporter {
         if csv_config.debit_column.is_some() || csv_config.credit_column.is_some() {
             let mut amount = Decimal::ZERO;
 
-            if let Some(debit_col) = &csv_config.debit_column {
-                if let Ok(debit_str) = self.get_column(record, debit_col, header_map) {
-                    if let Some(val) = parse_money_string(debit_str) {
-                        amount -= val; // Debits are negative
-                    }
-                }
+            if let Some(debit_col) = &csv_config.debit_column
+                && let Ok(debit_str) = self.get_column(record, debit_col, header_map)
+                && let Some(val) = parse_money_string(debit_str)
+            {
+                amount -= val; // Debits are negative
             }
 
-            if let Some(credit_col) = &csv_config.credit_column {
-                if let Ok(credit_str) = self.get_column(record, credit_col, header_map) {
-                    if let Some(val) = parse_money_string(credit_str) {
-                        amount += val; // Credits are positive
-                    }
-                }
+            if let Some(credit_col) = &csv_config.credit_column
+                && let Ok(credit_str) = self.get_column(record, credit_col, header_map)
+                && let Some(val) = parse_money_string(credit_str)
+            {
+                amount += val; // Credits are positive
             }
 
             return Ok(amount);

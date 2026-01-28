@@ -636,15 +636,14 @@ fn run_interactive(
     }
 
     // Run init file if it exists
-    if let Some(init_path) = get_init_path() {
-        if init_path.exists() {
-            if let Ok(init_contents) = fs::read_to_string(&init_path) {
-                for line in init_contents.lines() {
-                    let line = line.trim();
-                    if !line.is_empty() && !line.starts_with('#') {
-                        // Process init commands silently
-                    }
-                }
+    if let Some(init_path) = get_init_path()
+        && init_path.exists()
+        && let Ok(init_contents) = fs::read_to_string(&init_path)
+    {
+        for line in init_contents.lines() {
+            let line = line.trim();
+            if !line.is_empty() && !line.starts_with('#') {
+                // Process init commands silently
             }
         }
     }

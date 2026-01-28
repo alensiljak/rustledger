@@ -71,7 +71,7 @@ impl SourceFile {
 
     /// Get the total number of lines.
     #[must_use]
-    pub fn num_lines(&self) -> usize {
+    pub const fn num_lines(&self) -> usize {
         self.line_starts.len()
     }
 }

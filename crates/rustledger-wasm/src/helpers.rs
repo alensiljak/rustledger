@@ -12,7 +12,7 @@ use crate::types::{Error, LedgerOptions, Severity};
 use crate::utils::LineLookup;
 
 /// Result of loading and interpolating a source file.
-pub(crate) struct LoadResult {
+pub struct LoadResult {
     pub directives: Vec<Directive>,
     pub options: LedgerOptions,
     pub errors: Vec<Error>,
@@ -23,7 +23,7 @@ pub(crate) struct LoadResult {
 /// Parse and interpolate a Beancount source string.
 ///
 /// This is the common entry point for all processing functions.
-pub(crate) fn load_and_interpolate(source: &str) -> LoadResult {
+pub fn load_and_interpolate(source: &str) -> LoadResult {
     let parse_result = parse_beancount(source);
     let lookup = LineLookup::new(source);
 
@@ -71,7 +71,7 @@ pub(crate) fn load_and_interpolate(source: &str) -> LoadResult {
 }
 
 /// Run validation on a loaded ledger and return validation errors.
-pub(crate) fn run_validation(load: &LoadResult) -> Vec<Error> {
+pub fn run_validation(load: &LoadResult) -> Vec<Error> {
     if !load.errors.is_empty() {
         return Vec::new();
     }
@@ -102,7 +102,7 @@ pub(crate) fn run_validation(load: &LoadResult) -> Vec<Error> {
 /// This ensures:
 /// - `None` serializes as `null` (not `undefined`)
 /// - Maps serialize as plain objects (not ES2015 `Map`)
-pub(crate) fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsError> {
+pub fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsError> {
     let serializer = serde_wasm_bindgen::Serializer::json_compatible();
     value
         .serialize(&serializer)
@@ -110,9 +110,7 @@ pub(crate) fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsError> 
 }
 
 /// Extract [`LedgerOptions`] from parsed option directives.
-pub(crate) fn extract_options(
-    options: &[(String, String, rustledger_parser::Span)],
-) -> LedgerOptions {
+pub fn extract_options(options: &[(String, String, rustledger_parser::Span)]) -> LedgerOptions {
     let mut ledger_options = LedgerOptions::default();
 
     for (key, value, _span) in options {

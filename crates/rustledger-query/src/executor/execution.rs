@@ -58,16 +58,16 @@ impl Executor<'_> {
 
                 // Apply HAVING filter on aggregated row
                 // Note: HAVING only references visible columns, which are at indices 0..N
-                if let Some(having_expr) = &query.having {
-                    if !self.evaluate_having_filter(
+                if let Some(having_expr) = &query.having
+                    && !self.evaluate_having_filter(
                         having_expr,
                         &row,
                         &column_names,
                         &query.targets,
                         &group,
-                    )? {
-                        continue;
-                    }
+                    )?
+                {
+                    continue;
                 }
 
                 result.add_row(row);
@@ -177,10 +177,10 @@ impl Executor<'_> {
                     return true;
                 }
                 // Check if alias matches the expression string
-                if let Some(alias) = &t.alias {
-                    if alias == &expr_str {
-                        return true;
-                    }
+                if let Some(alias) = &t.alias
+                    && alias == &expr_str
+                {
+                    return true;
                 }
                 false
             });
@@ -229,10 +229,10 @@ impl Executor<'_> {
         // Process each row from the inner result
         for inner_row in &inner_result.rows {
             // Apply outer WHERE clause if present
-            if let Some(where_expr) = &outer_query.where_clause {
-                if !self.evaluate_subquery_filter(where_expr, inner_row, &inner_column_map)? {
-                    continue;
-                }
+            if let Some(where_expr) = &outer_query.where_clause
+                && !self.evaluate_subquery_filter(where_expr, inner_row, &inner_column_map)?
+            {
+                continue;
             }
 
             // Evaluate outer targets
@@ -298,10 +298,10 @@ impl Executor<'_> {
         // Process each row from the table
         for row in &table.rows {
             // Apply WHERE clause if present
-            if let Some(where_expr) = &query.where_clause {
-                if !self.evaluate_subquery_filter(where_expr, row, &column_map)? {
-                    continue;
-                }
+            if let Some(where_expr) = &query.where_clause
+                && !self.evaluate_subquery_filter(where_expr, row, &column_map)?
+            {
+                continue;
             }
 
             // Evaluate targets
@@ -469,12 +469,11 @@ impl Executor<'_> {
         for directive in self.directives {
             if let Directive::Transaction(txn) = directive {
                 // Apply FROM clause filter if present
-                if let Some(from) = &query.from {
-                    if let Some(filter) = &from.filter {
-                        if !self.evaluate_from_filter(filter, txn)? {
-                            continue;
-                        }
-                    }
+                if let Some(from) = &query.from
+                    && let Some(filter) = &from.filter
+                    && !self.evaluate_from_filter(filter, txn)?
+                {
+                    continue;
                 }
 
                 for posting in &txn.postings {
@@ -617,14 +616,14 @@ impl Executor<'_> {
 
         for directive in self.directives {
             // Apply FROM clause filter if present
-            if let Some(from) = &query.from {
-                if let Some(filter) = &from.filter {
-                    // PRINT filters at transaction level
-                    if let Directive::Transaction(txn) = directive {
-                        if !self.evaluate_from_filter(filter, txn)? {
-                            continue;
-                        }
-                    }
+            if let Some(from) = &query.from
+                && let Some(filter) = &from.filter
+            {
+                // PRINT filters at transaction level
+                if let Directive::Transaction(txn) = directive
+                    && !self.evaluate_from_filter(filter, txn)?
+                {
+                    continue;
                 }
             }
 
@@ -934,10 +933,10 @@ impl Executor<'_> {
                         // DATE(year, month, day) or DATE('YYYY-MM-DD')
                         if func.args.len() == 1 {
                             let arg = self.evaluate_literal_expr(&func.args[0])?;
-                            if let Value::String(s) = arg {
-                                if let Ok(date) = NaiveDate::parse_from_str(&s, "%Y-%m-%d") {
-                                    return Ok(Value::Date(date));
-                                }
+                            if let Value::String(s) = arg
+                                && let Ok(date) = NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                            {
+                                return Ok(Value::Date(date));
                             }
                             Err(QueryError::Type("invalid date string".to_string()))
                         } else if func.args.len() == 3 {

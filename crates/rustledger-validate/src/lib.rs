@@ -240,14 +240,14 @@ pub fn validate_with_options(
         let date = directive.date();
 
         // Check for date ordering (info only - we sort anyway)
-        if let Some(last) = state.last_date {
-            if date < last {
-                errors.push(ValidationError::new(
-                    ErrorCode::DateOutOfOrder,
-                    format!("Directive date {date} is before previous directive {last}"),
-                    date,
-                ));
-            }
+        if let Some(last) = state.last_date
+            && date < last
+        {
+            errors.push(ValidationError::new(
+                ErrorCode::DateOutOfOrder,
+                format!("Directive date {date} is before previous directive {last}"),
+                date,
+            ));
         }
         state.last_date = Some(date);
 
@@ -348,15 +348,15 @@ pub fn validate_spanned_with_options(
         let date = directive.date();
 
         // Check for date ordering (info only - we sort anyway)
-        if let Some(last) = state.last_date {
-            if date < last {
-                errors.push(ValidationError::with_location(
-                    ErrorCode::DateOutOfOrder,
-                    format!("Directive date {date} is before previous directive {last}"),
-                    date,
-                    spanned,
-                ));
-            }
+        if let Some(last) = state.last_date
+            && date < last
+        {
+            errors.push(ValidationError::with_location(
+                ErrorCode::DateOutOfOrder,
+                format!("Directive date {date} is before previous directive {last}"),
+                date,
+                spanned,
+            ));
         }
         state.last_date = Some(date);
 

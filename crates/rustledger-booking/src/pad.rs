@@ -117,19 +117,19 @@ pub fn process_pads(directives: &[Directive]) -> PadResult {
             Directive::Transaction(txn) => {
                 // Update inventories
                 for posting in &txn.postings {
-                    if let Some(units) = posting.amount() {
-                        if let Some(inv) = inventories.get_mut(&posting.account) {
-                            let position = if let Some(cost_spec) = &posting.cost {
-                                if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
-                                    Position::with_cost(units.clone(), cost)
-                                } else {
-                                    Position::simple(units.clone())
-                                }
+                    if let Some(units) = posting.amount()
+                        && let Some(inv) = inventories.get_mut(&posting.account)
+                    {
+                        let position = if let Some(cost_spec) = &posting.cost {
+                            if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
+                                Position::with_cost(units.clone(), cost)
                             } else {
                                 Position::simple(units.clone())
-                            };
-                            inv.add(position);
-                        }
+                            }
+                        } else {
+                            Position::simple(units.clone())
+                        };
+                        inv.add(position);
                     }
                 }
             }

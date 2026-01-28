@@ -45,35 +45,34 @@ pub fn handle_inlay_hints(
                 }
 
                 // Only show hint for postings without explicit amount
-                if posting.units.is_none() {
-                    if let Some((amount, currency)) = &inferred {
-                        if let Some(line) = lines.get(posting_line as usize) {
-                            // Position hint at the end of the account name
-                            let trimmed = line.trim();
-                            let indent = line.len() - line.trim_start().len();
-                            let end_col = indent + trimmed.len();
+                if posting.units.is_none()
+                    && let Some((amount, currency)) = &inferred
+                    && let Some(line) = lines.get(posting_line as usize)
+                {
+                    // Position hint at the end of the account name
+                    let trimmed = line.trim();
+                    let indent = line.len() - line.trim_start().len();
+                    let end_col = indent + trimmed.len();
 
-                            // Store data for resolve - include account for rich tooltip
-                            let data = serde_json::json!({
-                                "uri": uri,
-                                "kind": "inferred_amount",
-                                "account": posting.account.to_string(),
-                                "amount": amount.to_string(),
-                                "currency": currency,
-                            });
+                    // Store data for resolve - include account for rich tooltip
+                    let data = serde_json::json!({
+                        "uri": uri,
+                        "kind": "inferred_amount",
+                        "account": posting.account.to_string(),
+                        "amount": amount.to_string(),
+                        "currency": currency,
+                    });
 
-                            hints.push(InlayHint {
-                                position: Position::new(posting_line, end_col as u32),
-                                label: InlayHintLabel::String(format!("  {} {}", amount, currency)),
-                                kind: Some(InlayHintKind::TYPE),
-                                text_edits: None,
-                                tooltip: None, // Resolved lazily
-                                padding_left: Some(true),
-                                padding_right: None,
-                                data: Some(data),
-                            });
-                        }
-                    }
+                    hints.push(InlayHint {
+                        position: Position::new(posting_line, end_col as u32),
+                        label: InlayHintLabel::String(format!("  {} {}", amount, currency)),
+                        kind: Some(InlayHintKind::TYPE),
+                        text_edits: None,
+                        tooltip: None, // Resolved lazily
+                        padding_left: Some(true),
+                        padding_right: None,
+                        data: Some(data),
+                    });
                 }
             }
         }
@@ -88,23 +87,22 @@ pub fn handle_inlay_hint_resolve(hint: InlayHint, parse_result: &ParseResult) ->
     let mut resolved = hint.clone();
 
     // Check if we have data to resolve
-    if let Some(data) = &hint.data {
-        if let Some(kind) = data.get("kind").and_then(|v| v.as_str()) {
-            if kind == "inferred_amount" {
-                let account = data.get("account").and_then(|v| v.as_str()).unwrap_or("");
-                let amount = data.get("amount").and_then(|v| v.as_str()).unwrap_or("");
-                let currency = data.get("currency").and_then(|v| v.as_str()).unwrap_or("");
+    if let Some(data) = &hint.data
+        && let Some(kind) = data.get("kind").and_then(|v| v.as_str())
+        && kind == "inferred_amount"
+    {
+        let account = data.get("account").and_then(|v| v.as_str()).unwrap_or("");
+        let amount = data.get("amount").and_then(|v| v.as_str()).unwrap_or("");
+        let currency = data.get("currency").and_then(|v| v.as_str()).unwrap_or("");
 
-                // Build rich tooltip with account information
-                let tooltip = build_account_tooltip(account, amount, currency, parse_result);
-                resolved.tooltip = Some(lsp_types::InlayHintTooltip::MarkupContent(
-                    lsp_types::MarkupContent {
-                        kind: lsp_types::MarkupKind::Markdown,
-                        value: tooltip,
-                    },
-                ));
-            }
-        }
+        // Build rich tooltip with account information
+        let tooltip = build_account_tooltip(account, amount, currency, parse_result);
+        resolved.tooltip = Some(lsp_types::InlayHintTooltip::MarkupContent(
+            lsp_types::MarkupContent {
+                kind: lsp_types::MarkupKind::Markdown,
+                value: tooltip,
+            },
+        ));
     }
 
     resolved
@@ -126,11 +124,11 @@ fn build_account_tooltip(
             for posting in &txn.postings {
                 if posting.account.as_ref() == account {
                     transaction_count += 1;
-                    if let Some(units) = &posting.units {
-                        if let Some(number) = units.number() {
-                            let curr = units.currency().unwrap_or("???").to_string();
-                            *balances.entry(curr).or_default() += number;
-                        }
+                    if let Some(units) = &posting.units
+                        && let Some(number) = units.number()
+                    {
+                        let curr = units.currency().unwrap_or("???").to_string();
+                        *balances.entry(curr).or_default() += number;
                     }
                 }
             }
@@ -227,15 +225,15 @@ mod tests {
 "#;
         let result = parse(source);
 
-        if let Some(spanned) = result.directives.first() {
-            if let Directive::Transaction(txn) = &spanned.value {
-                let inferred = calculate_inferred_amount(txn);
-                assert!(inferred.is_some());
+        if let Some(spanned) = result.directives.first()
+            && let Directive::Transaction(txn) = &spanned.value
+        {
+            let inferred = calculate_inferred_amount(txn);
+            assert!(inferred.is_some());
 
-                let (amount, currency) = inferred.unwrap();
-                assert_eq!(amount, Decimal::new(1000, 2)); // 10.00
-                assert_eq!(currency, "USD");
-            }
+            let (amount, currency) = inferred.unwrap();
+            assert_eq!(amount, Decimal::new(1000, 2)); // 10.00
+            assert_eq!(currency, "USD");
         }
     }
 
