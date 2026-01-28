@@ -122,12 +122,13 @@ pub fn run(args: &Args) -> Result<()> {
         .load(file)
         .with_context(|| format!("failed to load {}", file.display()))?;
 
-    // Check for parse errors (unless --no-errors is set)
+    // Report parse errors to stderr (matching bean-query behavior)
+    // Continue with successfully parsed directives rather than bailing
     if !load_result.errors.is_empty() && !args.no_errors {
         for err in &load_result.errors {
-            eprintln!("error: {err}");
+            eprintln!("{err}");
         }
-        anyhow::bail!("file has parse errors");
+        eprintln!();
     }
 
     // Get directives, book transactions, then expand pads
