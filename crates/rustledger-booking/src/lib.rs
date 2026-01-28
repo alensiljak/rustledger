@@ -290,7 +290,10 @@ pub fn calculate_residual_precise(transaction: &Transaction) -> HashMap<Interned
                 } else if let (Some(total), Some(cost_curr)) =
                     (&cost_spec.number_total, &inferred_currency)
                 {
-                    Some((cost_curr.clone(), to_big(*total) * to_big(units.number.signum())))
+                    Some((
+                        cost_curr.clone(),
+                        to_big(*total) * to_big(units.number.signum()),
+                    ))
                 } else {
                     None
                 }
@@ -352,10 +355,7 @@ pub fn is_balanced(transaction: &Transaction, tolerances: &HashMap<InternedStr, 
     let residuals = calculate_residual(transaction);
 
     for (currency, residual) in residuals {
-        let tolerance = tolerances
-            .get(&currency)
-            .copied()
-            .unwrap_or(Decimal::ZERO); // Default 0 (exact balance for integer-only currencies)
+        let tolerance = tolerances.get(&currency).copied().unwrap_or(Decimal::ZERO); // Default 0 (exact balance for integer-only currencies)
 
         if residual.abs() > tolerance {
             return false;

@@ -280,8 +280,7 @@ pub fn calculate_tolerances(
                     && let Some(cost_currency) = &cost_spec.currency
                 {
                     let cost_tolerance = tolerance * cost_per_unit;
-                    *cost_tolerances.entry(cost_currency.clone()).or_default() +=
-                        cost_tolerance;
+                    *cost_tolerances.entry(cost_currency.clone()).or_default() += cost_tolerance;
                 }
 
                 // Price contribution
@@ -289,13 +288,15 @@ pub fn calculate_tolerances(
                     match price {
                         rustledger_core::PriceAnnotation::Unit(price_amt) => {
                             let price_tolerance = tolerance * price_amt.number;
-                            *cost_tolerances.entry(price_amt.currency.clone()).or_default() +=
-                                price_tolerance;
+                            *cost_tolerances
+                                .entry(price_amt.currency.clone())
+                                .or_default() += price_tolerance;
                         }
                         rustledger_core::PriceAnnotation::Total(price_amt) => {
                             let price_tolerance = tolerance * price_amt.number;
-                            *cost_tolerances.entry(price_amt.currency.clone()).or_default() +=
-                                price_tolerance;
+                            *cost_tolerances
+                                .entry(price_amt.currency.clone())
+                                .or_default() += price_tolerance;
                         }
                         _ => {}
                     }

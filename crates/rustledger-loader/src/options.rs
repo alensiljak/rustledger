@@ -699,8 +699,15 @@ mod tests {
 
         assert_eq!(opts.warnings.len(), 1);
         assert_eq!(opts.warnings[0].code, "E7004");
-        assert!(opts.warnings[0].message.contains("Renamed to 'tolerance_multiplier'"));
-        assert_eq!(opts.inferred_tolerance_multiplier, Decimal::from_str("1.01").unwrap());
+        assert!(
+            opts.warnings[0]
+                .message
+                .contains("Renamed to 'tolerance_multiplier'")
+        );
+        assert_eq!(
+            opts.inferred_tolerance_multiplier,
+            Decimal::from_str("1.01").unwrap()
+        );
     }
 
     #[test]
