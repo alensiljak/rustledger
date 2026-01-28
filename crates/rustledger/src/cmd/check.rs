@@ -843,9 +843,23 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let validation_options = ValidationOptions {
         account_types,
         document_base,
+        infer_tolerance_from_cost: options.infer_tolerance_from_cost,
+        tolerance_multiplier: options.inferred_tolerance_multiplier,
+        inferred_tolerance_default: options.inferred_tolerance_default,
         ..Default::default()
     };
     let validation_errors = validate_spanned_with_options(&spanned_directives, validation_options);
+
+    // Normalize total prices (@@→@) AFTER validation to preserve exact totals for
+    // precise residual calculation. The booking step preserves Total prices so that
+    // balance checking uses the original total directly, avoiding division-then-
+    // multiplication precision loss.
+    for spanned in &mut spanned_directives {
+        if let Directive::Transaction(txn) = &mut spanned.value {
+            rustledger_booking::normalize_prices(txn);
+        }
+    }
+
     let validation_error_count = validation_errors
         .iter()
         .filter(|e| !e.code.is_warning())

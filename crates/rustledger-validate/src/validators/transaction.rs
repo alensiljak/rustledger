@@ -313,6 +313,36 @@ pub fn calculate_tolerances(
         }
     }
 
+    // Apply per-currency default tolerances from `inferred_tolerance_default` option.
+    // These act as a floor: if the computed tolerance for a currency is less than the
+    // default, the default is used. The special key "*" applies to all currencies.
+    if !options.inferred_tolerance_default.is_empty() {
+        // Apply the wildcard default first (if any)
+        if let Some(wildcard_default) = options.inferred_tolerance_default.get("*") {
+            // Apply wildcard to all currencies that appear in the transaction
+            for posting in &txn.postings {
+                if let Some(units) = posting.amount() {
+                    tolerances
+                        .entry(units.currency.clone())
+                        .and_modify(|t| *t = (*t).max(*wildcard_default))
+                        .or_insert(*wildcard_default);
+                }
+            }
+        }
+
+        // Apply per-currency defaults (overrides wildcard for specific currencies)
+        for (currency_str, default_tol) in &options.inferred_tolerance_default {
+            if currency_str == "*" {
+                continue;
+            }
+            let currency = InternedStr::new(currency_str.as_str());
+            tolerances
+                .entry(currency)
+                .and_modify(|t| *t = (*t).max(*default_tol))
+                .or_insert(*default_tol);
+        }
+    }
+
     tolerances
 }
 

@@ -179,6 +179,8 @@ pub fn load_source(source: &str) -> LoadResult {
                         // Apply the booked transaction to update inventory for subsequent lot matching
                         booking_engine.apply(&result.transaction);
                         *txn = result.transaction;
+                        // Normalize total prices (@@→@) for downstream consumers
+                        rustledger_booking::normalize_prices(txn);
                     }
                     Err(e) => {
                         errors.push(Error::new(e.to_string()).with_line(directive_lines[i]));

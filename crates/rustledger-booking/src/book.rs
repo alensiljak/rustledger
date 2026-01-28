@@ -9,7 +9,7 @@
 use rust_decimal::Decimal;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
-    Posting, PriceAnnotation, Transaction,
+    Posting, Transaction,
 };
 use std::collections::HashMap;
 use thiserror::Error;
@@ -239,7 +239,7 @@ impl BookingEngine {
                         let per_unit = *total / units.number.abs();
                         result.postings[idx].cost = Some(CostSpec {
                             number_per: Some(per_unit),
-                            number_total: None, // Clear total cost
+                            number_total: cost_spec.number_total, // Preserve for precise residual calculation
                             currency: Some(currency.clone()),
                             // Fill in transaction date if no date specified
                             date: cost_spec.date.or(Some(txn.date)),
@@ -332,41 +332,9 @@ impl BookingEngine {
             result.postings = new_postings;
         }
 
-        // Normalize total prices (@@) to per-unit prices (@)
-        // This matches Python beancount behavior where @@ is converted to @
-        for posting in &mut result.postings {
-            if let (Some(IncompleteAmount::Complete(units)), Some(price)) =
-                (&posting.units, &posting.price)
-            {
-                let normalized = match price {
-                    PriceAnnotation::Total(total_amount) if !units.number.is_zero() => {
-                        // Convert total price to per-unit: @@ 15000 USD for 100 units -> @ 150 USD
-                        let per_unit = total_amount.number / units.number.abs();
-                        Some(PriceAnnotation::Unit(Amount::new(
-                            per_unit,
-                            &total_amount.currency,
-                        )))
-                    }
-                    PriceAnnotation::TotalIncomplete(inc) if !units.number.is_zero() => {
-                        // Convert incomplete total to incomplete unit
-                        if let Some(total_amount) = inc.as_amount() {
-                            let per_unit = total_amount.number / units.number.abs();
-                            Some(PriceAnnotation::Unit(Amount::new(
-                                per_unit,
-                                &total_amount.currency,
-                            )))
-                        } else {
-                            None
-                        }
-                    }
-                    PriceAnnotation::TotalEmpty => Some(PriceAnnotation::UnitEmpty),
-                    _ => None, // Already per-unit or can't normalize
-                };
-                if let Some(normalized_price) = normalized {
-                    posting.price = Some(normalized_price);
-                }
-            }
-        }
+        // NOTE: Price normalization (@@→@) is NOT done here to preserve exact
+        // total prices for precise residual calculation. Call `normalize_prices()`
+        // on the transaction after validation to convert total prices to per-unit.
 
         Ok(BookedTransaction {
             transaction: result,
@@ -636,8 +604,8 @@ mod tests {
         let buy_posting = &booked_buy.transaction.postings[0];
         assert!(buy_posting.cost.is_some());
         let cost_spec = buy_posting.cost.as_ref().unwrap();
-        // Total cost should be cleared, per-unit should be set
-        assert!(cost_spec.number_total.is_none());
+        // Both total and per-unit should be set (total preserved for precise residual calc)
+        assert!(cost_spec.number_total.is_some());
         assert!(cost_spec.number_per.is_some());
 
         // Sell all shares at $191 per unit

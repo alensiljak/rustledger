@@ -164,15 +164,18 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Dec
                     .or(price_currency)
                     .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
-                if let (Some(per_unit), Some(cost_curr)) =
+                // Check number_total first: when both per-unit and total are present
+                // (booking preserves total), use the total directly for exact residual
+                // calculation. Division-then-multiplication loses precision.
+                if let (Some(total), Some(cost_curr)) =
+                    (&cost_spec.number_total, &inferred_currency)
+                {
+                    Some((cost_curr.clone(), *total * units.number.signum()))
+                } else if let (Some(per_unit), Some(cost_curr)) =
                     (&cost_spec.number_per, &inferred_currency)
                 {
                     let cost_amount = units.number * per_unit;
                     Some((cost_curr.clone(), cost_amount))
-                } else if let (Some(total), Some(cost_curr)) =
-                    (&cost_spec.number_total, &inferred_currency)
-                {
-                    Some((cost_curr.clone(), *total * units.number.signum()))
                 } else {
                     None // Cost spec without determinable amount (e.g., empty `{}`)
                 }
@@ -282,18 +285,21 @@ pub fn calculate_residual_precise(transaction: &Transaction) -> HashMap<Interned
                     .or(price_currency)
                     .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
-                if let (Some(per_unit), Some(cost_curr)) =
-                    (&cost_spec.number_per, &inferred_currency)
-                {
-                    let cost_amount = &units_number * to_big(*per_unit);
-                    Some((cost_curr.clone(), cost_amount))
-                } else if let (Some(total), Some(cost_curr)) =
+                // Check number_total first: when both per-unit and total are present
+                // (booking preserves total), use the total directly for exact residual
+                // calculation. Division-then-multiplication loses precision.
+                if let (Some(total), Some(cost_curr)) =
                     (&cost_spec.number_total, &inferred_currency)
                 {
                     Some((
                         cost_curr.clone(),
                         to_big(*total) * to_big(units.number.signum()),
                     ))
+                } else if let (Some(per_unit), Some(cost_curr)) =
+                    (&cost_spec.number_per, &inferred_currency)
+                {
+                    let cost_amount = &units_number * to_big(*per_unit);
+                    Some((cost_curr.clone(), cost_amount))
                 } else {
                     None
                 }
@@ -363,6 +369,49 @@ pub fn is_balanced(transaction: &Transaction, tolerances: &HashMap<InternedStr, 
     }
 
     true
+}
+
+/// Normalize total prices (`@@`) to per-unit prices (`@`) on a transaction.
+///
+/// This converts `PriceAnnotation::Total` to `PriceAnnotation::Unit` by dividing
+/// the total price by the number of units. This should be called AFTER validation
+/// (balance checking) to preserve exact total prices for precise residual calculation.
+///
+/// Matches Python beancount behavior where `@@` is converted to `@`.
+pub fn normalize_prices(txn: &mut Transaction) {
+    use rustledger_core::PriceAnnotation;
+
+    for posting in &mut txn.postings {
+        if let (Some(IncompleteAmount::Complete(units)), Some(price)) =
+            (&posting.units, &posting.price)
+        {
+            let normalized = match price {
+                PriceAnnotation::Total(total_amount) if !units.number.is_zero() => {
+                    let per_unit = total_amount.number / units.number.abs();
+                    Some(PriceAnnotation::Unit(Amount::new(
+                        per_unit,
+                        &total_amount.currency,
+                    )))
+                }
+                PriceAnnotation::TotalIncomplete(inc) if !units.number.is_zero() => {
+                    if let Some(total_amount) = inc.as_amount() {
+                        let per_unit = total_amount.number / units.number.abs();
+                        Some(PriceAnnotation::Unit(Amount::new(
+                            per_unit,
+                            &total_amount.currency,
+                        )))
+                    } else {
+                        None
+                    }
+                }
+                PriceAnnotation::TotalEmpty => Some(PriceAnnotation::UnitEmpty),
+                _ => None,
+            };
+            if let Some(normalized_price) = normalized {
+                posting.price = Some(normalized_price);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

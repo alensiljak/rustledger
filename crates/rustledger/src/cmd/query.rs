@@ -153,7 +153,10 @@ pub fn run(args: &Args) -> Result<()> {
                 if let Ok(result) = booking_engine.book_and_interpolate(txn) {
                     // Apply the booked transaction to update inventory
                     booking_engine.apply(&result.transaction);
-                    return Directive::Transaction(result.transaction);
+                    let mut txn = result.transaction;
+                    // Normalize total prices (@@→@) for downstream consumers
+                    rustledger_booking::normalize_prices(&mut txn);
+                    return Directive::Transaction(txn);
                 }
             }
             d

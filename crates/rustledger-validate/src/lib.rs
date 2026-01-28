@@ -100,6 +100,9 @@ pub struct ValidationOptions {
     /// Tolerance multiplier (matches Python beancount's `inferred_tolerance_multiplier`).
     /// Default is 0.5.
     pub tolerance_multiplier: Decimal,
+    /// Per-currency default tolerances (matches Python beancount's `inferred_tolerance_default`).
+    /// e.g., `{"GBP": 0.004}` means GBP transactions tolerate up to 0.004 residual.
+    pub inferred_tolerance_default: HashMap<String, Decimal>,
 }
 
 impl Default for ValidationOptions {
@@ -119,6 +122,7 @@ impl Default for ValidationOptions {
             // Match Python beancount defaults
             infer_tolerance_from_cost: false,
             tolerance_multiplier: Decimal::new(5, 1), // 0.5
+            inferred_tolerance_default: HashMap::new(),
         }
     }
 }
