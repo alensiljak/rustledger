@@ -101,21 +101,33 @@ def parse_with_python(file_path: Path) -> Optional[ParseResult]:
         type_counts[type_name] += 1
 
         if isinstance(entry, data.Open):
-            result.accounts.add(entry.account)
             result.open_count += 1
         elif isinstance(entry, data.Transaction):
             result.transaction_count += 1
             result.posting_count += len(entry.postings)
-            # Also extract accounts from postings
-            for posting in entry.postings:
-                result.accounts.add(posting.account)
         elif isinstance(entry, data.Balance):
             result.balance_count += 1
-            result.accounts.add(entry.account)
         elif isinstance(entry, data.Price):
             result.price_count += 1
 
     result.directive_counts = dict(type_counts)
+
+    # Get accounts via BQL (fair comparison with Rust side)
+    try:
+        proc = subprocess.run(
+            ["bean-query", str(file_path), "SELECT DISTINCT account ORDER BY account"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if proc.returncode == 0:
+            for line in proc.stdout.strip().split('\n')[2:]:
+                line = line.strip()
+                if line and not line.startswith('-') and 'row(s)' not in line:
+                    result.accounts.add(line)
+    except Exception as e:
+        result.raw_errors.append(f"accounts query: {e}")
+
     return result
 
 
