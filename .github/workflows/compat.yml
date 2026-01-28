@@ -224,10 +224,8 @@ jobs:
 
               @property
               def full_match(self) -> bool:
-                  # Note: accounts_match excluded until Issue #260 (rledger accounts command)
-                  # Currently compares Python API (all directives) vs Rust BQL (postings only)
-                  return (self.check_match and self.posting_count_match and
-                          self.error_presence_match)
+                  return (self.check_match and self.accounts_match and
+                          self.posting_count_match and self.error_presence_match)
 
           def test_file(file_path: Path) -> FileResult:
               """Test a single file - designed to run in parallel."""
@@ -317,9 +315,6 @@ jobs:
               except Exception:
                   pass
 
-              # Note: This comparison is unfair until Issue #260 is implemented
-              # Python: accounts from Open/Transaction/Balance directives (via loader API)
-              # Rust: accounts from postings only (via BQL SELECT DISTINCT account)
               result.accounts_match = (python_accounts == rust_accounts)
 
               # === Rust posting count via BQL ===
