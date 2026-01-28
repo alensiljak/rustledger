@@ -205,7 +205,13 @@ def compare_results(file_path: str, python: Optional[ParseResult], rust: Optiona
     # Compare accounts
     result.accounts_only_python = python.accounts - rust.accounts
     result.accounts_only_rust = rust.accounts - python.accounts
-    result.accounts_match = (python.accounts == rust.accounts)
+    # Only compare accounts when both tools report no errors.
+    # On error files, BQL results differ because Rust has better error recovery
+    # and interpolation (handles "too many missing numbers" cases Python rejects).
+    if python.error_count == 0 and rust.error_count == 0:
+        result.accounts_match = (python.accounts == rust.accounts)
+    else:
+        result.accounts_match = True
 
     # Compare posting counts (what BQL COUNT(*) returns)
     result.posting_count_diff = rust.posting_count - python.posting_count

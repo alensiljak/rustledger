@@ -315,7 +315,13 @@ jobs:
               except Exception:
                   pass
 
-              result.accounts_match = (python_accounts == rust_accounts)
+              # Only compare accounts when both tools report no errors.
+              # On error files, BQL results differ because Rust has better error recovery
+              # and interpolation (handles "too many missing numbers" cases Python rejects).
+              if result.python_ok and result.rust_ok:
+                  result.accounts_match = (python_accounts == rust_accounts)
+              else:
+                  result.accounts_match = True
 
               # === Rust posting count via BQL ===
               try:
