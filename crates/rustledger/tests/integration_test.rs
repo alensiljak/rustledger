@@ -635,7 +635,7 @@ option "title" "Note Test"
 
 /// Path to beancount's canonical example.beancount file.
 fn beancount_example_file() -> PathBuf {
-    project_root().join("spec/fixtures/examples/example.beancount")
+    project_root().join("tests/fixtures/examples/example.beancount")
 }
 
 #[test]
@@ -645,7 +645,7 @@ fn test_beancount_canonical_example() {
     let path = beancount_example_file();
 
     if !path.exists() {
-        eprintln!("Skipping: spec/fixtures/examples/example.beancount not found");
+        eprintln!("Skipping: tests/fixtures/examples/example.beancount not found");
         return;
     }
 
@@ -667,7 +667,7 @@ fn test_beancount_canonical_example_matches_python() {
     let path = beancount_example_file();
 
     if !path.exists() {
-        eprintln!("Skipping: spec/fixtures/examples/example.beancount not found");
+        eprintln!("Skipping: tests/fixtures/examples/example.beancount not found");
         return;
     }
 

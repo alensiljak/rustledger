@@ -28,10 +28,10 @@ You are a Beancount compatibility specialist ensuring rustledger matches Python 
 - Check edge cases and error conditions
 - Verify numerical precision (decimal handling)
 - Ensure date handling is identical
-- Test with real Beancount files from spec/fixtures/
+- Test with real Beancount files from tests/fixtures/
 
 ## Resources
 
 - Python beancount: https://github.com/beancount/beancount
-- Test fixtures in: spec/fixtures/lima-tests/
+- Test fixtures in: tests/fixtures/lima-tests/
 - Compatibility tests in: crates/*/tests/

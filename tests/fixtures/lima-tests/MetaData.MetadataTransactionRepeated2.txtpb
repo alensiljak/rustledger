@@ -1,0 +1,10 @@
+# ANOMALY: duplicated metadata keys is a parse error for Lima
+errors {
+  message: "duplicate key test"
+}
+errors {
+  message: "duplicate key test"
+}
+errors {
+  message: "duplicate key test"
+}

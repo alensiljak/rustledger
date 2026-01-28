@@ -5,7 +5,7 @@ failed=0
 passed=0
 total=0
 
-for f in spec/fixtures/lima-tests/*.beancount; do
+for f in tests/fixtures/lima-tests/*.beancount; do
     total=$((total+1))
     basename=$(basename "$f")
     out=$(cargo run --quiet --bin bean-check -- "$f" 2>&1)

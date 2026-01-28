@@ -11,11 +11,12 @@
 name: Compatibility
 
 on:
-  schedule:
-    - cron: '0 3 * * *'  # Nightly at 3 AM UTC (1 hour after benchmarks)
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  push:
     branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 3 * * *'  # Nightly at 3 AM UTC (for historical tracking)
   workflow_dispatch:
 
 # Prevent concurrent runs from racing on the compatibility branch
@@ -36,11 +37,6 @@ jobs:
     name: Run compatibility tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    # Run on: nightly schedule, manual trigger, or release PRs
-    if: >
-      github.event_name == 'schedule' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'release'))
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
 
@@ -65,7 +61,7 @@ jobs:
         id: cache-compat-files
         uses: actions/cache@v4
         with:
-          path: tests/compat/files
+          path: tests/compatibility/files
           # Cache key includes hash of fetch script; v2 busts old broken caches
           key: compat-files-v2-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}
           restore-keys: |
@@ -76,7 +72,7 @@ jobs:
         run: |
           echo "Downloading compatibility test files..."
           ./scripts/fetch-compat-test-files.sh
-          echo "Downloaded $(find tests/compat/files -name '*.beancount' | wc -l) test files"
+          echo "Downloaded $(find tests/compatibility/files -name '*.beancount' | wc -l) test files"
 
       - name: Build rustledger
         run: |
@@ -87,24 +83,24 @@ jobs:
           echo "Generating synthetic test files..."
           # Use rledger doctor to generate synthetic files with manifest
           ./target/release/rledger doctor generate-synthetic \
-            --output tests/compat/synthetic \
+            --output tests/compatibility/synthetic \
             --count 50 \
             --seed 12345 \
             --manifest \
             --skip-validation
-          echo "Generated $(find tests/compat/synthetic -name '*.beancount' 2>/dev/null | wc -l) synthetic files"
+          echo "Generated $(find tests/compatibility/synthetic -name '*.beancount' 2>/dev/null | wc -l) synthetic files"
 
           # Also generate bean-example files if available
           if command -v bean-example &> /dev/null; then
             echo "Generating bean-example files..."
-            mkdir -p tests/compat/synthetic/bean-example
+            mkdir -p tests/compatibility/synthetic/bean-example
             for seed in 1 42 123; do
               end_date=$(date +%Y-%m-%d)
               start_date=$(date -d "$end_date - 1 year" +%Y-%m-%d 2>/dev/null || date -v-1y +%Y-%m-%d)
-              output="tests/compat/synthetic/bean-example/example_seed${seed}.beancount"
+              output="tests/compatibility/synthetic/bean-example/example_seed${seed}.beancount"
               bean-example --seed "$seed" --date-begin "$start_date" --date-end "$end_date" --output "$output" 2>/dev/null || true
             done
-            echo "Generated $(find tests/compat/synthetic/bean-example -name '*.beancount' 2>/dev/null | wc -l) bean-example files"
+            echo "Generated $(find tests/compatibility/synthetic/bean-example -name '*.beancount' 2>/dev/null | wc -l) bean-example files"
           fi
 
       - name: Verify tool installations
@@ -146,7 +142,8 @@ jobs:
               BEANCOUNT_AVAILABLE = False
               print("Warning: beancount not installed")
 
-          TEST_DIRS = [Path("tests/compat/files"), Path("tests/compat/synthetic")]
+          TEST_DIRS = [Path("tests/compatibility/files"), Path("tests/compatibility/synthetic"), Path("tests/regressions")]
+          EXCLUSIONS_FILE = Path("tests/compatibility/exclusions.toml")
           RLEDGER = "./target/release/rledger"
           RLEDGER_CHECK = [RLEDGER, "check"]
           RLEDGER_QUERY = [RLEDGER, "query"]
@@ -155,10 +152,36 @@ jobs:
           MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
           print(f"Running with {MAX_WORKERS} parallel workers")
 
+          # Load exclusions from TOML file
+          excluded_patterns = []
+          excluded_reasons = {}
+          if EXCLUSIONS_FILE.exists():
+              content = EXCLUSIONS_FILE.read_text()
+              current_pattern = None
+              for line in content.split('\n'):
+                  line = line.strip()
+                  if line.startswith('pattern = "'):
+                      current_pattern = line.split('"')[1]
+                      excluded_patterns.append(current_pattern)
+                  elif line.startswith('reason = "') and current_pattern:
+                      excluded_reasons[current_pattern] = line.split('"')[1]
+              print(f"Loaded {len(excluded_patterns)} exclusion patterns")
+
+          def is_excluded(file_path: Path) -> bool:
+              """Check if a file matches any exclusion pattern."""
+              rel_path = str(file_path)
+              for pattern in excluded_patterns:
+                  if pattern in rel_path:
+                      return True
+              return False
+
           # Category mapping based on directory structure
           def get_category(file_path: Path) -> str:
               parts = file_path.parts
               for part in parts:
+                  # Regression tests from user-reported issues
+                  if part == "regressions":
+                      return "regressions"
                   # Synthetic test files (edge cases, proptest, bean-example)
                   if part == "synthetic":
                       # Further categorize by filename prefix
@@ -201,8 +224,10 @@ jobs:
 
               @property
               def full_match(self) -> bool:
-                  return (self.check_match and self.accounts_match and
-                          self.posting_count_match and self.error_presence_match)
+                  # Note: accounts_match excluded until Issue #260 (rledger accounts command)
+                  # Currently compares Python API (all directives) vs Rust BQL (postings only)
+                  return (self.check_match and self.posting_count_match and
+                          self.error_presence_match)
 
           def test_file(file_path: Path) -> FileResult:
               """Test a single file - designed to run in parallel."""
@@ -284,6 +309,9 @@ jobs:
               except Exception:
                   pass
 
+              # Note: This comparison is unfair until Issue #260 is implemented
+              # Python: accounts from Open/Transaction/Balance directives (via loader API)
+              # Rust: accounts from postings only (via BQL SELECT DISTINCT account)
               result.accounts_match = (python_accounts == rust_accounts)
 
               # === Rust posting count via BQL ===
@@ -304,16 +332,37 @@ jobs:
               except Exception:
                   pass
 
-              result.posting_count_match = (result.python_posting_count == result.rust_posting_count)
+              # Only compare posting counts for files that both tools validated successfully
+              # (BQL returns 0 rows on error files, making comparison meaningless)
+              if result.python_ok and result.rust_ok:
+                  result.posting_count_match = (result.python_posting_count == result.rust_posting_count)
+              else:
+                  # Skip comparison for error files - mark as matching to avoid false negatives
+                  result.posting_count_match = True
 
               return result
 
           # === Run tests in parallel ===
-          files = []
+          all_files = []
           for test_dir in TEST_DIRS:
               if test_dir.exists():
-                  files.extend(sorted(test_dir.rglob("*.beancount")))
-          print(f"Testing {len(files)} files from {len(TEST_DIRS)} directories...")
+                  all_files.extend(sorted(test_dir.rglob("*.beancount")))
+
+          # Filter out excluded files
+          files = []
+          excluded_files = []
+          for f in all_files:
+              if is_excluded(f):
+                  excluded_files.append(f)
+              else:
+                  files.append(f)
+
+          print(f"Found {len(all_files)} total files from {len(TEST_DIRS)} directories")
+          if excluded_files:
+              print(f"  - Testing: {len(files)}")
+              print(f"  - Excluded (known limitations): {len(excluded_files)}")
+          else:
+              print(f"Testing {len(files)} files...")
 
           results = []
           completed = 0
@@ -394,7 +443,10 @@ jobs:
           realworld_pct = realworld_check * 100 // realworld_total if realworld_total > 0 else 0
 
           # === Print results ===
+          total_excluded = len(excluded_files)
           print(f"Total files: {total}")
+          if total_excluded > 0:
+              print(f"Excluded files: {total_excluded} (known limitations)")
           print(f"Check exit match: {check_match}/{total} ({check_pct}%)")
           print(f"Accounts match: {accounts_match}/{total} ({accounts_pct}%)")
           print(f"Posting count match: {posting_match}/{total} ({posting_pct}%)")
@@ -426,6 +478,7 @@ jobs:
           # === Write to GITHUB_OUTPUT ===
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"check_total={total}\n")
+              f.write(f"check_excluded={total_excluded}\n")
               f.write(f"check_match={check_match}\n")
               f.write(f"check_match_pct={check_pct}\n")
               f.write(f"accounts_match={accounts_match}\n")
@@ -480,7 +533,7 @@ jobs:
           from concurrent.futures import ThreadPoolExecutor, as_completed
           import multiprocessing
 
-          TEST_DIRS = [Path("tests/compat/files"), Path("tests/compat/synthetic")]
+          TEST_DIRS = [Path("tests/compatibility/files"), Path("tests/compatibility/synthetic"), Path("tests/regressions")]
           RLEDGER = "./target/release/rledger"
           RLEDGER_QUERY = [RLEDGER, "query"]
 
@@ -602,6 +655,7 @@ jobs:
 
           summary:
             total_files: ${{ steps.compat_test.outputs.check_total }}
+            excluded_files: ${{ steps.compat_test.outputs.check_excluded }}
             check_exit_match_pct: ${{ steps.compat_test.outputs.check_match_pct }}
             full_match_pct: ${{ steps.compat_test.outputs.full_pct }}
             bql_match_pct: ${{ steps.bql_compat.outputs.bql_pct }}
@@ -609,6 +663,7 @@ jobs:
 
           check_compatibility:
             total_files: ${{ steps.compat_test.outputs.check_total }}
+            excluded_files: ${{ steps.compat_test.outputs.check_excluded }}
             exit_code_match: ${{ steps.compat_test.outputs.check_match }}
             exit_code_match_pct: ${{ steps.compat_test.outputs.check_match_pct }}
             rust_only_pass: ${{ steps.compat_test.outputs.rust_only_pass }}

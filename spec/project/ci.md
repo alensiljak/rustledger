@@ -32,7 +32,7 @@ Location: `crates/*/tests/*.rs`
 // crates/beancount-parser/tests/parse_fixtures.rs
 #[test]
 fn test_parse_syntax_edge_cases() {
-    let content = include_str!("../../spec/fixtures/syntax-edge-cases.beancount");
+    let content = include_str!("../../tests/fixtures/syntax-edge-cases.beancount");
     let result = parse(content);
     assert!(result.errors.is_empty());
 }
@@ -42,14 +42,14 @@ fn test_parse_syntax_edge_cases() {
 
 ### 3. Golden Tests (Fixture-Based)
 
-Location: `spec/fixtures/`
+Location: `tests/fixtures/`
 
 Compare parser output against expected results:
 
 ```rust
 #[test]
 fn test_lima_fixtures() {
-    for entry in glob("spec/fixtures/lima-tests/*.beancount").unwrap() {
+    for entry in glob("tests/fixtures/lima-tests/*.beancount").unwrap() {
         let path = entry.unwrap();
         let expected = read_expected(&path);  // .txtpb file
         let actual = parse_file(&path);
@@ -85,9 +85,9 @@ Compare output with Python beancount:
 
 ```bash
 #!/bin/bash
-# tests/compat/run.sh
+# tests/compatibility/run.sh
 
-for file in spec/fixtures/examples/*.beancount; do
+for file in tests/fixtures/examples/*.beancount; do
     python_out=$(python -m beancount.scripts.check "$file" 2>&1)
     rust_out=$(cargo run --release -- check "$file" 2>&1)
 
@@ -98,7 +98,7 @@ for file in spec/fixtures/examples/*.beancount; do
 done
 ```
 
-**Run**: `./tests/compat/run.sh`
+**Run**: `./tests/compatibility/run.sh`
 
 ### 6. Benchmark Tests
 
@@ -108,7 +108,7 @@ Location: `benches/*.rs`
 use criterion::{criterion_group, criterion_main, Criterion};
 
 fn bench_parse(c: &mut Criterion) {
-    let source = include_str!("../spec/fixtures/examples/example.beancount");
+    let source = include_str!("../tests/fixtures/examples/example.beancount");
     c.bench_function("parse_example", |b| {
         b.iter(|| parse(source))
     });
@@ -229,7 +229,7 @@ jobs:
           python-version: '3.11'
       - run: pip install beancount
       - run: cargo build --release
-      - run: ./tests/compat/run.sh
+      - run: ./tests/compatibility/run.sh
 
   wasm:
     name: WASM Build
@@ -386,7 +386,7 @@ cargo test --test fixtures
 cargo +nightly fuzz cmin fuzz_parser
 
 # Import regression tests from corpus
-cp fuzz/corpus/fuzz_parser/* spec/fixtures/fuzz-regressions/
+cp fuzz/corpus/fuzz_parser/* tests/fixtures/fuzz-regressions/
 ```
 
 ## Quality Gates

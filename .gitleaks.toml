@@ -10,7 +10,7 @@ useDefault = true
 # Paths to ignore (test fixtures, examples, etc.)
 [allowlist]
 paths = [
-  '''spec/fixtures/.*''',
+  '''tests/fixtures/.*''',
   '''testdata/.*''',
   '''\.github/workflows/.*\.yml''',  # Workflow files may have token placeholders
 ]

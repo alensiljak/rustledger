@@ -139,7 +139,7 @@ pub enum Command {
     /// Generate synthetic beancount files for testing
     GenerateSynthetic {
         /// Output directory for generated files
-        #[arg(short, long, default_value = "tests/compat/synthetic")]
+        #[arg(short, long, default_value = "tests/compatibility/synthetic")]
         output: PathBuf,
 
         /// Number of files to generate (for proptest-style generation)

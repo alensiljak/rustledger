@@ -1,11 +1,11 @@
 //! Comprehensive tests for all beancount fixtures.
 //!
 //! This module tests:
-//! - spec/fixtures/syntax-edge-cases.beancount - Parser edge cases
-//! - spec/fixtures/booking-scenarios.beancount - Booking algorithm scenarios
-//! - spec/fixtures/validation-errors.beancount - Expected validation errors
-//! - spec/fixtures/lima-tests/*.beancount - 218 parser conformance tests
-//! - spec/fixtures/examples/*.beancount - Official beancount examples
+//! - tests/fixtures/syntax-edge-cases.beancount - Parser edge cases
+//! - tests/fixtures/booking-scenarios.beancount - Booking algorithm scenarios
+//! - tests/fixtures/validation-errors.beancount - Expected validation errors
+//! - tests/fixtures/lima-tests/*.beancount - 218 parser conformance tests
+//! - tests/fixtures/examples/*.beancount - Official beancount examples
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -20,7 +20,7 @@ fn project_root() -> PathBuf {
 }
 
 fn spec_fixtures_dir() -> PathBuf {
-    project_root().join("spec/fixtures")
+    project_root().join("tests/fixtures")
 }
 
 fn rledger_binary() -> PathBuf {

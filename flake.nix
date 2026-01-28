@@ -231,7 +231,7 @@
                 entry = lib.mkForce "cargo fmt --all --";
               };
 
-              # Rust linting - always run on every commit to catch all warnings
+              # Rust linting - runs on pre-push (too slow for every commit)
               clippy = {
                 enable = true;
                 packageOverrides.cargo = rustToolchainWithWasm;
@@ -241,8 +241,7 @@
                   denyWarnings = true;
                   extraArgs = "--all-targets";
                 };
-                # Always run clippy, not just when .rs files are staged
-                # This catches warnings in unchanged files (e.g., from new clippy lints)
+                stages = [ "pre-push" ];
                 always_run = true;
               };
 
@@ -260,6 +259,34 @@
                 entry = "${pkgs.gitleaks}/bin/gitleaks protect --staged --redact --config .gitleaks.toml";
                 language = "system";
                 pass_filenames = false;
+              };
+
+              # Code quality (all fast, ~instant)
+              check-merge-conflict = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-merge-conflict";
+              };
+              trailing-whitespace = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/trailing-whitespace-fixer";
+                types = [ "text" ];
+              };
+              end-of-file-fixer = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/end-of-file-fixer";
+                types = [ "text" ];
+              };
+              check-toml = {
+                enable = true;
+                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-toml";
+                types = [ "toml" ];
+              };
+
+              # Typo checker - catches spelling mistakes in code/docs
+              typos = {
+                enable = true;
+                entry = "${pkgs.typos}/bin/typos --locale en-us";
+                types = [ "text" ];
               };
 
               # Commit message

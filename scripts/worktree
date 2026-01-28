@@ -99,6 +99,12 @@ cmd_new() {
         git worktree add -b "$branch" "$wt_path" "$DEFAULT_BRANCH"
     fi
 
+    # Initialize direnv if available (sets up nix environment, pre-commit, etc.)
+    if command -v direnv &>/dev/null && [[ -f "$wt_path/.envrc" ]]; then
+        echo "Initializing direnv..."
+        (cd "$wt_path" && direnv allow)
+    fi
+
     echo ""
     echo "Worktree created at: $wt_path"
     echo ""

@@ -76,7 +76,7 @@ bean-check test.beancount
 ./target/debug/rledger check test.beancount
 ```
 
-Reference files in `spec/fixtures/` for expected behavior.
+Reference files in `tests/fixtures/` for expected behavior.
 
 ## Common Tasks
 

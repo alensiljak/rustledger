@@ -48,7 +48,7 @@ mod tests {
         use std::time::Instant;
 
         // Load test file
-        let source = std::fs::read_to_string("../../spec/fixtures/examples/example.beancount")
+        let source = std::fs::read_to_string("../../tests/fixtures/examples/example.beancount")
             .expect("Failed to read example.beancount");
 
         let parse_result = parse(&source);

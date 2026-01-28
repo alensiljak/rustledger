@@ -1,0 +1,10 @@
+; Issue: https://github.com/rustledger/rustledger/issues/178
+; Description: Posting amount inference differs from beancount when costs are involved
+; Expected: No errors - the last posting amount should be inferred correctly
+
+2026-01-01 open Equity:Opening-Balances USD
+2026-01-01 open Assets:Vanguard:IRA:Trad:VFIFX VFIFX
+
+2026-01-01 * "Opening balance for Vanguard traditional IRA"
+  Assets:Vanguard:IRA:Trad:VFIFX  10 VFIFX {100 USD}
+  Equity:Opening-Balances

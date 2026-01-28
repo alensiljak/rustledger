@@ -1,0 +1,9 @@
+; Issue: https://github.com/rustledger/rustledger/issues/179
+; Description: Indented comments within metadata cause parse errors
+; Expected: No errors - comments should be allowed within metadata blocks
+
+2022-02-14 commodity VFIFXG
+  asset-class: "stock"
+  ; Some comment helping me remember what this is.
+  fiid: "7743"
+  name: "VANGUARD TARGET RETIREMENT 2050 TRUST"

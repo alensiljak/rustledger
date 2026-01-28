@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-FIXTURES_DIR="$PROJECT_ROOT/spec/fixtures"
+FIXTURES_DIR="$PROJECT_ROOT/tests/fixtures"
 
 echo "=== Fetching Beancount Test Vectors ==="
 echo "Target: $FIXTURES_DIR"

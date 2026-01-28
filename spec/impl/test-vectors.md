@@ -415,14 +415,14 @@ test_ambiguous__NONE__matching_existing2
 
 ```bash
 git clone https://github.com/tesujimath/beancount-parser-lima.git
-cp -r beancount-parser-lima/test-cases spec/fixtures/lima-tests/
+cp -r beancount-parser-lima/test-cases tests/fixtures/lima-tests/
 ```
 
 ### Download Python beancount examples
 
 ```bash
 git clone https://github.com/beancount/beancount.git --branch v2 --depth 1
-cp -r beancount/examples spec/fixtures/examples/
+cp -r beancount/examples tests/fixtures/examples/
 ```
 
 ### Extract embedded test cases from Python

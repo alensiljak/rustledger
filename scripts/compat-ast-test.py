@@ -11,7 +11,7 @@ going beyond exit codes to compare:
 
 Usage:
     python scripts/compat-ast-test.py [directory]
-    python scripts/compat-ast-test.py tests/compat/files
+    python scripts/compat-ast-test.py tests/compatibility/files
 
 Environment variables:
     PARALLEL_JOBS: Number of parallel workers (default: CPU count, max 8)
@@ -357,9 +357,9 @@ def main():
         test_dir = Path(sys.argv[1])
     else:
         # Default to curated files, then full suite
-        test_dir = Path("tests/compat/files")
+        test_dir = Path("tests/compatibility/files")
         if not test_dir.exists():
-            test_dir = Path("tests/compat-full")
+            test_dir = Path("tests/compatibility-full")
 
     if not test_dir.exists():
         print(f"Error: Directory not found: {test_dir}")
@@ -382,7 +382,7 @@ def main():
     print_summary(results)
 
     # Save results
-    output_dir = Path("tests/compat-results")
+    output_dir = Path("tests/compatibility-results")
     output_dir.mkdir(exist_ok=True)
 
     from datetime import datetime
