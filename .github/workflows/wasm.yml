@@ -53,11 +53,13 @@ jobs:
           wasm-pack test --node
 
   # Test in headless browser (more realistic but slower)
-  # Note: Browser tests can be flaky on CI due to timeouts, so we allow failure
+  # DISABLED: Tests timeout after ~6/21 complete. See Issue #261.
+  # Node.js tests provide equivalent coverage.
   test-browser:
     name: Test (Browser)
     runs-on: ubuntu-latest
-    continue-on-error: true  # Browser tests can be flaky on CI
+    if: false  # Disabled - see Issue #261
+    continue-on-error: true
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
