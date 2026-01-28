@@ -267,6 +267,48 @@ proptest! {
         );
     }
 
+    /// TLA+ SumAccuracy:
+    /// SUM returns exact sum of matching values.
+    ///
+    /// The sum of all posting amounts should equal the expected total.
+    #[test]
+    fn prop_sum_accuracy(
+        amounts in prop::collection::vec(amount_strategy(100), 1..5),
+        date in date_strategy(),
+    ) {
+        // Create transactions with known amounts
+        let directives: Vec<Directive> = amounts
+            .iter()
+            .enumerate()
+            .map(|(i, &amount)| {
+                Directive::Transaction(
+                    Transaction::new(date, format!("Txn {i}"))
+                        .with_flag('*')
+                        .with_posting(Posting::new("Expenses:Food", Amount::new(Decimal::from(amount), "USD")))
+                        .with_posting(Posting::new("Assets:Cash", Amount::new(Decimal::from(-amount), "USD")))
+                )
+            })
+            .collect();
+
+        let mut executor = Executor::new(&directives);
+
+        // Sum all Expenses postings
+        let query = parse("SELECT SUM(number) WHERE account ~ \"Expenses:\"").unwrap();
+        let result = executor.execute(&query).unwrap();
+
+        // Expected sum of all expense amounts
+        let expected_sum: i64 = amounts.iter().sum();
+
+        if let rustledger_query::Value::Number(sum) = &result.rows[0][0] {
+            prop_assert_eq!(
+                *sum,
+                Decimal::from(expected_sum),
+                "SUM should be accurate: expected {}, got {}",
+                expected_sum, sum
+            );
+        }
+    }
+
     /// TLA+ ResultMatchesSelection:
     /// Filtered results match the selection criteria.
     ///

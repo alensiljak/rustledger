@@ -109,6 +109,15 @@ pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Op
 ///
 /// Returns a map of currency -> residual amount.
 /// A balanced transaction has all residuals within tolerance.
+///
+/// # TLA+ Specification
+///
+/// Implements balance checking from `DoubleEntry.tla`:
+/// - Invariant: `TransactionsBalance` - For every transaction, `sum(postings) = 0`
+/// - Each currency is checked independently
+/// - A non-zero residual indicates a violation of double-entry bookkeeping
+///
+/// See: `spec/tla/DoubleEntry.tla`
 #[must_use]
 pub fn calculate_residual(transaction: &Transaction) -> HashMap<InternedStr, Decimal> {
     // Pre-allocate for typical case (1-2 currencies per transaction)

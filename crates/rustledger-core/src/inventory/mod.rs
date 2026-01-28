@@ -308,6 +308,14 @@ impl Inventory {
     /// For positions with cost, this adds as a new lot (O(1)).
     /// Lot aggregation for display purposes is handled separately at output time
     /// (e.g., in the query result formatter).
+    ///
+    /// # TLA+ Specification
+    ///
+    /// Implements `AddAmount` action from `Conservation.tla`:
+    /// - Invariant: `inventory + totalReduced = totalAdded`
+    /// - After add: `totalAdded' = totalAdded + amount`
+    ///
+    /// See: `spec/tla/Conservation.tla`
     pub fn add(&mut self, position: Position) {
         if position.is_empty() {
             return;
@@ -353,6 +361,20 @@ impl Inventory {
     ///
     /// Returns a `BookingResult` with the matched positions and cost basis,
     /// or a `BookingError` if the reduction cannot be performed.
+    ///
+    /// # TLA+ Specification
+    ///
+    /// Implements `ReduceAmount` action from `Conservation.tla`:
+    /// - Invariant: `inventory + totalReduced = totalAdded`
+    /// - After reduce: `totalReduced' = totalReduced + amount`
+    /// - Precondition: `amount <= inventory` (else `InsufficientUnits` error)
+    ///
+    /// Lot selection follows these TLA+ specs based on `method`:
+    /// - `Fifo`: `FIFOCorrect.tla` - Oldest lots first (`selected_date <= all other dates`)
+    /// - `Lifo`: `LIFOCorrect.tla` - Newest lots first (`selected_date >= all other dates`)
+    /// - `Hifo`: `HIFOCorrect.tla` - Highest cost first (`selected_cost >= all other costs`)
+    ///
+    /// See: `spec/tla/Conservation.tla`, `spec/tla/FIFOCorrect.tla`, etc.
     pub fn reduce(
         &mut self,
         units: &Amount,

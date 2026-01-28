@@ -181,11 +181,13 @@ rustledger uses a **multi-layered verification approach**:
 **Invariants**:
 - `FilterCorrectness`: WHERE selects only matching rows
 - `CountAccuracy`: COUNT returns exact count
+- `SumAccuracy`: SUM returns exact sum
 
 | TLA+ Element | Rust Implementation | Test Coverage |
 |--------------|---------------------|---------------|
 | `FilterCorrectness` | `Executor::execute_select()` | `prop_filter_no_false_positives` |
 | `CountAccuracy` | `COUNT()` aggregate | `prop_count_accuracy` |
+| `SumAccuracy` | `SUM()` aggregate | `prop_sum_accuracy` |
 | `ResultMatchesSelection` | Query result filtering | `prop_result_matches_selection` |
 
 **Files**:
@@ -251,7 +253,7 @@ rustledger uses a **multi-layered verification approach**:
 | Interpolation.tla | - | 8 tests | Many |
 | MultiCurrency.tla | - | 4 tests | Many |
 | ValidationCorrect.tla | - | 8 tests | Many |
-| QueryExecution.tla | - | 12 tests | Many |
+| QueryExecution.tla | - | 13 tests | Many |
 | PriceDB.tla | - | 4 tests | Many |
 | PluginCorrect.tla | - | 8 tests | Many |
 
