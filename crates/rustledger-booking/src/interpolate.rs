@@ -102,9 +102,21 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     let mut missing_by_currency: HashMap<InternedStr, Vec<usize>> = HashMap::with_capacity(2);
     let mut unassigned_missing: Vec<usize> = Vec::new();
 
+    // Track maximum scale (decimal places) per currency for rounding interpolated amounts.
+    // Python beancount rounds interpolated amounts to match the precision of other amounts
+    // in the same currency, which can create small residuals within tolerance.
+    let mut max_scale_by_currency: HashMap<InternedStr, u32> = HashMap::with_capacity(4);
+
     for (i, posting) in transaction.postings.iter().enumerate() {
         match &posting.units {
             Some(IncompleteAmount::Complete(amount)) => {
+                // Track scale (decimal places) for rounding interpolated amounts
+                let scale = amount.number.scale();
+                max_scale_by_currency
+                    .entry(amount.currency.clone())
+                    .and_modify(|s| *s = (*s).max(scale))
+                    .or_insert(scale);
+
                 // Determine the "weight" of this posting for balance purposes.
                 // This must match the logic in calculate_residual().
                 //
@@ -153,9 +165,15 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
 
                 if let Some((currency, cost_amount)) = cost_contribution {
                     // Cost-based posting: weight is in the cost currency
+                    // Note: We intentionally do NOT track scale from cost specs here.
+                    // Cost numbers are multipliers (e.g., {100 USD} means $100 per unit),
+                    // not explicit amounts. The scale of a cost multiplier doesn't determine
+                    // the precision of interpolated amounts - only explicit amounts do.
                     *residuals.entry(currency).or_default() += cost_amount;
                 } else if let Some(price) = &posting.price {
                     // Price annotation: converts units to price currency
+                    // Note: We do NOT track scale from per-unit prices (they're multipliers).
+                    // We DO track scale from total prices (they're explicit amounts).
                     match price {
                         rustledger_core::PriceAnnotation::Unit(price_amt) => {
                             let converted = amount.number.abs() * price_amt.number;
@@ -163,6 +181,12 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                                 converted * amount.number.signum();
                         }
                         rustledger_core::PriceAnnotation::Total(price_amt) => {
+                            // Total price is an explicit amount - track its scale
+                            let scale = price_amt.number.scale();
+                            max_scale_by_currency
+                                .entry(price_amt.currency.clone())
+                                .and_modify(|s| *s = (*s).max(scale))
+                                .or_insert(scale);
                             *residuals.entry(price_amt.currency.clone()).or_default() +=
                                 price_amt.number * amount.number.signum();
                         }
@@ -179,6 +203,12 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                         }
                         rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
                             if let Some(price_amt) = inc.as_amount() {
+                                // Total price is an explicit amount - track its scale
+                                let scale = price_amt.number.scale();
+                                max_scale_by_currency
+                                    .entry(price_amt.currency.clone())
+                                    .and_modify(|s| *s = (*s).max(scale))
+                                    .or_insert(scale);
                                 *residuals.entry(price_amt.currency.clone()).or_default() +=
                                     price_amt.number * amount.number.signum();
                             } else {
@@ -267,16 +297,23 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     for (currency, indices) in missing_by_currency {
         let idx = indices[0];
         let residual = residuals.get(&currency).copied().unwrap_or(Decimal::ZERO);
-        // Keep full precision - Python beancount preserves precision during interpolation
-        // Rounding happens only at display time
+
+        // Round interpolated amount to match the scale (decimal places) of other amounts
+        // in the same currency. This matches Python beancount's behavior.
+        let interpolated = if let Some(&scale) = max_scale_by_currency.get(&currency) {
+            (-residual).round_dp(scale)
+        } else {
+            -residual
+        };
 
         result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
-            -residual, &currency,
+            interpolated,
+            &currency,
         )));
         filled_indices.push(idx);
 
-        // Update residual
-        residuals.insert(currency, Decimal::ZERO);
+        // Update residual to reflect actual interpolated amount (may have rounding difference)
+        *residuals.entry(currency).or_default() += interpolated;
     }
 
     // Handle unassigned missing postings
@@ -296,35 +333,51 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             let original_posting = &transaction.postings[idx];
 
             // Fill the first currency into the original posting
-            // Keep full precision - rounding happens only at display time
             let (first_currency, first_residual) = &non_zero_residuals[0];
+            let interpolated = if let Some(&scale) = max_scale_by_currency.get(first_currency) {
+                (-first_residual).round_dp(scale)
+            } else {
+                -first_residual
+            };
             result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
-                -first_residual,
+                interpolated,
                 first_currency,
             )));
             filled_indices.push(idx);
-            residuals.insert(first_currency.clone(), Decimal::ZERO);
+            *residuals.entry(first_currency.clone()).or_default() += interpolated;
 
             // Add new postings for remaining currencies
             for (currency, residual) in non_zero_residuals.iter().skip(1) {
                 let mut new_posting = original_posting.clone();
-                // Keep full precision - rounding happens only at display time
-                new_posting.units =
-                    Some(IncompleteAmount::Complete(Amount::new(-residual, currency)));
+                let interpolated = if let Some(&scale) = max_scale_by_currency.get(currency) {
+                    (-residual).round_dp(scale)
+                } else {
+                    -residual
+                };
+                new_posting.units = Some(IncompleteAmount::Complete(Amount::new(
+                    interpolated,
+                    currency,
+                )));
                 result.postings.push(new_posting);
                 filled_indices.push(result.postings.len() - 1);
-                residuals.insert(currency.clone(), Decimal::ZERO);
+                *residuals.entry(currency.clone()).or_default() += interpolated;
             }
         } else {
             // Standard case: assign one currency per missing posting
             for (i, idx) in unassigned_missing.iter().enumerate() {
                 if i < non_zero_residuals.len() {
                     let (currency, residual) = &non_zero_residuals[i];
-                    // Keep full precision - rounding happens only at display time
-                    result.postings[*idx].units =
-                        Some(IncompleteAmount::Complete(Amount::new(-residual, currency)));
+                    let interpolated = if let Some(&scale) = max_scale_by_currency.get(currency) {
+                        (-residual).round_dp(scale)
+                    } else {
+                        -residual
+                    };
+                    result.postings[*idx].units = Some(IncompleteAmount::Complete(Amount::new(
+                        interpolated,
+                        currency,
+                    )));
                     filled_indices.push(*idx);
-                    residuals.insert(currency.clone(), Decimal::ZERO);
+                    *residuals.entry(currency.clone()).or_default() += interpolated;
                 } else if !non_zero_residuals.is_empty() {
                     // Use the first currency
                     let (currency, _) = &non_zero_residuals[0];
@@ -839,5 +892,89 @@ mod tests {
             residual.abs() < dec!(0.01),
             "USD residual should be ~0, got {residual}"
         );
+    }
+
+    // =========================================================================
+    // Interpolation rounding tests (issue #268)
+    // =========================================================================
+
+    /// Test that interpolated amounts are rounded to match the precision of other amounts.
+    /// This matches Python beancount's behavior where interpolated amounts use the same
+    /// quantum (decimal places) as other amounts in the same currency.
+    ///
+    /// Issue: <https://github.com/rustledger/rustledger/issues/268>
+    #[test]
+    fn test_interpolate_rounds_to_quantum() {
+        // From issue #268:
+        // 2026-01-02 * "..."
+        //   Assets:Cash
+        //   Assets:Abc                    12.3340 ABC {140.02 USD, 2025-01-01}
+        //   Expenses:Abc                    -0.01 USD
+        //
+        // Cost: 12.3340 * 140.02 = 1727.006680 USD
+        // Python rounds Cash to -1727.00 (2 decimal places from -0.01 USD)
+        // Residual: 1727.006680 - 0.01 - 1727.00 = -0.003320 USD (within 0.005 tolerance)
+        let txn = Transaction::new(date(2026, 1, 2), "Test")
+            .with_posting(Posting::auto("Assets:Cash"))
+            .with_posting(
+                Posting::new("Assets:Abc", Amount::new(dec!(12.3340), "ABC")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(140.02))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Expenses:Abc",
+                Amount::new(dec!(-0.01), "USD"),
+            ));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // Check that Cash was filled
+        assert_eq!(result.filled_indices, vec![0]);
+
+        // The interpolated amount should be rounded to 2 decimal places
+        // (matching the -0.01 USD in Expenses:Abc)
+        let filled = &result.transaction.postings[0];
+        let amount = get_amount(filled).expect("should have amount");
+        assert_eq!(amount.currency, "USD");
+        assert_eq!(
+            amount.number,
+            dec!(-1727.00),
+            "should be -1727.00 USD (rounded to 2 decimal places)"
+        );
+
+        // The residual should be non-zero but small (within tolerance)
+        let residual = result
+            .residuals
+            .get("USD")
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        assert_eq!(
+            residual,
+            dec!(-0.003320),
+            "residual should be -0.003320 USD"
+        );
+    }
+
+    /// Test that interpolation uses the maximum scale when multiple amounts have different scales.
+    #[test]
+    fn test_interpolate_uses_max_scale() {
+        // When we have amounts with different scales, use the maximum.
+        // 0.1 USD (scale 1) and 0.001 USD (scale 3) -> interpolate to scale 3
+        let txn = Transaction::new(date(2024, 1, 15), "Test")
+            .with_posting(Posting::new("Expenses:A", Amount::new(dec!(0.1), "USD")))
+            .with_posting(Posting::new("Expenses:B", Amount::new(dec!(0.001), "USD")))
+            .with_posting(Posting::auto("Assets:Cash"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        let filled = &result.transaction.postings[2];
+        let amount = get_amount(filled).expect("should have amount");
+
+        // The amount is exactly -0.101, which fits in 3 decimal places
+        assert_eq!(amount.number, dec!(-0.101));
+        // Scale should be 3 (the maximum of 1 and 3)
+        assert_eq!(amount.number.scale(), 3);
     }
 }
