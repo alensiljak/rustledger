@@ -478,12 +478,12 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 } else {
                     // Module-based plugin - we can't resolve it without system Python
                     // Provide helpful error message with suggestion
-                    let (line, _column, file_path) =
+                    let (line, file_path) =
                         if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
-                            let (l, c) = source_file.line_col(plugin.span.start);
-                            (l, c, source_file.path.clone())
+                            let (l, _) = source_file.line_col(plugin.span.start);
+                            (l, source_file.path.clone())
                         } else {
-                            (1, 1, file.clone())
+                            (1, file.clone())
                         };
 
                     // Try to find the module path using system Python (for helpful error only)
@@ -669,7 +669,15 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             Ok(output) => {
                                 for err in &output.errors {
                                     if !args.quiet {
-                                        writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
+                                        let severity = match err.severity {
+                                            rustledger_plugin::PluginErrorSeverity::Error => {
+                                                "error"
+                                            }
+                                            rustledger_plugin::PluginErrorSeverity::Warning => {
+                                                "warning"
+                                            }
+                                        };
+                                        writeln!(stdout, "{severity}: {}", err.message)?;
                                     }
                                     error_count += 1;
                                 }

@@ -332,9 +332,9 @@ pub fn suggest_module_path(module_name: &str) -> Option<String> {
     let output = Command::new("python3")
         .args([
             "-c",
-            "import sys, importlib.util; \
-             spec = importlib.util.find_spec(sys.argv[1]); \
-             print(spec.origin if spec and spec.origin and spec.origin.endswith('.py') else '')",
+            r"import sys, importlib.util
+spec = importlib.util.find_spec(sys.argv[1])
+print(spec.origin if spec and spec.origin and spec.origin.endswith('.py') else '')",
             module_name,
         ])
         .output()
