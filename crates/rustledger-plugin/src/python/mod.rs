@@ -34,7 +34,7 @@ mod compat;
 mod download;
 mod runtime;
 
-pub use runtime::PythonRuntime;
+pub use runtime::{is_python_available, suggest_module_path, PythonRuntime};
 
 /// Python plugin error types.
 #[derive(Debug, thiserror::Error)]
@@ -67,4 +67,16 @@ pub enum PythonError {
     /// WASM runtime error.
     #[error("WASM runtime error: {0}")]
     Wasm(#[from] anyhow::Error),
+
+    /// Plugin module not found on the system.
+    #[error("Python plugin module not found: {0}")]
+    ModuleNotFound(String),
+
+    /// Plugin is a C extension (not supported in WASI sandbox).
+    #[error("Python plugin '{0}' is a C extension and cannot run in WASI sandbox")]
+    CExtensionNotSupported(String),
+
+    /// Python runtime not available (Python interpreter not found).
+    #[error("Python runtime unavailable: {0}")]
+    RuntimeUnavailable(String),
 }

@@ -160,7 +160,7 @@ pub struct LoadResult {
 /// A plugin directive.
 #[derive(Debug, Clone)]
 pub struct Plugin {
-    /// Plugin module name.
+    /// Plugin module name (with any `python:` prefix stripped).
     pub name: String,
     /// Optional configuration string.
     pub config: Option<String>,
@@ -168,6 +168,8 @@ pub struct Plugin {
     pub span: Span,
     /// File this plugin was declared in.
     pub file_id: usize,
+    /// Whether the `python:` prefix was used to force Python execution.
+    pub force_python: bool,
 }
 
 /// Check if a file is GPG-encrypted based on extension or content.
@@ -393,11 +395,18 @@ impl Loader {
 
         // Process plugins
         for (name, config, span) in result.plugins {
+            // Check for "python:" prefix to force Python execution
+            let (actual_name, force_python) = if let Some(stripped) = name.strip_prefix("python:") {
+                (stripped.to_string(), true)
+            } else {
+                (name, false)
+            };
             plugins.push(Plugin {
-                name,
+                name: actual_name,
                 config,
                 span,
                 file_id,
+                force_python,
             });
         }
 

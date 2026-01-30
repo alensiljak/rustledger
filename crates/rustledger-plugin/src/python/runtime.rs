@@ -173,6 +173,35 @@ with open('work/output.json', 'w') as f:
         self.execute_plugin(plugin_code, "plugin", input)
     }
 
+    /// Execute a Python plugin by module name.
+    ///
+    /// This method discovers the module on the host filesystem (using the host
+    /// Python interpreter), reads its source code, and executes it in the WASI
+    /// sandbox.
+    ///
+    /// # Arguments
+    ///
+    /// * `module_name` - Python module path (e.g., `"my_plugin"` or `"my_package.plugin"`)
+    /// * `input` - Plugin input with directives
+    /// * `beancount_dir` - Directory containing the beancount file (for relative imports)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PythonError::ModuleNotFound` if the module cannot be located.
+    /// Returns `PythonError::CExtensionNotSupported` if the module is a C extension.
+    pub fn execute_module(
+        &self,
+        module_name: &str,
+        input: &PluginInput,
+        beancount_dir: Option<&std::path::Path>,
+    ) -> Result<PluginOutput, PythonError> {
+        // Discover and read the module source
+        let source = discover_module_source(module_name, beancount_dir)?;
+
+        // Execute the plugin using the discovered source
+        self.execute_plugin(&source, "plugin", input)
+    }
+
     /// Run a Python script and return output via file.
     fn run_python(
         &self,
@@ -256,6 +285,80 @@ with open('work/output.json', 'w') as f:
             ))
         })
     }
+}
+
+/// Discover and read a Python plugin's source code.
+///
+/// For file-based plugins (`.py` files or paths), reads the file directly.
+/// For module-based plugins, returns `ModuleNotFound` error - the caller should
+/// use `suggest_module_path()` to provide a helpful hint to the user.
+fn discover_module_source(
+    module_name: &str,
+    beancount_dir: Option<&std::path::Path>,
+) -> Result<String, PythonError> {
+    use std::path::PathBuf;
+
+    // Handle file-based plugins first
+    let is_py_file = std::path::Path::new(module_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+    if is_py_file || module_name.contains(std::path::MAIN_SEPARATOR) {
+        let path = if let Some(dir) = beancount_dir {
+            dir.join(module_name)
+        } else {
+            PathBuf::from(module_name)
+        };
+
+        if !path.exists() {
+            return Err(PythonError::ModuleNotFound(module_name.to_string()));
+        }
+
+        return std::fs::read_to_string(&path).map_err(PythonError::Io);
+    }
+
+    // Module-based plugins require explicit file paths
+    Err(PythonError::ModuleNotFound(module_name.to_string()))
+}
+
+/// Try to locate a Python module's file path using the system Python.
+///
+/// This is used to provide helpful error messages suggesting the user
+/// replace module-based plugin references with explicit file paths.
+///
+/// Returns `Some(path)` if the module was found, `None` otherwise.
+pub fn suggest_module_path(module_name: &str) -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            "import sys, importlib.util; \
+             spec = importlib.util.find_spec(sys.argv[1]); \
+             print(spec.origin if spec and spec.origin and spec.origin.endswith('.py') else '')",
+            module_name,
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+/// Check if Python 3 is available on the system.
+pub fn is_python_available() -> bool {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Serialize directives to JSON for Python consumption.

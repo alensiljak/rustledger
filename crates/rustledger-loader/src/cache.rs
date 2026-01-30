@@ -34,6 +34,8 @@ pub struct CachedPlugin {
     pub name: String,
     /// Optional configuration string.
     pub config: Option<String>,
+    /// Whether the `python:` prefix was used to force Python execution.
+    pub force_python: bool,
 }
 
 /// Cached options - a serializable subset of Options.
@@ -649,6 +651,7 @@ mod tests {
             plugins: vec![CachedPlugin {
                 name: "test_plugin".to_string(),
                 config: Some("config".to_string()),
+                force_python: false,
             }],
             files: vec![beancount_file.to_string_lossy().to_string()],
         };
