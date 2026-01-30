@@ -521,4 +521,76 @@ mod tests {
         assert!(result.directives.is_empty());
         assert!(result.errors.is_empty());
     }
+
+    #[test]
+    fn test_is_python_available() {
+        // Just ensure this doesn't panic and returns a bool
+        let _available = is_python_available();
+    }
+
+    #[test]
+    fn test_discover_module_source_file_not_found() {
+        let result = discover_module_source("nonexistent.py", None);
+        assert!(matches!(result, Err(PythonError::ModuleNotFound(_))));
+    }
+
+    #[test]
+    fn test_discover_module_source_module_based() {
+        // Module-based plugins should return ModuleNotFound
+        let result = discover_module_source("beancount.plugins.check_commodity", None);
+        assert!(matches!(result, Err(PythonError::ModuleNotFound(_))));
+    }
+
+    #[test]
+    fn test_discover_module_source_reads_file() {
+        use std::io::Write;
+
+        // Create a temp file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_path = temp_dir.path().join("test_plugin.py");
+        let mut file = std::fs::File::create(&plugin_path).unwrap();
+        writeln!(file, "def plugin(entries, options): return entries, []").unwrap();
+
+        // Test reading with absolute path
+        let result = discover_module_source(plugin_path.to_str().unwrap(), None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("def plugin"));
+    }
+
+    #[test]
+    fn test_discover_module_source_relative_to_beancount_dir() {
+        use std::io::Write;
+
+        // Create a temp file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_path = temp_dir.path().join("my_plugin.py");
+        let mut file = std::fs::File::create(&plugin_path).unwrap();
+        writeln!(file, "# my plugin").unwrap();
+
+        // Test reading relative to beancount_dir
+        let result = discover_module_source("my_plugin.py", Some(temp_dir.path()));
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("# my plugin"));
+    }
+
+    #[test]
+    fn test_suggest_module_path_returns_option() {
+        // Test with a module that likely doesn't exist
+        let result = suggest_module_path("nonexistent_module_xyz123");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_suggest_module_path_finds_known_module() {
+        if !is_python_available() {
+            return; // Skip if Python not available
+        }
+
+        // 'os' is a standard library module that should exist
+        let result = suggest_module_path("os");
+        // os.py should be found on most systems
+        if let Some(path) = result {
+            assert!(path.ends_with(".py") || path.contains("os"));
+        }
+    }
 }

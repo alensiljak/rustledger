@@ -584,4 +584,38 @@ mod tests {
             panic!("Expected Decryption error");
         }
     }
+
+    #[test]
+    fn test_plugin_force_python_prefix() {
+        let mut file = NamedTempFile::with_suffix(".beancount").unwrap();
+        writeln!(file, r#"plugin "python:my_plugin""#).unwrap();
+        writeln!(file, r#"plugin "regular_plugin""#).unwrap();
+        file.flush().unwrap();
+
+        let result = load(file.path()).unwrap();
+
+        assert_eq!(result.plugins.len(), 2);
+
+        // First plugin should have force_python = true and name without prefix
+        assert_eq!(result.plugins[0].name, "my_plugin");
+        assert!(result.plugins[0].force_python);
+
+        // Second plugin should have force_python = false
+        assert_eq!(result.plugins[1].name, "regular_plugin");
+        assert!(!result.plugins[1].force_python);
+    }
+
+    #[test]
+    fn test_plugin_force_python_with_config() {
+        let mut file = NamedTempFile::with_suffix(".beancount").unwrap();
+        writeln!(file, r#"plugin "python:my_plugin" "config_value""#).unwrap();
+        file.flush().unwrap();
+
+        let result = load(file.path()).unwrap();
+
+        assert_eq!(result.plugins.len(), 1);
+        assert_eq!(result.plugins[0].name, "my_plugin");
+        assert!(result.plugins[0].force_python);
+        assert_eq!(result.plugins[0].config, Some("config_value".to_string()));
+    }
 }
