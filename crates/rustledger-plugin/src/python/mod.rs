@@ -34,7 +34,7 @@ mod compat;
 mod download;
 mod runtime;
 
-pub use runtime::{is_python_available, suggest_module_path, PythonRuntime};
+pub use runtime::{PythonRuntime, is_python_available, suggest_module_path};
 
 /// Python plugin error types.
 #[derive(Debug, thiserror::Error)]

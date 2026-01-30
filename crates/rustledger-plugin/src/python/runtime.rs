@@ -345,11 +345,7 @@ pub fn suggest_module_path(module_name: &str) -> Option<String> {
     }
 
     let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if path.is_empty() {
-        None
-    } else {
-        Some(path)
-    }
+    if path.is_empty() { None } else { Some(path) }
 }
 
 /// Check if Python 3 is available on the system.

@@ -470,8 +470,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 let is_py_file = std::path::Path::new(&plugin.name)
                     .extension()
                     .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
-                let is_file_based = is_py_file
-                    || plugin.name.contains(std::path::MAIN_SEPARATOR);
+                let is_file_based = is_py_file || plugin.name.contains(std::path::MAIN_SEPARATOR);
 
                 if is_file_based {
                     // File-based plugins can be executed in WASM sandbox
@@ -496,26 +495,24 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
                     if let Some(module_path) = suggestion {
                         if !args.quiet {
+                            let plugin_name = &plugin.name;
                             writeln!(
                                 stdout,
-                                "{}:{}: error[E8004]: Cannot resolve Python module '{}'",
+                                "{}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
                                 file_path.display(),
-                                line,
-                                plugin.name
                             )?;
                             writeln!(stdout)?;
-                            writeln!(stdout, "Replace line {}:", line)?;
-                            writeln!(stdout, "  plugin \"{}\"", plugin.name)?;
+                            writeln!(stdout, "Replace line {line}:")?;
+                            writeln!(stdout, "  plugin \"{plugin_name}\"")?;
                             writeln!(stdout, "with:")?;
-                            writeln!(stdout, "  plugin \"{}\"", module_path)?;
+                            writeln!(stdout, "  plugin \"{module_path}\"")?;
                         }
                     } else if !args.quiet {
+                        let plugin_name = &plugin.name;
                         writeln!(
                             stdout,
-                            "{}:{}: error[E8001]: Plugin not found: \"{}\"",
+                            "{}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
                             file_path.display(),
-                            line,
-                            plugin.name
                         )?;
                     }
                     error_count += 1;
@@ -686,8 +683,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                 if !args.quiet {
                                     writeln!(
                                         stdout,
-                                        "error[E8002]: Python plugin execution failed: {}",
-                                        e
+                                        "error[E8002]: Python plugin execution failed: {e}"
                                     )?;
                                 }
                                 error_count += 1;
@@ -698,11 +694,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 Err(e) => {
                     // E8003: Python runtime unavailable
                     if !args.quiet {
-                        writeln!(
-                            stdout,
-                            "error[E8003]: Python runtime unavailable: {}",
-                            e
-                        )?;
+                        writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
                     }
                     error_count += python_plugins_to_run.len();
                 }
