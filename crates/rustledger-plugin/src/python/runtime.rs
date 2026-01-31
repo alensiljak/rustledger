@@ -52,6 +52,9 @@ impl PythonRuntime {
         // Create engine with fuel for execution limits
         let mut config = Config::new();
         config.consume_fuel(true);
+        // Python needs a larger stack for compiling/importing modules
+        // Default is 512KB which is too small for Python's recursive AST visitor
+        config.max_wasm_stack(16 * 1024 * 1024); // 16MB stack
         let engine = Arc::new(Engine::new(&config).map_err(PythonError::Wasm)?);
 
         // Try to load precompiled module from cache, or compile and cache it
@@ -112,13 +115,13 @@ impl PythonRuntime {
         let script = format!(
             r"
 import sys
-sys.path.insert(0, 'work')
+sys.path.insert(0, '/work')
 
 # Load compatibility layer (defines types like ValidationError, Transaction, etc.)
-exec(open('work/compat.py').read())
+exec(open('/work/compat.py').read())
 
 # Load plugin code in same namespace so it has access to compat types
-exec(open('work/plugin.py').read())
+exec(open('/work/plugin.py').read())
 
 # Input data
 entries_json = '''{entries_json}'''
@@ -129,7 +132,7 @@ config = {config_arg}
 entries_out, errors_out = run_plugin({plugin_func}, entries_json, options_json, config)
 
 # Write output to file
-with open('work/output.json', 'w') as f:
+with open('/work/output.json', 'w') as f:
     f.write(entries_out)
     f.write('\n---SEPARATOR---\n')
     f.write(errors_out)
@@ -233,23 +236,24 @@ with open('work/output.json', 'w') as f:
         // Get the python-wasi root directory (parent of lib)
         let python_root = self.stdlib_path.parent().unwrap_or(&self.stdlib_path);
 
-        // Map the python-wasi directory as "." so Python can find ./lib
+        // Map the python-wasi directory as "/" (root) so Python can find /lib
+        // This is critical - Python needs absolute paths for PYTHONHOME/PYTHONPATH
         wasi_builder
-            .preopened_dir(python_root, ".", DirPerms::READ, FilePerms::READ)
+            .preopened_dir(python_root, "/", DirPerms::READ, FilePerms::READ)
             .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
 
         // Set up work directory for script and output (read-write)
         wasi_builder
-            .preopened_dir(work_dir.path(), "work", DirPerms::all(), FilePerms::all())
+            .preopened_dir(work_dir.path(), "/work", DirPerms::all(), FilePerms::all())
             .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
 
-        // Set environment for Python - use relative paths
+        // Set environment for Python - use absolute paths from guest perspective
         wasi_builder
-            .env("PYTHONHOME", ".")
-            .env("PYTHONPATH", "./lib")
+            .env("PYTHONHOME", "/")
+            .env("PYTHONPATH", "/lib")
             .env("PYTHONDONTWRITEBYTECODE", "1")
-            // Set args: python work/script.py (no leading ./)
-            .args(&["python", "work/script.py"]);
+            // Set args: python /work/script.py
+            .args(&["python", "/work/script.py"]);
 
         let wasi_ctx = wasi_builder.build_p1();
 
