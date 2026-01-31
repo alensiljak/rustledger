@@ -292,6 +292,10 @@ with open('work/output.json', 'w') as f:
 /// For file-based plugins (`.py` files or paths), reads the file directly.
 /// For module-based plugins, returns `ModuleNotFound` error - the caller should
 /// use `suggest_module_path()` to provide a helpful hint to the user.
+///
+/// This intentionally does NOT auto-discover module sources via system Python.
+/// We want users to explicitly specify file paths so we can track which plugins
+/// need native Rust implementations.
 fn discover_module_source(
     module_name: &str,
     beancount_dir: Option<&std::path::Path>,
@@ -590,7 +594,10 @@ mod tests {
         let result = suggest_module_path("os");
         // os.py should be found on most systems
         if let Some(path) = result {
-            assert!(path.ends_with(".py") || path.contains("os"));
+            let has_py_ext = std::path::Path::new(&path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+            assert!(has_py_ext || path.contains("os"));
         }
     }
 }
