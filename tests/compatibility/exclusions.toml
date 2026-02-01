@@ -41,3 +41,19 @@ reason = "Uses beancount.plugins.unrealized removed in v3"
 [[exclusions]]
 pattern = "parser-lima/test-cases_ParserPlugin.PluginWithConfig.beancount"
 reason = "Uses beancount.plugins.unrealized removed in v3"
+
+[[exclusions]]
+pattern = "beanahead/examples_defs_rx.beancount"
+reason = "Rust provides native rx_txn plugin; Python fails to import"
+
+[[exclusions]]
+pattern = "beanahead/examples_new_empty_files_rx_def.beancount"
+reason = "Rust provides native rx_txn plugin; Python fails to import"
+
+[[exclusions]]
+pattern = "beanahead/tests_resources_defs_rx_opts.beancount"
+reason = "Rust provides native rx_txn plugin; Python fails to import"
+
+[[exclusions]]
+pattern = "intellij-beancount/resources-test_testData_parsing_Simple.beancount"
+reason = "Rust provides native zerosum plugin; Python can't find plugins.redstreet.zerosum"
