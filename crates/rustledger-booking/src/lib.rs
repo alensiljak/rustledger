@@ -65,9 +65,11 @@ pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal>
 /// 1. An explicit currency in the cost specification itself (handled by the caller).
 /// 2. A price annotation on a simple posting (the price currency takes precedence).
 /// 3. The currency of other simple postings (units or currency-only amounts).
+/// 4. The currency from a cost spec (e.g., `{0 USD}` for zero-cost items).
 pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Option<InternedStr> {
+    // First pass: look for simple postings (no cost spec) - these take priority
     for posting in &transaction.postings {
-        // Skip postings with cost specs - we're looking for simple postings
+        // Skip postings with cost specs in first pass
         if posting.cost.is_some() {
             continue;
         }
@@ -103,6 +105,17 @@ pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Op
             }
         }
     }
+
+    // Second pass: look for cost spec currencies (e.g., `{0 USD}`)
+    // This handles zero-cost postings where the cost currency should be used
+    for posting in &transaction.postings {
+        if let Some(cost) = &posting.cost
+            && let Some(currency) = &cost.currency
+        {
+            return Some(currency.clone());
+        }
+    }
+
     None
 }
 
