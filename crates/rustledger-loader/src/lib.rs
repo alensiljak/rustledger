@@ -31,6 +31,8 @@
 #[cfg(feature = "cache")]
 pub mod cache;
 mod options;
+#[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
+mod process;
 mod source_map;
 
 #[cfg(feature = "cache")]
@@ -40,6 +42,13 @@ pub use cache::{
 };
 pub use options::Options;
 pub use source_map::{SourceFile, SourceMap};
+
+// Re-export processing API when features are enabled
+#[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
+pub use process::{
+    ErrorLocation, ErrorSeverity, Ledger, LedgerError, LoadOptions, ProcessError, load, load_raw,
+    process,
+};
 
 use rustledger_core::{Directive, DisplayContext};
 use rustledger_parser::{ParseError, Span, Spanned};
@@ -519,9 +528,12 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
     ctx
 }
 
-/// Load a beancount file.
+/// Load a beancount file without processing.
 ///
 /// This is a convenience function that creates a loader and loads a single file.
+/// For fully processed results (booking, plugins, validation), use the
+/// [`load`] function with [`LoadOptions`] instead.
+#[cfg(not(any(feature = "booking", feature = "plugins", feature = "validation")))]
 pub fn load(path: &Path) -> Result<LoadResult, LoadError> {
     Loader::new().load(path)
 }
@@ -592,7 +604,7 @@ mod tests {
         writeln!(file, r#"plugin "regular_plugin""#).unwrap();
         file.flush().unwrap();
 
-        let result = load(file.path()).unwrap();
+        let result = Loader::new().load(file.path()).unwrap();
 
         assert_eq!(result.plugins.len(), 2);
 
@@ -611,7 +623,7 @@ mod tests {
         writeln!(file, r#"plugin "python:my_plugin" "config_value""#).unwrap();
         file.flush().unwrap();
 
-        let result = load(file.path()).unwrap();
+        let result = Loader::new().load(file.path()).unwrap();
 
         assert_eq!(result.plugins.len(), 1);
         assert_eq!(result.plugins[0].name, "my_plugin");

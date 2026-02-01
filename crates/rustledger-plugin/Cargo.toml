@@ -27,6 +27,8 @@ rmp-serde.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 rust_decimal.workspace = true
+chrono.workspace = true
+regex.workspace = true
 
 # Python plugin support (optional)
 ureq = { workspace = true, optional = true }

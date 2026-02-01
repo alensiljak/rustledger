@@ -172,6 +172,7 @@
             hyperfine # Benchmarking
             tokei # Code stats
             git-cliff # Changelog generation
+            uv # Python package manager for compat testing
 
             # Documentation
             mdbook

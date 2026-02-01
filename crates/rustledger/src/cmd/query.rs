@@ -14,9 +14,9 @@
 use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result};
 use clap::Parser;
-use rustledger_booking::{BookingEngine, expand_pads};
-use rustledger_core::{BookingMethod, Directive, DisplayContext};
-use rustledger_loader::Loader;
+use rustledger_booking::expand_pads;
+use rustledger_core::{Directive, DisplayContext};
+use rustledger_loader::{LoadOptions, load};
 use rustledger_query::{Executor, Value, parse as parse_query};
 use rustyline::error::ReadlineError;
 use rustyline::history::DefaultHistory;
@@ -116,59 +116,33 @@ pub fn run(args: &Args) -> Result<()> {
         anyhow::bail!("file not found: {}", file.display());
     }
 
-    // Load and parse the file
-    let mut loader = Loader::new();
-    let load_result = loader
-        .load(file)
-        .with_context(|| format!("failed to load {}", file.display()))?;
+    // Load and fully process the file (parse → book → plugins)
+    // This uses the new loader API which matches Python's loader.load_file()
+    let options = LoadOptions {
+        validate: false, // Query doesn't need validation
+        ..Default::default()
+    };
 
-    // Report parse errors to stderr (matching bean-query behavior)
+    let ledger =
+        load(file, &options).with_context(|| format!("failed to load {}", file.display()))?;
+
+    // Report errors to stderr (matching bean-query behavior)
     // Continue with successfully parsed directives rather than bailing
-    if !load_result.errors.is_empty() && !args.no_errors {
-        for err in &load_result.errors {
-            eprintln!("{err}");
+    if !ledger.errors.is_empty() && !args.no_errors {
+        for err in &ledger.errors {
+            eprintln!("{}: {}", err.code, err.message);
         }
         eprintln!();
     }
 
-    // Get directives, book transactions, then expand pads
-    // This matches Python beancount behavior where:
-    // 1. Transactions are interpolated (fill in missing amounts)
-    // 2. Pad directives are expanded into synthetic transactions (using interpolated amounts)
-    // 3. Queries run on fully booked entries
-    let raw_directives: Vec<_> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
+    // Get directives (already booked and plugins applied)
+    let booked_directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
 
-    // Step 1: Book transactions (lot matching + interpolation)
-    // This fills in missing amounts BEFORE pad expansion
-    let mut booking_engine = BookingEngine::with_method(BookingMethod::Fifo);
-    let booked_directives: Vec<_> = raw_directives
-        .into_iter()
-        .map(|d| {
-            if let Directive::Transaction(txn) = &d {
-                // Book and interpolate: fills in empty cost specs and missing amounts
-                if let Ok(result) = booking_engine.book_and_interpolate(txn) {
-                    // Apply the booked transaction to update inventory
-                    booking_engine.apply(&result.transaction);
-                    let mut txn = result.transaction;
-                    // Normalize total prices (@@→@) for downstream consumers
-                    rustledger_booking::normalize_prices(&mut txn);
-                    return Directive::Transaction(txn);
-                }
-            }
-            d
-        })
-        .collect();
-
-    // Step 2: Expand pad directives into synthetic transactions
-    // Now pad processing sees the interpolated amounts and calculates correct padding
+    // Expand pad directives into synthetic transactions
     let directives = expand_pads(&booked_directives);
 
-    // Get the display context for formatting numbers
-    let display_context = load_result.display_context;
+    // Use display context from the loaded ledger
+    let display_context = ledger.display_context;
 
     if args.verbose {
         eprintln!("Loaded {} directives", directives.len());

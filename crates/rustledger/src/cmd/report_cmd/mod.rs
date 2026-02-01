@@ -36,9 +36,8 @@ mod stats;
 use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use rustledger_booking::interpolate;
-use rustledger_core::{Directive, NaiveDate};
-use rustledger_loader::Loader;
+use rustledger_core::NaiveDate;
+use rustledger_loader::{LoadOptions, load};
 use std::io;
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -173,31 +172,26 @@ pub fn run(file: &PathBuf, report: &Report, verbose: bool, format: &OutputFormat
         anyhow::bail!("file not found: {}", file.display());
     }
 
-    // Load the file
+    // Load and fully process the file (parse → book → plugins)
     if verbose {
         eprintln!("Loading {}...", file.display());
     }
 
-    let mut loader = Loader::new();
-    let load_result = loader
-        .load(file)
-        .with_context(|| format!("failed to load {}", file.display()))?;
+    let options = LoadOptions {
+        validate: false, // Reports don't need validation
+        ..Default::default()
+    };
 
-    // Extract directives (move, not clone)
-    let mut directives: Vec<_> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
+    let ledger =
+        load(file, &options).with_context(|| format!("failed to load {}", file.display()))?;
 
-    // Interpolate transactions
-    for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive
-            && let Ok(result) = interpolate(txn)
-        {
-            *txn = result.transaction;
-        }
+    // Report any errors
+    for err in &ledger.errors {
+        eprintln!("{}: {}", err.code, err.message);
     }
+
+    // Extract directives (already booked and plugins applied)
+    let directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
 
     // Generate the requested report
     match report {

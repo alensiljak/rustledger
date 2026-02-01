@@ -3037,8 +3037,11 @@ dependencies = [
  "rkyv 0.8.14",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustledger-booking",
  "rustledger-core",
  "rustledger-parser",
+ "rustledger-plugin",
+ "rustledger-validate",
  "sha2",
  "tempfile",
  "thiserror 2.0.18",
@@ -3089,8 +3092,10 @@ name = "rustledger-plugin"
 version = "0.8.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "dirs",
  "proptest",
+ "regex",
  "rmp-serde",
  "rust_decimal",
  "rust_decimal_macros",

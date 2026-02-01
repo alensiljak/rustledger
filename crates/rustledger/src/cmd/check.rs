@@ -545,12 +545,57 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Destructure to enable move instead of clone
     let LoadResult {
-        directives: spanned_directives,
+        directives: mut spanned_directives,
         options,
         plugins: file_plugins,
         source_map,
         ..
     } = load_result;
+
+    // Run booking and interpolation FIRST (before plugins)
+    // This matches Python beancount behavior where booking fills in missing amounts
+    // before plugins run. Plugins like gain_loss need the interpolated amounts.
+    if args.verbose && !args.quiet {
+        eprintln!(
+            "Booking and interpolating {} directives...",
+            spanned_directives.len()
+        );
+    }
+
+    // Sort directives by date before booking, so lot matching works correctly
+    spanned_directives.sort_by(|a, b| {
+        a.value
+            .date()
+            .cmp(&b.value.date())
+            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    });
+
+    let booking_method: BookingMethod = options
+        .booking_method
+        .parse()
+        .unwrap_or(BookingMethod::Strict);
+    let mut booking_engine = BookingEngine::with_method(booking_method);
+    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
+
+    for spanned in &mut spanned_directives {
+        if let Directive::Transaction(txn) = &mut spanned.value {
+            match booking_engine.book_and_interpolate(txn) {
+                Ok(result) => {
+                    booking_engine.apply(&result.transaction);
+                    *txn = result.transaction;
+                }
+                Err(e) => {
+                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
+                        interpolation_errors.push((
+                            txn.date,
+                            txn.narration.to_string(),
+                            interp_err,
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     // Extract directives and spans in a single pass for efficiency
     // We need the spans for validation error reporting
@@ -567,8 +612,12 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         .map(|s| (*s).to_string())
         .collect();
 
-    // Build list of native plugins to run from CLI args
-    let mut native_plugins_to_run = args.native_plugins.clone();
+    // Build list of native plugins to run from CLI args (with no config)
+    let mut native_plugins_to_run: Vec<(String, Option<String>)> = args
+        .native_plugins
+        .iter()
+        .map(|name| (name.clone(), None))
+        .collect();
 
     // Also run plugins declared in the beancount file (if they're native)
     for plugin in &file_plugins {
@@ -585,14 +634,18 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             continue; // Unknown plugin, already reported error above
         };
 
-        if !native_plugins_to_run.contains(&plugin_name) {
-            native_plugins_to_run.push(plugin_name);
+        if !native_plugins_to_run.iter().any(|(n, _)| n == &plugin_name) {
+            native_plugins_to_run.push((plugin_name, plugin.config.clone()));
         }
     }
 
     // If --auto is set, add auto-plugins
-    if args.auto && !native_plugins_to_run.contains(&"auto_accounts".to_string()) {
-        native_plugins_to_run.insert(0, "auto_accounts".to_string());
+    if args.auto
+        && !native_plugins_to_run
+            .iter()
+            .any(|(n, _)| n == "auto_accounts")
+    {
+        native_plugins_to_run.insert(0, ("auto_accounts".to_string(), None));
     }
 
     // Run plugins if specified
@@ -623,12 +676,18 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         // native_registry already created above for plugin validation
         let mut current_input = plugin_input;
 
-        for plugin_name in &native_plugins_to_run {
+        for (plugin_name, plugin_config) in &native_plugins_to_run {
             if let Some(plugin) = native_registry.find(plugin_name) {
                 if args.verbose && !args.quiet {
                     eprintln!("  Running native plugin: {}", plugin.name());
                 }
-                let output = plugin.process(current_input.clone());
+                // Set config for this specific plugin
+                let plugin_input = PluginInput {
+                    directives: current_input.directives.clone(),
+                    options: current_input.options.clone(),
+                    config: plugin_config.clone(),
+                };
+                let output = plugin.process(plugin_input);
 
                 for err in &output.errors {
                     if !args.quiet {
@@ -794,58 +853,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 .collect()
         };
 
-    // Run booking and interpolation on transactions (sequential)
-    // Booking must be sequential because lot matching depends on prior inventory.
-    // This matches Python beancount behavior where booking runs before interpolation
-    // to fill in empty cost specs (e.g., `-5 AAPL {}` -> `-5 AAPL {100 USD, 2020-01-01}`).
-    if args.verbose && !args.quiet {
-        eprintln!(
-            "Booking and interpolating {} directives...",
-            spanned_directives.len()
-        );
-    }
-
-    // Sort directives by date before booking, so lot matching works correctly
-    // regardless of source file ordering (e.g., reverse-chronological ledgers).
-    // Uses stable sort to preserve original ordering for same-date directives.
-    spanned_directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
-    });
-
-    let booking_method: BookingMethod = options
-        .booking_method
-        .parse()
-        .unwrap_or(BookingMethod::Strict);
-    let mut booking_engine = BookingEngine::with_method(booking_method);
-    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
-
-    for spanned in &mut spanned_directives {
-        if let Directive::Transaction(txn) = &mut spanned.value {
-            match booking_engine.book_and_interpolate(txn) {
-                Ok(result) => {
-                    // Apply the booked transaction to update inventory for subsequent lot matching
-                    booking_engine.apply(&result.transaction);
-                    *txn = result.transaction;
-                }
-                Err(e) => {
-                    // Convert BookingError to InterpolationError for consistent error reporting
-                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
-                        interpolation_errors.push((
-                            txn.date,
-                            txn.narration.to_string(),
-                            interp_err,
-                        ));
-                    }
-                    // Other booking errors (NoMatchingLot, InsufficientUnits) are
-                    // reported as validation errors, not interpolation errors
-                }
-            }
-        }
-    }
-
+    // Report interpolation errors from booking (which ran before plugins)
     if !interpolation_errors.is_empty() {
         if json_mode {
             for (date, narration, err) in &interpolation_errors {

@@ -21,3 +21,23 @@ This is not a practical issue - no real-world ledger uses 28-decimal-place amoun
 Fixing this would require replacing rust_decimal with an arbitrary-precision library
 like bigdecimal, which is a significant refactor for negligible practical benefit.
 """
+
+[[exclusions]]
+pattern = "beancount-v2/examples_forecast_forecast.beancount"
+reason = "Uses beancount.plugins.forecast removed in v3"
+
+[[exclusions]]
+pattern = "beancount-v2/examples_sharing_cozumel2015.beancount"
+reason = "Uses beancount.plugins.split_expenses removed in v3"
+
+[[exclusions]]
+pattern = "beancount-v2/examples_sharing_duxbury2015.beancount"
+reason = "Uses beancount.plugins.split_expenses removed in v3"
+
+[[exclusions]]
+pattern = "parser-lima/test-cases_ParserPlugin.Plugin.beancount"
+reason = "Uses beancount.plugins.unrealized removed in v3"
+
+[[exclusions]]
+pattern = "parser-lima/test-cases_ParserPlugin.PluginWithConfig.beancount"
+reason = "Uses beancount.plugins.unrealized removed in v3"
