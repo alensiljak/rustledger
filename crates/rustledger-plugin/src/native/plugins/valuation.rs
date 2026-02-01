@@ -55,11 +55,12 @@ impl NativePlugin for ValuationPlugin {
     }
 
     fn process(&self, input: PluginInput) -> PluginOutput {
-        // TODO: The beancount-lazy-plugins valuation plugin is complex and our
-        // native implementation has bugs. For now, pass through unchanged to avoid
-        // generating broken transactions. This allows Python to handle these files.
+        // Note: The beancount-lazy-plugins valuation logic is currently handled by
+        // the existing Python implementation. This native plugin intentionally
+        // passes directives through unchanged to avoid generating incorrect
+        // transactions until a fully tested native implementation is introduced.
         //
-        // The full implementation needs to:
+        // Any future native implementation should:
         // 1. Parse `custom "valuation" "config"` directives for account mapping
         // 2. Track synthetic currency balances
         // 3. Convert fund transactions to use synthetic currency with proper cost basis

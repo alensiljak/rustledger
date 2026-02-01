@@ -52,9 +52,12 @@ impl PythonRuntime {
         // Create engine with fuel for execution limits
         let mut config = Config::new();
         config.consume_fuel(true);
-        // Python needs a larger stack for compiling/importing modules
-        // Default is 512KB which is too small for Python's recursive AST visitor
-        config.max_wasm_stack(16 * 1024 * 1024); // 16MB stack
+        // Python needs a larger stack for compiling/importing modules.
+        // As of wasmtime's Config::max_wasm_stack documentation
+        // (https://docs.wasmtime.dev/api/wasmtime/struct.Config.html#method.max_wasm_stack),
+        // the default max WebAssembly stack size is 512 KiB, which is too small for
+        // Python's recursive AST visitor, so we increase it to 16 MiB here.
+        config.max_wasm_stack(16 * 1024 * 1024);
         let engine = Arc::new(Engine::new(&config).map_err(PythonError::Wasm)?);
 
         // Try to load precompiled module from cache, or compile and cache it

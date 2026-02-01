@@ -380,7 +380,10 @@ fn run_plugins(
             directives[i].value = new_directive;
         }
     } else {
-        // Count changed - plugins added/removed directives
+        // Count changed - plugins added/removed directives.
+        // Use synthetic zero spans for plugin-generated directives since we cannot
+        // reliably map them back to source locations. Error reporting for these
+        // directives will show the plugin name instead of a file location.
         *directives = processed
             .into_iter()
             .map(|d| Spanned::new(d, rustledger_parser::Span::new(0, 0)))

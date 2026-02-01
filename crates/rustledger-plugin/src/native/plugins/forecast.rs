@@ -201,7 +201,9 @@ fn generate_dates(
 fn add_months(date: NaiveDate, months: i32) -> NaiveDate {
     let total_months = date.month0() as i32 + months;
     let new_year = date.year() + total_months / 12;
-    let new_month = (total_months % 12 + 12) % 12 + 1; // Handle negative months
+    // Normalize total_months to a 0–11 month index even when total_months is negative
+    // (Rust's % operator can return a negative remainder, so we use a double modulo).
+    let new_month = (total_months % 12 + 12) % 12 + 1;
 
     // Try to keep the same day, but clamp to valid days in the new month
     let max_day = days_in_month(new_year, new_month as u32);
