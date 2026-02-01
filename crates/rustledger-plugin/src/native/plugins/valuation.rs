@@ -75,7 +75,10 @@ impl NativePlugin for ValuationPlugin {
 
 #[allow(dead_code)]
 impl ValuationPlugin {
-    /// Full implementation (disabled for now due to bugs)
+    /// Full implementation - kept for reference but not used.
+    /// The valuation plugin requires complex cost-basis tracking that is
+    /// better handled by Python until comprehensive test coverage exists.
+    /// See: <https://github.com/rustledger/rustledger/issues/276>
     fn process_full(&self, input: PluginInput) -> PluginOutput {
         let mut account_mapping: HashMap<String, AccountMapping> = HashMap::new();
         let mut commodities_present: HashSet<String> = HashSet::new();
