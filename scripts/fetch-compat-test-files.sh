@@ -42,7 +42,7 @@ fetch_repo() {
         echo "  Warning: Failed to clone $name"
         return 0
     }
-    
+
     # Find and copy all .beancount files, preserving some path info in filename
     find "$TMPDIR/$name" -name "*.beancount" -type f | while read -r f; do
         # Create a unique filename based on relative path
@@ -50,7 +50,7 @@ fetch_repo() {
         safename=$(echo "$relpath" | tr '/' '_')
         cp "$f" "$subdir/$safename" 2>/dev/null || true
     done
-    
+
     count=$(find "$subdir" -name "*.beancount" | wc -l | tr -d ' ')
     echo "  Found $count files"
 }
@@ -262,6 +262,23 @@ fetch_repo "pinto-reports" "sjoblomj/pinto-reports"
 fetch_repo "portfolio-eidorb" "eidorb/portfolio"
 fetch_repo "apyb-financeiro" "apyb/financeiro"
 fetch_repo "cookbook-beancount-llm" "David-Barnes-Data-Imaginations/cookbook-beancount-llm"
+
+# === Fix short plugin names ===
+# Some test files use short plugin names that only work in specific Python environments.
+# Replace them with full module paths for compatibility testing.
+echo ""
+echo "=== Fixing short plugin names ==="
+
+# Fix beancount_reds_plugins capital_gains_classifier short names
+find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "gain_loss"' {} \; 2>/dev/null | while read -r file; do
+    sed -i 's/plugin "gain_loss"/plugin "beancount_reds_plugins.capital_gains_classifier.gain_loss"/' "$file"
+    echo "  Fixed: $(basename "$file")"
+done
+
+find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "long_short"' {} \; 2>/dev/null | while read -r file; do
+    sed -i 's/plugin "long_short"/plugin "beancount_reds_plugins.capital_gains_classifier.long_short"/' "$file"
+    echo "  Fixed: $(basename "$file")"
+done
 
 # === Deduplication ===
 # Remove duplicate files based on content hash to avoid testing the same content twice
