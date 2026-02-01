@@ -280,6 +280,12 @@ find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "long_short"' {} 
     echo "  Fixed: $(basename "$file")"
 done
 
+# Fix beanahead rx_txn_plugin short name
+find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "rx_txn_plugin"' {} \; 2>/dev/null | while read -r file; do
+    sed -i 's/plugin "rx_txn_plugin"/plugin "beanahead.plugins.rx_txn_plugin"/' "$file"
+    echo "  Fixed: $(basename "$file")"
+done
+
 # === Deduplication ===
 # Remove duplicate files based on content hash to avoid testing the same content twice
 echo ""
