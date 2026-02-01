@@ -56,7 +56,8 @@ fetch_repo() {
 }
 
 # 1. beancount v2 - most comprehensive test data
-fetch_repo "beancount-v2" "beancount/beancount" "v2"
+# Skip beancount v2 - uses plugins removed in v3
+# fetch_repo "beancount-v2" "beancount/beancount" "v2"
 
 # 2. beancount v3
 fetch_repo "beancount-v3" "beancount/beancount" "v3"
@@ -283,6 +284,12 @@ done
 # Fix beanahead rx_txn_plugin short name
 find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "rx_txn_plugin"' {} \; 2>/dev/null | while read -r file; do
     sed -i 's/plugin "rx_txn_plugin"/plugin "beanahead.plugins.rx_txn_plugin"/' "$file"
+    echo "  Fixed: $(basename "$file")"
+done
+
+# Fix plugins.redstreet.zerosum path to beancount_reds_plugins.zerosum
+find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugins.redstreet.zerosum' {} \; 2>/dev/null | while read -r file; do
+    sed -i 's/plugins\.redstreet\.zerosum/beancount_reds_plugins.zerosum/' "$file"
     echo "  Fixed: $(basename "$file")"
 done
 

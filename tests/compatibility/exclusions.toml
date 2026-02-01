@@ -23,25 +23,9 @@ like bigdecimal, which is a significant refactor for negligible practical benefi
 """
 
 [[exclusions]]
-pattern = "beancount-v2/examples_forecast_forecast.beancount"
-reason = "Uses beancount.plugins.forecast removed in v3"
-
-[[exclusions]]
-pattern = "beancount-v2/examples_sharing_cozumel2015.beancount"
-reason = "Uses beancount.plugins.split_expenses removed in v3"
-
-[[exclusions]]
-pattern = "beancount-v2/examples_sharing_duxbury2015.beancount"
-reason = "Uses beancount.plugins.split_expenses removed in v3"
-
-[[exclusions]]
 pattern = "parser-lima/test-cases_ParserPlugin.Plugin.beancount"
 reason = "Uses beancount.plugins.unrealized removed in v3"
 
 [[exclusions]]
 pattern = "parser-lima/test-cases_ParserPlugin.PluginWithConfig.beancount"
 reason = "Uses beancount.plugins.unrealized removed in v3"
-
-[[exclusions]]
-pattern = "intellij-beancount/resources-test_testData_parsing_Simple.beancount"
-reason = "Rust provides native zerosum plugin; Python can't find plugins.redstreet.zerosum"
