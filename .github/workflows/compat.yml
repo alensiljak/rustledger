@@ -56,7 +56,8 @@ jobs:
         run: |
           pip install beancount beanquery matplotlib pyyaml
           # Third-party plugins used by test files
-          pip install beanahead tariochbctools beancount-lazy-plugins || true
+          pip install beanahead tariochbctools || true
+          pip install git+https://github.com/Evernight/beancount-lazy-plugins || true
 
       # Cache downloaded test files to avoid re-cloning repos every run
       - name: Cache compatibility test files
