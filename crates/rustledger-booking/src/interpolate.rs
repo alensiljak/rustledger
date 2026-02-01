@@ -384,9 +384,17 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                     result.postings[*idx].units =
                         Some(IncompleteAmount::Complete(Amount::zero(currency)));
                     filled_indices.push(*idx);
+                } else if let Some(currency) = get_inferred_currency(&mut inferred_cost_currency) {
+                    // No residuals but we can infer currency from cost basis
+                    // This handles balanced cost-basis transactions like:
+                    //   Assets:Crypto  100 USDC {1.0 USD}
+                    //   Assets:Cash   -100 USD
+                    //   Income:Trading  ; <- infer 0 USD from cost basis
+                    result.postings[*idx].units =
+                        Some(IncompleteAmount::Complete(Amount::zero(&currency)));
+                    filled_indices.push(*idx);
                 } else {
-                    // No residuals - posting stays without amount
-                    // This is an error condition
+                    // No residuals and cannot infer currency
                     return Err(InterpolationError::CannotInferCurrency {
                         account: transaction.postings[*idx].account.clone(),
                     });
