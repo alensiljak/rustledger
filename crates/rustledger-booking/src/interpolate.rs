@@ -985,4 +985,110 @@ mod tests {
         // Scale should be 3 (the maximum of 1 and 3)
         assert_eq!(amount.number.scale(), 3);
     }
+
+    // =========================================================================
+    // Currency inference from cost basis tests
+    // =========================================================================
+
+    /// Test that currency can be inferred from cost basis when transaction balances perfectly.
+    ///
+    /// When a transaction with cost basis balances to zero (e.g., cost equals cash),
+    /// the empty posting should still infer its currency from the cost basis.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 USDC {1.0 USD, 2022-04-16}
+    /// Assets:Cash     -100 USD
+    /// Income:Trading   ; <- should infer 0 USD
+    /// ```
+    #[test]
+    fn test_interpolate_balanced_cost_infers_currency() {
+        let txn = Transaction::new(date(2022, 4, 16), "Trade")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "USDC")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(1.0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-100), "USD")))
+            .with_posting(Posting::auto("Income:Trading"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The Income:Trading posting should be filled
+        assert_eq!(result.filled_indices, vec![2]);
+
+        // It should be 0 USD (transaction balances perfectly)
+        let filled = &result.transaction.postings[2];
+        let amount = get_amount(filled).expect("should have amount");
+        assert_eq!(amount.currency, "USD");
+        assert_eq!(amount.number, dec!(0));
+    }
+
+    /// Test that currency can be inferred from zero-cost basis.
+    ///
+    /// When a posting has a zero cost like `{0 USD}`, the balancing currency
+    /// should still be inferred as USD even though the cost contributes nothing
+    /// to the residuals.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 TOKEN {0 USD}
+    /// Income:Bonus     ; <- should infer 0 USD
+    /// ```
+    #[test]
+    fn test_interpolate_zero_cost_infers_currency() {
+        let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Bonus"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The Income:Bonus posting should be filled
+        assert_eq!(result.filled_indices, vec![1]);
+
+        // It should be 0 USD (inferred from cost spec currency)
+        let filled = &result.transaction.postings[1];
+        let amount = get_amount(filled).expect("should have amount");
+        assert_eq!(amount.currency, "USD");
+        assert_eq!(amount.number, dec!(0));
+    }
+
+    /// Test that zero total cost also infers currency correctly.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 TOKEN {{0 USD}}
+    /// Income:Bonus     ; <- should infer 0 USD
+    /// ```
+    #[test]
+    fn test_interpolate_zero_total_cost_infers_currency() {
+        let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_total(dec!(0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Bonus"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The Income:Bonus posting should be filled
+        assert_eq!(result.filled_indices, vec![1]);
+
+        // It should be 0 USD
+        let filled = &result.transaction.postings[1];
+        let amount = get_amount(filled).expect("should have amount");
+        assert_eq!(amount.currency, "USD");
+        assert_eq!(amount.number, dec!(0));
+    }
 }

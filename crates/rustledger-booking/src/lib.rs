@@ -990,4 +990,63 @@ mod tests {
         assert_eq!(residual.get("EUR"), Some(&dec!(1000)));
         assert_eq!(residual.get("USD"), Some(&dec!(-1000)));
     }
+
+    // =========================================================================
+    // infer_cost_currency_from_postings tests
+    // =========================================================================
+
+    /// Test that cost spec currency is used as fallback when no simple postings exist.
+    #[test]
+    fn test_infer_cost_currency_from_cost_spec() {
+        // Transaction with only cost-spec posting - should get currency from cost spec
+        let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Bonus"));
+
+        let inferred = infer_cost_currency_from_postings(&txn);
+        assert_eq!(inferred.as_deref(), Some("USD"));
+    }
+
+    /// Test that simple posting currency takes precedence over cost spec currency.
+    #[test]
+    fn test_infer_cost_currency_simple_takes_precedence() {
+        // Transaction with both simple posting and cost spec - simple should win
+        let txn = Transaction::new(date(2022, 4, 16), "Trade")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(10))
+                        .with_currency("EUR"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD")));
+
+        let inferred = infer_cost_currency_from_postings(&txn);
+        // Should get USD from the simple posting, not EUR from cost spec
+        assert_eq!(inferred.as_deref(), Some("USD"));
+    }
+
+    /// Test that zero-cost spec currency is still used for inference.
+    #[test]
+    fn test_infer_cost_currency_zero_cost() {
+        // Zero cost should still provide the currency
+        let txn = Transaction::new(date(2022, 4, 16), "Airdrop")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(1000), "SHIB")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(0))
+                        .with_currency("JPY"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Airdrop"));
+
+        let inferred = infer_cost_currency_from_postings(&txn);
+        assert_eq!(inferred.as_deref(), Some("JPY"));
+    }
 }
