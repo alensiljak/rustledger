@@ -315,7 +315,8 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
         let idx = indices[0];
         let residual = residuals.get(&currency).copied().unwrap_or(Decimal::ZERO);
 
-        let interpolated = round_interpolated(residual, max_scale_by_currency.get(&currency).copied());
+        let interpolated =
+            round_interpolated(residual, max_scale_by_currency.get(&currency).copied());
 
         result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
             interpolated,
@@ -345,7 +346,10 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
 
             // Fill the first currency into the original posting
             let (first_currency, first_residual) = &non_zero_residuals[0];
-            let interpolated = round_interpolated(*first_residual, max_scale_by_currency.get(first_currency).copied());
+            let interpolated = round_interpolated(
+                *first_residual,
+                max_scale_by_currency.get(first_currency).copied(),
+            );
             result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
                 interpolated,
                 first_currency,
@@ -356,7 +360,8 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             // Add new postings for remaining currencies
             for (currency, residual) in non_zero_residuals.iter().skip(1) {
                 let mut new_posting = original_posting.clone();
-                let interpolated = round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
+                let interpolated =
+                    round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
                 new_posting.units = Some(IncompleteAmount::Complete(Amount::new(
                     interpolated,
                     currency,
@@ -370,7 +375,8 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             for (i, idx) in unassigned_missing.iter().enumerate() {
                 if i < non_zero_residuals.len() {
                     let (currency, residual) = &non_zero_residuals[i];
-                    let interpolated = round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
+                    let interpolated =
+                        round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
                     result.postings[*idx].units = Some(IncompleteAmount::Complete(Amount::new(
                         interpolated,
                         currency,
