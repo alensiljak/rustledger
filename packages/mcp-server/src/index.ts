@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { readFileSync } from "fs";
+import { createRequire } from "module";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -10,7 +12,8 @@ import {
   ListPromptsRequestSchema,
   GetPromptRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import init, * as rustledger from "@rustledger/wasm";
+import { initSync } from "@rustledger/wasm";
+import * as rustledger from "@rustledger/wasm";
 
 // Import modular components
 import { TOOLS } from "./tools.js";
@@ -19,11 +22,15 @@ import { RESOURCES, getResourceContents } from "./resources.js";
 import { PROMPTS, getPrompt } from "./prompts.js";
 import type { ToolArguments } from "./types.js";
 
+// Initialize WASM synchronously for Node.js
+// (The --target web build uses fetch() which doesn't work in Node.js)
+const require = createRequire(import.meta.url);
+const wasmPath = require.resolve("@rustledger/wasm/rustledger_wasm_bg.wasm");
+initSync(readFileSync(wasmPath));
+rustledger.init();
+
 // Start the server
 async function main(): Promise<void> {
-  // Initialize WASM module first
-  await init();
-  rustledger.init();
 
   // Create server instance
   const server = new Server(
