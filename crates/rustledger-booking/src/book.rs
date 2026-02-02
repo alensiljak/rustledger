@@ -123,6 +123,18 @@ impl BookingEngine {
         // Track posting expansions: (original_idx, expanded_postings)
         let mut expansions: Vec<(usize, Vec<Posting>)> = Vec::new();
 
+        // Create working copies of inventories for this transaction.
+        // This allows us to track inventory changes across multiple postings
+        // within the same transaction (e.g., main sale + fee posting).
+        let mut working_inventories: std::collections::HashMap<
+            rustledger_core::InternedStr,
+            rustledger_core::Inventory,
+        > = self
+            .inventories
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
         // First pass: identify postings that need lot matching (reductions)
         for (idx, posting) in txn.postings.iter().enumerate() {
             // Check if this is a reduction with a cost spec
@@ -133,15 +145,17 @@ impl BookingEngine {
                 // This handles both:
                 // - Selling long positions (negative units, positive inventory)
                 // - Closing short positions (positive units, negative inventory)
-                if let Some(inv) = self.inventories.get(&posting.account) {
+                if let Some(inv) = working_inventories.get_mut(&posting.account) {
                     // Check if inventory is_reduced_by these units
                     // (signs differ for the same currency)
                     let is_reduction = inv.is_reduced_by(units);
 
                     if is_reduction {
-                        // Use try_reduce to preview booking without cloning inventory
+                        // Use reduce (not try_reduce) to actually update the working inventory
+                        // This ensures subsequent postings in the same transaction see
+                        // the updated inventory state (e.g., after first posting exhausts a lot)
                         if let Ok(booking_result) =
-                            inv.try_reduce(units, Some(cost_spec), self.booking_method)
+                            inv.reduce(units, Some(cost_spec), self.booking_method)
                         {
                             // Check if multiple lots were matched
                             if booking_result.matched.len() > 1 {
