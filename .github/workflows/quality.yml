@@ -22,7 +22,7 @@ jobs:
     # Only run on PRs to catch breaking changes before merge
     if: github.event_name == 'pull_request'
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - name: Check for Rust changes
         id: changes
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
@@ -48,7 +48,7 @@ jobs:
     name: MSRV (1.89)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - uses: dtolnay/rust-toolchain@9710f9012180ecfb08dcfc878269be6dc6f1d80e # 1.89
       - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
       - name: Check MSRV compatibility
@@ -59,7 +59,7 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - uses: taiki-e/install-action@0fc09cf1c2f18a9f700d18b3d6eb8f7ee877c7a2 # cargo-deny
       - name: Check advisories, licenses, and bans
         run: cargo deny check
@@ -71,7 +71,7 @@ jobs:
     env:
       RUST_MIN_STACK: 8388608
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v6
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
         with:
           components: llvm-tools-preview
