@@ -1,0 +1,22 @@
+; Issue: https://github.com/rustledger/rustledger/issues/273
+; Description: Inventory lots with same price but different dates
+; Expected: No errors - lots with same price but different dates should be distinct
+
+2025-01-01 open Assets:Abc ABC
+2025-01-01 open Assets:Cash
+2025-01-01 open Equity:Opening
+
+; Create two lots with same price but different dates
+2026-01-01 * "Buy with explicit date"
+  Assets:Abc                       2 ABC {10.01 USD, 2018-12-06}
+  Assets:Abc                       1 ABC {10.01 USD}
+  Equity:Opening
+
+; Sell both lots - one has explicit date, one doesn't
+2026-01-03 * "Sell"
+  Assets:Abc                      -2 ABC {10.01 USD, 2018-12-06}
+  Assets:Abc                      -1 ABC {10.01 USD}
+  Assets:Cash                  30.03 USD
+
+; Balance should be zero after selling all
+2026-01-04 balance Assets:Abc      0 ABC

@@ -1,0 +1,15 @@
+; Issue: https://github.com/rustledger/rustledger/issues/274
+; Description: Transaction balances differently - interpolation rounding issue
+; Expected: No errors - interpolated amount should preserve precision
+
+2025-01-01 open Assets:Abc ABC
+2025-01-01 open Assets:Cash
+2025-01-01 open Expenses:FinancialServices
+
+; Transaction where residual (0.049 USD) is smaller than the scale of
+; existing USD amounts (scale 0 from -1049 USD). The interpolated posting
+; should preserve the residual's precision, not round to zero.
+2026-01-01 * "Buy ABC with fee"
+  Assets:Cash     -1049 USD
+  Assets:Abc   104.8951 ABC {10 USD}
+  Expenses:FinancialServices
