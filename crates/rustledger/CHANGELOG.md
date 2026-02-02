@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.8.2](https://github.com/rustledger/rustledger/compare/v0.8.1...v0.8.2) - 2026-02-02
+
+### Bug Fixes
+
+- address PR review feedback
+
+### Features
+
+- *(loader)* add central orchestration API matching Python's loader.load_file()
+- *(plugin)* enable Python plugin execution via WASM sandbox
+
+### Style
+
+- fix clippy warnings and formatting
+
 ## [0.8.0](https://github.com/rustledger/rustledger/releases/tag/v0.8.0) - 2026-01-28
 
 ### Bug Fixes
