@@ -940,4 +940,93 @@ mod tests {
             "Sale should match the lot created in opening"
         );
     }
+
+    #[test]
+    fn test_multi_posting_crosses_lot_boundary() {
+        // Regression test: Multiple postings in the same transaction reducing
+        // the same commodity should correctly track inventory state across postings.
+        // Previously, each posting would see the original inventory instead of
+        // the updated state after processing previous postings.
+
+        let mut engine = BookingEngine::new();
+
+        // Create two lots of ADA with different costs
+        // Lot 1: 100 ADA at $0.50 (2021-01-01)
+        let buy1 = Transaction::new(date(2021, 1, 1), "Buy lot 1")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "ADA")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(0.50))
+                        .with_currency("USD")
+                        .with_date(date(2021, 1, 1)),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD")));
+        engine.apply(&buy1);
+
+        // Lot 2: 100 ADA at $0.52 (2022-05-19)
+        let buy2 = Transaction::new(date(2022, 5, 19), "Buy lot 2")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "ADA")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(0.52))
+                        .with_currency("USD")
+                        .with_date(date(2022, 5, 19)),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-52), "USD")));
+        engine.apply(&buy2);
+
+        // Verify initial inventory: 200 ADA total
+        let inv = engine.inventory(&"Assets:Crypto".into()).unwrap();
+        assert_eq!(inv.units("ADA"), dec!(200));
+
+        // Consume half of lot 1 first
+        let sell1 = Transaction::new(date(2022, 5, 20), "Sell 50 ADA")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(-50), "ADA"))
+                    .with_cost(CostSpec::empty()),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(25), "USD")));
+        let booked1 = engine.book(&sell1).unwrap();
+        engine.apply(&booked1.transaction);
+
+        // Verify: 150 ADA remaining (50 in lot 1, 100 in lot 2)
+        let inv = engine.inventory(&"Assets:Crypto".into()).unwrap();
+        assert_eq!(inv.units("ADA"), dec!(150));
+
+        // Now the critical test: TWO postings in the same transaction
+        // that together cross the lot boundary.
+        // - Posting 1: -75 ADA {} → takes 50 from lot 1 + 25 from lot 2
+        // - Posting 2: -5 ADA {} → should take from lot 2 (continuing)
+        let sell2 = Transaction::new(date(2022, 5, 22), "Sell 80 ADA (multi-posting)")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(-75), "ADA"))
+                    .with_cost(CostSpec::empty()),
+            )
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(-5), "ADA"))
+                    .with_cost(CostSpec::empty()),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(42), "USD")));
+
+        // This should succeed - the bug was that the second posting would fail
+        // with "No matching lot" because it was trying to match against lot 1
+        // which was already exhausted by the first posting.
+        let booked2 = engine.book(&sell2);
+        assert!(
+            booked2.is_ok(),
+            "Multi-posting transaction should succeed: {:?}",
+            booked2.err()
+        );
+
+        // Apply and verify final inventory: 70 ADA remaining (all in lot 2)
+        engine.apply(&booked2.unwrap().transaction);
+        let inv = engine.inventory(&"Assets:Crypto".into()).unwrap();
+        assert_eq!(
+            inv.units("ADA"),
+            dec!(70),
+            "Should have 70 ADA remaining in lot 2"
+        );
+    }
 }
