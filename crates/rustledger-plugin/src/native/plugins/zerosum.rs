@@ -76,6 +76,19 @@ impl NativePlugin for ZerosumPlugin {
         let mut new_accounts: HashSet<String> = HashSet::new();
         let mut earliest_date: Option<String> = None;
 
+        // Collect existing Open accounts to avoid creating duplicates
+        let existing_opens: HashSet<String> = input
+            .directives
+            .iter()
+            .filter_map(|d| {
+                if let DirectiveData::Open(ref open) = d.data {
+                    Some(open.account.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Index transactions by zerosum account
         let mut txn_indices: HashMap<String, Vec<usize>> = HashMap::new();
 
@@ -254,10 +267,14 @@ impl NativePlugin for ZerosumPlugin {
             }
         }
 
-        // Create Open directives for new accounts
+        // Create Open directives for new accounts (only if not already opened)
         let mut open_directives: Vec<DirectiveWrapper> = Vec::new();
         if let Some(date) = earliest_date {
             for account in &new_accounts {
+                // Skip if account already has an Open directive
+                if existing_opens.contains(account) {
+                    continue;
+                }
                 open_directives.push(DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: date.clone(),
@@ -536,6 +553,80 @@ mod tests {
             }
         }
         assert!(found_unmatched, "Should have unmatched postings");
+    }
+
+    #[test]
+    fn test_zerosum_does_not_duplicate_open() {
+        // Regression test: zerosum should not create duplicate Open directives
+        // when the target account already has an Open directive.
+        let plugin = ZerosumPlugin;
+
+        let config = r"{
+            'zerosum_accounts': {
+                'Assets:Transfer': ('Assets:ZSA-Matched:Transfer', 7)
+            }
+        }";
+
+        // Create an existing Open for the target account
+        let existing_open = DirectiveWrapper {
+            directive_type: "open".to_string(),
+            date: "2020-01-01".to_string(),
+            filename: Some("accounts.beancount".to_string()),
+            lineno: Some(422),
+            data: DirectiveData::Open(OpenData {
+                account: "Assets:ZSA-Matched:Transfer".to_string(),
+                currencies: vec![],
+                booking: None,
+                metadata: vec![],
+            }),
+        };
+
+        let input = PluginInput {
+            directives: vec![
+                existing_open,
+                create_transfer_txn(
+                    "2024-01-01",
+                    "Assets:Bank",
+                    "Assets:Transfer",
+                    "100.00",
+                    "USD",
+                ),
+                create_transfer_txn(
+                    "2024-01-02",
+                    "Assets:Transfer",
+                    "Assets:Investment",
+                    "100.00",
+                    "USD",
+                ),
+            ],
+            options: PluginOptions {
+                operating_currencies: vec!["USD".to_string()],
+                title: None,
+            },
+            config: Some(config.to_string()),
+        };
+
+        let output = plugin.process(input);
+        assert_eq!(output.errors.len(), 0);
+
+        // Count Open directives for the target account
+        let open_count = output
+            .directives
+            .iter()
+            .filter(|d| {
+                if let DirectiveData::Open(ref open) = d.data {
+                    open.account == "Assets:ZSA-Matched:Transfer"
+                } else {
+                    false
+                }
+            })
+            .count();
+
+        // Should only have 1 Open (the existing one, not a duplicate from the plugin)
+        assert_eq!(
+            open_count, 1,
+            "Should not create duplicate Open directives for existing accounts"
+        );
     }
 
     #[test]
