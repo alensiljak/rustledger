@@ -222,11 +222,11 @@ version = "0.2.2"
 criteria = "safe-to-run"
 
 [[exemptions.clap]]
-version = "4.5.54"
+version = "4.5.56"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.54"
+version = "4.5.56"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_complete]]
@@ -234,7 +234,7 @@ version = "4.5.65"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
-version = "4.5.49"
+version = "4.5.55"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
@@ -534,7 +534,7 @@ version = "0.1.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
-version = "1.46.1"
+version = "1.46.3"
 criteria = "safe-to-run"
 
 [[exemptions.io-extras]]
@@ -626,7 +626,7 @@ version = "0.15.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos]]
-version = "0.16.0"
+version = "0.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos-codegen]]
@@ -634,7 +634,7 @@ version = "0.15.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos-codegen]]
-version = "0.16.0"
+version = "0.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos-derive]]
@@ -642,7 +642,7 @@ version = "0.15.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos-derive]]
-version = "0.16.0"
+version = "0.16.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.logosky]]
