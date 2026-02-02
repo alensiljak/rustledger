@@ -257,7 +257,7 @@ jobs:
 
       - name: Upload counterexample traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: tla-traces
           path: |
