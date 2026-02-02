@@ -1,11 +1,62 @@
 // Helper functions for the MCP server
 
+import * as fs from "fs";
+import * as path from "path";
 import type {
   BeancountError,
   QueryResult,
   ToolResponse,
   ToolArguments,
 } from "./types.js";
+
+// Regex to match include directives: include "path/to/file.beancount"
+const INCLUDE_REGEX = /^include\s+"([^"]+)"\s*$/gm;
+
+/**
+ * Load a beancount file with all its includes resolved.
+ *
+ * This recursively follows include directives and returns the concatenated
+ * source with all includes inlined. Paths in include directives are resolved
+ * relative to the file containing the include.
+ *
+ * @param filePath - The absolute path to the main beancount file
+ * @returns The concatenated source with all includes resolved
+ * @throws Error if a file cannot be read or circular include detected
+ */
+export function loadWithIncludes(filePath: string): string {
+  const visited = new Set<string>();
+  return loadFileRecursive(filePath, visited);
+}
+
+function loadFileRecursive(filePath: string, visited: Set<string>): string {
+  const absolutePath = path.resolve(filePath);
+
+  // Check for circular includes (only in current recursion stack)
+  if (visited.has(absolutePath)) {
+    throw new Error(`Circular include detected: ${absolutePath}`);
+  }
+  visited.add(absolutePath);
+
+  try {
+    const source = fs.readFileSync(absolutePath, "utf-8");
+    const baseDir = path.dirname(absolutePath);
+
+    // Replace each include directive with the contents of the included file
+    return source.replace(INCLUDE_REGEX, (_match, includePath: string) => {
+      const includeAbsPath = path.resolve(baseDir, includePath);
+      try {
+        return loadFileRecursive(includeAbsPath, visited);
+      } catch (error) {
+        // Re-throw with context about which include failed
+        const msg = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to include "${includePath}" from ${absolutePath}: ${msg}`);
+      }
+    });
+  } finally {
+    // Remove from visited after processing to allow same file from different branches
+    visited.delete(absolutePath);
+  }
+}
 
 /**
  * Validate that required arguments are present.

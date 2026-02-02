@@ -16,6 +16,7 @@ import {
   jsonResponse,
   formatErrors,
   formatQueryResult,
+  loadWithIncludes,
 } from "./helpers.js";
 import { getBqlTablesDocs } from "./resources.js";
 
@@ -588,7 +589,8 @@ function handleValidateFile(args: ToolArguments | undefined): ToolResponse {
 
   try {
     const absolutePath = path.resolve(args!.file_path!);
-    const source = fs.readFileSync(absolutePath, "utf-8");
+    // Load file with includes resolved
+    const source = loadWithIncludes(absolutePath);
     const result = rustledger.validateSource(source);
     return textResponse(
       result.valid
@@ -608,7 +610,8 @@ function handleQueryFile(args: ToolArguments | undefined): ToolResponse {
 
   try {
     const absolutePath = path.resolve(args!.file_path!);
-    const source = fs.readFileSync(absolutePath, "utf-8");
+    // Load file with includes resolved
+    const source = loadWithIncludes(absolutePath);
     const result = rustledger.query(source, args!.query!);
     if (result.errors?.length > 0) {
       return errorResponse(formatErrors(result.errors));

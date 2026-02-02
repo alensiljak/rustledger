@@ -1,13 +1,22 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { fileURLToPath } from 'url';
+import { initSync } from '@rustledger/wasm';
 import * as rustledger from '@rustledger/wasm';
 import { handleToolCall } from '../handlers.js';
-import { validateArgs, formatErrors, formatQueryResult, textResponse, errorResponse, jsonResponse } from '../helpers.js';
+import { validateArgs, formatErrors, formatQueryResult, textResponse, errorResponse, jsonResponse, loadWithIncludes } from '../helpers.js';
 import { TOOLS } from '../tools.js';
 import { RESOURCES, getResourceContents } from '../resources.js';
 import { PROMPTS, getPrompt } from '../prompts.js';
 
-// Initialize WASM before tests (nodejs target auto-loads WASM)
+// Initialize WASM before tests using synchronous initialization for Node.js
 beforeAll(() => {
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const wasmPath = path.resolve(__dirname, '../../node_modules/@rustledger/wasm/rustledger_wasm_bg.wasm');
+  const wasmBuffer = fs.readFileSync(wasmPath);
+  initSync({ module: wasmBuffer });
   rustledger.init();
 });
 
@@ -664,6 +673,211 @@ describe('Prompts', () => {
 
     it('should throw for unknown prompt', () => {
       expect(() => getPrompt('unknown_prompt', {})).toThrow('Unknown prompt');
+    });
+  });
+});
+
+// ============================================================================
+// Include Resolution Tests
+// ============================================================================
+
+describe('loadWithIncludes', () => {
+  let tempDir: string;
+
+  beforeAll(() => {
+    // Create a temporary directory for test files
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-test-'));
+  });
+
+  afterAll(() => {
+    // Clean up temp files
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it('should load a single file without includes', () => {
+    const filePath = path.join(tempDir, 'single.beancount');
+    fs.writeFileSync(filePath, '2024-01-01 open Assets:Bank USD');
+
+    const result = loadWithIncludes(filePath);
+    expect(result).toBe('2024-01-01 open Assets:Bank USD');
+  });
+
+  it('should resolve a single include', () => {
+    const mainPath = path.join(tempDir, 'main.beancount');
+    const includedPath = path.join(tempDir, 'accounts.beancount');
+
+    fs.writeFileSync(includedPath, '2024-01-01 open Assets:Cash USD');
+    fs.writeFileSync(mainPath, `include "accounts.beancount"
+
+2024-01-15 * "Test"
+  Expenses:Food  10 USD
+  Assets:Cash  -10 USD
+`);
+
+    const result = loadWithIncludes(mainPath);
+    expect(result).toContain('2024-01-01 open Assets:Cash USD');
+    expect(result).toContain('2024-01-15 * "Test"');
+  });
+
+  it('should resolve nested includes', () => {
+    const mainPath = path.join(tempDir, 'nested-main.beancount');
+    const level1Path = path.join(tempDir, 'level1.beancount');
+    const level2Path = path.join(tempDir, 'level2.beancount');
+
+    fs.writeFileSync(level2Path, '2024-01-01 open Assets:Nested USD');
+    fs.writeFileSync(level1Path, `include "level2.beancount"
+2024-01-01 open Expenses:Food USD
+`);
+    fs.writeFileSync(mainPath, `include "level1.beancount"
+2024-01-15 * "Transaction"
+  Expenses:Food  5 USD
+  Assets:Nested  -5 USD
+`);
+
+    const result = loadWithIncludes(mainPath);
+    expect(result).toContain('Assets:Nested');
+    expect(result).toContain('Expenses:Food');
+    expect(result).toContain('Transaction');
+  });
+
+  it('should resolve includes with relative paths', () => {
+    const subDir = path.join(tempDir, 'subdir');
+    fs.mkdirSync(subDir, { recursive: true });
+
+    const mainPath = path.join(tempDir, 'rel-main.beancount');
+    const includedPath = path.join(subDir, 'sub-file.beancount');
+
+    fs.writeFileSync(includedPath, '2024-01-01 open Assets:SubDir USD');
+    fs.writeFileSync(mainPath, 'include "subdir/sub-file.beancount"');
+
+    const result = loadWithIncludes(mainPath);
+    expect(result).toContain('Assets:SubDir');
+  });
+
+  it('should detect circular includes', () => {
+    const file1Path = path.join(tempDir, 'circular1.beancount');
+    const file2Path = path.join(tempDir, 'circular2.beancount');
+
+    fs.writeFileSync(file1Path, 'include "circular2.beancount"');
+    fs.writeFileSync(file2Path, 'include "circular1.beancount"');
+
+    // Verify error message contains the file path for debugging
+    expect(() => loadWithIncludes(file1Path)).toThrow(/Circular include.*circular1\.beancount/);
+  });
+
+  it('should allow diamond includes (same file from different branches)', () => {
+    // Test case: A includes B and C, both B and C include D
+    // This should NOT be detected as circular - D is included twice but not in a cycle
+    const mainPath = path.join(tempDir, 'diamond-main.beancount');
+    const branchBPath = path.join(tempDir, 'diamond-b.beancount');
+    const branchCPath = path.join(tempDir, 'diamond-c.beancount');
+    const sharedPath = path.join(tempDir, 'diamond-shared.beancount');
+
+    fs.writeFileSync(sharedPath, '2024-01-01 open Assets:Shared USD');
+    fs.writeFileSync(branchBPath, 'include "diamond-shared.beancount"\n2024-01-01 open Assets:B USD');
+    fs.writeFileSync(branchCPath, 'include "diamond-shared.beancount"\n2024-01-01 open Assets:C USD');
+    fs.writeFileSync(mainPath, 'include "diamond-b.beancount"\ninclude "diamond-c.beancount"');
+
+    // Should succeed - the shared file is included twice but not circularly
+    const result = loadWithIncludes(mainPath);
+    expect(result).toContain('Assets:Shared');
+    expect(result).toContain('Assets:B');
+    expect(result).toContain('Assets:C');
+  });
+
+  it('should throw error for missing included file', () => {
+    const mainPath = path.join(tempDir, 'missing-include.beancount');
+    fs.writeFileSync(mainPath, 'include "nonexistent.beancount"');
+
+    expect(() => loadWithIncludes(mainPath)).toThrow('Failed to include');
+  });
+});
+
+// ============================================================================
+// File Handler Tests with Includes
+// ============================================================================
+
+describe('File Handlers with Include Resolution', () => {
+  let tempDir: string;
+
+  beforeAll(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-file-test-'));
+  });
+
+  afterAll(() => {
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  describe('query_file', () => {
+    it('should query a file with includes resolved', () => {
+      const accountsPath = path.join(tempDir, 'accounts.beancount');
+      const transactionsPath = path.join(tempDir, 'transactions.beancount');
+      const mainPath = path.join(tempDir, 'query-main.beancount');
+
+      fs.writeFileSync(accountsPath, `2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+`);
+      fs.writeFileSync(transactionsPath, `2024-01-15 * "Grocery Store" "Food"
+  Expenses:Food  100 USD
+  Assets:Bank  -100 USD
+`);
+      fs.writeFileSync(mainPath, `include "accounts.beancount"
+include "transactions.beancount"
+`);
+
+      const result = handleToolCall('query_file', {
+        file_path: mainPath,
+        query: 'SELECT count(*)',
+      });
+
+      expect(result.isError).toBeFalsy();
+      // Should find 2 postings from the transaction in the included file
+      expect(result.content[0].text).toContain('2');
+    });
+  });
+
+  describe('validate_file', () => {
+    it('should validate a file with includes resolved', () => {
+      const accountsPath = path.join(tempDir, 'val-accounts.beancount');
+      const mainPath = path.join(tempDir, 'val-main.beancount');
+
+      fs.writeFileSync(accountsPath, `2024-01-01 open Assets:Checking USD
+2024-01-01 open Expenses:Food USD
+`);
+      fs.writeFileSync(mainPath, `include "val-accounts.beancount"
+
+2024-01-15 * "Test"
+  Expenses:Food  50 USD
+  Assets:Checking  -50 USD
+`);
+
+      const result = handleToolCall('validate_file', {
+        file_path: mainPath,
+      });
+
+      expect(result.isError).toBeFalsy();
+      expect(result.content[0].text).toContain('valid');
+    });
+
+    it('should report errors from included files', () => {
+      const badAccountsPath = path.join(tempDir, 'bad-accounts.beancount');
+      const badMainPath = path.join(tempDir, 'bad-main.beancount');
+
+      // Note: Transaction uses an account that's never opened
+      fs.writeFileSync(badAccountsPath, `2024-01-01 open Assets:Bank USD`);
+      fs.writeFileSync(badMainPath, `include "bad-accounts.beancount"
+
+2024-01-15 * "Test"
+  Expenses:Unopened  50 USD
+  Assets:Bank  -50 USD
+`);
+
+      const result = handleToolCall('validate_file', {
+        file_path: badMainPath,
+      });
+
+      // Should report the missing account error
+      expect(result.content[0].text).toContain('error');
     });
   });
 });
