@@ -56,7 +56,9 @@ jobs:
         run: |
           pip install beancount beanquery matplotlib pyyaml
           # Third-party plugins used by test files
-          pip install beanahead tariochbctools beancount-reds-plugins || true
+          pip install beanahead tariochbctools || true
+          # Install reds-plugins from GitHub to get unreleased plugins like box_accrual
+          pip install git+https://github.com/redstreet/beancount_reds_plugins || true
           pip install git+https://github.com/Evernight/beancount-lazy-plugins || true
 
       # Cache downloaded test files to avoid re-cloning repos every run
@@ -65,10 +67,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: tests/compatibility/files
-          # Cache key includes hash of fetch script; v2 busts old broken caches
-          key: compat-files-v2-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}
+          # Cache key includes hash of fetch script; v3 removes beancount v2 files with removed plugins
+          key: compat-files-v3-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}
           restore-keys: |
-            compat-files-v2-
+            compat-files-v3-
 
       - name: Fetch compatibility test files
         if: steps.cache-compat-files.outputs.cache-hit != 'true'
