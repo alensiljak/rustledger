@@ -384,9 +384,17 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                     result.postings[*idx].units =
                         Some(IncompleteAmount::Complete(Amount::zero(currency)));
                     filled_indices.push(*idx);
+                } else if let Some(currency) = get_inferred_currency(&mut inferred_cost_currency) {
+                    // No residuals but we can infer currency from cost basis
+                    // This handles balanced cost-basis transactions like:
+                    //   Assets:Crypto  100 USDC {1.0 USD}
+                    //   Assets:Cash   -100 USD
+                    //   Income:Trading  ; <- infer 0 USD from cost basis
+                    result.postings[*idx].units =
+                        Some(IncompleteAmount::Complete(Amount::zero(&currency)));
+                    filled_indices.push(*idx);
                 } else {
-                    // No residuals - posting stays without amount
-                    // This is an error condition
+                    // No residuals and cannot infer currency
                     return Err(InterpolationError::CannotInferCurrency {
                         account: transaction.postings[*idx].account.clone(),
                     });
@@ -395,11 +403,44 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
         }
     }
 
+    // Remove postings that were filled with zero amounts.
+    // Python beancount removes postings that interpolate to exactly zero,
+    // as they don't contribute to the transaction balance.
+    // We must iterate in reverse to maintain correct indices during removal.
+    let mut indices_to_remove: Vec<usize> = filled_indices
+        .iter()
+        .filter(|&&idx| {
+            result.postings.get(idx).is_some_and(|p| {
+                p.units
+                    .as_ref()
+                    .and_then(|u| u.as_amount())
+                    .is_some_and(|a| a.number.is_zero())
+            })
+        })
+        .copied()
+        .collect();
+    indices_to_remove.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending
+
+    for idx in &indices_to_remove {
+        result.postings.remove(*idx);
+    }
+
+    // Update filled_indices to remove the zero-amount indices and adjust remaining indices
+    let final_filled_indices: Vec<usize> = filled_indices
+        .into_iter()
+        .filter(|idx| !indices_to_remove.contains(idx))
+        .map(|idx| {
+            // Adjust index for removed postings before it
+            let adjustment = indices_to_remove.iter().filter(|&&r| r < idx).count();
+            idx - adjustment
+        })
+        .collect();
+
     // Return the residuals we've been tracking incrementally
     // (no need to recalculate - we've updated residuals as we filled amounts)
     Ok(InterpolationResult {
         transaction: result,
-        filled_indices,
+        filled_indices: final_filled_indices,
         residuals,
     })
 }
@@ -976,5 +1017,123 @@ mod tests {
         assert_eq!(amount.number, dec!(-0.101));
         // Scale should be 3 (the maximum of 1 and 3)
         assert_eq!(amount.number.scale(), 3);
+    }
+
+    // =========================================================================
+    // Currency inference from cost basis tests
+    // =========================================================================
+
+    /// Test that zero-amount postings are removed when transaction balances perfectly.
+    ///
+    /// When a transaction with cost basis balances to zero (e.g., cost equals cash),
+    /// the empty posting that would be 0 USD is removed entirely.
+    /// This matches Python beancount's behavior.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 USDC {1.0 USD, 2022-04-16}
+    /// Assets:Cash     -100 USD
+    /// Income:Trading   ; <- would be 0 USD, so removed
+    /// ```
+    #[test]
+    fn test_interpolate_balanced_cost_removes_zero_posting() {
+        let txn = Transaction::new(date(2022, 4, 16), "Trade")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "USDC")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(1.0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-100), "USD")))
+            .with_posting(Posting::auto("Income:Trading"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The zero-amount posting should be removed, not filled
+        assert!(
+            result.filled_indices.is_empty(),
+            "zero-amount posting should be removed"
+        );
+
+        // Transaction should only have 2 postings (Income:Trading removed)
+        assert_eq!(
+            result.transaction.postings.len(),
+            2,
+            "zero-amount posting should be removed from transaction"
+        );
+    }
+
+    /// Test that zero-amount postings from zero-cost basis are removed.
+    ///
+    /// When a posting has a zero cost like `{0 USD}`, the empty posting
+    /// would be 0 USD and is removed. This matches Python beancount behavior.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 TOKEN {0 USD}
+    /// Income:Bonus     ; <- would be 0 USD, so removed
+    /// ```
+    #[test]
+    fn test_interpolate_zero_cost_removes_zero_posting() {
+        let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Bonus"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The zero-amount posting should be removed
+        assert!(
+            result.filled_indices.is_empty(),
+            "zero-amount posting should be removed"
+        );
+
+        // Transaction should only have 1 posting
+        assert_eq!(
+            result.transaction.postings.len(),
+            1,
+            "zero-amount posting should be removed from transaction"
+        );
+    }
+
+    /// Test that zero-amount postings from zero total cost are removed.
+    ///
+    /// Example:
+    /// ```beancount
+    /// Assets:Crypto    100 TOKEN {{0 USD}}
+    /// Income:Bonus     ; <- would be 0 USD, so removed
+    /// ```
+    #[test]
+    fn test_interpolate_zero_total_cost_removes_zero_posting() {
+        let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
+            .with_posting(
+                Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_total(dec!(0))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::auto("Income:Bonus"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The zero-amount posting should be removed
+        assert!(
+            result.filled_indices.is_empty(),
+            "zero-amount posting should be removed"
+        );
+
+        // Transaction should only have 1 posting
+        assert_eq!(
+            result.transaction.postings.len(),
+            1,
+            "zero-amount posting should be removed from transaction"
+        );
     }
 }

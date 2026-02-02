@@ -13,17 +13,37 @@ authors.workspace = true
 readme = "../../README.md"
 
 [features]
-default = ["cache"]
+default = ["cache", "full"]
+
 # Enable rkyv-based binary caching for faster loads
 cache = ["dep:rkyv", "dep:sha2", "rustledger-parser/rkyv"]
+
+# Full processing: booking + plugins + validation (like Python's loader.load_file())
+full = ["booking", "plugins", "validation"]
+
+# Individual processing features
+booking = ["dep:rustledger-booking"]
+plugins = ["dep:rustledger-plugin"]
+validation = ["dep:rustledger-validate"]
+
+# Plugin runtime features (passed through to rustledger-plugin)
+native-plugins = ["plugins"]
+python-plugins = ["plugins", "rustledger-plugin/python-plugins"]
+wasm-plugins = ["plugins", "rustledger-plugin/wasm-runtime"]
 
 [dependencies]
 rustledger-core.workspace = true
 rustledger-parser.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true
+chrono.workspace = true
 rkyv = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+
+# Optional processing dependencies
+rustledger-booking = { workspace = true, optional = true }
+rustledger-plugin = { workspace = true, optional = true, default-features = false }
+rustledger-validate = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true

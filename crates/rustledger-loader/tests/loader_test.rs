@@ -2,7 +2,7 @@
 //!
 //! Tests are based on patterns from beancount's test suite.
 
-use rustledger_loader::{LoadError, Loader, load};
+use rustledger_loader::{LoadError, Loader, load_raw};
 use std::path::Path;
 
 fn fixtures_path(name: &str) -> std::path::PathBuf {
@@ -14,7 +14,7 @@ fn fixtures_path(name: &str) -> std::path::PathBuf {
 #[test]
 fn test_load_simple_file() {
     let path = fixtures_path("simple.beancount");
-    let result = load(&path).expect("should load simple file");
+    let result = load_raw(&path).expect("should load simple file");
 
     // Check options were parsed
     assert_eq!(result.options.title, Some("Test Ledger".to_string()));
@@ -45,7 +45,7 @@ fn test_load_simple_file() {
 #[test]
 fn test_load_with_include() {
     let path = fixtures_path("main_with_include.beancount");
-    let result = load(&path).expect("should load file with include");
+    let result = load_raw(&path).expect("should load file with include");
 
     // Should have directives from both files
     // main_with_include.beancount: 1 transaction
@@ -109,7 +109,7 @@ fn test_load_include_cycle_detection() {
 #[test]
 fn test_load_missing_include() {
     let path = fixtures_path("missing_include.beancount");
-    let result = load(&path).expect("should load file even with missing include");
+    let result = load_raw(&path).expect("should load file even with missing include");
 
     // Should have IO error for missing file
     let has_io_error = result
@@ -130,7 +130,7 @@ fn test_load_missing_include() {
 #[test]
 fn test_load_with_plugins() {
     let path = fixtures_path("with_plugin.beancount");
-    let result = load(&path).expect("should load file with plugins");
+    let result = load_raw(&path).expect("should load file with plugins");
 
     // Should have 2 plugin directives
     assert_eq!(result.plugins.len(), 2, "expected 2 plugins");
@@ -147,7 +147,7 @@ fn test_load_with_plugins() {
 #[test]
 fn test_load_with_parse_errors() {
     let path = fixtures_path("parse_error.beancount");
-    let result = load(&path).expect("should load file even with parse errors");
+    let result = load_raw(&path).expect("should load file even with parse errors");
 
     // Should have parse errors
     let has_parse_error = result
@@ -206,7 +206,7 @@ fn test_loader_reuse() {
 #[test]
 fn test_source_map_line_lookup() {
     let path = fixtures_path("simple.beancount");
-    let result = load(&path).expect("should load simple file");
+    let result = load_raw(&path).expect("should load simple file");
 
     // Source map should have the file
     assert!(!result.source_map.files().is_empty());
@@ -228,7 +228,7 @@ fn test_duplicate_include_ignored() {
     // Create a scenario where the same file is included multiple times
     // It should only be loaded once
     let path = fixtures_path("main_with_include.beancount");
-    let result = load(&path).expect("should load file");
+    let result = load_raw(&path).expect("should load file");
 
     // Each unique file should only be in source map once
     let file_count = result.source_map.files().len();
@@ -272,7 +272,7 @@ fn test_path_traversal_blocked_with_security_enabled() {
 #[test]
 fn test_path_traversal_allowed_without_security() {
     let path = fixtures_path("path_traversal.beancount");
-    let result = load(&path).expect("should load file");
+    let result = load_raw(&path).expect("should load file");
 
     // Without security enabled, should NOT have path traversal error
     // (though may have IO error if include target doesn't exist or parse error if not valid beancount)

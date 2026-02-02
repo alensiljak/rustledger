@@ -31,6 +31,8 @@
 #[cfg(feature = "cache")]
 pub mod cache;
 mod options;
+#[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
+mod process;
 mod source_map;
 
 #[cfg(feature = "cache")]
@@ -40,6 +42,13 @@ pub use cache::{
 };
 pub use options::Options;
 pub use source_map::{SourceFile, SourceMap};
+
+// Re-export processing API when features are enabled
+#[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
+pub use process::{
+    ErrorLocation, ErrorSeverity, Ledger, LedgerError, LoadOptions, ProcessError, load, load_raw,
+    process,
+};
 
 use rustledger_core::{Directive, DisplayContext};
 use rustledger_parser::{ParseError, Span, Spanned};
@@ -160,7 +169,7 @@ pub struct LoadResult {
 /// A plugin directive.
 #[derive(Debug, Clone)]
 pub struct Plugin {
-    /// Plugin module name.
+    /// Plugin module name (with any `python:` prefix stripped).
     pub name: String,
     /// Optional configuration string.
     pub config: Option<String>,
@@ -168,6 +177,8 @@ pub struct Plugin {
     pub span: Span,
     /// File this plugin was declared in.
     pub file_id: usize,
+    /// Whether the `python:` prefix was used to force Python execution.
+    pub force_python: bool,
 }
 
 /// Check if a file is GPG-encrypted based on extension or content.
@@ -393,11 +404,18 @@ impl Loader {
 
         // Process plugins
         for (name, config, span) in result.plugins {
+            // Check for "python:" prefix to force Python execution
+            let (actual_name, force_python) = if let Some(stripped) = name.strip_prefix("python:") {
+                (stripped.to_string(), true)
+            } else {
+                (name, false)
+            };
             plugins.push(Plugin {
-                name,
+                name: actual_name,
                 config,
                 span,
                 file_id,
+                force_python,
             });
         }
 
@@ -510,9 +528,12 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
     ctx
 }
 
-/// Load a beancount file.
+/// Load a beancount file without processing.
 ///
 /// This is a convenience function that creates a loader and loads a single file.
+/// For fully processed results (booking, plugins, validation), use the
+/// [`load`] function with [`LoadOptions`] instead.
+#[cfg(not(any(feature = "booking", feature = "plugins", feature = "validation")))]
 pub fn load(path: &Path) -> Result<LoadResult, LoadError> {
     Loader::new().load(path)
 }
@@ -574,5 +595,39 @@ mod tests {
         } else {
             panic!("Expected Decryption error");
         }
+    }
+
+    #[test]
+    fn test_plugin_force_python_prefix() {
+        let mut file = NamedTempFile::with_suffix(".beancount").unwrap();
+        writeln!(file, r#"plugin "python:my_plugin""#).unwrap();
+        writeln!(file, r#"plugin "regular_plugin""#).unwrap();
+        file.flush().unwrap();
+
+        let result = Loader::new().load(file.path()).unwrap();
+
+        assert_eq!(result.plugins.len(), 2);
+
+        // First plugin should have force_python = true and name without prefix
+        assert_eq!(result.plugins[0].name, "my_plugin");
+        assert!(result.plugins[0].force_python);
+
+        // Second plugin should have force_python = false
+        assert_eq!(result.plugins[1].name, "regular_plugin");
+        assert!(!result.plugins[1].force_python);
+    }
+
+    #[test]
+    fn test_plugin_force_python_with_config() {
+        let mut file = NamedTempFile::with_suffix(".beancount").unwrap();
+        writeln!(file, r#"plugin "python:my_plugin" "config_value""#).unwrap();
+        file.flush().unwrap();
+
+        let result = Loader::new().load(file.path()).unwrap();
+
+        assert_eq!(result.plugins.len(), 1);
+        assert_eq!(result.plugins[0].name, "my_plugin");
+        assert!(result.plugins[0].force_python);
+        assert_eq!(result.plugins[0].config, Some("config_value".to_string()));
     }
 }

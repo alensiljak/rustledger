@@ -37,8 +37,10 @@ impl Executor<'_> {
             }
             BinaryOperator::Regex => {
                 // ~ operator: string matches regex pattern
+                // NULL ~ pattern returns false (matches Python beancount behavior)
                 let s = match left {
                     Value::String(s) => s,
+                    Value::Null => return Ok(Value::Boolean(false)),
                     _ => {
                         return Err(QueryError::Type(
                             "regex requires string left operand".to_string(),
@@ -78,8 +80,10 @@ impl Executor<'_> {
             }
             BinaryOperator::NotRegex => {
                 // !~ operator: string does not match regex pattern
+                // NULL !~ pattern returns true (matches Python beancount behavior)
                 let s = match left {
                     Value::String(s) => s,
+                    Value::Null => return Ok(Value::Boolean(true)),
                     _ => {
                         return Err(QueryError::Type(
                             "!~ requires string left operand".to_string(),
@@ -291,8 +295,10 @@ impl Executor<'_> {
             }
             BinaryOperator::Regex => {
                 // ~ operator: string matches regex pattern
+                // NULL ~ pattern returns false (matches Python beancount behavior)
                 let s = match left {
                     Value::String(s) => s,
+                    Value::Null => return Ok(Value::Boolean(false)),
                     _ => {
                         return Err(QueryError::Type(
                             "regex requires string left operand".to_string(),
@@ -332,8 +338,10 @@ impl Executor<'_> {
             }
             BinaryOperator::NotRegex => {
                 // !~ operator: string does not match regex pattern
+                // NULL !~ pattern returns true (matches Python beancount behavior)
                 let s = match left {
                     Value::String(s) => s,
+                    Value::Null => return Ok(Value::Boolean(true)),
                     _ => {
                         return Err(QueryError::Type(
                             "!~ requires string left operand".to_string(),

@@ -13,6 +13,8 @@ use rustledger_loader::{
 };
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::PluginManager;
+#[cfg(feature = "python-plugin-wasm")]
+use rustledger_plugin::python::{PythonRuntime, is_python_available, suggest_module_path};
 use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions, wrappers_to_directives};
 use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 use serde::Serialize;
@@ -21,45 +23,6 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use tracing::Level;
 use tracing_subscriber::fmt::format::FmtSpan;
-
-/// Check if a Python plugin can be imported.
-///
-/// This function attempts to verify if a plugin module exists in the Python environment
-/// by running `python3 -c "import <module>"`. For file-based plugins (paths ending in .py
-/// or containing path separators), it checks if the file exists.
-///
-/// Returns `true` if the plugin appears to be available, `false` otherwise.
-fn check_python_plugin_exists(plugin_name: &str) -> bool {
-    // For file-based plugins (relative/absolute paths), check filesystem
-    let is_py_file = std::path::Path::new(plugin_name)
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
-    if is_py_file || plugin_name.contains(std::path::MAIN_SEPARATOR) {
-        // For relative paths, we can't easily resolve them without knowing the
-        // beancount file's directory, so we'll be conservative and assume they exist
-        // if they look like file paths. Python beancount will validate them properly.
-        return true;
-    }
-
-    // For module-style plugins, try to import with Python
-    // Use sys.argv to safely pass the plugin name without shell interpolation
-    let output = std::process::Command::new("python3")
-        .args([
-            "-c",
-            "import importlib, sys; importlib.import_module(sys.argv[1])",
-            plugin_name,
-        ])
-        .output();
-
-    match output {
-        Ok(result) => result.status.success(),
-        Err(_) => {
-            // Python not available - be conservative and assume plugin exists
-            // This avoids false positives when Python isn't installed
-            true
-        }
-    }
-}
 
 /// Output format for diagnostics.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -228,6 +191,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 config: p.config.clone(),
                 span: rustledger_parser::Span::new(0, 0),
                 file_id: 0,
+                force_python: p.force_python,
             })
             .collect();
 
@@ -280,6 +244,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     .map(|p| CachedPlugin {
                         name: p.name.clone(),
                         config: p.config.clone(),
+                        force_python: p.force_python,
                     })
                     .collect(),
                 files,
@@ -476,10 +441,11 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     }
     error_count += option_error_count;
 
-    // Validate plugins declared in the beancount file
-    // Like Python beancount, report an error if a plugin is not found
+    // Validate plugins declared in the beancount file and categorize them
     let native_registry = NativePluginRegistry::new();
-    let mut plugin_warning_count = 0usize;
+    #[cfg(feature = "python-plugin-wasm")]
+    let mut python_plugins_to_run: Vec<rustledger_loader::Plugin> = Vec::new();
+
     for plugin in &load_result.plugins {
         // Check if it's a known native plugin
         let is_native = native_registry.find(&plugin.name).is_some();
@@ -494,72 +460,79 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 )
                 .is_some();
 
-        if !is_native && !is_supported_beancount_plugin {
-            // Get source location for error reporting
-            let (line, column, file_path) =
-                if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
-                    let (l, c) = source_file.line_col(plugin.span.start);
-                    (l, c, source_file.path.clone())
+        // Determine if we should use Python for this plugin
+        let use_python = plugin.force_python || (!is_native && !is_supported_beancount_plugin);
+
+        if use_python {
+            #[cfg(feature = "python-plugin-wasm")]
+            {
+                // Check if it's a file-based plugin (can be executed directly)
+                let is_py_file = std::path::Path::new(&plugin.name)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+                let is_file_based = is_py_file || plugin.name.contains(std::path::MAIN_SEPARATOR);
+
+                if is_file_based {
+                    // File-based plugins can be executed in WASM sandbox
+                    python_plugins_to_run.push(plugin.clone());
                 } else {
-                    (1, 1, file.clone())
-                };
+                    // Module-based plugin - we can't resolve it without system Python
+                    // Provide helpful error message with suggestion
+                    let (line, file_path) =
+                        if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
+                            let (l, _) = source_file.line_col(plugin.span.start);
+                            (l, source_file.path.clone())
+                        } else {
+                            (1, file.clone())
+                        };
 
-            // Check if Python can import this plugin
-            let python_can_import = check_python_plugin_exists(&plugin.name);
+                    // Try to find the module path using system Python (for helpful error only)
+                    let suggestion = if is_python_available() {
+                        suggest_module_path(&plugin.name)
+                    } else {
+                        None
+                    };
 
-            if python_can_import {
-                // Plugin exists in Python but we can't run it - warn but don't fail
-                if json_mode {
-                    diagnostics.push(JsonDiagnostic {
-                        file: file_path.display().to_string(),
-                        line,
-                        column,
-                        end_line: line,
-                        end_column: column + plugin.name.len(),
-                        severity: "warning".to_string(),
-                        code: "W8002".to_string(),
-                        message: format!(
-                            "Python plugin \"{}\" found but cannot be executed by rustledger",
-                            plugin.name
-                        ),
-                        hint: Some(
-                            "Plugin validation skipped. Use Python beancount for full plugin support."
-                                .to_string(),
-                        ),
-                        context: None,
-                    });
-                } else if !args.quiet {
-                    writeln!(
-                        stdout,
-                        "{}:{}: warning[W8002]: Python plugin \"{}\" found but cannot be executed",
-                        file_path.display(),
-                        line,
-                        plugin.name
-                    )?;
+                    if let Some(module_path) = suggestion {
+                        if !args.quiet {
+                            let plugin_name = &plugin.name;
+                            writeln!(
+                                stdout,
+                                "{}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
+                                file_path.display(),
+                            )?;
+                            writeln!(stdout)?;
+                            writeln!(stdout, "Replace line {line}:")?;
+                            writeln!(stdout, "  plugin \"{plugin_name}\"")?;
+                            writeln!(stdout, "with:")?;
+                            writeln!(stdout, "  plugin \"{module_path}\"")?;
+                        }
+                    } else if !args.quiet {
+                        let plugin_name = &plugin.name;
+                        writeln!(
+                            stdout,
+                            "{}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
+                            file_path.display(),
+                        )?;
+                    }
+                    error_count += 1;
                 }
-                plugin_warning_count += 1;
-            } else {
-                // Plugin doesn't exist - error (matches Python beancount behavior)
-                if json_mode {
-                    diagnostics.push(JsonDiagnostic {
-                        file: file_path.display().to_string(),
-                        line,
-                        column,
-                        end_line: line,
-                        end_column: column + plugin.name.len(),
-                        severity: "error".to_string(),
-                        code: "E8001".to_string(),
-                        message: format!("Plugin not found: \"{}\"", plugin.name),
-                        hint: Some(
-                            "Plugin could not be found by Python. Check the plugin name and installation."
-                                .to_string(),
-                        ),
-                        context: None,
-                    });
-                } else if !args.quiet {
+            }
+            #[cfg(not(feature = "python-plugin-wasm"))]
+            {
+                // Python plugins not supported in this build
+                let (line, _column, file_path) =
+                    if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
+                        let (l, c) = source_file.line_col(plugin.span.start);
+                        (l, c, source_file.path.clone())
+                    } else {
+                        (1, 1, file.clone())
+                    };
+
+                if !args.quiet {
                     writeln!(
                         stdout,
-                        "{}:{}: error[E8001]: Plugin not found: \"{}\"",
+                        "{}:{}: error[E8005]: Python plugin \"{}\" requires python-plugin-wasm feature",
                         file_path.display(),
                         line,
                         plugin.name
@@ -572,12 +545,57 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Destructure to enable move instead of clone
     let LoadResult {
-        directives: spanned_directives,
+        directives: mut spanned_directives,
         options,
         plugins: file_plugins,
         source_map,
         ..
     } = load_result;
+
+    // Run booking and interpolation FIRST (before plugins)
+    // This matches Python beancount behavior where booking fills in missing amounts
+    // before plugins run. Plugins like gain_loss need the interpolated amounts.
+    if args.verbose && !args.quiet {
+        eprintln!(
+            "Booking and interpolating {} directives...",
+            spanned_directives.len()
+        );
+    }
+
+    // Sort directives by date before booking, so lot matching works correctly
+    spanned_directives.sort_by(|a, b| {
+        a.value
+            .date()
+            .cmp(&b.value.date())
+            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    });
+
+    let booking_method: BookingMethod = options
+        .booking_method
+        .parse()
+        .unwrap_or(BookingMethod::Strict);
+    let mut booking_engine = BookingEngine::with_method(booking_method);
+    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
+
+    for spanned in &mut spanned_directives {
+        if let Directive::Transaction(txn) = &mut spanned.value {
+            match booking_engine.book_and_interpolate(txn) {
+                Ok(result) => {
+                    booking_engine.apply(&result.transaction);
+                    *txn = result.transaction;
+                }
+                Err(e) => {
+                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
+                        interpolation_errors.push((
+                            txn.date,
+                            txn.narration.to_string(),
+                            interp_err,
+                        ));
+                    }
+                }
+            }
+        }
+    }
 
     // Extract directives and spans in a single pass for efficiency
     // We need the spans for validation error reporting
@@ -594,8 +612,12 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         .map(|s| (*s).to_string())
         .collect();
 
-    // Build list of native plugins to run from CLI args
-    let mut native_plugins_to_run = args.native_plugins.clone();
+    // Build list of native plugins to run from CLI args (with no config)
+    let mut native_plugins_to_run: Vec<(String, Option<String>)> = args
+        .native_plugins
+        .iter()
+        .map(|name| (name.clone(), None))
+        .collect();
 
     // Also run plugins declared in the beancount file (if they're native)
     for plugin in &file_plugins {
@@ -612,14 +634,18 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             continue; // Unknown plugin, already reported error above
         };
 
-        if !native_plugins_to_run.contains(&plugin_name) {
-            native_plugins_to_run.push(plugin_name);
+        if !native_plugins_to_run.iter().any(|(n, _)| n == &plugin_name) {
+            native_plugins_to_run.push((plugin_name, plugin.config.clone()));
         }
     }
 
     // If --auto is set, add auto-plugins
-    if args.auto && !native_plugins_to_run.contains(&"auto_accounts".to_string()) {
-        native_plugins_to_run.insert(0, "auto_accounts".to_string());
+    if args.auto
+        && !native_plugins_to_run
+            .iter()
+            .any(|(n, _)| n == "auto_accounts")
+    {
+        native_plugins_to_run.insert(0, ("auto_accounts".to_string(), None));
     }
 
     // Run plugins if specified
@@ -627,8 +653,12 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let has_wasm_plugins = !args.plugins.is_empty();
     #[cfg(not(feature = "python-plugin-wasm"))]
     let has_wasm_plugins = false;
+    #[cfg(feature = "python-plugin-wasm")]
+    let has_python_plugins = !python_plugins_to_run.is_empty();
+    #[cfg(not(feature = "python-plugin-wasm"))]
+    let has_python_plugins = false;
 
-    if !native_plugins_to_run.is_empty() || has_wasm_plugins {
+    if !native_plugins_to_run.is_empty() || has_wasm_plugins || has_python_plugins {
         if args.verbose && !args.quiet {
             eprintln!("Running plugins...");
         }
@@ -646,12 +676,18 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         // native_registry already created above for plugin validation
         let mut current_input = plugin_input;
 
-        for plugin_name in &native_plugins_to_run {
+        for (plugin_name, plugin_config) in &native_plugins_to_run {
             if let Some(plugin) = native_registry.find(plugin_name) {
                 if args.verbose && !args.quiet {
                     eprintln!("  Running native plugin: {}", plugin.name());
                 }
-                let output = plugin.process(current_input.clone());
+                // Set config for this specific plugin
+                let plugin_input = PluginInput {
+                    directives: current_input.directives.clone(),
+                    options: current_input.options.clone(),
+                    config: plugin_config.clone(),
+                };
+                let output = plugin.process(plugin_input);
 
                 for err in &output.errors {
                     if !args.quiet {
@@ -667,6 +703,68 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 };
             } else if !args.quiet {
                 writeln!(stdout, "warning: unknown native plugin: {plugin_name}")?;
+            }
+        }
+
+        // Run Python plugins (file-based only - module-based are rejected earlier)
+        #[cfg(feature = "python-plugin-wasm")]
+        if !python_plugins_to_run.is_empty() {
+            // Lazily initialize Python runtime
+            match PythonRuntime::new() {
+                Ok(runtime) => {
+                    for plugin in &python_plugins_to_run {
+                        if args.verbose && !args.quiet {
+                            eprintln!("  Running Python plugin: {}", plugin.name);
+                        }
+
+                        // Set config for this specific plugin
+                        let plugin_input = PluginInput {
+                            directives: current_input.directives.clone(),
+                            options: current_input.options.clone(),
+                            config: plugin.config.clone(),
+                        };
+
+                        match runtime.execute_module(&plugin.name, &plugin_input, file.parent()) {
+                            Ok(output) => {
+                                for err in &output.errors {
+                                    if !args.quiet {
+                                        let severity = match err.severity {
+                                            rustledger_plugin::PluginErrorSeverity::Error => {
+                                                "error"
+                                            }
+                                            rustledger_plugin::PluginErrorSeverity::Warning => {
+                                                "warning"
+                                            }
+                                        };
+                                        writeln!(stdout, "{severity}: {}", err.message)?;
+                                    }
+                                    error_count += 1;
+                                }
+                                current_input = PluginInput {
+                                    directives: output.directives,
+                                    options: current_input.options.clone(),
+                                    config: None,
+                                };
+                            }
+                            Err(e) => {
+                                if !args.quiet {
+                                    writeln!(
+                                        stdout,
+                                        "error[E8002]: Python plugin execution failed: {e}"
+                                    )?;
+                                }
+                                error_count += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    // E8003: Python runtime unavailable
+                    if !args.quiet {
+                        writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
+                    }
+                    error_count += python_plugins_to_run.len();
+                }
             }
         }
 
@@ -755,58 +853,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 .collect()
         };
 
-    // Run booking and interpolation on transactions (sequential)
-    // Booking must be sequential because lot matching depends on prior inventory.
-    // This matches Python beancount behavior where booking runs before interpolation
-    // to fill in empty cost specs (e.g., `-5 AAPL {}` -> `-5 AAPL {100 USD, 2020-01-01}`).
-    if args.verbose && !args.quiet {
-        eprintln!(
-            "Booking and interpolating {} directives...",
-            spanned_directives.len()
-        );
-    }
-
-    // Sort directives by date before booking, so lot matching works correctly
-    // regardless of source file ordering (e.g., reverse-chronological ledgers).
-    // Uses stable sort to preserve original ordering for same-date directives.
-    spanned_directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
-    });
-
-    let booking_method: BookingMethod = options
-        .booking_method
-        .parse()
-        .unwrap_or(BookingMethod::Strict);
-    let mut booking_engine = BookingEngine::with_method(booking_method);
-    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
-
-    for spanned in &mut spanned_directives {
-        if let Directive::Transaction(txn) = &mut spanned.value {
-            match booking_engine.book_and_interpolate(txn) {
-                Ok(result) => {
-                    // Apply the booked transaction to update inventory for subsequent lot matching
-                    booking_engine.apply(&result.transaction);
-                    *txn = result.transaction;
-                }
-                Err(e) => {
-                    // Convert BookingError to InterpolationError for consistent error reporting
-                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
-                        interpolation_errors.push((
-                            txn.date,
-                            txn.narration.to_string(),
-                            interp_err,
-                        ));
-                    }
-                    // Other booking errors (NoMatchingLot, InsufficientUnits) are
-                    // reported as validation errors, not interpolation errors
-                }
-            }
-        }
-    }
-
+    // Report interpolation errors from booking (which ran before plugins)
     if !interpolation_errors.is_empty() {
         if json_mode {
             for (date, narration, err) in &interpolation_errors {
@@ -904,7 +951,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Print summary / output
     let elapsed = start.elapsed();
-    let warning_count = validation_warning_count + plugin_warning_count;
+    let warning_count = validation_warning_count;
 
     if json_mode {
         let output = JsonOutput {

@@ -174,7 +174,7 @@ def _parse_posting(d):
     return Posting(
         account=d.get('account', ''),
         units=_parse_amount(d.get('units')),
-        cost=_parse_cost(d.get('cost')),
+        cost=_parse_cost_spec(d.get('cost')),
         price=_parse_amount(d.get('price')),
         flag=d.get('flag'),
         meta=d.get('meta', {})
@@ -333,6 +333,33 @@ def _serialize_cost(c):
     }
 
 
+def _serialize_cost_spec(c):
+    """Serialize a CostSpec to dict (matches Rust CostData format)."""
+    if c is None:
+        return None
+    # Handle both Cost and CostSpec namedtuples
+    if hasattr(c, 'number_per'):
+        # CostSpec
+        return {
+            'number_per': _serialize_decimal(c.number_per),
+            'number_total': _serialize_decimal(c.number_total) if hasattr(c, 'number_total') else None,
+            'currency': c.currency if c.currency else None,
+            'date': _serialize_date(c.date),
+            'label': c.label,
+            'merge': c.merge if hasattr(c, 'merge') else False
+        }
+    else:
+        # Cost (convert to CostSpec format)
+        return {
+            'number_per': _serialize_decimal(c.number),
+            'number_total': None,
+            'currency': c.currency if c.currency else None,
+            'date': _serialize_date(c.date),
+            'label': c.label,
+            'merge': False
+        }
+
+
 def _serialize_posting(p):
     """Serialize a Posting to dict."""
     if p is None:
@@ -340,7 +367,7 @@ def _serialize_posting(p):
     return {
         'account': p.account,
         'units': _serialize_amount(p.units),
-        'cost': _serialize_cost(p.cost),
+        'cost': _serialize_cost_spec(p.cost),
         'price': _serialize_amount(p.price),
         'flag': p.flag,
         'metadata': list(p.meta.items()) if p.meta else []
@@ -553,15 +580,67 @@ _beancount.core.data.Cost = Cost
 _beancount.core.data.CostSpec = CostSpec
 _beancount.core.data.TxnPosting = TxnPosting
 
+def new_metadata(filename, lineno, kvlist=None):
+    """Create a new metadata dictionary."""
+    meta = {'filename': filename, 'lineno': lineno}
+    if kvlist:
+        meta.update(kvlist)
+    return meta
+
+_beancount.core.data.new_metadata = new_metadata
+
 # Create beancount.core.amount module
 _beancount.core.amount = FakeModule()
 _beancount.core.amount.Amount = Amount
+
+# Create beancount.core.getters module
+_beancount.core.getters = FakeModule()
+
+def get_account_open_close(entries):
+    """Get a mapping of account name to Open/Close directives.
+
+    This is a simplified version of beancount.core.getters.get_account_open_close
+    that returns a dict mapping account names to (open, close) tuples.
+    """
+    open_close_map = {}
+    for entry in entries:
+        if isinstance(entry, Open):
+            account = entry.account
+            if account not in open_close_map:
+                open_close_map[account] = (entry, None)
+            else:
+                # Update the open entry
+                open_close_map[account] = (entry, open_close_map[account][1])
+        elif isinstance(entry, Close):
+            account = entry.account
+            if account not in open_close_map:
+                open_close_map[account] = (None, entry)
+            else:
+                # Update the close entry
+                open_close_map[account] = (open_close_map[account][0], entry)
+    return open_close_map
+
+_beancount.core.getters.get_account_open_close = get_account_open_close
+
+# Create beancount.core.flags module
+_beancount.core.flags = FakeModule()
+_beancount.core.flags.FLAG_OKAY = '*'
+_beancount.core.flags.FLAG_WARNING = '!'
+_beancount.core.flags.FLAG_PADDING = 'P'
+_beancount.core.flags.FLAG_SUMMARIZE = 'S'
+_beancount.core.flags.FLAG_TRANSFER = 'T'
+_beancount.core.flags.FLAG_CONVERSIONS = 'C'
+_beancount.core.flags.FLAG_UNREALIZED = 'U'
+_beancount.core.flags.FLAG_RETURNS = 'R'
+_beancount.core.flags.FLAG_MERGING = 'M'
 
 # Install in sys.modules so imports work
 sys.modules['beancount'] = _beancount
 sys.modules['beancount.core'] = _beancount.core
 sys.modules['beancount.core.data'] = _beancount.core.data
 sys.modules['beancount.core.amount'] = _beancount.core.amount
+sys.modules['beancount.core.getters'] = _beancount.core.getters
+sys.modules['beancount.core.flags'] = _beancount.core.flags
 
 # Export for direct use
 __all__ = [

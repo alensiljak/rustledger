@@ -1,0 +1,4 @@
+[default.extend-words]
+# Financial term: Profit and Loss
+Pn = "Pn"
+pnl = "pnl"

@@ -1,0 +1,37 @@
+; Issue: https://github.com/rustledger/rustledger/issues/276
+; Description: Multi-posting lot boundary crossing fails with E4001
+; Expected: No errors - both postings should succeed with inventory updated between them
+
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Crypto:Exchange  ADA,USD  "FIFO"
+2020-01-01 open Equity:Opening
+2020-01-01 open Income:Trading
+
+; Lot 1: 100 ADA at $0.50 (oldest)
+2021-01-01 * "Opening balance - Lot 1"
+  Assets:Crypto:Exchange   100 ADA {0.50 USD, 2021-01-01}
+  Equity:Opening          -50 USD
+
+; Lot 2: 100 ADA at $0.52 (newer)
+2022-05-19 * "Opening balance - Lot 2"
+  Assets:Crypto:Exchange   100 ADA {0.52 USD, 2022-05-19}
+  Equity:Opening          -52 USD
+
+; First sale: consume half of lot 1 (50 ADA remaining in lot 1)
+2022-05-20 * "Sell 50 ADA"
+  Assets:Crypto:Exchange   25 USD
+  Assets:Crypto:Exchange  -50 ADA {} @ 0.50 USD
+  Income:Trading
+
+; Two postings in same transaction crossing lot boundary
+; - First posting: -75 ADA {} takes 50 from lot 1 + 25 from lot 2
+; - Second posting: -5 ADA {} should take from lot 2 (not fail!)
+; Cost: 50*$0.50 + 25*$0.52 + 5*$0.52 = $25.00 + $13.00 + $2.60 = $40.60
+2022-05-22 * "Sell 80 ADA with fee (crosses lot boundary)"
+  Assets:Crypto:Exchange   -75 ADA {}
+  Assets:Crypto:Exchange    -5 ADA {}
+  Assets:Crypto:Exchange  40.60 USD
+  Income:Trading
+
+2022-05-23 balance Assets:Crypto:Exchange  70 ADA

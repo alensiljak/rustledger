@@ -81,6 +81,12 @@ if [ ! -x "$RLEDGER" ]; then
     exit 1
 fi
 
+# Activate plugin venv if available (provides third-party plugins)
+VENV_DIR=".venv-plugins"
+if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
+    source "$VENV_DIR/bin/activate"
+fi
+
 # Check that bean-check is available
 if ! command -v bean-check &> /dev/null; then
     echo "Error: bean-check not found. Run inside nix develop."

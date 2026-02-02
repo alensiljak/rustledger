@@ -259,7 +259,7 @@ pub enum Token<'src> {
     /// This is a placeholder - actual indentation detection happens in [`tokenize`].
     Indent(usize),
 
-    /// Deep indentation (4+ spaces) - used for posting-level metadata.
+    /// Deep indentation (3+ spaces) - used for posting-level metadata.
     DeepIndent(usize),
 
     /// Error token for unrecognized input.
@@ -442,8 +442,12 @@ pub fn tokenize(source: &str) -> Vec<(Token<'_>, Span)> {
                     if space_count >= 1 {
                         let indent_start = last_newline_end;
                         let indent_end = last_newline_end + char_count;
-                        // Use DeepIndent for 4+ spaces (posting metadata level)
-                        let indent_token = if space_count >= 4 {
+                        // Use DeepIndent for 3+ spaces (posting metadata level).
+                        // Python beancount allows flexible indentation where posting
+                        // metadata just needs to be more indented than the posting.
+                        // Common patterns: 2-space posting / 4-space meta, or
+                        // 1-space posting / 3-space meta (as in beancount_reds_plugins).
+                        let indent_token = if space_count >= 3 {
                             Token::DeepIndent(space_count)
                         } else {
                             Token::Indent(space_count)

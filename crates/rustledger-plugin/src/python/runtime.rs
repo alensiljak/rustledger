@@ -52,6 +52,12 @@ impl PythonRuntime {
         // Create engine with fuel for execution limits
         let mut config = Config::new();
         config.consume_fuel(true);
+        // Python needs a larger stack for compiling/importing modules.
+        // As of wasmtime's Config::max_wasm_stack documentation
+        // (https://docs.wasmtime.dev/api/wasmtime/struct.Config.html#method.max_wasm_stack),
+        // the default max WebAssembly stack size is 512 KiB, which is too small for
+        // Python's recursive AST visitor, so we increase it to 16 MiB here.
+        config.max_wasm_stack(16 * 1024 * 1024);
         let engine = Arc::new(Engine::new(&config).map_err(PythonError::Wasm)?);
 
         // Try to load precompiled module from cache, or compile and cache it
@@ -112,13 +118,13 @@ impl PythonRuntime {
         let script = format!(
             r"
 import sys
-sys.path.insert(0, 'work')
+sys.path.insert(0, '/work')
 
 # Load compatibility layer (defines types like ValidationError, Transaction, etc.)
-exec(open('work/compat.py').read())
+exec(open('/work/compat.py').read())
 
 # Load plugin code in same namespace so it has access to compat types
-exec(open('work/plugin.py').read())
+exec(open('/work/plugin.py').read())
 
 # Input data
 entries_json = '''{entries_json}'''
@@ -129,7 +135,7 @@ config = {config_arg}
 entries_out, errors_out = run_plugin({plugin_func}, entries_json, options_json, config)
 
 # Write output to file
-with open('work/output.json', 'w') as f:
+with open('/work/output.json', 'w') as f:
     f.write(entries_out)
     f.write('\n---SEPARATOR---\n')
     f.write(errors_out)
@@ -173,6 +179,35 @@ with open('work/output.json', 'w') as f:
         self.execute_plugin(plugin_code, "plugin", input)
     }
 
+    /// Execute a Python plugin by module name.
+    ///
+    /// This method discovers the module on the host filesystem (using the host
+    /// Python interpreter), reads its source code, and executes it in the WASI
+    /// sandbox.
+    ///
+    /// # Arguments
+    ///
+    /// * `module_name` - Python module path (e.g., `"my_plugin"` or `"my_package.plugin"`)
+    /// * `input` - Plugin input with directives
+    /// * `beancount_dir` - Directory containing the beancount file (for relative imports)
+    ///
+    /// # Errors
+    ///
+    /// Returns `PythonError::ModuleNotFound` if the module cannot be located.
+    /// Returns `PythonError::CExtensionNotSupported` if the module is a C extension.
+    pub fn execute_module(
+        &self,
+        module_name: &str,
+        input: &PluginInput,
+        beancount_dir: Option<&std::path::Path>,
+    ) -> Result<PluginOutput, PythonError> {
+        // Discover and read the module source
+        let source = discover_module_source(module_name, beancount_dir)?;
+
+        // Execute the plugin using the discovered source
+        self.execute_plugin(&source, "plugin", input)
+    }
+
     /// Run a Python script and return output via file.
     fn run_python(
         &self,
@@ -204,23 +239,24 @@ with open('work/output.json', 'w') as f:
         // Get the python-wasi root directory (parent of lib)
         let python_root = self.stdlib_path.parent().unwrap_or(&self.stdlib_path);
 
-        // Map the python-wasi directory as "." so Python can find ./lib
+        // Map the python-wasi directory as "/" (root) so Python can find /lib
+        // This is critical - Python needs absolute paths for PYTHONHOME/PYTHONPATH
         wasi_builder
-            .preopened_dir(python_root, ".", DirPerms::READ, FilePerms::READ)
+            .preopened_dir(python_root, "/", DirPerms::READ, FilePerms::READ)
             .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
 
         // Set up work directory for script and output (read-write)
         wasi_builder
-            .preopened_dir(work_dir.path(), "work", DirPerms::all(), FilePerms::all())
+            .preopened_dir(work_dir.path(), "/work", DirPerms::all(), FilePerms::all())
             .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
 
-        // Set environment for Python - use relative paths
+        // Set environment for Python - use absolute paths from guest perspective
         wasi_builder
-            .env("PYTHONHOME", ".")
-            .env("PYTHONPATH", "./lib")
+            .env("PYTHONHOME", "/")
+            .env("PYTHONPATH", "/lib")
             .env("PYTHONDONTWRITEBYTECODE", "1")
-            // Set args: python work/script.py (no leading ./)
-            .args(&["python", "work/script.py"]);
+            // Set args: python /work/script.py
+            .args(&["python", "/work/script.py"]);
 
         let wasi_ctx = wasi_builder.build_p1();
 
@@ -256,6 +292,80 @@ with open('work/output.json', 'w') as f:
             ))
         })
     }
+}
+
+/// Discover and read a Python plugin's source code.
+///
+/// For file-based plugins (`.py` files or paths), reads the file directly.
+/// For module-based plugins, returns `ModuleNotFound` error - the caller should
+/// use `suggest_module_path()` to provide a helpful hint to the user.
+///
+/// This intentionally does NOT auto-discover module sources via system Python.
+/// We want users to explicitly specify file paths so we can track which plugins
+/// need native Rust implementations.
+fn discover_module_source(
+    module_name: &str,
+    beancount_dir: Option<&std::path::Path>,
+) -> Result<String, PythonError> {
+    use std::path::PathBuf;
+
+    // Handle file-based plugins first
+    let is_py_file = std::path::Path::new(module_name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+    if is_py_file || module_name.contains(std::path::MAIN_SEPARATOR) {
+        let path = if let Some(dir) = beancount_dir {
+            dir.join(module_name)
+        } else {
+            PathBuf::from(module_name)
+        };
+
+        if !path.exists() {
+            return Err(PythonError::ModuleNotFound(module_name.to_string()));
+        }
+
+        return std::fs::read_to_string(&path).map_err(PythonError::Io);
+    }
+
+    // Module-based plugins require explicit file paths
+    Err(PythonError::ModuleNotFound(module_name.to_string()))
+}
+
+/// Try to locate a Python module's file path using the system Python.
+///
+/// This is used to provide helpful error messages suggesting the user
+/// replace module-based plugin references with explicit file paths.
+///
+/// Returns `Some(path)` if the module was found, `None` otherwise.
+pub fn suggest_module_path(module_name: &str) -> Option<String> {
+    use std::process::Command;
+
+    let output = Command::new("python3")
+        .args([
+            "-c",
+            r"import sys, importlib.util
+spec = importlib.util.find_spec(sys.argv[1])
+print(spec.origin if spec and spec.origin and spec.origin.endswith('.py') else '')",
+            module_name,
+        ])
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() { None } else { Some(path) }
+}
+
+/// Check if Python 3 is available on the system.
+pub fn is_python_available() -> bool {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Serialize directives to JSON for Python consumption.
@@ -421,5 +531,80 @@ mod tests {
         let result = parse_plugin_output(output).unwrap();
         assert!(result.directives.is_empty());
         assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_is_python_available() {
+        // Just ensure this doesn't panic and returns a bool
+        let _available = is_python_available();
+    }
+
+    #[test]
+    fn test_discover_module_source_file_not_found() {
+        let result = discover_module_source("nonexistent.py", None);
+        assert!(matches!(result, Err(PythonError::ModuleNotFound(_))));
+    }
+
+    #[test]
+    fn test_discover_module_source_module_based() {
+        // Module-based plugins should return ModuleNotFound
+        let result = discover_module_source("beancount.plugins.check_commodity", None);
+        assert!(matches!(result, Err(PythonError::ModuleNotFound(_))));
+    }
+
+    #[test]
+    fn test_discover_module_source_reads_file() {
+        use std::io::Write;
+
+        // Create a temp file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_path = temp_dir.path().join("test_plugin.py");
+        let mut file = std::fs::File::create(&plugin_path).unwrap();
+        writeln!(file, "def plugin(entries, options): return entries, []").unwrap();
+
+        // Test reading with absolute path
+        let result = discover_module_source(plugin_path.to_str().unwrap(), None);
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("def plugin"));
+    }
+
+    #[test]
+    fn test_discover_module_source_relative_to_beancount_dir() {
+        use std::io::Write;
+
+        // Create a temp file
+        let temp_dir = tempfile::tempdir().unwrap();
+        let plugin_path = temp_dir.path().join("my_plugin.py");
+        let mut file = std::fs::File::create(&plugin_path).unwrap();
+        writeln!(file, "# my plugin").unwrap();
+
+        // Test reading relative to beancount_dir
+        let result = discover_module_source("my_plugin.py", Some(temp_dir.path()));
+        assert!(result.is_ok());
+        assert!(result.unwrap().contains("# my plugin"));
+    }
+
+    #[test]
+    fn test_suggest_module_path_returns_option() {
+        // Test with a module that likely doesn't exist
+        let result = suggest_module_path("nonexistent_module_xyz123");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_suggest_module_path_finds_known_module() {
+        if !is_python_available() {
+            return; // Skip if Python not available
+        }
+
+        // 'os' is a standard library module that should exist
+        let result = suggest_module_path("os");
+        // os.py should be found on most systems
+        if let Some(path) = result {
+            let has_py_ext = std::path::Path::new(&path)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+            assert!(has_py_ext || path.contains("os"));
+        }
     }
 }
