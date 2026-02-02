@@ -48,6 +48,23 @@ pub struct InterpolationResult {
     pub residuals: HashMap<InternedStr, Decimal>,
 }
 
+/// Round an interpolated amount to match existing scale, but never round
+/// a non-zero residual to zero (that would leave the transaction unbalanced).
+fn round_interpolated(residual: Decimal, existing_scale: Option<u32>) -> Decimal {
+    let interpolated = -residual;
+    if let Some(scale) = existing_scale {
+        let rounded = interpolated.round_dp(scale);
+        // If rounding would make non-zero residual into zero, preserve precision
+        if rounded.is_zero() && !residual.is_zero() {
+            interpolated
+        } else {
+            rounded
+        }
+    } else {
+        interpolated
+    }
+}
+
 /// Interpolate missing amounts in a transaction.
 ///
 /// This function:
@@ -298,19 +315,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
         let idx = indices[0];
         let residual = residuals.get(&currency).copied().unwrap_or(Decimal::ZERO);
 
-        // Round interpolated amount to match existing scale, but never round
-        // a non-zero residual to zero (that would leave the transaction unbalanced).
-        let interpolated = if let Some(&existing_scale) = max_scale_by_currency.get(&currency) {
-            let rounded = (-residual).round_dp(existing_scale);
-            // If rounding would make non-zero residual into zero, preserve precision
-            if rounded.is_zero() && !residual.is_zero() {
-                -residual
-            } else {
-                rounded
-            }
-        } else {
-            -residual
-        };
+        let interpolated = round_interpolated(residual, max_scale_by_currency.get(&currency).copied());
 
         result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
             interpolated,
@@ -340,16 +345,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
 
             // Fill the first currency into the original posting
             let (first_currency, first_residual) = &non_zero_residuals[0];
-            let interpolated = if let Some(&existing_scale) = max_scale_by_currency.get(first_currency) {
-                let rounded = (-first_residual).round_dp(existing_scale);
-                if rounded.is_zero() && !first_residual.is_zero() {
-                    -first_residual
-                } else {
-                    rounded
-                }
-            } else {
-                -first_residual
-            };
+            let interpolated = round_interpolated(*first_residual, max_scale_by_currency.get(first_currency).copied());
             result.postings[idx].units = Some(IncompleteAmount::Complete(Amount::new(
                 interpolated,
                 first_currency,
@@ -360,16 +356,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             // Add new postings for remaining currencies
             for (currency, residual) in non_zero_residuals.iter().skip(1) {
                 let mut new_posting = original_posting.clone();
-                let interpolated = if let Some(&existing_scale) = max_scale_by_currency.get(currency) {
-                    let rounded = (-residual).round_dp(existing_scale);
-                    if rounded.is_zero() && !residual.is_zero() {
-                        -residual
-                    } else {
-                        rounded
-                    }
-                } else {
-                    -residual
-                };
+                let interpolated = round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
                 new_posting.units = Some(IncompleteAmount::Complete(Amount::new(
                     interpolated,
                     currency,
@@ -383,16 +370,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
             for (i, idx) in unassigned_missing.iter().enumerate() {
                 if i < non_zero_residuals.len() {
                     let (currency, residual) = &non_zero_residuals[i];
-                    let interpolated = if let Some(&existing_scale) = max_scale_by_currency.get(currency) {
-                        let rounded = (-residual).round_dp(existing_scale);
-                        if rounded.is_zero() && !residual.is_zero() {
-                            -residual
-                        } else {
-                            rounded
-                        }
-                    } else {
-                        -residual
-                    };
+                    let interpolated = round_interpolated(*residual, max_scale_by_currency.get(currency).copied());
                     result.postings[*idx].units = Some(IncompleteAmount::Complete(Amount::new(
                         interpolated,
                         currency,
