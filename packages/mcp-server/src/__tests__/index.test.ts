@@ -761,7 +761,28 @@ describe('loadWithIncludes', () => {
     fs.writeFileSync(file1Path, 'include "circular2.beancount"');
     fs.writeFileSync(file2Path, 'include "circular1.beancount"');
 
-    expect(() => loadWithIncludes(file1Path)).toThrow('Circular include');
+    // Verify error message contains the file path for debugging
+    expect(() => loadWithIncludes(file1Path)).toThrow(/Circular include.*circular1\.beancount/);
+  });
+
+  it('should allow diamond includes (same file from different branches)', () => {
+    // Test case: A includes B and C, both B and C include D
+    // This should NOT be detected as circular - D is included twice but not in a cycle
+    const mainPath = path.join(tempDir, 'diamond-main.beancount');
+    const branchBPath = path.join(tempDir, 'diamond-b.beancount');
+    const branchCPath = path.join(tempDir, 'diamond-c.beancount');
+    const sharedPath = path.join(tempDir, 'diamond-shared.beancount');
+
+    fs.writeFileSync(sharedPath, '2024-01-01 open Assets:Shared USD');
+    fs.writeFileSync(branchBPath, 'include "diamond-shared.beancount"\n2024-01-01 open Assets:B USD');
+    fs.writeFileSync(branchCPath, 'include "diamond-shared.beancount"\n2024-01-01 open Assets:C USD');
+    fs.writeFileSync(mainPath, 'include "diamond-b.beancount"\ninclude "diamond-c.beancount"');
+
+    // Should succeed - the shared file is included twice but not circularly
+    const result = loadWithIncludes(mainPath);
+    expect(result).toContain('Assets:Shared');
+    expect(result).toContain('Assets:B');
+    expect(result).toContain('Assets:C');
   });
 
   it('should throw error for missing included file', () => {

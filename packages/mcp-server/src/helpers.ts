@@ -31,26 +31,31 @@ export function loadWithIncludes(filePath: string): string {
 function loadFileRecursive(filePath: string, visited: Set<string>): string {
   const absolutePath = path.resolve(filePath);
 
-  // Check for circular includes
+  // Check for circular includes (only in current recursion stack)
   if (visited.has(absolutePath)) {
     throw new Error(`Circular include detected: ${absolutePath}`);
   }
   visited.add(absolutePath);
 
-  const source = fs.readFileSync(absolutePath, "utf-8");
-  const baseDir = path.dirname(absolutePath);
+  try {
+    const source = fs.readFileSync(absolutePath, "utf-8");
+    const baseDir = path.dirname(absolutePath);
 
-  // Replace each include directive with the contents of the included file
-  return source.replace(INCLUDE_REGEX, (_match, includePath: string) => {
-    const includeAbsPath = path.resolve(baseDir, includePath);
-    try {
-      return loadFileRecursive(includeAbsPath, visited);
-    } catch (error) {
-      // Re-throw with context about which include failed
-      const msg = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to include "${includePath}" from ${absolutePath}: ${msg}`);
-    }
-  });
+    // Replace each include directive with the contents of the included file
+    return source.replace(INCLUDE_REGEX, (_match, includePath: string) => {
+      const includeAbsPath = path.resolve(baseDir, includePath);
+      try {
+        return loadFileRecursive(includeAbsPath, visited);
+      } catch (error) {
+        // Re-throw with context about which include failed
+        const msg = error instanceof Error ? error.message : String(error);
+        throw new Error(`Failed to include "${includePath}" from ${absolutePath}: ${msg}`);
+      }
+    });
+  } finally {
+    // Remove from visited after processing to allow same file from different branches
+    visited.delete(absolutePath);
+  }
 }
 
 /**
