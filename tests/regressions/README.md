@@ -62,3 +62,7 @@ When adding a test from a new issue:
 | [#223](https://github.com/rustledger/rustledger/issues/223) | Lot matching with reverse-chronological order | Fixed |
 | [#230](https://github.com/rustledger/rustledger/issues/230) | Cost without currency lot matching | Fixed |
 | [#251](https://github.com/rustledger/rustledger/issues/251) | Tolerance handling | Fixed |
+| [#276](https://github.com/rustledger/rustledger/issues/276) | Multi-posting lot boundary crossing | Fixed |
+| [#277](https://github.com/rustledger/rustledger/issues/277) | CostSpec serialization in Python compat layer | Fixed |
+| [#278](https://github.com/rustledger/rustledger/issues/278) | Zerosum plugin duplicate Open directives | Fixed |
+| [#279](https://github.com/rustledger/rustledger/issues/279) | Crypto FIFO with multi-lot sales | Fixed |

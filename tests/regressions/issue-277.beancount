@@ -1,0 +1,25 @@
+; Issue: https://github.com/rustledger/rustledger/issues/277
+; Description: CostSpec serialization bug in Python plugin compat layer
+; Expected: No errors - cost specs preserved through Python plugin processing
+
+option "operating_currency" "USD"
+
+2020-01-01 open Assets:Stock  AAPL  "FIFO"
+2020-01-01 open Assets:Cash
+2020-01-01 open Income:CapitalGains
+
+plugin "beancount.plugins.auto_accounts"
+
+; Buy stock with explicit cost
+2024-01-15 * "Buy AAPL"
+  Assets:Stock   10 AAPL {150.00 USD, 2024-01-15}
+  Assets:Cash   -1500 USD
+
+; Sell with empty cost spec - FIFO should match the lot above
+2024-06-15 * "Sell AAPL"
+  Assets:Stock   -5 AAPL {}
+  Assets:Cash    875 USD
+  Income:CapitalGains
+
+; Validates cost was preserved through Python plugin roundtrip
+2024-06-16 balance Assets:Stock  5 AAPL

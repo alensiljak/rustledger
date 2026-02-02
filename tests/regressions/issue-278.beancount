@@ -1,0 +1,27 @@
+; Issue: https://github.com/rustledger/rustledger/issues/278
+; Description: Zerosum plugin creates duplicate Open directives
+; Expected: No errors - zerosum should not duplicate pre-existing Open
+
+option "operating_currency" "USD"
+
+; Pre-existing Open for the zerosum target account
+2020-01-01 open Assets:Transfer
+2020-01-01 open Assets:ZSA-Matched:Transfer
+2020-01-01 open Assets:Bank:Checking
+2020-01-01 open Assets:Bank:Savings
+
+plugin "beancount_reds_plugins.zerosum.zerosum" "{
+    'zerosum_accounts': {
+        'Assets:Transfer': ('Assets:ZSA-Matched:Transfer', 7),
+    },
+}"
+
+; Transfer out
+2024-01-15 * "Transfer to savings"
+  Assets:Bank:Checking    -1000 USD
+  Assets:Transfer          1000 USD
+
+; Matching transfer in (within 7 days)
+2024-01-17 * "Transfer received"
+  Assets:Transfer         -1000 USD
+  Assets:Bank:Savings      1000 USD
