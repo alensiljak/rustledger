@@ -438,6 +438,9 @@ impl Executor<'_> {
                 obj.insert("meta".to_string(), Value::Object(Box::new(meta_obj)));
                 Ok(Value::Object(Box::new(obj)))
             }
+            // type - directive type (matches Python beancount's type column)
+            // For SELECT FROM (default), this is always "Transaction"
+            "type" => Ok(Value::String("Transaction".to_string())),
             _ => Err(QueryError::UnknownColumn(name.to_string())),
         }
     }
