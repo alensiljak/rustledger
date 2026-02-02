@@ -174,7 +174,7 @@ def _parse_posting(d):
     return Posting(
         account=d.get('account', ''),
         units=_parse_amount(d.get('units')),
-        cost=_parse_cost(d.get('cost')),
+        cost=_parse_cost_spec(d.get('cost')),
         price=_parse_amount(d.get('price')),
         flag=d.get('flag'),
         meta=d.get('meta', {})
@@ -333,6 +333,33 @@ def _serialize_cost(c):
     }
 
 
+def _serialize_cost_spec(c):
+    """Serialize a CostSpec to dict (matches Rust CostData format)."""
+    if c is None:
+        return None
+    # Handle both Cost and CostSpec namedtuples
+    if hasattr(c, 'number_per'):
+        # CostSpec
+        return {
+            'number_per': _serialize_decimal(c.number_per),
+            'number_total': _serialize_decimal(c.number_total) if hasattr(c, 'number_total') else None,
+            'currency': c.currency if c.currency else None,
+            'date': _serialize_date(c.date),
+            'label': c.label,
+            'merge': c.merge if hasattr(c, 'merge') else False
+        }
+    else:
+        # Cost (convert to CostSpec format)
+        return {
+            'number_per': _serialize_decimal(c.number),
+            'number_total': None,
+            'currency': c.currency if c.currency else None,
+            'date': _serialize_date(c.date),
+            'label': c.label,
+            'merge': False
+        }
+
+
 def _serialize_posting(p):
     """Serialize a Posting to dict."""
     if p is None:
@@ -340,7 +367,7 @@ def _serialize_posting(p):
     return {
         'account': p.account,
         'units': _serialize_amount(p.units),
-        'cost': _serialize_cost(p.cost),
+        'cost': _serialize_cost_spec(p.cost),
         'price': _serialize_amount(p.price),
         'flag': p.flag,
         'metadata': list(p.meta.items()) if p.meta else []
