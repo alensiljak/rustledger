@@ -57,6 +57,8 @@ jobs:
           pip install beancount beanquery matplotlib pyyaml
           # Third-party plugins used by test files
           pip install beanahead tariochbctools || true
+          # beancount-share requires beancount_plugin_utils as a dependency
+          pip install beancount_plugin_utils beancount-share || true
           # Install reds-plugins from GitHub to get unreleased plugins like box_accrual
           pip install git+https://github.com/redstreet/beancount_reds_plugins || true
           pip install git+https://github.com/Evernight/beancount-lazy-plugins || true
