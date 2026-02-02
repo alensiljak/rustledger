@@ -466,6 +466,22 @@ jobs:
           print(f"Full match: {full_match}/{total} ({full_pct}%)")
           print(f"Rust only pass: {rust_only_pass}")
           print(f"Python only pass: {python_only_pass}")
+
+          # List specific files for rust-only and python-only passes
+          if rust_only_pass > 0:
+              print(f"\n=== Rust-only pass files ({rust_only_pass}) ===")
+              for r in results:
+                  if r.rust_ok and not r.python_ok:
+                      print(f"  - {r.file}")
+                      print(f"    Python error count: {r.python_error_count}, types: {r.python_error_types[:5]}")
+
+          if python_only_pass > 0:
+              print(f"\n=== Python-only pass files ({python_only_pass}) ===")
+              for r in results:
+                  if r.python_ok and not r.rust_ok:
+                      print(f"  - {r.file}")
+                      print(f"    Rust error count: {r.rust_error_count}, types: {r.rust_error_types[:5]}")
+
           print(f"Regressions: {len(regressions)}")
           print(f"\n=== Synthetic vs Real-World ===")
           print(f"  Real-world: {realworld_check}/{realworld_total} ({realworld_pct}%)")
