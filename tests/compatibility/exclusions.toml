@@ -29,3 +29,12 @@ reason = "Uses beancount.plugins.unrealized removed in v3"
 [[exclusions]]
 pattern = "parser-lima/test-cases_ParserPlugin.PluginWithConfig.beancount"
 reason = "Uses beancount.plugins.unrealized removed in v3"
+
+[[exclusions]]
+pattern = "examples_forecast_forecast.beancount"
+reason = "Uses beancount.plugins.forecast removed in v3"
+details = """
+The forecast plugin was a built-in beancount v2 plugin that was removed in v3.
+There is no standalone PyPI package to provide this functionality.
+Fava has a similar plugin at fava.plugins.forecast but with different API.
+"""
