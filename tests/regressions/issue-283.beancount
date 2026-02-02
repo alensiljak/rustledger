@@ -1,0 +1,22 @@
+; Issue: https://github.com/rustledger/rustledger/issues/283
+; Description: BQL convert() should use latest price when no date specified
+; Expected: convert(position, 'USD') uses latest price, not transaction date
+
+option "operating_currency" "USD"
+
+2024-01-01 open Assets:Stock AAPL
+2024-01-01 open Assets:Cash USD
+
+; Price history
+2024-01-01 price AAPL 150.00 USD
+2024-06-01 price AAPL 180.00 USD
+2024-12-01 price AAPL 200.00 USD
+
+; Buy stock - convert() should use latest price (200), not buy date price
+2024-03-15 * "Buy AAPL"
+  Assets:Stock  10 AAPL {155.00 USD}
+  Assets:Cash  -1550.00 USD
+
+; Query: SELECT sum(convert(position, 'USD')) WHERE account ~ 'Stock'
+; Expected: 2000.00 USD (10 AAPL * 200 USD latest price)
+; NOT: 1500.00 USD (10 AAPL * 150 USD price at transaction date 2024-03-15)

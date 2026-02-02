@@ -93,9 +93,10 @@ impl Executor<'_> {
             }
         };
 
-        let date = if func.args.len() == 3 {
+        // When no date is specified, use the latest price (matches Python beancount behavior)
+        let date: Option<chrono::NaiveDate> = if func.args.len() == 3 {
             match self.evaluate_expr(&func.args[2], ctx)? {
-                Value::Date(d) => d,
+                Value::Date(d) => Some(d),
                 _ => {
                     return Err(QueryError::Type(
                         "CONVERT: third argument must be a date".to_string(),
@@ -103,16 +104,23 @@ impl Executor<'_> {
                 }
             }
         } else {
-            ctx.transaction.date
+            None // Use latest price when no date specified
+        };
+
+        // Helper to convert an amount, using latest price if no date specified
+        let convert_amount = |amt: &Amount| -> Option<Amount> {
+            if let Some(d) = date {
+                self.price_db.convert(amt, &target_currency, d)
+            } else {
+                self.price_db.convert_latest(amt, &target_currency)
+            }
         };
 
         match val {
             Value::Position(p) => {
                 if p.units.currency == target_currency {
                     Ok(Value::Amount(p.units))
-                } else if let Some(converted) =
-                    self.price_db.convert(&p.units, &target_currency, date)
-                {
+                } else if let Some(converted) = convert_amount(&p.units) {
                     Ok(Value::Amount(converted))
                 } else {
                     // Return original units if no conversion available
@@ -122,7 +130,7 @@ impl Executor<'_> {
             Value::Amount(a) => {
                 if a.currency == target_currency {
                     Ok(Value::Amount(a))
-                } else if let Some(converted) = self.price_db.convert(&a, &target_currency, date) {
+                } else if let Some(converted) = convert_amount(&a) {
                     Ok(Value::Amount(converted))
                 } else {
                     Ok(Value::Amount(a))
@@ -133,9 +141,7 @@ impl Executor<'_> {
                 for pos in inv.positions() {
                     if pos.units.currency == target_currency {
                         total += pos.units.number;
-                    } else if let Some(converted) =
-                        self.price_db.convert(&pos.units, &target_currency, date)
-                    {
+                    } else if let Some(converted) = convert_amount(&pos.units) {
                         total += converted.number;
                     }
                 }
