@@ -150,7 +150,7 @@ version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.bytes]]
-version = "1.11.0"
+version = "1.11.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bzip2]]
