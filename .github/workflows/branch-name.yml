@@ -24,7 +24,7 @@ jobs:
             exit 0
           fi
 
-          PATTERN="^(feat|feature|fix|docs|chore|refactor|release|hotfix|claude|dependabot|copilot)/[a-zA-Z0-9][a-zA-Z0-9/_-]*$"
+          PATTERN="^(feat|feature|fix|docs|chore|refactor|release|hotfix|claude|dependabot|copilot)/[a-zA-Z0-9][a-zA-Z0-9/_.-]*$"
 
           if [[ "$BRANCH" =~ $PATTERN ]]; then
             echo "✅ Branch name '$BRANCH' is valid"
@@ -33,7 +33,7 @@ jobs:
             echo ""
             echo "Branch names must follow: <type>/<description>"
             echo "  Types: feat, feature, fix, docs, chore, refactor, release, hotfix, claude, dependabot, copilot"
-            echo "  Description: letters, numbers, hyphens, underscores, slashes"
+            echo "  Description: letters, numbers, hyphens, underscores, slashes, dots"
             echo ""
             echo "Examples:"
             echo "  feat/add-csv-export"
