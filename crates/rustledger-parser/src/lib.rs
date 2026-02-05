@@ -33,6 +33,7 @@ mod error;
 pub mod logos_lexer;
 mod span;
 mod token_parser;
+mod winnow_parser;
 
 pub use error::{ParseError, ParseErrorKind};
 pub use span::{Span, Spanned};
@@ -77,7 +78,7 @@ impl ParseWarning {
 
 /// Parse beancount source code.
 ///
-/// Uses a fast token-based parser (Logos lexer + Chumsky combinators).
+/// Uses a fast token-based parser (Logos lexer + Winnow combinators).
 ///
 /// # Arguments
 ///
@@ -87,6 +88,14 @@ impl ParseWarning {
 ///
 /// A `ParseResult` containing directives, options, includes, plugins, and errors.
 pub fn parse(source: &str) -> ParseResult {
+    winnow_parser::parse(source)
+}
+
+/// Parse beancount source code using chumsky parser (legacy).
+///
+/// This is kept for comparison/benchmarking purposes.
+#[doc(hidden)]
+pub fn parse_chumsky(source: &str) -> ParseResult {
     token_parser::parse(source)
 }
 
