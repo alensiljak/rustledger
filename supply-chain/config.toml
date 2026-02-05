@@ -713,6 +713,10 @@ criteria = "safe-to-deploy"
 version = "0.4.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.num-conv]]
+version = "0.2.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.num-integer]]
 version = "0.1.46"
 criteria = "safe-to-deploy"
@@ -1178,15 +1182,15 @@ version = "1.1.9"
 criteria = "safe-to-deploy"
 
 [[exemptions.time]]
-version = "0.3.44"
+version = "0.3.47"
 criteria = "safe-to-deploy"
 
 [[exemptions.time-core]]
-version = "0.1.6"
+version = "0.1.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.time-macros]]
-version = "0.2.24"
+version = "0.2.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.tinystr]]
