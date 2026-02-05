@@ -1142,13 +1142,16 @@ fn parse_query_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let name = parse_string(stream)?;
     let query = parse_string(stream)?;
     skip_comment(stream);
+
+    // Parse directive metadata
+    let meta = parse_metadata_with_comments(stream);
     let span = stream.span_from(start_pos);
 
     let query_directive = Query {
         date,
         name,
         query,
-        meta: Default::default(),
+        meta,
     };
 
     Ok(ParsedItem::Directive(
@@ -1286,13 +1289,16 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
     }
 
     skip_comment(stream);
+
+    // Parse directive metadata
+    let meta = parse_metadata_with_comments(stream);
     let span = stream.span_from(start_pos);
 
     let custom = Custom {
         date,
         custom_type: name,
         values,
-        meta: Default::default(),
+        meta,
     };
 
     Ok(ParsedItem::Directive(Directive::Custom(custom), span))
