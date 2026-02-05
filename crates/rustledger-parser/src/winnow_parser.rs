@@ -67,32 +67,6 @@ impl<'src> TokenStream<'src> {
         }
     }
 
-    #[allow(dead_code)]
-    fn next(&mut self) -> Option<&SpannedToken<'src>> {
-        let tok = self.tokens.get(self.pos);
-        if tok.is_some() {
-            self.pos += 1;
-        }
-        tok
-    }
-
-    /// Check if next token matches without consuming.
-    #[allow(dead_code)]
-    fn check(&self, f: impl FnOnce(&Token<'src>) -> bool) -> bool {
-        self.peek_token().is_some_and(f)
-    }
-
-    #[allow(dead_code)]
-    fn current_span(&self) -> Span {
-        if let Some(t) = self.tokens.get(self.pos) {
-            Span::new(t.span.0, t.span.1)
-        } else if let Some(t) = self.tokens.last() {
-            Span::new(t.span.1, t.span.1)
-        } else {
-            Span::new(0, 0)
-        }
-    }
-
     fn span_from(&self, start_pos: usize) -> Span {
         let start = self.tokens.get(start_pos).map_or(0, |t| t.span.0);
         let end = if self.pos > 0 {
@@ -543,22 +517,22 @@ fn parse_price_annotation(stream: &mut TokenStream<'_>) -> ParseRes<PriceAnnotat
 
     // Try just currency (incomplete price - number missing)
     if let Ok(currency) = parse_currency(stream) {
-        let amount = Amount::new(Decimal::ZERO, currency);
+        let incomplete = IncompleteAmount::CurrencyOnly(currency);
         return Ok(if is_total {
-            PriceAnnotation::Total(amount)
+            PriceAnnotation::TotalIncomplete(incomplete)
         } else {
-            PriceAnnotation::Unit(amount)
+            PriceAnnotation::UnitIncomplete(incomplete)
         });
     }
     stream.pos = save_pos;
 
     // Try just number (incomplete price - currency missing)
     if let Ok(number) = parse_expr(stream) {
-        let amount = Amount::new(number, "");
+        let incomplete = IncompleteAmount::NumberOnly(number);
         return Ok(if is_total {
-            PriceAnnotation::Total(amount)
+            PriceAnnotation::TotalIncomplete(incomplete)
         } else {
-            PriceAnnotation::Unit(amount)
+            PriceAnnotation::UnitIncomplete(incomplete)
         });
     }
     stream.pos = save_pos;
@@ -710,50 +684,6 @@ fn parse_meta_value(stream: &mut TokenStream<'_>) -> ParseRes<MetaValue> {
     Err(())
 }
 
-/// Parse a single metadata line (indent + key: value).
-#[allow(dead_code)]
-fn parse_metadata_line(stream: &mut TokenStream<'_>) -> ParseRes<(String, MetaValue)> {
-    // Expect indent
-    if let Some(t) = stream.peek() {
-        if !matches!(t.token, Token::Indent(_)) {
-            return Err(());
-        }
-        stream.advance();
-    } else {
-        return Err(());
-    }
-
-    // Parse key (must be a MetaKey token)
-    let key = parse_meta_key(stream)?;
-    let value = parse_meta_value(stream)?;
-    skip_comment(stream);
-
-    Ok((key, value))
-}
-
-/// Parse multiple metadata lines into a `HashMap`.
-#[allow(dead_code)]
-fn parse_metadata(stream: &mut TokenStream<'_>) -> std::collections::HashMap<String, MetaValue> {
-    let mut meta = std::collections::HashMap::new();
-
-    loop {
-        // Skip newlines between metadata lines
-        skip_newlines(stream);
-
-        // Try to parse a metadata line
-        let save_pos = stream.pos;
-        if let Ok((key, value)) = parse_metadata_line(stream) {
-            meta.insert(key, value);
-        } else {
-            // Restore position if we didn't find metadata
-            stream.pos = save_pos;
-            break;
-        }
-    }
-
-    meta
-}
-
 /// Parse metadata lines, also skipping any indented comment lines.
 fn parse_metadata_with_comments(
     stream: &mut TokenStream<'_>,
@@ -789,7 +719,7 @@ fn parse_metadata_with_comments(
                     if let Some(v) = value {
                         meta.insert(key, v);
                     } else {
-                        meta.insert(key, MetaValue::String(String::new()));
+                        meta.insert(key, MetaValue::None);
                     }
                     skip_comment(stream);
                     continue;
@@ -985,7 +915,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
                             txn_meta.insert(key, v);
                         } else {
                             // Empty metadata - use None/null value
-                            txn_meta.insert(key, MetaValue::String(String::new()));
+                            txn_meta.insert(key, MetaValue::None);
                         }
                         skip_comment(stream);
                         continue;
