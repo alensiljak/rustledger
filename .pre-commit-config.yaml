@@ -1,0 +1,91 @@
+# prek configuration
+# Install: cargo install prek (or use nix)
+# Setup: prek install
+# Run: prek run --all-files
+#
+# Note: This config uses local hooks for maximum compatibility.
+# Hooks that require external tools (typos, gitleaks, nil, commitizen)
+# will be skipped if the tool is not available.
+
+repos:
+  - repo: local
+    hooks:
+      # === Pre-commit hooks (fast, run on every commit) ===
+
+      # Rust formatting
+      - id: rustfmt
+        name: rustfmt
+        entry: cargo fmt --all --
+        language: system
+        types: [rust]
+        pass_filenames: false
+
+      # Typos - spell checker
+      - id: typos
+        name: typos
+        entry: typos --locale en-us
+        language: system
+        types: [text]
+
+      # Gitleaks - secrets detection
+      - id: gitleaks
+        name: gitleaks
+        entry: gitleaks git --staged --redact --config .gitleaks.toml
+        language: system
+        pass_filenames: false
+
+      # Nix linting
+      - id: nil
+        name: nil
+        entry: nil diagnostics
+        language: system
+        files: \.nix$
+
+      # === Commit-msg hooks ===
+
+      # Commitizen - commit message format
+      - id: commitizen
+        name: commitizen
+        entry: cz check --allow-abort --commit-msg-file
+        language: system
+        stages: [commit-msg]
+        pass_filenames: true
+
+      # === Pre-push hooks (slower, run before push) ===
+
+      # Branch name validation
+      - id: branch-name
+        name: branch-name
+        entry: ./scripts/check-branch-name.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+      # Clippy
+      - id: clippy
+        name: clippy
+        entry: cargo clippy --all-features --all-targets -- -D warnings
+        language: system
+        types: [rust]
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+      # Cargo test
+      - id: cargo-test
+        name: cargo-test
+        entry: cargo test --workspace --lib --quiet
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
+
+      # Cargo doc
+      - id: cargo-doc
+        name: cargo-doc
+        entry: bash -c 'RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet'
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
