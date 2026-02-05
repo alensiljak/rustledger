@@ -54,6 +54,7 @@ regex = "1"
 
 # Parsing
 chumsky = "1.0.0-alpha.7"
+winnow = { version = "0.7", features = ["simd"] }
 ariadne = "0.6"
 logos = "0.16"
 logosky = "0.2"

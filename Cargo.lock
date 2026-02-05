@@ -3083,6 +3083,7 @@ dependencies = [
  "rustledger-core",
  "serde",
  "thiserror 2.0.18",
+ "winnow",
 ]
 
 [[package]]

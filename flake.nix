@@ -21,12 +21,6 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
 
-    # Pre-commit hooks
-    git-hooks-nix = {
-      url = "github:cachix/git-hooks.nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
-
     # Process management for dev
     process-compose-flake.url = "github:Platonic-Systems/process-compose-flake";
 
@@ -42,7 +36,6 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.treefmt-nix.flakeModule
-        inputs.git-hooks-nix.flakeModule
         # Disabled for now - process-compose requires configuration
         # inputs.process-compose-flake.flakeModule
       ];
@@ -154,6 +147,12 @@
             cargo-udeps
             bacon
 
+            # Git hooks
+            prek
+            gitleaks
+            typos
+            commitizen
+
             # WASM tools
             wasm-pack
             wasm-bindgen-cli
@@ -216,158 +215,6 @@
 
               # YAML
               yamlfmt.enable = true;
-            };
-          };
-
-          # Pre-commit hooks
-          pre-commit = {
-            check.enable = true;
-            settings.hooks = {
-              # Rust formatting - matches CI (cargo fmt --all -- --check)
-              # Using cargo fmt instead of treefmt because treefmt requires
-              # additional formatters (shfmt, yamlfmt, mdformat) that may not
-              # be available outside the nix shell
-              rustfmt = {
-                enable = true;
-                entry = lib.mkForce "cargo fmt --all --";
-              };
-
-              # Rust linting - runs on pre-push (too slow for every commit)
-              clippy = {
-                enable = true;
-                packageOverrides.cargo = rustToolchainWithWasm;
-                packageOverrides.clippy = rustToolchainWithWasm;
-                settings = {
-                  allFeatures = true;
-                  denyWarnings = true;
-                  extraArgs = "--all-targets";
-                };
-                stages = [ "pre-push" ];
-                always_run = true;
-              };
-
-              # Nix
-              nil.enable = true;
-
-              # Secrets detection (defense in depth)
-              detect-private-keys.enable = true;
-
-              # Comprehensive secret scanning with gitleaks
-              # Uses --staged to only scan staged changes (fast)
-              gitleaks = {
-                enable = true;
-                name = "gitleaks";
-                entry = "${pkgs.gitleaks}/bin/gitleaks protect --staged --redact --config .gitleaks.toml";
-                language = "system";
-                pass_filenames = false;
-              };
-
-              # Code quality (all fast, ~instant)
-              check-merge-conflict = {
-                enable = true;
-                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-merge-conflict";
-              };
-              trailing-whitespace = {
-                enable = true;
-                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/trailing-whitespace-fixer";
-                types = [ "text" ];
-              };
-              end-of-file-fixer = {
-                enable = true;
-                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/end-of-file-fixer";
-                types = [ "text" ];
-              };
-              check-toml = {
-                enable = true;
-                entry = "${pkgs.python3Packages.pre-commit-hooks}/bin/check-toml";
-                types = [ "toml" ];
-              };
-
-              # Typo checker - catches spelling mistakes in code/docs
-              typos = {
-                enable = true;
-                entry = "${pkgs.typos}/bin/typos --locale en-us";
-                types = [ "text" ];
-              };
-
-              # Commit message
-              commitizen.enable = true;
-
-              # Branch name validation (runs on pre-push)
-              branch-name = {
-                enable = true;
-                name = "branch-name";
-                entry = "${pkgs.writeShellScript "check-branch-name" ''
-                  BRANCH=$(git rev-parse --abbrev-ref HEAD)
-
-                  # Skip for main branch
-                  if [ "$BRANCH" = "main" ] || [ "$BRANCH" = "HEAD" ]; then
-                    exit 0
-                  fi
-
-                  # Allow release-plz branches (e.g., release-plz-2026-01-18T17-10-14Z)
-                  if [[ "$BRANCH" =~ ^release-plz- ]]; then
-                    echo "✅ Branch name '$BRANCH' is valid (release-plz)"
-                    exit 0
-                  fi
-
-                  PATTERN="^(feature|fix|docs|chore|refactor|release|hotfix|claude|dependabot|copilot)/[a-zA-Z0-9][a-zA-Z0-9/_-]*$"
-
-                  if [[ "$BRANCH" =~ $PATTERN ]]; then
-                    echo "✅ Branch name '$BRANCH' is valid"
-                    exit 0
-                  else
-                    echo "❌ Branch name '$BRANCH' does not match pattern"
-                    echo ""
-                    echo "Branch names must follow: <type>/<description>"
-                    echo "  Types: feature, fix, docs, chore, refactor, release, hotfix, claude, dependabot, copilot"
-                    echo "  Description: letters, numbers, hyphens, underscores, slashes"
-                    echo ""
-                    echo "Examples:"
-                    echo "  feature/add-csv-export"
-                    echo "  fix/balance-calculation"
-                    echo "  claude/repo-improvements"
-                    echo ""
-                    echo "Note: 'feat/' is NOT valid, use 'feature/' instead"
-                    exit 1
-                  fi
-                ''}";
-                language = "system";
-                stages = [ "pre-push" ];
-                pass_filenames = false;
-                always_run = true;
-              };
-
-              # Run tests before push to catch failures before CI
-              cargo-test = {
-                enable = true;
-                name = "cargo-test";
-                entry = "${pkgs.writeShellScript "cargo-test" ''
-                  echo "Running cargo test (library tests only for speed)..."
-                  cargo test --workspace --lib --quiet
-                ''}";
-                language = "system";
-                stages = [ "pre-push" ];
-                pass_filenames = false;
-                always_run = true;
-              };
-
-              # Check documentation builds without warnings
-              cargo-doc = {
-                enable = true;
-                name = "cargo-doc";
-                entry = "${pkgs.writeShellScript "cargo-doc" ''
-                  echo "Checking documentation..."
-                  RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet 2>&1 | head -20 || {
-                    echo "Documentation has warnings. Run 'cargo doc' to see details."
-                    exit 1
-                  }
-                ''}";
-                language = "system";
-                stages = [ "pre-push" ];
-                pass_filenames = false;
-                always_run = true;
-              };
             };
           };
 
@@ -452,12 +299,16 @@
 
           # Development shell
           devShells.default = craneLib.devShell {
-            # Inherit checks for pre-commit
+            # Inherit checks
             checks = self'.checks;
 
-            # Include pre-commit hook installation
+            # Shell initialization
             shellHook = ''
-              ${config.pre-commit.installationScript}
+              # Install prek hooks if not already installed
+              if command -v prek &> /dev/null && [ -f .pre-commit-config.yaml ]; then
+                prek install --hook-type pre-commit --hook-type pre-push --hook-type commit-msg 2>/dev/null || true
+              fi
+
               echo "🦀 rustledger development environment"
               echo ""
               echo "Available commands:"
