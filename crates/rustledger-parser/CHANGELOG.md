@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.8.3](https://github.com/rustledger/rustledger/compare/v0.8.2...v0.8.3) - 2026-02-05
+
+### Bug Fixes
+
+- *(parser)* parse metadata for custom and query directives
+
+### Performance
+
+- *(parser)* add winnow-based parser for ~3x performance improvement
+
+### Refactoring
+
+- *(parser)* address Copilot review suggestions
+
 ## [0.8.2](https://github.com/rustledger/rustledger/compare/v0.8.1...v0.8.2) - 2026-02-02
 
 ### Bug Fixes
