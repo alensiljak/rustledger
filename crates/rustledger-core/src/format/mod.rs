@@ -98,8 +98,8 @@ mod tests {
     use super::*;
     use crate::{
         Amount, Balance, Close, Commodity, CostSpec, Custom, Directive, Document, Event,
-        IncompleteAmount, MetaValue, NaiveDate, Note, Open, Pad, Posting, Price, PriceAnnotation,
-        Query, Transaction,
+        IncompleteAmount, MetaValue, Metadata, NaiveDate, Note, Open, Pad, Posting, Price,
+        PriceAnnotation, Query, Transaction,
     };
     use rust_decimal_macros::dec;
 
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn test_format_transaction_with_metadata() {
-        let mut meta = std::collections::HashMap::new();
+        let mut meta = Metadata::default();
         meta.insert(
             "filename".to_string(),
             MetaValue::String("receipt.pdf".to_string()),

@@ -1,7 +1,7 @@
 //! Beancount options parsing and storage.
 
 use rust_decimal::Decimal;
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::str::FromStr;
 
 /// Known beancount option names.
@@ -118,7 +118,7 @@ pub struct Options {
     pub conversion_currency: Option<String>,
 
     /// Default tolerances per currency (e.g., "USD:0.005" or "*:0.001").
-    pub inferred_tolerance_default: HashMap<String, Decimal>,
+    pub inferred_tolerance_default: FxHashMap<String, Decimal>,
 
     /// Tolerance multiplier for balance assertions.
     pub inferred_tolerance_multiplier: Decimal,
@@ -140,7 +140,7 @@ pub struct Options {
 
     /// Display precision per currency (e.g., "USD:2" means format USD with 2 decimal places).
     /// Format: CURRENCY:PRECISION where PRECISION is the number of decimal places.
-    pub display_precision: HashMap<String, u32>,
+    pub display_precision: FxHashMap<String, u32>,
 
     /// Whether to allow pipe separator in numbers.
     pub allow_pipe_separator: bool,
@@ -155,11 +155,11 @@ pub struct Options {
     pub plugin_processing_mode: String,
 
     /// Any other custom options.
-    pub custom: HashMap<String, String>,
+    pub custom: FxHashMap<String, String>,
 
     /// Options that have been set (for duplicate detection).
     #[doc(hidden)]
-    pub set_options: HashSet<String>,
+    pub set_options: FxHashSet<String>,
 
     /// Validation warnings collected during parsing.
     pub warnings: Vec<OptionWarning>,
@@ -192,20 +192,20 @@ impl Options {
             account_current_conversions: None,
             account_unrealized_gains: None,
             conversion_currency: None,
-            inferred_tolerance_default: HashMap::new(),
+            inferred_tolerance_default: FxHashMap::default(),
             inferred_tolerance_multiplier: Decimal::new(5, 1), // 0.5
             infer_tolerance_from_cost: false,
             use_legacy_fixed_tolerances: false,
             experiment_explicit_tolerances: false,
             booking_method: "STRICT".to_string(),
             render_commas: false, // Python beancount default is FALSE
-            display_precision: HashMap::new(),
+            display_precision: FxHashMap::default(),
             allow_pipe_separator: false,
             long_string_maxlines: 64,
             documents: Vec::new(),
             plugin_processing_mode: "default".to_string(),
-            custom: HashMap::new(),
-            set_options: HashSet::new(),
+            custom: FxHashMap::default(),
+            set_options: FxHashSet::default(),
             warnings: Vec::new(),
         }
     }

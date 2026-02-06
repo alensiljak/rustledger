@@ -17,8 +17,8 @@
 
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 
 use crate::intern::InternedStr;
@@ -73,7 +73,7 @@ impl fmt::Display for MetaValue {
 }
 
 /// Metadata is a key-value map attached to directives and postings.
-pub type Metadata = HashMap<String, MetaValue>;
+pub type Metadata = FxHashMap<String, MetaValue>;
 
 /// A posting within a transaction.
 ///
@@ -115,7 +115,7 @@ impl Posting {
             cost: None,
             price: None,
             flag: None,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -128,7 +128,7 @@ impl Posting {
             cost: None,
             price: None,
             flag: None,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -141,7 +141,7 @@ impl Posting {
             cost: None,
             price: None,
             flag: None,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -475,7 +475,7 @@ impl Transaction {
             narration: narration.into(),
             tags: Vec::new(),
             links: Vec::new(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
             postings: Vec::new(),
         }
     }
@@ -651,7 +651,7 @@ impl Balance {
             account: account.into(),
             amount,
             tolerance: None,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -713,7 +713,7 @@ impl Open {
             account: account.into(),
             currencies: Vec::new(),
             booking: None,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -779,7 +779,7 @@ impl Close {
         Self {
             date,
             account: account.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -823,7 +823,7 @@ impl Commodity {
         Self {
             date,
             currency: currency.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -876,7 +876,7 @@ impl Pad {
             date,
             account: account.into(),
             source_account: source_account.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -926,7 +926,7 @@ impl Event {
             date,
             event_type: event_type.into(),
             value: value.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -976,7 +976,7 @@ impl Query {
             date,
             name: name.into(),
             query: query.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -1031,7 +1031,7 @@ impl Note {
             date,
             account: account.into(),
             comment: comment.into(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -1090,7 +1090,7 @@ impl Document {
             path: path.into(),
             tags: Vec::new(),
             links: Vec::new(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -1155,7 +1155,7 @@ impl Price {
             date,
             currency: currency.into(),
             amount,
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 
@@ -1201,7 +1201,7 @@ impl Custom {
             date,
             custom_type: custom_type.into(),
             values: Vec::new(),
-            meta: Metadata::new(),
+            meta: Metadata::default(),
         }
     }
 

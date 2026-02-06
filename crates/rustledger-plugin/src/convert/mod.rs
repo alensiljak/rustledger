@@ -169,9 +169,8 @@ mod tests {
     use super::*;
     use rustledger_core::{
         Amount, Balance, Close, Commodity, Custom, Decimal, Document, Event, IncompleteAmount,
-        MetaValue, Note, Open, Pad, Posting, Price, Query, Transaction,
+        MetaValue, Metadata, Note, Open, Pad, Posting, Price, Query, Transaction,
     };
-    use std::collections::HashMap;
     use std::str::FromStr;
 
     fn dec(s: &str) -> Decimal {
@@ -188,7 +187,7 @@ mod tests {
             narration: "Weekly groceries".into(),
             tags: vec!["food".into()],
             links: vec!["grocery-2024".into()],
-            meta: HashMap::new(),
+            meta: Metadata::default(),
             postings: vec![
                 Posting {
                     account: "Expenses:Food".into(),
@@ -196,7 +195,7 @@ mod tests {
                     cost: None,
                     price: None,
                     flag: None,
-                    meta: HashMap::new(),
+                    meta: Metadata::default(),
                 },
                 Posting {
                     account: "Assets:Checking".into(),
@@ -204,7 +203,7 @@ mod tests {
                     cost: None,
                     price: None,
                     flag: None,
-                    meta: HashMap::new(),
+                    meta: Metadata::default(),
                 },
             ],
         };
@@ -235,7 +234,7 @@ mod tests {
             account: "Assets:Checking".into(),
             amount: Amount::new(dec("1000.00"), "USD"),
             tolerance: Some(dec("0.01")),
-            meta: HashMap::new(),
+            meta: Metadata::default(),
         };
 
         let directive = Directive::Balance(balance);
@@ -260,7 +259,7 @@ mod tests {
             account: "Assets:Checking".into(),
             currencies: vec!["USD".into(), "EUR".into()],
             booking: Some("FIFO".to_string()),
-            meta: HashMap::new(),
+            meta: Metadata::default(),
         };
 
         let directive = Directive::Open(open);
@@ -284,7 +283,7 @@ mod tests {
             date,
             currency: "AAPL".into(),
             amount: Amount::new(dec("185.50"), "USD"),
-            meta: HashMap::new(),
+            meta: Metadata::default(),
         };
 
         let directive = Directive::Price(price);
@@ -310,35 +309,35 @@ mod tests {
                 account: "Assets:Test".into(),
                 currencies: vec![],
                 booking: None,
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Close(Close {
                 date,
                 account: "Assets:Test".into(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Commodity(Commodity {
                 date,
                 currency: "TEST".into(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Pad(Pad {
                 date,
                 account: "Assets:Checking".into(),
                 source_account: "Equity:Opening".into(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Event(Event {
                 date,
                 event_type: "location".to_string(),
                 value: "Home".to_string(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Note(Note {
                 date,
                 account: "Assets:Test".into(),
                 comment: "Test note".to_string(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Document(Document {
                 date,
@@ -346,19 +345,19 @@ mod tests {
                 path: "/path/to/doc.pdf".to_string(),
                 tags: vec![],
                 links: vec![],
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Query(Query {
                 date,
                 name: "test_query".to_string(),
                 query: "SELECT * FROM transactions".to_string(),
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
             Directive::Custom(Custom {
                 date,
                 custom_type: "budget".to_string(),
                 values: vec![MetaValue::String("monthly".to_string())],
-                meta: HashMap::new(),
+                meta: Metadata::default(),
             }),
         ];
 

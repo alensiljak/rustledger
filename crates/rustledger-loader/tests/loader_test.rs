@@ -310,3 +310,180 @@ fn test_with_custom_root_dir() {
     // Should have loaded the include
     assert_eq!(result.source_map.files().len(), 2, "should have 2 files");
 }
+
+// ============================================================================
+// Process Pipeline Tests (Coverage improvement for process.rs)
+// ============================================================================
+
+use rustledger_loader::{ErrorSeverity, LedgerError, LoadOptions, load, process};
+
+#[test]
+fn test_process_pipeline_with_validation() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions {
+        validate: true,
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    // Should have processed directives
+    assert!(!ledger.directives.is_empty());
+
+    // Options should be preserved
+    assert_eq!(ledger.options.title, Some("Test Ledger".to_string()));
+}
+
+#[test]
+fn test_process_pipeline_without_validation() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions {
+        validate: false,
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load without validation");
+
+    // Should still have directives
+    assert!(!ledger.directives.is_empty());
+}
+
+#[test]
+fn test_process_directives_sorted_by_date() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    // Check that directives are sorted by date
+    let mut last_date = None;
+    for dir in &ledger.directives {
+        let date = dir.value.date();
+        if let Some(prev) = last_date {
+            assert!(
+                date >= prev,
+                "directives should be sorted by date: {prev} should come before {date}"
+            );
+        }
+        last_date = Some(date);
+    }
+}
+
+#[test]
+fn test_process_raw_mode() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions::raw();
+
+    let ledger = load(&path, &options).expect("should load in raw mode");
+
+    // Raw mode should still have directives but skip plugins/validation
+    assert!(!ledger.directives.is_empty());
+}
+
+#[test]
+fn test_process_with_extra_plugins() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions {
+        run_plugins: false, // Don't run file plugins
+        extra_plugins: vec!["check_commodity".to_string()],
+        extra_plugin_configs: vec![None],
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load with extra plugins");
+
+    // The check_commodity plugin should have been run
+    // It adds warnings for undeclared commodities
+    // Just check that we processed without error
+    assert!(!ledger.directives.is_empty());
+}
+
+#[test]
+fn test_process_with_auto_accounts() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions {
+        auto_accounts: true,
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load with auto_accounts");
+
+    // auto_accounts plugin adds Open directives for used accounts
+    // Just verify it processed successfully
+    assert!(!ledger.directives.is_empty());
+}
+
+#[test]
+fn test_ledger_error_creation() {
+    use rustledger_loader::ErrorLocation;
+
+    // Test error creation
+    let err = LedgerError::error("E001", "Test error message");
+    assert_eq!(err.code, "E001");
+    assert_eq!(err.message, "Test error message");
+    assert!(matches!(err.severity, ErrorSeverity::Error));
+    assert!(err.location.is_none());
+
+    // Test warning creation
+    let warn = LedgerError::warning("W001", "Test warning");
+    assert!(matches!(warn.severity, ErrorSeverity::Warning));
+
+    // Test with location
+    let err_with_loc = LedgerError::error("E002", "Located error").with_location(ErrorLocation {
+        file: std::path::PathBuf::from("test.beancount"),
+        line: 10,
+        column: 5,
+    });
+    assert!(err_with_loc.location.is_some());
+    let loc = err_with_loc.location.unwrap();
+    assert_eq!(loc.line, 10);
+    assert_eq!(loc.column, 5);
+}
+
+#[test]
+fn test_load_options_default() {
+    let options = LoadOptions::default();
+
+    assert!(options.validate);
+    assert!(options.run_plugins);
+    assert!(!options.auto_accounts);
+    assert!(options.extra_plugins.is_empty());
+    assert!(!options.path_security);
+}
+
+#[test]
+fn test_load_options_raw() {
+    let options = LoadOptions::raw();
+
+    assert!(!options.validate);
+    assert!(!options.run_plugins);
+    assert!(!options.auto_accounts);
+}
+
+#[test]
+fn test_process_from_load_result() {
+    // Test calling process() directly on a LoadResult
+    let path = fixtures_path("simple.beancount");
+    let raw = load_raw(&path).expect("should load raw");
+
+    let options = LoadOptions {
+        validate: true,
+        ..Default::default()
+    };
+
+    let ledger = process(raw, &options).expect("should process");
+    assert!(!ledger.directives.is_empty());
+}
+
+#[test]
+fn test_process_preserves_display_context() {
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load");
+
+    // Display context should be available for formatting
+    // Just check it exists (it's populated from directives)
+    let _ctx = &ledger.display_context;
+    // If we got here, display context was created successfully
+}

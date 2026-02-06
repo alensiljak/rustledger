@@ -831,3 +831,395 @@ fn test_auto_accounts_same_date_ordering() {
         "Open should still come before Transaction after conversion"
     );
 }
+
+// ============================================================================
+// CheckClosingPlugin Tests
+// ============================================================================
+
+use rustledger_plugin::native::CheckClosingPlugin;
+
+fn make_transaction_with_closing_metadata(
+    date: &str,
+    narration: &str,
+    account: &str,
+    units: (&str, &str),
+    other_account: &str,
+) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![
+                PostingData {
+                    account: account.to_string(),
+                    units: Some(AmountData {
+                        number: units.0.to_string(),
+                        currency: units.1.to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![("closing".to_string(), MetaValueData::Bool(true))],
+                },
+                PostingData {
+                    account: other_account.to_string(),
+                    units: None,
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+            ],
+        }),
+    }
+}
+
+/// Test `check_closing` adds balance assertion after closing posting.
+#[test]
+fn test_check_closing_adds_balance_assertion() {
+    let plugin = CheckClosingPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Final"),
+        make_transaction_with_closing_metadata(
+            "2024-01-15",
+            "Close out account",
+            "Assets:Bank",
+            ("-500.00", "USD"),
+            "Expenses:Final",
+        ),
+    ]);
+
+    let output = plugin.process(input);
+
+    assert!(output.errors.is_empty(), "expected no errors");
+
+    // Should have a balance directive for the day after
+    let balance = output
+        .directives
+        .iter()
+        .find(|d| d.directive_type == "balance");
+    assert!(balance.is_some(), "expected balance assertion to be added");
+
+    let balance = balance.unwrap();
+    assert_eq!(balance.date, "2024-01-16", "balance should be on next day");
+
+    if let DirectiveData::Balance(b) = &balance.data {
+        assert_eq!(b.account, "Assets:Bank");
+        assert_eq!(b.amount.number, "0");
+    } else {
+        panic!("expected balance directive");
+    }
+}
+
+/// Test `check_closing` does nothing without closing metadata.
+#[test]
+fn test_check_closing_no_metadata() {
+    let plugin = CheckClosingPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Normal transaction",
+            vec![
+                ("Expenses:Food", "50.00", "USD"),
+                ("Assets:Bank", "-50.00", "USD"),
+            ],
+        ),
+    ]);
+
+    let output = plugin.process(input);
+
+    assert!(output.errors.is_empty(), "expected no errors");
+
+    // Should NOT have any balance directives
+    let balance_count = output
+        .directives
+        .iter()
+        .filter(|d| d.directive_type == "balance")
+        .count();
+    assert_eq!(
+        balance_count, 0,
+        "should not add balance without closing metadata"
+    );
+}
+
+// ============================================================================
+// CloseTreePlugin Tests
+// ============================================================================
+
+use rustledger_plugin::native::CloseTreePlugin;
+
+fn make_close(date: &str, account: &str) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "close".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Close(CloseData {
+            account: account.to_string(),
+            metadata: vec![],
+        }),
+    }
+}
+
+/// Test `close_tree` closes child accounts when parent is closed.
+#[test]
+fn test_close_tree_closes_children() {
+    let plugin = CloseTreePlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Assets:Bank:Checking"),
+        make_open("2024-01-01", "Assets:Bank:Savings"),
+        make_transaction(
+            "2024-01-15",
+            "Deposit",
+            vec![
+                ("Assets:Bank:Checking", "100.00", "USD"),
+                ("Assets:Bank:Savings", "-100.00", "USD"),
+            ],
+        ),
+        make_close("2024-12-31", "Assets:Bank"),
+    ]);
+
+    let output = plugin.process(input);
+
+    assert!(output.errors.is_empty(), "expected no errors");
+
+    // Should have close directives for both child accounts
+    let close_directives: Vec<_> = output
+        .directives
+        .iter()
+        .filter(|d| d.directive_type == "close")
+        .collect();
+
+    assert_eq!(
+        close_directives.len(),
+        3,
+        "expected 3 close directives (parent + 2 children)"
+    );
+
+    // Verify child accounts are closed
+    let closed_accounts: Vec<String> = close_directives
+        .iter()
+        .filter_map(|d| {
+            if let DirectiveData::Close(c) = &d.data {
+                Some(c.account.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert!(closed_accounts.contains(&"Assets:Bank".to_string()));
+    assert!(closed_accounts.contains(&"Assets:Bank:Checking".to_string()));
+    assert!(closed_accounts.contains(&"Assets:Bank:Savings".to_string()));
+}
+
+/// Test `close_tree` does not duplicate already closed accounts.
+#[test]
+fn test_close_tree_no_duplicate_close() {
+    let plugin = CloseTreePlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Assets:Bank:Checking"),
+        make_close("2024-06-30", "Assets:Bank:Checking"), // Already closed
+        make_close("2024-12-31", "Assets:Bank"),
+    ]);
+
+    let output = plugin.process(input);
+
+    // Count close directives for Checking
+    let checking_closes = output
+        .directives
+        .iter()
+        .filter(|d| {
+            d.directive_type == "close"
+                && matches!(&d.data, DirectiveData::Close(c) if c.account == "Assets:Bank:Checking")
+        })
+        .count();
+
+    assert_eq!(
+        checking_closes, 1,
+        "should not duplicate close for already-closed account"
+    );
+}
+
+// ============================================================================
+// CoherentCostPlugin Tests
+// ============================================================================
+
+use rustledger_plugin::native::CoherentCostPlugin;
+
+fn make_transaction_with_price(
+    date: &str,
+    narration: &str,
+    account: &str,
+    units: (&str, &str),
+    price: (&str, &str),
+    other_account: &str,
+) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![
+                PostingData {
+                    account: account.to_string(),
+                    units: Some(AmountData {
+                        number: units.0.to_string(),
+                        currency: units.1.to_string(),
+                    }),
+                    cost: None,
+                    price: Some(PriceAnnotationData {
+                        amount: Some(AmountData {
+                            number: price.0.to_string(),
+                            currency: price.1.to_string(),
+                        }),
+                        is_total: false,
+                        number: None,
+                        currency: None,
+                    }),
+                    flag: None,
+                    metadata: vec![],
+                },
+                PostingData {
+                    account: other_account.to_string(),
+                    units: None,
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+            ],
+        }),
+    }
+}
+
+/// Test `coherent_cost` detects currency used with both cost and price.
+#[test]
+fn test_coherent_cost_mixed_usage_error() {
+    let plugin = CoherentCostPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        // Use HOOL with cost notation
+        make_transaction_with_cost(
+            "2024-01-15",
+            "Buy stock",
+            "Assets:Stock",
+            ("10", "HOOL"),
+            ("100", "USD"),
+            "Assets:Cash",
+        ),
+        // Use HOOL with price notation
+        make_transaction_with_price(
+            "2024-02-15",
+            "Convert",
+            "Assets:Stock",
+            ("5", "HOOL"),
+            ("110", "USD"),
+            "Assets:Cash",
+        ),
+    ]);
+
+    let output = plugin.process(input);
+
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "expected error for mixed cost/price usage"
+    );
+    assert!(
+        output.errors[0].message.contains("HOOL"),
+        "error should mention the currency"
+    );
+}
+
+/// Test `coherent_cost` passes when currency uses only cost.
+#[test]
+fn test_coherent_cost_only_cost_ok() {
+    let plugin = CoherentCostPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction_with_cost(
+            "2024-01-15",
+            "Buy stock",
+            "Assets:Stock",
+            ("10", "HOOL"),
+            ("100", "USD"),
+            "Assets:Cash",
+        ),
+        make_transaction_with_cost(
+            "2024-02-15",
+            "Buy more",
+            "Assets:Stock",
+            ("5", "HOOL"),
+            ("110", "USD"),
+            "Assets:Cash",
+        ),
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "expected no errors when using only cost"
+    );
+}
+
+/// Test `coherent_cost` passes when currency uses only price.
+#[test]
+fn test_coherent_cost_only_price_ok() {
+    let plugin = CoherentCostPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Forex"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction_with_price(
+            "2024-01-15",
+            "Exchange",
+            "Assets:Forex",
+            ("100", "EUR"),
+            ("1.10", "USD"),
+            "Assets:Cash",
+        ),
+        make_transaction_with_price(
+            "2024-02-15",
+            "Exchange more",
+            "Assets:Forex",
+            ("50", "EUR"),
+            ("1.12", "USD"),
+            "Assets:Cash",
+        ),
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "expected no errors when using only price"
+    );
+}

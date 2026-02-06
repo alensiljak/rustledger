@@ -11,8 +11,9 @@ pub use types::{
     WindowContext,
 };
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::sync::RwLock;
+
+use rustc_hash::FxHashMap;
 
 use chrono::Datelike;
 use regex::Regex;
@@ -33,21 +34,21 @@ pub struct Executor<'a> {
     /// Spanned directives (optional, for source location support).
     spanned_directives: Option<&'a [Spanned<Directive>]>,
     /// Account balances (built up during query).
-    balances: HashMap<InternedStr, Inventory>,
+    balances: FxHashMap<InternedStr, Inventory>,
     /// Price database for `VALUE()` conversions.
     price_db: crate::price::PriceDatabase,
     /// Target currency for `VALUE()` conversions.
     target_currency: Option<String>,
     /// Query date for price lookups (defaults to today).
     query_date: chrono::NaiveDate,
-    /// Cache for compiled regex patterns.
-    regex_cache: RefCell<HashMap<String, Option<Regex>>>,
+    /// Cache for compiled regex patterns (`RwLock` for thread-safe parallel execution).
+    regex_cache: RwLock<FxHashMap<String, Option<Regex>>>,
     /// Account info cache from Open/Close directives.
-    account_info: HashMap<String, AccountInfo>,
+    account_info: FxHashMap<String, AccountInfo>,
     /// Source locations for directives (indexed by directive index).
     source_locations: Option<Vec<SourceLocation>>,
     /// In-memory tables created by CREATE TABLE.
-    tables: HashMap<String, Table>,
+    tables: FxHashMap<String, Table>,
 }
 
 // Sub-modules for focused functionality
@@ -64,7 +65,7 @@ impl<'a> Executor<'a> {
         let price_db = crate::price::PriceDatabase::from_directives(directives);
 
         // Build account info cache from Open/Close directives
-        let mut account_info: HashMap<String, AccountInfo> = HashMap::new();
+        let mut account_info: FxHashMap<String, AccountInfo> = FxHashMap::default();
         for directive in directives {
             match directive {
                 Directive::Open(open) => {
@@ -72,7 +73,7 @@ impl<'a> Executor<'a> {
                     let info = account_info.entry(account).or_insert_with(|| AccountInfo {
                         open_date: None,
                         close_date: None,
-                        open_meta: Metadata::new(),
+                        open_meta: Metadata::default(),
                     });
                     info.open_date = Some(open.date);
                     info.open_meta.clone_from(&open.meta);
@@ -82,7 +83,7 @@ impl<'a> Executor<'a> {
                     let info = account_info.entry(account).or_insert_with(|| AccountInfo {
                         open_date: None,
                         close_date: None,
-                        open_meta: Metadata::new(),
+                        open_meta: Metadata::default(),
                     });
                     info.close_date = Some(close.date);
                 }
@@ -93,14 +94,14 @@ impl<'a> Executor<'a> {
         Self {
             directives,
             spanned_directives: None,
-            balances: HashMap::new(),
+            balances: FxHashMap::default(),
             price_db,
             target_currency: None,
             query_date: chrono::Local::now().date_naive(),
-            regex_cache: RefCell::new(HashMap::new()),
+            regex_cache: RwLock::new(FxHashMap::default()),
             account_info,
             source_locations: None,
-            tables: HashMap::new(),
+            tables: FxHashMap::default(),
         }
     }
 
@@ -134,7 +135,7 @@ impl<'a> Executor<'a> {
             .collect();
 
         // Build account info cache from Open/Close directives
-        let mut account_info: HashMap<String, AccountInfo> = HashMap::new();
+        let mut account_info: FxHashMap<String, AccountInfo> = FxHashMap::default();
         for spanned in spanned_directives {
             match &spanned.value {
                 Directive::Open(open) => {
@@ -142,7 +143,7 @@ impl<'a> Executor<'a> {
                     let info = account_info.entry(account).or_insert_with(|| AccountInfo {
                         open_date: None,
                         close_date: None,
-                        open_meta: Metadata::new(),
+                        open_meta: Metadata::default(),
                     });
                     info.open_date = Some(open.date);
                     info.open_meta.clone_from(&open.meta);
@@ -152,7 +153,7 @@ impl<'a> Executor<'a> {
                     let info = account_info.entry(account).or_insert_with(|| AccountInfo {
                         open_date: None,
                         close_date: None,
-                        open_meta: Metadata::new(),
+                        open_meta: Metadata::default(),
                     });
                     info.close_date = Some(close.date);
                 }
@@ -163,14 +164,14 @@ impl<'a> Executor<'a> {
         Self {
             directives: &[], // Empty - we use spanned_directives instead
             spanned_directives: Some(spanned_directives),
-            balances: HashMap::new(),
+            balances: FxHashMap::default(),
             price_db,
             target_currency: None,
             query_date: chrono::Local::now().date_naive(),
-            regex_cache: RefCell::new(HashMap::new()),
+            regex_cache: RwLock::new(FxHashMap::default()),
             account_info,
             source_locations: Some(source_locations),
-            tables: HashMap::new(),
+            tables: FxHashMap::default(),
         }
     }
 
@@ -186,11 +187,20 @@ impl<'a> Executor<'a> {
     /// Returns `Some(Regex)` if the pattern is valid, `None` if it's invalid.
     /// Invalid patterns are cached as `None` to avoid repeated compilation attempts.
     fn get_or_compile_regex(&self, pattern: &str) -> Option<Regex> {
-        let mut cache = self.regex_cache.borrow_mut();
+        // Fast path: check read lock first
+        {
+            let cache = self.regex_cache.read().unwrap();
+            if let Some(cached) = cache.get(pattern) {
+                return cached.clone();
+            }
+        }
+        // Slow path: compile and insert with write lock
+        let compiled = Regex::new(pattern).ok();
+        let mut cache = self.regex_cache.write().unwrap();
+        // Double-check in case another thread inserted while we waited
         if let Some(cached) = cache.get(pattern) {
             return cached.clone();
         }
-        let compiled = Regex::new(pattern).ok();
         cache.insert(pattern.to_string(), compiled.clone());
         compiled
     }
@@ -270,7 +280,7 @@ impl<'a> Executor<'a> {
     ) -> Result<Vec<PostingContext<'a>>, QueryError> {
         let mut postings = Vec::new();
         // Track running balance per account
-        let mut running_balances: HashMap<InternedStr, Inventory> = HashMap::new();
+        let mut running_balances: FxHashMap<InternedStr, Inventory> = FxHashMap::default();
 
         // Create an iterator over (directive_index, directive) pairs
         // Handle both spanned and unspanned directives
@@ -1481,16 +1491,14 @@ mod tests {
 
     #[test]
     fn test_meta_functions() {
-        use std::collections::HashMap;
-
         // Create directives with metadata
-        let mut txn_meta: HashMap<String, MetaValue> = HashMap::new();
+        let mut txn_meta: Metadata = Metadata::default();
         txn_meta.insert(
             "source".to_string(),
             MetaValue::String("bank_import".to_string()),
         );
 
-        let mut posting_meta: HashMap<String, MetaValue> = HashMap::new();
+        let mut posting_meta: Metadata = Metadata::default();
         posting_meta.insert(
             "category".to_string(),
             MetaValue::String("food".to_string()),
@@ -1556,7 +1564,7 @@ mod tests {
             date: date(2024, 1, 1),
             currency: "EUR".into(),
             amount: Amount::new(dec!(1.10), "USD"),
-            meta: HashMap::new(),
+            meta: Metadata::default(),
         };
 
         let txn = Transaction::new(date(2024, 1, 15), "Test")
@@ -1757,7 +1765,7 @@ mod tests {
         use rustledger_core::{Close, Metadata, Open};
 
         // Create directives with Open/Close
-        let mut open_meta = Metadata::new();
+        let mut open_meta = Metadata::default();
         open_meta.insert(
             "category".to_string(),
             MetaValue::String("checking".to_string()),
@@ -1831,7 +1839,7 @@ mod tests {
             narration: "Test transaction".into(),
             tags: vec![],
             links: vec![],
-            meta: Metadata::new(),
+            meta: Metadata::default(),
             postings: vec![
                 Posting::new("Assets:Bank", Amount::new(dec!(100), "USD")),
                 Posting::new("Expenses:Food", Amount::new(dec!(-100), "USD")),
@@ -1876,7 +1884,7 @@ mod tests {
             narration: "Test transaction".into(),
             tags: vec![],
             links: vec![],
-            meta: Metadata::new(),
+            meta: Metadata::default(),
             postings: vec![
                 Posting::new("Assets:Bank", Amount::new(dec!(100), "USD")),
                 Posting::new("Expenses:Food", Amount::new(dec!(-100), "USD")),

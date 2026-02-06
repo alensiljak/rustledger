@@ -62,9 +62,9 @@ use rayon::prelude::*;
 /// is faster due to reduced threading overhead.
 const PARALLEL_SORT_THRESHOLD: usize = 5000;
 use rust_decimal::Decimal;
+use rustc_hash::{FxHashMap, FxHashSet};
 use rustledger_core::{BookingMethod, Directive, InternedStr, Inventory};
 use rustledger_parser::Spanned;
-use std::collections::{HashMap, HashSet};
 
 /// Account state for tracking lifecycle.
 #[derive(Debug, Clone)]
@@ -74,7 +74,7 @@ struct AccountState {
     /// Date closed (if closed).
     closed: Option<NaiveDate>,
     /// Allowed currencies (empty = any).
-    currencies: HashSet<InternedStr>,
+    currencies: FxHashSet<InternedStr>,
     /// Booking method (stored for future use in booking validation).
     #[allow(dead_code)]
     booking: BookingMethod,
@@ -102,7 +102,7 @@ pub struct ValidationOptions {
     pub tolerance_multiplier: Decimal,
     /// Per-currency default tolerances (matches Python beancount's `inferred_tolerance_default`).
     /// e.g., `{"GBP": 0.004}` means GBP transactions tolerate up to 0.004 residual.
-    pub inferred_tolerance_default: HashMap<String, Decimal>,
+    pub inferred_tolerance_default: FxHashMap<String, Decimal>,
 }
 
 impl Default for ValidationOptions {
@@ -122,7 +122,7 @@ impl Default for ValidationOptions {
             // Match Python beancount defaults
             infer_tolerance_from_cost: false,
             tolerance_multiplier: Decimal::new(5, 1), // 0.5
-            inferred_tolerance_default: HashMap::new(),
+            inferred_tolerance_default: FxHashMap::default(),
         }
     }
 }
@@ -142,20 +142,20 @@ struct PendingPad {
 #[derive(Debug, Default)]
 pub struct LedgerState {
     /// Account states.
-    accounts: HashMap<InternedStr, AccountState>,
+    accounts: FxHashMap<InternedStr, AccountState>,
     /// Account inventories.
-    inventories: HashMap<InternedStr, Inventory>,
+    inventories: FxHashMap<InternedStr, Inventory>,
     /// Declared commodities.
-    commodities: HashSet<InternedStr>,
+    commodities: FxHashSet<InternedStr>,
     /// Pending pad directives (account -> list of pads).
-    pending_pads: HashMap<InternedStr, Vec<PendingPad>>,
+    pending_pads: FxHashMap<InternedStr, Vec<PendingPad>>,
     /// Validation options.
     options: ValidationOptions,
     /// Track previous directive date for out-of-order detection.
     last_date: Option<NaiveDate>,
     /// Accumulated tolerances per currency from transaction amounts.
     /// Balance assertions use these with 2x multiplier (Python beancount behavior).
-    tolerances: HashMap<InternedStr, Decimal>,
+    tolerances: FxHashMap<InternedStr, Decimal>,
 }
 
 impl LedgerState {
@@ -228,7 +228,8 @@ pub fn validate_with_options(
     // Sort directives by date, then by type priority
     // (e.g., balance assertions before transactions on the same day)
     // Use parallel sort only for large collections (threading overhead otherwise)
-    let mut sorted: Vec<&Directive> = directives.iter().collect();
+    let mut sorted: Vec<&Directive> = Vec::with_capacity(directives.len());
+    sorted.extend(directives.iter());
     let sort_fn = |a: &&Directive, b: &&Directive| {
         a.date()
             .cmp(&b.date())

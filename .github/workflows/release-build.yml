@@ -225,20 +225,32 @@ jobs:
             export RUSTFLAGS="-C link-arg=-Wl,-ld_classic"
           fi
 
+          # Linux: Use full LTO profile for better performance
+          PROFILE="release"
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            PROFILE="release-linux"
+          fi
+
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release --target ${{ matrix.target }} --no-default-features --features bean-compat
+            cross build --profile $PROFILE --target ${{ matrix.target }} --no-default-features --features bean-compat
             # Build LSP separately (no bean-compat feature needed)
-            cross build --release --target ${{ matrix.target }} -p rustledger-lsp
+            cross build --profile $PROFILE --target ${{ matrix.target }} -p rustledger-lsp
           else
-            cargo build --release --target ${{ matrix.target }} --no-default-features --features bean-compat
+            cargo build --profile $PROFILE --target ${{ matrix.target }} --no-default-features --features bean-compat
             # Build LSP separately (no bean-compat feature needed)
-            cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
+            cargo build --profile $PROFILE --target ${{ matrix.target }} -p rustledger-lsp
           fi
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
+          # Determine profile directory (release-linux on Linux non-PGO, release otherwise)
+          PROFILE_DIR="release"
+          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.pgo }}" != "true" ]; then
+            PROFILE_DIR="release-linux"
+          fi
+
+          cd target/${{ matrix.target }}/$PROFILE_DIR
 
           # Get version from tag (RELEASE_TAG is set at workflow level)
           VERSION=$RELEASE_TAG

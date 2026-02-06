@@ -82,6 +82,9 @@ wat = "1"
 # Parallelization
 rayon = "1.10"
 
+# Fast hashing
+rustc-hash = "2"
+
 # Testing
 proptest = "1"
 criterion = "0.8"
@@ -168,6 +171,12 @@ multiple_crate_versions = "allow"
 lto = "thin"  # Full LTO causes Apple linker crash with long symbol names
 codegen-units = 1
 strip = true
+
+# Linux-optimized profile with full LTO (use with: cargo build --profile release-linux)
+# macOS keeps thin LTO due to Apple linker crash issues
+[profile.release-linux]
+inherits = "release"
+lto = "fat"
 
 # WASM-optimized profile (use with: cargo build --profile wasm-release)
 [profile.wasm-release]
