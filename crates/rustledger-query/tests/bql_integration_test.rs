@@ -3128,3 +3128,109 @@ fn test_aggregation_sum_integers() {
         assert_eq!(*n, dec!(3));
     }
 }
+
+// ============================================================================
+// Parallel Execution Tests
+// ============================================================================
+
+/// Generate a large number of postings to test parallel query execution path.
+/// The parallel threshold is 1000 postings, so we need at least 1001.
+fn make_large_directives() -> Vec<Directive> {
+    let mut directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Test")),
+    ];
+
+    // Generate 510 transactions with 2 postings each = 1020 postings
+    // This exceeds PARALLEL_THRESHOLD (1000) to trigger parallel execution
+    for i in 0u32..510 {
+        let day = (i % 28) + 1; // Day 1-28
+        let txn = Transaction::new(date(2024, 1, day), format!("Transaction {i}"))
+            .with_posting(Posting::new(
+                "Expenses:Test",
+                Amount::new(dec!(10) + rust_decimal::Decimal::from(i64::from(i)), "USD"),
+            ))
+            .with_posting(Posting::new(
+                "Assets:Bank",
+                Amount::new(dec!(-10) - rust_decimal::Decimal::from(i64::from(i)), "USD"),
+            ));
+        directives.push(Directive::Transaction(txn));
+    }
+
+    directives
+}
+
+#[test]
+fn test_parallel_execution_simple_select() {
+    // Test that parallel execution produces correct results
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT account, number", &directives);
+
+    // Should have 1020 postings (510 transactions × 2 postings each)
+    assert_eq!(
+        result.len(),
+        1020,
+        "expected 1020 postings for parallel path"
+    );
+}
+
+#[test]
+fn test_parallel_execution_with_filter() {
+    let directives = make_large_directives();
+    let result = execute_query(
+        r#"SELECT account, number WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    // Should have 510 expense postings
+    assert_eq!(result.len(), 510, "expected 510 expense postings");
+}
+
+#[test]
+fn test_parallel_execution_with_distinct() {
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT DISTINCT account", &directives);
+
+    // Should have 2 distinct accounts: Assets:Bank and Expenses:Test
+    assert_eq!(result.len(), 2, "expected 2 distinct accounts");
+}
+
+#[test]
+fn test_parallel_execution_aggregation() {
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT account, SUM(number) GROUP BY account", &directives);
+
+    // Should have 2 groups (one per account)
+    assert_eq!(result.len(), 2, "expected 2 account groups");
+}
+
+#[test]
+fn test_parallel_execution_matches_sequential() {
+    // Verify parallel and sequential produce the same results
+    // We can't directly compare because the threshold is compile-time,
+    // but we can verify the results are mathematically correct
+    let directives = make_large_directives();
+
+    // Sum of 10+0 + 10+1 + 10+2 + ... + 10+509 for expenses
+    // = 510*10 + sum(0..509) = 5100 + (509*510/2) = 5100 + 129795 = 134895
+    let result = execute_query(
+        r#"SELECT SUM(number) WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // SUM(number) returns a Number (Decimal), not an Amount
+    match &result.rows[0][0] {
+        Value::Number(n) => {
+            assert_eq!(*n, dec!(134895), "parallel SUM should equal expected total");
+        }
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(134895),
+                "parallel SUM should equal expected total"
+            );
+        }
+        other => panic!("expected Number or Amount result, got {other:?}"),
+    }
+}

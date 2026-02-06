@@ -189,14 +189,22 @@ impl<'a> Executor<'a> {
     fn get_or_compile_regex(&self, pattern: &str) -> Option<Regex> {
         // Fast path: check read lock first
         {
-            let cache = self.regex_cache.read().unwrap();
+            // Handle lock poisoning gracefully - if another thread panicked while holding
+            // the lock, we can still recover the cached data via into_inner()
+            let cache = match self.regex_cache.read() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if let Some(cached) = cache.get(pattern) {
                 return cached.clone();
             }
         }
         // Slow path: compile and insert with write lock
         let compiled = Regex::new(pattern).ok();
-        let mut cache = self.regex_cache.write().unwrap();
+        let mut cache = match self.regex_cache.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
         // Double-check in case another thread inserted while we waited
         if let Some(cached) = cache.get(pattern) {
             return cached.clone();
