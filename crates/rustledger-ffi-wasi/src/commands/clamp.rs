@@ -1,9 +1,8 @@
 //! Clamp and filter commands (clamp, filter-entries, clamp-entries).
 
-use rustc_hash::FxHashMap;
 use std::collections::HashMap;
 
-use rustledger_core::{Cost, Directive, Metadata, NaiveDate};
+use rustledger_core::{Cost, Directive, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -273,7 +272,7 @@ pub fn cmd_clamp(
                         label: c.label.clone(),
                     }),
                     price: None,
-                    meta: Metadata::default(),
+                    meta: HashMap::new(),
                 })
                 .collect();
 
@@ -344,7 +343,7 @@ pub fn cmd_clamp(
                         label: c.label.clone(),
                     }),
                     price: None,
-                    meta: Metadata::default(),
+                    meta: HashMap::new(),
                 })
                 .collect();
 
