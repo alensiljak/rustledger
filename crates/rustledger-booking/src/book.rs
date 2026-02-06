@@ -7,11 +7,11 @@
 //! - Filling in cost specs for lot reductions
 
 use rust_decimal::Decimal;
+use rustc_hash::FxHashMap;
 use rustledger_core::{
     Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
     Posting, Transaction,
 };
-use std::collections::HashMap;
 use thiserror::Error;
 
 use crate::{InterpolationError, InterpolationResult, interpolate};
@@ -79,7 +79,7 @@ pub struct CapitalGain {
 #[derive(Debug, Default)]
 pub struct BookingEngine {
     /// Inventory per account.
-    inventories: HashMap<InternedStr, Inventory>,
+    inventories: FxHashMap<InternedStr, Inventory>,
     /// Default booking method.
     booking_method: BookingMethod,
 }
@@ -89,7 +89,7 @@ impl BookingEngine {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            inventories: HashMap::new(),
+            inventories: FxHashMap::default(),
             booking_method: BookingMethod::Fifo,
         }
     }
@@ -98,7 +98,7 @@ impl BookingEngine {
     #[must_use]
     pub fn with_method(method: BookingMethod) -> Self {
         Self {
-            inventories: HashMap::new(),
+            inventories: FxHashMap::default(),
             booking_method: method,
         }
     }
@@ -119,21 +119,18 @@ impl BookingEngine {
     pub fn book(&self, txn: &Transaction) -> Result<BookedTransaction, BookingError> {
         let mut result = txn.clone();
         let mut gains = Vec::new();
-        let mut booked_indices = std::collections::HashSet::new();
+        let mut booked_indices = std::collections::HashSet::with_capacity(txn.postings.len());
         // Track posting expansions: (original_idx, expanded_postings)
-        let mut expansions: Vec<(usize, Vec<Posting>)> = Vec::new();
+        let mut expansions: Vec<(usize, Vec<Posting>)> = Vec::with_capacity(txn.postings.len());
 
         // Create working copies of inventories for this transaction.
         // This allows us to track inventory changes across multiple postings
         // within the same transaction (e.g., main sale + fee posting).
-        let mut working_inventories: std::collections::HashMap<
-            rustledger_core::InternedStr,
-            rustledger_core::Inventory,
-        > = self
-            .inventories
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        let mut working_inventories: FxHashMap<InternedStr, Inventory> =
+            FxHashMap::with_capacity_and_hasher(self.inventories.len(), Default::default());
+        for (k, v) in &self.inventories {
+            working_inventories.insert(k.clone(), v.clone());
+        }
 
         // First pass: identify postings that need lot matching (reductions)
         for (idx, posting) in txn.postings.iter().enumerate() {

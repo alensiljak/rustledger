@@ -18,8 +18,8 @@ use std::str::FromStr;
 
 use rustledger_core::{
     Amount, Balance, Close, Commodity, CostSpec, Custom, Directive, Document, Event,
-    IncompleteAmount, InternedStr, MetaValue, Note, Open, Pad, Posting, Price, PriceAnnotation,
-    Query, Transaction,
+    IncompleteAmount, InternedStr, MetaValue, Metadata, Note, Open, Pad, Posting, Price,
+    PriceAnnotation, Query, Transaction,
 };
 
 use crate::ParseResult;
@@ -618,10 +618,8 @@ fn parse_posting_metadata_line(stream: &mut TokenStream<'_>) -> ParseRes<(String
 }
 
 /// Parse posting-level metadata (uses `DeepIndent` tokens).
-fn parse_posting_metadata(
-    stream: &mut TokenStream<'_>,
-) -> std::collections::HashMap<String, MetaValue> {
-    let mut meta = std::collections::HashMap::new();
+fn parse_posting_metadata(stream: &mut TokenStream<'_>) -> Metadata {
+    let mut meta: Metadata = Metadata::default();
 
     loop {
         // Skip newlines between metadata lines
@@ -685,10 +683,8 @@ fn parse_meta_value(stream: &mut TokenStream<'_>) -> ParseRes<MetaValue> {
 }
 
 /// Parse metadata lines, also skipping any indented comment lines.
-fn parse_metadata_with_comments(
-    stream: &mut TokenStream<'_>,
-) -> std::collections::HashMap<String, MetaValue> {
-    let mut meta = std::collections::HashMap::new();
+fn parse_metadata_with_comments(stream: &mut TokenStream<'_>) -> Metadata {
+    let mut meta: Metadata = Metadata::default();
 
     loop {
         // Skip newlines
@@ -864,8 +860,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     skip_comment(stream);
 
     // Parse transaction-level metadata, tags/links, and postings
-    let mut txn_meta: std::collections::HashMap<String, MetaValue> =
-        std::collections::HashMap::new();
+    let mut txn_meta: Metadata = Metadata::default();
     let mut postings = Vec::new();
 
     loop {

@@ -18,6 +18,7 @@ rust_decimal.workspace = true
 rust_decimal_macros = "1.40"
 bigdecimal = "0.4"
 thiserror.workspace = true
+rustc-hash.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

@@ -1,8 +1,12 @@
 //! Query execution functions for different query types.
 
-use std::collections::{HashMap, HashSet};
+use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use rustledger_core::{Amount, Directive, NaiveDate, Position};
+
+/// Threshold for parallel row evaluation. Below this, sequential is faster.
+const PARALLEL_THRESHOLD: usize = 1000;
 
 use crate::ast::{
     CreateTableStmt, Expr, InsertSource, InsertStmt, OrderSpec, SelectQuery, SortDirection, Target,
@@ -86,28 +90,54 @@ impl Executor<'_> {
             };
 
             // Simple query - one row per posting
-            // Use HashSet for O(1) DISTINCT deduplication instead of O(n) contains()
-            let mut seen_hashes: HashSet<u64> = if query.distinct {
-                HashSet::with_capacity(postings.len())
-            } else {
-                HashSet::new()
-            };
+            // Use parallel evaluation for large datasets
+            let use_parallel = postings.len() >= PARALLEL_THRESHOLD && window_contexts.is_none();
 
-            for (i, ctx) in postings.iter().enumerate() {
-                // Use extended_targets to include hidden columns for ORDER BY
-                let row = if let Some(ref wctxs) = window_contexts {
-                    self.evaluate_row_with_window(&extended_targets, ctx, Some(&wctxs[i]))?
-                } else {
-                    self.evaluate_row(&extended_targets, ctx)?
-                };
+            if use_parallel {
+                // Parallel row evaluation
+                let rows: Result<Vec<Row>, QueryError> = postings
+                    .par_iter()
+                    .map(|ctx| self.evaluate_row(&extended_targets, ctx))
+                    .collect();
+                let rows = rows?;
+
                 if query.distinct {
-                    // O(1) hash-based deduplication
-                    let row_hash = hash_row(&row);
-                    if seen_hashes.insert(row_hash) {
-                        result.add_row(row);
+                    // Sequential deduplication after parallel evaluation
+                    let mut seen_hashes: FxHashSet<u64> =
+                        FxHashSet::with_capacity_and_hasher(rows.len(), Default::default());
+                    for row in rows {
+                        let row_hash = hash_row(&row);
+                        if seen_hashes.insert(row_hash) {
+                            result.add_row(row);
+                        }
                     }
                 } else {
-                    result.add_row(row);
+                    result.rows = rows;
+                }
+            } else {
+                // Sequential evaluation for small datasets or window queries
+                let mut seen_hashes: FxHashSet<u64> = if query.distinct {
+                    FxHashSet::with_capacity_and_hasher(postings.len(), Default::default())
+                } else {
+                    FxHashSet::default()
+                };
+
+                for (i, ctx) in postings.iter().enumerate() {
+                    // Use extended_targets to include hidden columns for ORDER BY
+                    let row = if let Some(ref wctxs) = window_contexts {
+                        self.evaluate_row_with_window(&extended_targets, ctx, Some(&wctxs[i]))?
+                    } else {
+                        self.evaluate_row(&extended_targets, ctx)?
+                    };
+                    if query.distinct {
+                        // O(1) hash-based deduplication
+                        let row_hash = hash_row(&row);
+                        if seen_hashes.insert(row_hash) {
+                            result.add_row(row);
+                        }
+                    } else {
+                        result.add_row(row);
+                    }
                 }
             }
         }
@@ -207,7 +237,7 @@ impl Executor<'_> {
         let inner_result = self.execute_select(inner_query)?;
 
         // Build a column name -> index mapping for the inner result
-        let inner_column_map: HashMap<String, usize> = inner_result
+        let inner_column_map: FxHashMap<String, usize> = inner_result
             .columns
             .iter()
             .enumerate()
@@ -219,11 +249,11 @@ impl Executor<'_> {
             self.resolve_subquery_column_names(&outer_query.targets, &inner_result.columns)?;
         let mut result = QueryResult::new(outer_column_names);
 
-        // Use HashSet for O(1) DISTINCT deduplication
-        let mut seen_hashes: HashSet<u64> = if outer_query.distinct {
-            HashSet::with_capacity(inner_result.rows.len())
+        // Use FxHashSet for O(1) DISTINCT deduplication
+        let mut seen_hashes: FxHashSet<u64> = if outer_query.distinct {
+            FxHashSet::with_capacity_and_hasher(inner_result.rows.len(), Default::default())
         } else {
-            HashSet::new()
+            FxHashSet::default()
         };
 
         // Process each row from the inner result
@@ -277,7 +307,7 @@ impl Executor<'_> {
         })?;
 
         // Build a column name -> index mapping for the table
-        let column_map: HashMap<String, usize> = table
+        let column_map: FxHashMap<String, usize> = table
             .columns
             .iter()
             .enumerate()
@@ -288,11 +318,11 @@ impl Executor<'_> {
         let column_names = self.resolve_subquery_column_names(&query.targets, &table.columns)?;
         let mut result = QueryResult::new(column_names);
 
-        // Use HashSet for O(1) DISTINCT deduplication
-        let mut seen_hashes: HashSet<u64> = if query.distinct {
-            HashSet::with_capacity(table.rows.len())
+        // Use FxHashSet for O(1) DISTINCT deduplication
+        let mut seen_hashes: FxHashSet<u64> = if query.distinct {
+            FxHashSet::with_capacity_and_hasher(table.rows.len(), Default::default())
         } else {
-            HashSet::new()
+            FxHashSet::default()
         };
 
         // Process each row from the table
@@ -356,7 +386,7 @@ impl Executor<'_> {
         &self,
         expr: &Expr,
         row: &[Value],
-        column_map: &HashMap<String, usize>,
+        column_map: &FxHashMap<String, usize>,
     ) -> Result<bool, QueryError> {
         let val = self.evaluate_subquery_expr(expr, row, column_map)?;
         self.to_bool(&val)
@@ -367,7 +397,7 @@ impl Executor<'_> {
         &self,
         expr: &Expr,
         row: &[Value],
-        column_map: &HashMap<String, usize>,
+        column_map: &FxHashMap<String, usize>,
     ) -> Result<Value, QueryError> {
         match expr {
             Expr::Wildcard => Err(QueryError::Evaluation(
@@ -429,7 +459,7 @@ impl Executor<'_> {
         &self,
         targets: &[Target],
         inner_row: &[Value],
-        column_map: &HashMap<String, usize>,
+        column_map: &FxHashMap<String, usize>,
     ) -> Result<Row, QueryError> {
         let mut row = Vec::new();
         for target in targets {

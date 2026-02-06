@@ -2976,6 +2976,7 @@ dependencies = [
  "proptest",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustc-hash",
  "rustledger-core",
  "thiserror 2.0.18",
 ]
@@ -2990,6 +2991,7 @@ dependencies = [
  "rkyv 0.8.14",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustc-hash",
  "serde",
  "serde_json",
  "tempfile",
@@ -3000,6 +3002,7 @@ dependencies = [
 name = "rustledger-ffi-wasi"
 version = "0.8.3"
 dependencies = [
+ "rustc-hash",
  "rustledger-booking",
  "rustledger-core",
  "rustledger-loader",
@@ -3035,6 +3038,7 @@ dependencies = [
  "rkyv 0.8.14",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustc-hash",
  "rustledger-booking",
  "rustledger-core",
  "rustledger-parser",
@@ -3121,9 +3125,11 @@ dependencies = [
  "criterion",
  "insta",
  "proptest",
+ "rayon",
  "regex",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustc-hash",
  "rustledger-core",
  "rustledger-loader",
  "rustledger-parser",
@@ -3141,6 +3147,7 @@ dependencies = [
  "rayon",
  "rust_decimal",
  "rust_decimal_macros",
+ "rustc-hash",
  "rustledger-booking",
  "rustledger-core",
  "rustledger-parser",

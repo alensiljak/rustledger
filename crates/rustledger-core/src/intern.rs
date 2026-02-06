@@ -22,7 +22,7 @@
 //! assert!(!std::ptr::eq(s1.as_str().as_ptr(), s3.as_str().as_ptr()));
 //! ```
 
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use std::sync::Arc;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -239,21 +239,21 @@ impl std::borrow::Borrow<str> for InternedStr {
 #[derive(Debug, Default)]
 pub struct StringInterner {
     /// Set of all interned strings.
-    strings: HashSet<Arc<str>>,
+    strings: FxHashSet<Arc<str>>,
 }
 
 impl StringInterner {
     /// Create a new empty interner.
     pub fn new() -> Self {
         Self {
-            strings: HashSet::new(),
+            strings: FxHashSet::default(),
         }
     }
 
     /// Create an interner with pre-allocated capacity.
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            strings: HashSet::with_capacity(capacity),
+            strings: FxHashSet::with_capacity_and_hasher(capacity, Default::default()),
         }
     }
 

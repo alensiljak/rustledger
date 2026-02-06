@@ -2768,3 +2768,469 @@ fn test_number_on_empty_inventory() {
     // No results since account doesn't exist
     assert!(result.is_empty());
 }
+
+// ============================================================================
+// String Functions Tests (Coverage improvement)
+// ============================================================================
+
+#[test]
+fn test_string_startswith() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT account WHERE STARTSWITH(account, "Assets")"#,
+        &directives,
+    );
+
+    // Should have all Asset account postings
+    assert!(!result.is_empty());
+    for row in &result.rows {
+        if let Value::String(s) = &row[0] {
+            assert!(s.starts_with("Assets"));
+        }
+    }
+}
+
+#[test]
+fn test_string_endswith() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT account WHERE ENDSWITH(account, "Checking")"#,
+        &directives,
+    );
+
+    // Should have all Checking account postings
+    assert!(!result.is_empty());
+    for row in &result.rows {
+        if let Value::String(s) = &row[0] {
+            assert!(s.ends_with("Checking"));
+        }
+    }
+}
+
+#[test]
+fn test_string_grep_match() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT GREP("Bank", account) WHERE account ~ "Bank" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "Bank");
+    }
+}
+
+#[test]
+fn test_string_grep_no_match() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT GREP("XYZ", account) WHERE account ~ "Bank" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_string_grepn_capture_group() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT GREPN("Assets:([^:]+)", account, 1) WHERE account ~ "Assets" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should capture the first component after Assets:
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "Bank");
+    }
+}
+
+#[test]
+fn test_string_subst() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT SUBST("Bank", "Institution", account) WHERE account ~ "Bank" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert!(s.contains("Institution"));
+        assert!(!s.contains("Bank"));
+    }
+}
+
+#[test]
+fn test_string_splitcomp() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT SPLITCOMP(account, ":", 1) WHERE account ~ "Assets:Bank" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "Bank");
+    }
+}
+
+#[test]
+fn test_string_splitcomp_out_of_bounds() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT SPLITCOMP(account, ":", 100) WHERE account ~ "Assets" LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert!(matches!(&result.rows[0][0], Value::Null));
+}
+
+#[test]
+fn test_string_joinstr() {
+    let directives = make_test_directives();
+    let result = execute_query(r#"SELECT JOINSTR("A", "B", "C") LIMIT 1"#, &directives);
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "A, B, C");
+    }
+}
+
+#[test]
+fn test_string_maxwidth_truncate() {
+    let directives = make_test_directives();
+    let result = execute_query(r"SELECT MAXWIDTH(narration, 10) LIMIT 1", &directives);
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert!(s.len() <= 10);
+        if s.len() == 10 {
+            assert!(s.ends_with("..."));
+        }
+    }
+}
+
+#[test]
+fn test_string_maxwidth_no_truncate() {
+    let directives = make_test_directives();
+    let result = execute_query(r#"SELECT MAXWIDTH("short", 100) LIMIT 1"#, &directives);
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        assert_eq!(s, "short");
+    }
+}
+
+#[test]
+fn test_string_length_on_set() {
+    let directives = make_test_directives();
+    // LENGTH on tags set should return count
+    let result = execute_query(
+        r"SELECT LENGTH(tags) WHERE LENGTH(tags) > 0 LIMIT 1",
+        &directives,
+    );
+
+    // At least some transactions have tags
+    if !result.is_empty()
+        && let Value::Integer(n) = &result.rows[0][0]
+    {
+        assert!(*n > 0);
+    }
+}
+
+// ============================================================================
+// Aggregation Functions Tests (Coverage improvement)
+// ============================================================================
+
+#[test]
+fn test_aggregation_avg() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT AVG(number) as avg_amount WHERE account ~ "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Average of Food expenses (150 + 80) / 2 = 115
+        assert_eq!(*n, dec!(115));
+    } else {
+        panic!("Expected Number value for AVG");
+    }
+}
+
+#[test]
+fn test_aggregation_min_number() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT MIN(number) as min_amount WHERE account ~ "Expenses" AND number > 0"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Minimum expense should be 45 (Transport)
+        assert_eq!(*n, dec!(45));
+    } else {
+        panic!("Expected Number value for MIN");
+    }
+}
+
+#[test]
+fn test_aggregation_max_number() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT MAX(number) as max_amount WHERE account ~ "Expenses" AND number > 0"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Maximum expense should be 150 (Food groceries)
+        assert_eq!(*n, dec!(150));
+    } else {
+        panic!("Expected Number value for MAX");
+    }
+}
+
+#[test]
+fn test_aggregation_min_date() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT MIN(date) as earliest_date WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Date(d) = &result.rows[0][0] {
+        assert_eq!(*d, date(2024, 1, 20)); // First expense transaction
+    } else {
+        panic!("Expected Date value for MIN(date)");
+    }
+}
+
+#[test]
+fn test_aggregation_max_date() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT MAX(date) as latest_date WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Date(d) = &result.rows[0][0] {
+        assert_eq!(*d, date(2024, 1, 27)); // Last expense transaction
+    } else {
+        panic!("Expected Date value for MAX(date)");
+    }
+}
+
+#[test]
+fn test_aggregation_first() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT FIRST(narration) as first_narration WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        // First chronologically should be "Weekly groceries"
+        assert_eq!(s, "Weekly groceries");
+    } else {
+        panic!("Expected String value for FIRST");
+    }
+}
+
+#[test]
+fn test_aggregation_last() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT LAST(narration) as last_narration WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::String(s) = &result.rows[0][0] {
+        // Last chronologically should be "More groceries"
+        assert_eq!(s, "More groceries");
+    } else {
+        panic!("Expected String value for LAST");
+    }
+}
+
+#[test]
+fn test_aggregation_group_key_types() {
+    // Test that various value types work as GROUP BY keys
+    let directives = make_test_directives();
+
+    // Group by string
+    let result = execute_query(r"SELECT account, COUNT(*) GROUP BY account", &directives);
+    assert!(!result.is_empty());
+
+    // Group by date
+    let result = execute_query(r"SELECT date, COUNT(*) GROUP BY date", &directives);
+    assert!(!result.is_empty());
+}
+
+#[test]
+fn test_aggregation_having_with_alias() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        r"SELECT account, COUNT(*) as cnt
+           GROUP BY account
+           HAVING cnt > 1",
+        &directives,
+    );
+
+    // Only accounts with more than 1 posting
+    for row in &result.rows {
+        if let Value::Integer(n) = &row[1] {
+            assert!(*n > 1);
+        }
+    }
+}
+
+#[test]
+fn test_aggregation_nested_function() {
+    let directives = make_test_directives();
+    // Test nested aggregate: units(sum(position))
+    let result = execute_query(
+        r#"SELECT units(sum(position)) as total_units
+           WHERE account ~ "Expenses:Food"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(a) = &result.rows[0][0] {
+        // 150 + 80 = 230 USD in food expenses
+        assert_eq!(a.number, dec!(230));
+    }
+}
+
+#[test]
+fn test_aggregation_sum_integers() {
+    let directives = make_test_directives();
+    // COUNT returns integers, can we sum them?
+    let result = execute_query(
+        r#"SELECT SUM(1) as total_count WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Should be the count of expense postings (3 total)
+        assert_eq!(*n, dec!(3));
+    }
+}
+
+// ============================================================================
+// Parallel Execution Tests
+// ============================================================================
+
+/// Generate a large number of postings to test parallel query execution path.
+/// The parallel threshold is 1000 postings, so we need at least 1001.
+fn make_large_directives() -> Vec<Directive> {
+    let mut directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Test")),
+    ];
+
+    // Generate 510 transactions with 2 postings each = 1020 postings
+    // This exceeds PARALLEL_THRESHOLD (1000) to trigger parallel execution
+    for i in 0u32..510 {
+        let day = (i % 28) + 1; // Day 1-28
+        let txn = Transaction::new(date(2024, 1, day), format!("Transaction {i}"))
+            .with_posting(Posting::new(
+                "Expenses:Test",
+                Amount::new(dec!(10) + rust_decimal::Decimal::from(i64::from(i)), "USD"),
+            ))
+            .with_posting(Posting::new(
+                "Assets:Bank",
+                Amount::new(dec!(-10) - rust_decimal::Decimal::from(i64::from(i)), "USD"),
+            ));
+        directives.push(Directive::Transaction(txn));
+    }
+
+    directives
+}
+
+#[test]
+fn test_parallel_execution_simple_select() {
+    // Test that parallel execution produces correct results
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT account, number", &directives);
+
+    // Should have 1020 postings (510 transactions × 2 postings each)
+    assert_eq!(
+        result.len(),
+        1020,
+        "expected 1020 postings for parallel path"
+    );
+}
+
+#[test]
+fn test_parallel_execution_with_filter() {
+    let directives = make_large_directives();
+    let result = execute_query(
+        r#"SELECT account, number WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    // Should have 510 expense postings
+    assert_eq!(result.len(), 510, "expected 510 expense postings");
+}
+
+#[test]
+fn test_parallel_execution_with_distinct() {
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT DISTINCT account", &directives);
+
+    // Should have 2 distinct accounts: Assets:Bank and Expenses:Test
+    assert_eq!(result.len(), 2, "expected 2 distinct accounts");
+}
+
+#[test]
+fn test_parallel_execution_aggregation() {
+    let directives = make_large_directives();
+    let result = execute_query(r"SELECT account, SUM(number) GROUP BY account", &directives);
+
+    // Should have 2 groups (one per account)
+    assert_eq!(result.len(), 2, "expected 2 account groups");
+}
+
+#[test]
+fn test_parallel_execution_matches_sequential() {
+    // Verify parallel and sequential produce the same results
+    // We can't directly compare because the threshold is compile-time,
+    // but we can verify the results are mathematically correct
+    let directives = make_large_directives();
+
+    // Sum of 10+0 + 10+1 + 10+2 + ... + 10+509 for expenses
+    // = 510*10 + sum(0..509) = 5100 + (509*510/2) = 5100 + 129795 = 134895
+    let result = execute_query(
+        r#"SELECT SUM(number) WHERE account ~ "Expenses""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // SUM(number) returns a Number (Decimal), not an Amount
+    match &result.rows[0][0] {
+        Value::Number(n) => {
+            assert_eq!(*n, dec!(134895), "parallel SUM should equal expected total");
+        }
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(134895),
+                "parallel SUM should equal expected total"
+            );
+        }
+        other => panic!("expected Number or Amount result, got {other:?}"),
+    }
+}

@@ -5,8 +5,8 @@
 //! using different booking methods (FIFO, LIFO, STRICT, NONE).
 
 use rust_decimal::Decimal;
+use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -183,13 +183,13 @@ pub struct Inventory {
     /// Not serialized - rebuilt on demand.
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
-    simple_index: HashMap<InternedStr, usize>,
+    simple_index: FxHashMap<InternedStr, usize>,
     /// Cache of total units per currency for O(1) `units()` lookups.
     /// Updated incrementally on `add()` and `reduce()`.
     /// Not serialized - rebuilt on demand.
     #[serde(skip)]
     #[cfg_attr(feature = "rkyv", rkyv(with = rkyv::with::Skip))]
-    units_cache: HashMap<InternedStr, Decimal>,
+    units_cache: FxHashMap<InternedStr, Decimal>,
 }
 
 impl PartialEq for Inventory {
@@ -286,8 +286,8 @@ impl Inventory {
     ///
     /// Returns the sum of all cost bases for positions of the given currency.
     #[must_use]
-    pub fn book_value(&self, units_currency: &str) -> HashMap<InternedStr, Decimal> {
-        let mut totals: HashMap<InternedStr, Decimal> = HashMap::new();
+    pub fn book_value(&self, units_currency: &str) -> FxHashMap<InternedStr, Decimal> {
+        let mut totals: FxHashMap<InternedStr, Decimal> = FxHashMap::default();
 
         for pos in &self.positions {
             if pos.units.currency == units_currency
