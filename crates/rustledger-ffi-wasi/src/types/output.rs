@@ -299,6 +299,7 @@ pub struct LedgerOptions {
     /// Whether to render commas in numbers.
     pub render_commas: bool,
     /// Default tolerances per currency (e.g., {"USD": "0.005", "*": "0.01"}).
+    #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub inferred_tolerance_default: HashMap<String, String>,
     /// Tolerance multiplier (default 0.5).
     pub inferred_tolerance_multiplier: String,

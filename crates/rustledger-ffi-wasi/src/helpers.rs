@@ -114,14 +114,15 @@ pub fn load_source(source: &str) -> LoadResult {
                 if let Some((curr, tol)) = value.split_once(':') {
                     options
                         .inferred_tolerance_default
-                        .insert(curr.to_string(), tol.to_string());
+                        .insert(curr.trim().to_string(), tol.trim().to_string());
                 }
             }
             "inferred_tolerance_multiplier" | "tolerance_multiplier" => {
                 options.inferred_tolerance_multiplier.clone_from(value);
             }
             "infer_tolerance_from_cost" => {
-                options.infer_tolerance_from_cost = value.eq_ignore_ascii_case("true");
+                options.infer_tolerance_from_cost =
+                    value.eq_ignore_ascii_case("true") || value == "1";
             }
             "account_rounding" => options.account_rounding = Some(value.clone()),
             "account_previous_balances" => options.account_previous_balances.clone_from(value),
