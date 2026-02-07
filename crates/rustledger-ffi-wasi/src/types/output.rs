@@ -189,6 +189,9 @@ pub struct Posting {
     pub cost: Option<PostingCost>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub price: Option<Amount>,
+    /// Posting-level flag (e.g., "!" for pending).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flag: Option<String>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub meta: HashMap<String, serde_json::Value>,
 }
@@ -225,6 +228,9 @@ pub enum DirectiveJson {
         date: String,
         account: String,
         amount: Amount,
+        /// Explicit tolerance (e.g., "~ 0.01").
+        #[serde(skip_serializing_if = "Option::is_none")]
+        tolerance: Option<String>,
         meta: Meta,
     },
     Pad {
@@ -290,6 +296,34 @@ pub struct LedgerOptions {
     pub commodities: Vec<String>,
     pub booking_method: String,
     pub display_precision: HashMap<String, u32>,
+    /// Whether to render commas in numbers.
+    pub render_commas: bool,
+    /// Default tolerances per currency (e.g., {"USD": "0.005", "*": "0.01"}).
+    pub inferred_tolerance_default: HashMap<String, String>,
+    /// Tolerance multiplier (default 0.5).
+    pub inferred_tolerance_multiplier: String,
+    /// Whether to infer tolerance from cost.
+    pub infer_tolerance_from_cost: bool,
+    /// Account for rounding errors.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_rounding: Option<String>,
+    /// Account for previous balances (opening balances).
+    pub account_previous_balances: String,
+    /// Account for previous earnings.
+    pub account_previous_earnings: String,
+    /// Account for previous conversions.
+    pub account_previous_conversions: String,
+    /// Account for current earnings.
+    pub account_current_earnings: String,
+    /// Account for current conversion differences.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_current_conversions: Option<String>,
+    /// Account for unrealized gains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_unrealized_gains: Option<String>,
+    /// Currency for conversion (if specified).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conversion_currency: Option<String>,
 }
 
 impl Default for LedgerOptions {
@@ -306,6 +340,18 @@ impl Default for LedgerOptions {
             commodities: Vec::new(),
             booking_method: "STRICT".to_string(),
             display_precision: HashMap::new(),
+            render_commas: false,
+            inferred_tolerance_default: HashMap::new(),
+            inferred_tolerance_multiplier: "0.5".to_string(),
+            infer_tolerance_from_cost: false,
+            account_rounding: None,
+            account_previous_balances: "Equity:Opening-Balances".to_string(),
+            account_previous_earnings: "Equity:Earnings:Previous".to_string(),
+            account_previous_conversions: "Equity:Conversions:Previous".to_string(),
+            account_current_earnings: "Equity:Earnings:Current".to_string(),
+            account_current_conversions: None,
+            account_unrealized_gains: None,
+            conversion_currency: None,
         }
     }
 }

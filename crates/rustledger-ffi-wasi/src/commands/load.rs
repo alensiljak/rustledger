@@ -1,6 +1,5 @@
 //! Load commands (load, load-full).
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use rustledger_booking::BookingEngine;
@@ -206,7 +205,32 @@ pub fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
         documents: load_result.options.documents.clone(),
         commodities: Vec::new(),
         booking_method: load_result.options.booking_method.clone(),
-        display_precision: HashMap::new(),
+        display_precision: load_result
+            .options
+            .display_precision
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect(),
+        render_commas: load_result.options.render_commas,
+        inferred_tolerance_default: load_result
+            .options
+            .inferred_tolerance_default
+            .iter()
+            .map(|(k, v)| (k.clone(), v.to_string()))
+            .collect(),
+        inferred_tolerance_multiplier: load_result
+            .options
+            .inferred_tolerance_multiplier
+            .to_string(),
+        infer_tolerance_from_cost: load_result.options.infer_tolerance_from_cost,
+        account_rounding: load_result.options.account_rounding.clone(),
+        account_previous_balances: load_result.options.account_previous_balances.clone(),
+        account_previous_earnings: load_result.options.account_previous_earnings.clone(),
+        account_previous_conversions: load_result.options.account_previous_conversions.clone(),
+        account_current_earnings: load_result.options.account_current_earnings.clone(),
+        account_current_conversions: load_result.options.account_current_conversions.clone(),
+        account_unrealized_gains: load_result.options.account_unrealized_gains.clone(),
+        conversion_currency: load_result.options.conversion_currency.clone(),
     };
 
     // Convert plugins from loader result
