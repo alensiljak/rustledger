@@ -205,7 +205,12 @@ pub fn cmd_load_full(path: &str, run_plugins: &[&str]) -> i32 {
         documents: load_result.options.documents.clone(),
         commodities: Vec::new(),
         booking_method: load_result.options.booking_method.clone(),
-        display_precision: load_result.options.display_precision.clone(),
+        display_precision: load_result
+            .options
+            .display_precision
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect(),
         render_commas: load_result.options.render_commas,
         inferred_tolerance_default: load_result
             .options
