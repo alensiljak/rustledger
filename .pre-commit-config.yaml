@@ -62,7 +62,7 @@ repos:
         pass_filenames: false
         always_run: true
 
-      # Clippy
+      # Clippy - only runs when Rust files change
       - id: clippy
         name: clippy
         entry: cargo clippy --all-features --all-targets -- -D warnings
@@ -70,22 +70,21 @@ repos:
         types: [rust]
         stages: [pre-push]
         pass_filenames: false
-        always_run: true
 
-      # Cargo test
+      # Cargo test - only runs when Rust files change
       - id: cargo-test
         name: cargo-test
         entry: cargo test --workspace --lib --quiet
         language: system
+        types: [rust]
         stages: [pre-push]
         pass_filenames: false
-        always_run: true
 
-      # Cargo doc
+      # Cargo doc - only runs when Rust files change
       - id: cargo-doc
         name: cargo-doc
         entry: bash -c 'RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet'
         language: system
+        types: [rust]
         stages: [pre-push]
         pass_filenames: false
-        always_run: true
