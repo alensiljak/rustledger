@@ -272,6 +272,7 @@ pub fn cmd_clamp(
                         label: c.label.clone(),
                     }),
                     price: None,
+                    flag: None,
                     meta: HashMap::new(),
                 })
                 .collect();
@@ -343,6 +344,7 @@ pub fn cmd_clamp(
                         label: c.label.clone(),
                     }),
                     price: None,
+                    flag: None,
                     meta: HashMap::new(),
                 })
                 .collect();

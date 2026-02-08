@@ -185,6 +185,7 @@ pub fn directive_to_json(directive: &Directive, line: u32, filename: &str) -> Di
                             units,
                             cost,
                             price,
+                            flag: p.flag.map(|c| c.to_string()),
                             meta: posting_meta,
                         }
                     })
@@ -223,6 +224,7 @@ pub fn directive_to_json(directive: &Directive, line: u32, filename: &str) -> Di
                     number: b.amount.number.to_string(),
                     currency: b.amount.currency.to_string(),
                 },
+                tolerance: b.tolerance.map(|t| t.to_string()),
                 meta,
             }
         }

@@ -106,6 +106,36 @@ pub fn load_source(source: &str) -> LoadResult {
             "name_expenses" => options.name_expenses.clone_from(value),
             "documents" => options.documents.push(value.clone()),
             "booking_method" => options.booking_method.clone_from(value),
+            "render_commas" => {
+                options.render_commas = value.eq_ignore_ascii_case("true") || value == "1";
+            }
+            "inferred_tolerance_default" => {
+                // Parse "CURRENCY:TOLERANCE" or "*:TOLERANCE"
+                if let Some((curr, tol)) = value.split_once(':') {
+                    options
+                        .inferred_tolerance_default
+                        .insert(curr.trim().to_string(), tol.trim().to_string());
+                }
+            }
+            "inferred_tolerance_multiplier" | "tolerance_multiplier" => {
+                options.inferred_tolerance_multiplier.clone_from(value);
+            }
+            "infer_tolerance_from_cost" => {
+                options.infer_tolerance_from_cost =
+                    value.eq_ignore_ascii_case("true") || value == "1";
+            }
+            "account_rounding" => options.account_rounding = Some(value.clone()),
+            "account_previous_balances" => options.account_previous_balances.clone_from(value),
+            "account_previous_earnings" => options.account_previous_earnings.clone_from(value),
+            "account_previous_conversions" => {
+                options.account_previous_conversions.clone_from(value)
+            }
+            "account_current_earnings" => options.account_current_earnings.clone_from(value),
+            "account_current_conversions" => {
+                options.account_current_conversions = Some(value.clone())
+            }
+            "account_unrealized_gains" => options.account_unrealized_gains = Some(value.clone()),
+            "conversion_currency" => options.conversion_currency = Some(value.clone()),
             _ => {}
         }
     }
