@@ -124,6 +124,12 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     // in the same currency, which can create small residuals within tolerance.
     let mut max_scale_by_currency: HashMap<InternedStr, u32> = HashMap::with_capacity(4);
 
+    // Track scales from cost specs separately. These are merged with max_scale_by_currency
+    // after the loop, but only for currencies that have explicit amounts. This ensures we
+    // preserve precision when cost has more decimal places than other postings (#333),
+    // without forcing rounding when there are no explicit amounts (#251).
+    let mut cost_scale_by_currency: HashMap<InternedStr, u32> = HashMap::with_capacity(2);
+
     for (i, posting) in transaction.postings.iter().enumerate() {
         match &posting.units {
             Some(IncompleteAmount::Complete(amount)) => {
@@ -169,23 +175,35 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                         (&cost_spec.number_per, &inferred_currency)
                     {
                         let cost_amount = amount.number * per_unit;
-                        Some((cost_curr.clone(), cost_amount))
+                        // Track the scale of number_per for rounding interpolated amounts.
+                        // This ensures we preserve the precision of the per-unit price.
+                        // See: https://github.com/rustledger/rustledger/issues/333
+                        Some((cost_curr.clone(), cost_amount, Some(per_unit.scale())))
                     } else if let (Some(total), Some(cost_curr)) =
                         (&cost_spec.number_total, &inferred_currency)
                     {
                         // For total cost, sign depends on units sign
-                        Some((cost_curr.clone(), *total * amount.number.signum()))
+                        // Track the scale of number_total for rounding
+                        Some((
+                            cost_curr.clone(),
+                            *total * amount.number.signum(),
+                            Some(total.scale()),
+                        ))
                     } else {
                         None // Cost spec without determinable amount (e.g., empty `{}`)
                     }
                 });
 
-                if let Some((currency, cost_amount)) = cost_contribution {
-                    // Cost-based posting: weight is in the cost currency
-                    // Note: We intentionally do NOT track scale from cost specs here.
-                    // Cost numbers are multipliers (e.g., {100 USD} means $100 per unit),
-                    // not explicit amounts. The scale of a cost multiplier doesn't determine
-                    // the precision of interpolated amounts - only explicit amounts do.
+                if let Some((currency, cost_amount, cost_scale)) = cost_contribution {
+                    // Cost-based posting: weight is in the cost currency.
+                    // Track cost scale separately - it will be merged later only for
+                    // currencies that have explicit amounts.
+                    if let Some(scale) = cost_scale {
+                        cost_scale_by_currency
+                            .entry(currency.clone())
+                            .and_modify(|s| *s = (*s).max(scale))
+                            .or_insert(scale);
+                    }
                     *residuals.entry(currency).or_default() += cost_amount;
                 } else if let Some(price) = &posting.price {
                     // Price annotation: converts units to price currency
@@ -298,6 +316,15 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
                 unassigned_missing.push(i);
             }
         }
+    }
+
+    // Merge cost scales into max_scale_by_currency, but only for currencies that
+    // already have explicit amounts. This preserves precision from cost specs (#333)
+    // without forcing rounding when there are no explicit amounts (#251).
+    for (currency, cost_scale) in cost_scale_by_currency {
+        max_scale_by_currency
+            .entry(currency)
+            .and_modify(|s| *s = (*s).max(cost_scale));
     }
 
     // Check for multiple missing in same currency
@@ -1022,6 +1049,69 @@ mod tests {
         assert_eq!(amount.number, dec!(-0.101));
         // Scale should be 3 (the maximum of 1 and 3)
         assert_eq!(amount.number.scale(), 3);
+    }
+
+    /// Test that cost spec scale is used when other postings have lower scale.
+    ///
+    /// Issue: <https://github.com/rustledger/rustledger/issues/333>
+    ///
+    /// When a transaction has:
+    /// - A cost spec with decimal places (e.g., {2800.01 CAD})
+    /// - Other postings with fewer decimal places (e.g., 1 CAD)
+    ///
+    /// The interpolated amount should use the cost spec's scale, not the
+    /// lower scale from other postings.
+    #[test]
+    fn test_interpolate_cost_scale_preserved() {
+        // From issue #333:
+        // 2026-01-19 * "Buy stock"
+        //   Assets:Stock  1 CSU { 2800.01 CAD }
+        //   Expenses:Commission  1 CAD
+        //   Assets:Cash
+        //
+        // Cost: 1 * 2800.01 = 2800.01 CAD (scale 2)
+        // Commission: 1 CAD (scale 0)
+        // Without fix: Cash rounds to -2801.00 (scale 0), leaving 0.01 residual
+        // With fix: Cash is -2801.01 (scale 2), transaction balances
+        let txn = Transaction::new(date(2026, 1, 19), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stock", Amount::new(dec!(1), "CSU")).with_cost(
+                    rustledger_core::CostSpec::empty()
+                        .with_number_per(dec!(2800.01))
+                        .with_currency("CAD"),
+                ),
+            )
+            .with_posting(Posting::new(
+                "Expenses:Commission",
+                Amount::new(dec!(1), "CAD"),
+            ))
+            .with_posting(Posting::auto("Assets:Cash"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // Check that Cash was filled
+        assert_eq!(result.filled_indices, vec![2]);
+
+        // The interpolated amount should be -2801.01 (scale 2 from cost spec)
+        let filled = &result.transaction.postings[2];
+        let amount = get_amount(filled).expect("should have amount");
+        assert_eq!(amount.currency, "CAD");
+        assert_eq!(
+            amount.number,
+            dec!(-2801.01),
+            "should be -2801.01 CAD (preserving cost spec precision)"
+        );
+
+        // Transaction should balance (no residual)
+        let residual = result
+            .residuals
+            .get("CAD")
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        assert!(
+            residual.is_zero(),
+            "CAD residual should be 0, got {residual}"
+        );
     }
 
     // =========================================================================
