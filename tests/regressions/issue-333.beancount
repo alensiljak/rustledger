@@ -1,0 +1,25 @@
+; Issue: https://github.com/rustledger/rustledger/issues/333
+; Description: Interpolation error with stock purchase when cost has more decimal
+;              places than other postings in the transaction.
+; Expected: No errors - interpolated amount should preserve cost spec precision
+;
+; The bug was that the interpolated Cash posting was rounded to 0 decimal places
+; (from the "1 CAD" commission) instead of 2 decimal places (from the cost spec
+; "2800.01 CAD"), resulting in -2801.00 CAD instead of -2801.01 CAD.
+
+2026-01-01 commodity CAD
+2026-01-01 commodity CSU
+
+2026-01-01 open Assets:Cash-CAD CAD
+2026-01-01 open Assets:Stock-CAD:CSU CSU
+2026-01-01 open Equity:Equity-CAD CAD
+2026-01-01 open Expenses:Commission-CAD CAD
+
+2026-01-02 * "Opening balance"
+  Assets:Cash-CAD                          2801.02 CAD
+  Equity:Equity-CAD
+
+2026-01-19 * "Buy stock"
+  Assets:Stock-CAD:CSU   1 CSU { 2800.01 CAD }
+  Expenses:Commission-CAD              1 CAD
+  Assets:Cash-CAD
