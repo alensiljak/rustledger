@@ -16,12 +16,14 @@
 # | Homebrew     | rustledger/homebrew-rustledger         |
 # | Scoop        | rustledger/scoop-rustledger            |
 # | COPR         | copr.fedorainfracloud.org/rustledger   |
+# | AUR          | aur.archlinux.org (rustledger*)        |
 # | Rustfava     | rustledger/rustfava (WASM update)      |
 #
 # SECRETS REQUIRED
 # ----------------
 # - BOT_APP_ID / BOT_PRIVATE_KEY: GitHub App for cross-repo dispatches (Homebrew, Scoop, website)
 # - COPR_LOGIN / COPR_TOKEN: COPR build trigger
+# - AUR_SSH_PRIVATE_KEY: SSH key for pushing to AUR (aur.archlinux.org)
 # - (npm uses OIDC trusted publishing, no token needed)
 #
 name: Release Publish
@@ -295,4 +297,90 @@ jobs:
           repository: rustledger/rustfava
           event-type: rustledger-release
           client-payload: '{"version": "${{ env.RELEASE_TAG }}"}'
+
+  # Update AUR packages (Arch Linux)
+  update-aur:
+    name: Update AUR packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Setup SSH for AUR
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_PRIVATE_KEY }}" > ~/.ssh/aur
+          chmod 600 ~/.ssh/aur
+          cat >> ~/.ssh/config << 'EOF'
+          Host aur.archlinux.org
+            IdentityFile ~/.ssh/aur
+            User aur
+          EOF
+          ssh-keyscan aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Get release checksums
+        id: checksums
+        run: |
+          VERSION=${RELEASE_TAG#v}
+          # Source tarball
+          SOURCE_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/archive/refs/tags/${RELEASE_TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+          # Binary tarballs
+          X86_64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
+          AARCH64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "source_sha256=$SOURCE_SHA256" >> $GITHUB_OUTPUT
+          echo "x86_64_sha256=$X86_64_SHA256" >> $GITHUB_OUTPUT
+          echo "aarch64_sha256=$AARCH64_SHA256" >> $GITHUB_OUTPUT
+
+      - name: Update rustledger (source package)
+        run: |
+          git clone ssh://aur@aur.archlinux.org/rustledger.git /tmp/aur-rustledger
+          cd /tmp/aur-rustledger
+
+          # Update PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksums.outputs.source_sha256 }}')/" PKGBUILD
+
+          # Generate .SRCINFO
+          docker run --rm -v "$PWD:/pkg" -w /pkg archlinux:latest bash -c '
+            pacman -Sy --noconfirm pacman-contrib >/dev/null 2>&1
+            useradd builder
+            chown -R builder:builder /pkg
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          '
+
+          # Commit and push
+          git config user.name "rustledger-bot"
+          git config user.email "bot@rustledger.dev"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to v${{ steps.checksums.outputs.version }}"
+          git push
+
+      - name: Update rustledger-bin (binary package)
+        run: |
+          git clone ssh://aur@aur.archlinux.org/rustledger-bin.git /tmp/aur-rustledger-bin
+          cd /tmp/aur-rustledger-bin
+
+          # Update PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.checksums.outputs.x86_64_sha256 }}')/" PKGBUILD
+          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${{ steps.checksums.outputs.aarch64_sha256 }}')/" PKGBUILD
+
+          # Generate .SRCINFO
+          docker run --rm -v "$PWD:/pkg" -w /pkg archlinux:latest bash -c '
+            pacman -Sy --noconfirm pacman-contrib >/dev/null 2>&1
+            useradd builder
+            chown -R builder:builder /pkg
+            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          '
+
+          # Commit and push
+          git config user.name "rustledger-bot"
+          git config user.email "bot@rustledger.dev"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to v${{ steps.checksums.outputs.version }}"
+          git push
 
