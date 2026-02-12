@@ -1,0 +1,17 @@
+pkgbase = rustledger-bin
+	pkgdesc = Fast, pure Rust implementation of Beancount double-entry accounting (pre-built binary)
+	pkgver = 0.8.6
+	pkgrel = 1
+	url = https://github.com/rustledger/rustledger
+	arch = x86_64
+	arch = aarch64
+	license = MIT
+	provides = rustledger
+	provides = rledger
+	conflicts = rustledger
+	source_x86_64 = rustledger-bin-0.8.6-x86_64.tar.gz::https://github.com/rustledger/rustledger/releases/download/v0.8.6/rustledger-v0.8.6-x86_64-unknown-linux-gnu.tar.gz
+	sha256sums_x86_64 = be300673dc4d5d4bfd65004a45b25390111c319d8023e5b880195e4076dc344f
+	source_aarch64 = rustledger-bin-0.8.6-aarch64.tar.gz::https://github.com/rustledger/rustledger/releases/download/v0.8.6/rustledger-v0.8.6-aarch64-unknown-linux-gnu.tar.gz
+	sha256sums_aarch64 = 759e74a36642d202d8f122c4b81cb3f7bc043c569a38e6c36d19bd6778b67a63
+
+pkgname = rustledger-bin
