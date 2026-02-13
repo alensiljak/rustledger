@@ -343,18 +343,13 @@ jobs:
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksums.outputs.source_sha256 }}')/" PKGBUILD
 
-          # Generate .SRCINFO in a separate directory to avoid Docker permission issues
+          # Generate .SRCINFO using Docker with current user to avoid permission issues
           mkdir -p /tmp/srcinfo-gen
           cp PKGBUILD /tmp/srcinfo-gen/
-          docker run --rm -v "/tmp/srcinfo-gen:/pkg" -w /pkg archlinux:latest bash -c '
-            pacman -Sy --noconfirm pacman-contrib >/dev/null 2>&1
-            useradd builder
-            chown -R builder:builder /pkg
-            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          docker run --rm --user "$(id -u):$(id -g)" -v "/tmp/srcinfo-gen:/pkg" -w /pkg archlinux:latest bash -c '
+            makepkg --printsrcinfo > .SRCINFO
           '
-          # Copy generated .SRCINFO back (use sudo to handle Docker's root ownership)
-          sudo cp /tmp/srcinfo-gen/.SRCINFO .SRCINFO
-          sudo chown $(id -u):$(id -g) .SRCINFO
+          cp /tmp/srcinfo-gen/.SRCINFO .SRCINFO
 
           # Commit and push
           git config user.name "rustledger-bot"
@@ -374,18 +369,13 @@ jobs:
           sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.checksums.outputs.x86_64_sha256 }}')/" PKGBUILD
           sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${{ steps.checksums.outputs.aarch64_sha256 }}')/" PKGBUILD
 
-          # Generate .SRCINFO in a separate directory to avoid Docker permission issues
+          # Generate .SRCINFO using Docker with current user to avoid permission issues
           mkdir -p /tmp/srcinfo-gen-bin
           cp PKGBUILD /tmp/srcinfo-gen-bin/
-          docker run --rm -v "/tmp/srcinfo-gen-bin:/pkg" -w /pkg archlinux:latest bash -c '
-            pacman -Sy --noconfirm pacman-contrib >/dev/null 2>&1
-            useradd builder
-            chown -R builder:builder /pkg
-            su builder -c "makepkg --printsrcinfo > .SRCINFO"
+          docker run --rm --user "$(id -u):$(id -g)" -v "/tmp/srcinfo-gen-bin:/pkg" -w /pkg archlinux:latest bash -c '
+            makepkg --printsrcinfo > .SRCINFO
           '
-          # Copy generated .SRCINFO back (use sudo to handle Docker's root ownership)
-          sudo cp /tmp/srcinfo-gen-bin/.SRCINFO .SRCINFO
-          sudo chown $(id -u):$(id -g) .SRCINFO
+          cp /tmp/srcinfo-gen-bin/.SRCINFO .SRCINFO
 
           # Commit and push
           git config user.name "rustledger-bot"
