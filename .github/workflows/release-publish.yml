@@ -338,7 +338,8 @@ jobs:
           git clone ssh://aur@aur.archlinux.org/rustledger.git /tmp/aur-rustledger
           cd /tmp/aur-rustledger
 
-          # Update PKGBUILD
+          # Copy PKGBUILD from repo and update version/checksums
+          cp "$GITHUB_WORKSPACE/packaging/arch/rustledger/PKGBUILD" PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksums.outputs.source_sha256 }}')/" PKGBUILD
@@ -363,7 +364,8 @@ jobs:
           git clone ssh://aur@aur.archlinux.org/rustledger-bin.git /tmp/aur-rustledger-bin
           cd /tmp/aur-rustledger-bin
 
-          # Update PKGBUILD
+          # Copy PKGBUILD from repo and update version/checksums
+          cp "$GITHUB_WORKSPACE/packaging/arch/rustledger-bin/PKGBUILD" PKGBUILD
           sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
           sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.checksums.outputs.x86_64_sha256 }}')/" PKGBUILD
