@@ -6,14 +6,14 @@ use rustledger_core::{Directive, MetaValue, Metadata, NaiveDate};
 use serde::Deserialize;
 
 /// Input amount for entry creation.
-#[derive(Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct InputAmount {
     pub number: String,
     pub currency: String,
 }
 
 /// Input cost for entry creation.
-#[derive(Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct InputCost {
     #[serde(default)]
     pub number: Option<String>,
@@ -28,7 +28,7 @@ pub struct InputCost {
 }
 
 /// Input posting for entry creation.
-#[derive(Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct InputPosting {
     pub account: String,
     #[serde(default)]
@@ -42,7 +42,7 @@ pub struct InputPosting {
 }
 
 /// Input entry for create-entry/format-entry commands.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum InputEntry {
     Transaction {
