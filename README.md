@@ -241,28 +241,41 @@ rledger format --in-place ledger.beancount
 </details>
 
 <details>
-<summary><strong>Python plugin support</strong></summary>
+<summary><strong>Plugin support</strong></summary>
 
-rustledger can execute your existing Python beancount plugins via a secure WebAssembly sandbox:
+rustledger supports three types of plugins:
 
+**Native plugins** (built-in, fastest):
 ```bash
-# Run with a Python plugin
-rledger check --plugin beancount.plugins.auto_accounts ledger.beancount
+# Run a native plugin from CLI
+rledger check --native-plugin implicit_prices ledger.beancount
 
-# Multiple plugins
-rledger check --plugin my_plugin --plugin another_plugin ledger.beancount
+# Or declare in your beancount file (auto-detected as native):
+# plugin "beancount.plugins.auto_accounts"
 ```
 
-**How it works:**
-- Plugins run in a sandboxed CPython interpreter compiled to WebAssembly (WASI)
+**Python file plugins** (via WASM sandbox):
+```bash
+# Declare in your beancount file:
+# plugin "/path/to/my_plugin.py"
+```
+
+**WASM plugins** (sandboxed WebAssembly):
+```bash
+# Load a WASM plugin
+rledger check --plugin /path/to/plugin.wasm ledger.beancount
+```
+
+**How Python plugins work:**
+- File-based plugins (`.py` files) run in a sandboxed CPython compiled to WebAssembly
 - No system Python installation required
 - Plugins cannot access the filesystem or network (sandbox isolation)
 - Compatible with most pure-Python beancount plugins
 
 **Limitations:**
+- Module-based plugins (`beancount.plugins.xyz`) only work if rustledger has a native implementation
 - Plugins with C extensions won't work (numpy, pandas, etc.)
 - No network access (price fetching plugins need alternatives)
-- First plugin load has ~1s startup overhead
 
 </details>
 

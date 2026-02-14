@@ -157,7 +157,7 @@ WHERE date >= 2024-01-01 AND date < 2024-02-01
 
 -- Last 30 days
 SELECT date, narration, position
-WHERE date >= today() - 30
+WHERE date >= today() - interval(30, "days")
 ```
 
 ### Monthly Reports
@@ -211,12 +211,11 @@ WHERE account ~ "^Income:" AND year(date) = 2024
 GROUP BY month(date)
 ORDER BY month
 
--- Net income by month
-SELECT month(date) as month,
-       sum(position) FILTER (WHERE account ~ "^Expenses:") as expenses,
-       -sum(position) FILTER (WHERE account ~ "^Income:") as income
-WHERE year(date) = 2024
+-- Monthly expenses
+SELECT month(date) as month, sum(position) as expenses
+WHERE account ~ "^Expenses:" AND year(date) = 2024
 GROUP BY month(date)
+ORDER BY month
 ```
 
 ### Tags and Links

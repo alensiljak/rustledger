@@ -63,20 +63,27 @@ rledger check --native-plugin auto_accounts --native-plugin implicit_prices ledg
 
 ### Python Plugin Compatibility
 
-rustledger can run your existing Python plugins via a WASM sandbox:
+rustledger supports plugins in several ways:
 
+**Native plugins** (recommended for `beancount.plugins.*`):
 ```bash
-# Run with Python plugin
-rledger check --plugin beancount.plugins.auto_accounts ledger.beancount
+# Declare in your beancount file - automatically uses native implementation:
+plugin "beancount.plugins.auto_accounts"
 
-# Custom plugin
-rledger check --plugin my_custom_plugin ledger.beancount
+# Or run from CLI:
+rledger check --native-plugin auto_accounts ledger.beancount
+```
+
+**File-based Python plugins** (via WASM sandbox):
+```bash
+# Declare in your beancount file with the file path:
+plugin "/path/to/my_custom_plugin.py"
 ```
 
 **Limitations:**
+- Module-based plugins (`beancount.plugins.xyz`) require native implementations
 - Plugins with C extensions (numpy, pandas) won't work
 - No network access from plugins
-- ~1s startup overhead for first plugin load
 
 ### Plugin Equivalents
 
@@ -133,7 +140,7 @@ rustledger provides more detailed error messages with error codes:
 ledger.beancount:42: Transaction does not balance
 
 # rustledger:
-error[E0201]: Transaction does not balance
+error[E3001]: Transaction does not balance
   --> ledger.beancount:42:1
    |
 42 | 2024-01-15 * "Coffee shop"

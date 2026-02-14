@@ -8,9 +8,9 @@ This directory contains developer documentation for rustledger.
 | Document | Description |
 |----------|-------------|
 | [MIGRATION.md](MIGRATION.md) | Guide for migrating from Python beancount |
-| [IMPORTING.md](IMPORTING.md) | CSV/OFX bank statement import tutorial |
+| [IMPORTING.md](IMPORTING.md) | CSV bank statement import tutorial |
 | [BQL_REFERENCE.md](BQL_REFERENCE.md) | BQL query language quick reference |
-| [VALIDATION_ERRORS.md](VALIDATION_ERRORS.md) | Reference for all validation error codes (E0001-E0702) |
+| [VALIDATION_ERRORS.md](VALIDATION_ERRORS.md) | Reference for all validation error codes |
 
 ### Developer Guides
 | Document | Description |

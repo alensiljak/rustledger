@@ -133,13 +133,12 @@ For files without headers, use column indices (0-based):
 2024-01-16,Grocery Store,-25.00
 ```
 
+For files without headers, you must ensure the CSV has column names added, or use a configuration file to map columns. The `--no-header` flag indicates that the first row contains data, not headers.
+
 ```bash
-rledger extract statement.csv \
-  --no-header \
-  --date-column 0 \
-  --narration-column 1 \
-  --amount-column 2 \
-  -a Assets:Bank:Main
+# Add headers to a headerless CSV first:
+echo "Date,Description,Amount" | cat - statement.csv > with_headers.csv
+rledger extract with_headers.csv -a Assets:Bank:Main
 ```
 
 ## Command Reference
@@ -148,7 +147,7 @@ rledger extract statement.csv \
 |--------|---------|-------------|
 | `-a, --account` | `Assets:Bank:Checking` | Target account for transactions |
 | `-c, --currency` | `USD` | Currency for amounts |
-| `--date-column` | `Date` | Column name or index for dates |
+| `--date-column` | `Date` | Column name for dates |
 | `--date-format` | `%Y-%m-%d` | Date format ([strftime](https://strftime.org/)) |
 | `--narration-column` | `Description` | Column for transaction description |
 | `--payee-column` | (none) | Column for payee (optional) |
@@ -216,15 +215,6 @@ rustledger doesn't auto-deduplicate. Use the `noduplicates` plugin to detect dup
 rledger check --native-plugin noduplicates ledger.beancount
 ```
 
-## OFX/QFX Import
-
-OFX files from banks are also supported:
-```bash
-rledger extract statement.ofx -a Assets:Bank:Main >> ledger.beancount
-```
-
-OFX files contain structured data, so column options are not needed.
-
 ## Troubleshooting
 
 **"Date parse error"**
@@ -233,8 +223,8 @@ OFX files contain structured data, so column options are not needed.
 
 **"Column not found"**
 - Column names are case-sensitive
-- Try using column index (0-based) instead of name
-- Check for hidden characters in CSV headers
+- Check for hidden characters or extra spaces in CSV headers
+- Verify your column names exactly match the CSV header row
 
 **"Amounts look wrong"**
 - Try `--invert-sign` for credit card statements
