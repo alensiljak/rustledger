@@ -10,9 +10,12 @@
 //! rledger format ledger.beancount
 //! rledger report ledger.beancount balances
 //! rledger doctor lex ledger.beancount
+//! rledger completions bash  # Generate shell completions
 //! ```
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
+use std::io;
 use std::process::ExitCode;
 
 /// rledger - A pure Rust implementation of Beancount
@@ -78,6 +81,13 @@ enum Commands {
     Price {
         #[command(flatten)]
         args: rustledger::cmd::price_cmd::Args,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -157,5 +167,9 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Commands::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "rledger", &mut io::stdout());
+            ExitCode::SUCCESS
+        }
     }
 }
