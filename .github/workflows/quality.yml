@@ -38,7 +38,7 @@ jobs:
         with:
           feature-group: all-features
           exclude: rustledger-lsp,rustledger-wasm
-          rust-toolchain: "1.92.0"
+          rust-toolchain: stable
       - name: Skip semver check
         if: steps.changes.outputs.rust != 'true'
         run: echo "No Rust changes detected, skipping semver check"

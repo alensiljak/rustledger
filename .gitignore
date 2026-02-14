@@ -62,3 +62,4 @@ book/
 .bench-tools/
 tests/compatibility/synthetic/
 .playwright*
+.venv-plugins/

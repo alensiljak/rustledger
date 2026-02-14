@@ -1,12 +1,11 @@
-//! Query commands (query, batch).
+//! Query execution for the JSON-RPC API.
 
 use rustledger_core::Directive;
 use rustledger_query::{Executor, parse as parse_query};
 
-use crate::convert::{directive_to_json, value_datatype, value_to_json};
-use crate::helpers::load_source;
-use crate::types::{BatchOutput, ColumnInfo, DirectiveJson, Error, LoadOutput, QueryOutput};
-use crate::{API_VERSION, output_json};
+use crate::API_VERSION;
+use crate::convert::{value_datatype, value_to_json};
+use crate::types::{ColumnInfo, Error, QueryOutput};
 
 /// Execute a single query on directives, returning `QueryOutput`.
 pub fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
@@ -34,7 +33,7 @@ pub fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
                     .iter()
                     .map(|name| ColumnInfo {
                         name: name.clone(),
-                        datatype: "str".to_string(), // Default if no rows
+                        datatype: "str".to_string(),
                     })
                     .collect()
             } else {
@@ -69,70 +68,4 @@ pub fn execute_query(directives: &[Directive], query_str: &str) -> QueryOutput {
             errors: vec![Error::new(format!("Query error: {e}"))],
         },
     }
-}
-
-/// Execute a single query on source from stdin.
-pub fn cmd_query(source: &str, query_str: &str) -> i32 {
-    let load = load_source(source);
-
-    if !load.errors.is_empty() {
-        let output = QueryOutput {
-            api_version: API_VERSION,
-            columns: vec![],
-            rows: vec![],
-            errors: load.errors,
-        };
-        return output_json(&output);
-    }
-
-    let output = execute_query(&load.directives, query_str);
-    output_json(&output)
-}
-
-/// Batch command: load + multiple queries in one parse.
-pub fn cmd_batch(source: &str, filename: &str, queries: &[String]) -> i32 {
-    let load = load_source(source);
-
-    // Build load output
-    let entries: Vec<DirectiveJson> = load
-        .directives
-        .iter()
-        .zip(load.directive_lines.iter())
-        .map(|(d, &line)| directive_to_json(d, line, filename))
-        .collect();
-
-    let load_output = LoadOutput {
-        api_version: API_VERSION,
-        entries,
-        errors: load.errors.clone(),
-        options: load.options,
-        plugins: load.plugins,
-        includes: load.includes,
-    };
-
-    // Execute queries (only if no parse errors)
-    let query_outputs: Vec<QueryOutput> = if load.errors.is_empty() {
-        queries
-            .iter()
-            .map(|q| execute_query(&load.directives, q))
-            .collect()
-    } else {
-        // Return error for each query
-        queries
-            .iter()
-            .map(|_| QueryOutput {
-                api_version: API_VERSION,
-                columns: vec![],
-                rows: vec![],
-                errors: vec![Error::new("Cannot execute query: parse errors exist")],
-            })
-            .collect()
-    };
-
-    let output = BatchOutput {
-        api_version: API_VERSION,
-        load: load_output,
-        queries: query_outputs,
-    };
-    output_json(&output)
 }

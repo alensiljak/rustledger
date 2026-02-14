@@ -37,7 +37,7 @@ release-plz creates/updates Release PR
 You review and merge PR
      │
      ▼
-release-plz creates git tag (v0.5.0)
+release-plz creates git tag (v0.9.0)
      │
      ▼
 release-build.yml builds binaries
@@ -71,7 +71,7 @@ release-plz automatically creates a PR titled "chore: release". Review:
 
 Merge via the merge queue. release-plz will:
 
-1. Create a git tag (e.g., `v0.5.0`)
+1. Create a git tag (e.g., `v0.9.0`)
 2. Create a GitHub Release with changelog
 
 ### 4. Monitor the release
@@ -169,14 +169,14 @@ If release-plz fails with "Reference already exists" for the tag:
 
 ```bash
 # 1. Delete the tag locally and remotely
-git push --delete origin v0.5.0
-git tag -d v0.5.0
+git push --delete origin v0.9.0
+git tag -d v0.9.0
 
 # 2. Create a PR with "chore: release" in the commit message
 git checkout -b chore/trigger-release
-git commit --allow-empty -m "chore: release v0.5.0"
+git commit --allow-empty -m "chore: release v0.9.0"
 git push -u origin chore/trigger-release
-gh pr create --title "chore: release v0.5.0" --body "Retrigger release after tag fix"
+gh pr create --title "chore: release v0.9.0" --body "Retrigger release after tag fix"
 
 # 3. Merge the PR to trigger the Release job
 ```
@@ -189,15 +189,15 @@ If automation fails, you can still release manually:
 
 ```bash
 # Update version
-cargo set-version 0.5.0 --workspace
+cargo set-version 0.9.0 --workspace
 
 # Update npm packages
-sed -i 's/\"version\": \"[^\"]*\"/\"version\": \"0.5.0\"/' packages/mcp-server/package.json
+sed -i 's/\"version\": \"[^\"]*\"/\"version\": \"0.9.0\"/' packages/mcp-server/package.json
 
 # Commit and tag
 git add -A
-git commit -m "chore: release v0.5.0"
-git tag v0.5.0
+git commit -m "chore: release v0.9.0"
+git tag v0.9.0
 git push origin main --tags
 ```
 

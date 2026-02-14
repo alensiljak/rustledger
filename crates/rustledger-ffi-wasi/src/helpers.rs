@@ -128,11 +128,11 @@ pub fn load_source(source: &str) -> LoadResult {
             "account_previous_balances" => options.account_previous_balances.clone_from(value),
             "account_previous_earnings" => options.account_previous_earnings.clone_from(value),
             "account_previous_conversions" => {
-                options.account_previous_conversions.clone_from(value)
+                options.account_previous_conversions.clone_from(value);
             }
             "account_current_earnings" => options.account_current_earnings.clone_from(value),
             "account_current_conversions" => {
-                options.account_current_conversions = Some(value.clone())
+                options.account_current_conversions = Some(value.clone());
             }
             "account_unrealized_gains" => options.account_unrealized_gains = Some(value.clone()),
             "conversion_currency" => options.conversion_currency = Some(value.clone()),
