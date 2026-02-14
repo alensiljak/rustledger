@@ -24,9 +24,9 @@ pub struct FilterResult {
 ///
 /// Rules:
 /// - `commodity`: Always excluded
-/// - `open`: Included if date < end_date (still active)
-/// - `close`: Included if date >= begin_date
-/// - Others: Included if begin_date <= date < end_date
+/// - `open`: Included if date < `end` (still active)
+/// - `close`: Included if date >= `begin`
+/// - Others: Included if `begin` <= date < `end`
 pub fn filter_entries(
     entries: Vec<serde_json::Value>,
     begin: NaiveDate,
@@ -39,7 +39,8 @@ pub fn filter_entries(
             let date_str = entry.get("date").and_then(|d| d.as_str()).unwrap_or("");
 
             let Ok(entry_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
-                return true; // Keep entries without valid dates
+                // Drop entries without valid dates (consistent with clamp_entries)
+                return false;
             };
 
             match entry_type {
@@ -57,7 +58,7 @@ pub fn filter_entries(
 /// Clamp entries by date range with opening balance summarization.
 ///
 /// This function:
-/// 1. Accumulates balances from transactions before begin_date
+/// 1. Accumulates balances from transactions before `begin`
 /// 2. Creates summarization transactions for opening balances
 /// 3. Filters entries to the date range
 /// 4. Includes relevant prices
@@ -84,31 +85,29 @@ pub fn clamp_entries(
             // Entries before begin date
 
             // Accumulate transaction balances for opening balance calculation
-            if entry_type == "transaction" {
-                if let Some(postings) = entry.get("postings").and_then(|p| p.as_array()) {
-                    for posting in postings {
-                        accumulate_posting_balance(posting, &mut account_balances);
-                    }
+            if entry_type == "transaction"
+                && let Some(postings) = entry.get("postings").and_then(|p| p.as_array())
+            {
+                for posting in postings {
+                    accumulate_posting_balance(posting, &mut account_balances);
                 }
             }
 
             // Track most recent price before begin_date (only keep latest per pair)
-            if entry_type == "price" {
-                if let (Some(currency), Some(amount)) = (
+            if entry_type == "price"
+                && let (Some(currency), Some(amount)) = (
                     entry.get("currency").and_then(|c| c.as_str()),
                     entry.get("amount"),
-                ) {
-                    if let Some(amt_currency) = amount.get("currency").and_then(|c| c.as_str()) {
-                        let key = (currency.to_string(), amt_currency.to_string());
-                        // Only update if this price is more recent
-                        let should_update = latest_prices
-                            .get(&key)
-                            .map(|(d, _)| entry_date > *d)
-                            .unwrap_or(true);
-                        if should_update {
-                            latest_prices.insert(key, (entry_date, entry.clone()));
-                        }
-                    }
+                )
+                && let Some(amt_currency) = amount.get("currency").and_then(|c| c.as_str())
+            {
+                let key = (currency.to_string(), amt_currency.to_string());
+                // Only update if this price is more recent (or same day - last wins)
+                let should_update = latest_prices
+                    .get(&key)
+                    .is_none_or(|(d, _)| entry_date >= *d);
+                if should_update {
+                    latest_prices.insert(key, (entry_date, entry.clone()));
                 }
             }
 
@@ -118,11 +117,7 @@ pub fn clamp_entries(
             }
         } else if entry_date < end {
             // Entry is within range - include all except commodity
-            let include = match entry_type {
-                "commodity" => false,
-                _ => true,
-            };
-            if include {
+            if entry_type != "commodity" {
                 filtered_entries.push(entry);
             }
         }
@@ -177,11 +172,40 @@ pub fn clamp_entries(
     all_entries.append(&mut summary_entries);
     all_entries.append(&mut filtered_entries);
 
-    // Sort by date
+    // Sort by date with deterministic tiebreakers (type priority, then hash)
     all_entries.sort_by(|a, b| {
         let date_a = a.get("date").and_then(|d| d.as_str()).unwrap_or("");
         let date_b = b.get("date").and_then(|d| d.as_str()).unwrap_or("");
-        date_a.cmp(date_b)
+
+        date_a
+            .cmp(date_b)
+            .then_with(|| {
+                // Type priority: open < balance < transaction < others
+                fn type_priority(entry: &serde_json::Value) -> u8 {
+                    match entry.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+                        "open" => 0,
+                        "balance" => 1,
+                        "transaction" => 2,
+                        "close" => 10,
+                        _ => 5,
+                    }
+                }
+                type_priority(a).cmp(&type_priority(b))
+            })
+            .then_with(|| {
+                // Finally, compare by hash for full determinism
+                let hash_a = a
+                    .get("meta")
+                    .and_then(|m| m.get("hash"))
+                    .and_then(|h| h.as_str())
+                    .unwrap_or("");
+                let hash_b = b
+                    .get("meta")
+                    .and_then(|m| m.get("hash"))
+                    .and_then(|h| h.as_str())
+                    .unwrap_or("");
+                hash_a.cmp(hash_b)
+            })
     });
 
     ClampResult {
@@ -249,7 +273,7 @@ fn create_earnings_transaction(
     }
 
     // Create unique hash for the earnings transaction
-    let hash_input = format!("earnings:{}", date_str);
+    let hash_input = format!("earnings:{date_str}");
     let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 
     serde_json::json!({
@@ -306,27 +330,38 @@ fn accumulate_posting_balance(
 }
 
 /// Parse cost from JSON and create a Position.
+/// Falls back to `Position::simple` if cost data is missing or invalid.
 fn parse_cost_and_create_position(
     amount: rustledger_core::Amount,
     cost: &serde_json::Value,
 ) -> Position {
-    let cost_number_str = cost.get("number").and_then(|n| n.as_str()).unwrap_or("0");
-    let cost_currency = cost.get("currency").and_then(|c| c.as_str()).unwrap_or("");
+    // Get cost number - if missing or invalid, fall back to simple position
+    let Some(cost_number_str) = cost.get("number").and_then(|n| n.as_str()) else {
+        return Position::simple(amount);
+    };
+    let Ok(cost_number) = rustledger_core::Decimal::from_str_exact(cost_number_str) else {
+        return Position::simple(amount);
+    };
+
+    // Get cost currency - if missing or empty, fall back to simple position
+    let Some(cost_currency) = cost.get("currency").and_then(|c| c.as_str()) else {
+        return Position::simple(amount);
+    };
+    if cost_currency.is_empty() {
+        return Position::simple(amount);
+    }
+
     let cost_date_str = cost.get("date").and_then(|d| d.as_str());
     let cost_label = cost.get("label").and_then(|l| l.as_str()).map(String::from);
+    let cost_date = cost_date_str.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
 
-    if let Ok(cost_number) = rustledger_core::Decimal::from_str_exact(cost_number_str) {
-        let cost_date = cost_date_str.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
-        let cost = Cost {
-            number: cost_number,
-            currency: cost_currency.into(),
-            date: cost_date,
-            label: cost_label,
-        };
-        Position::with_cost(amount, cost)
-    } else {
-        Position::simple(amount)
-    }
+    let cost = Cost {
+        number: cost_number,
+        currency: cost_currency.into(),
+        date: cost_date,
+        label: cost_label,
+    };
+    Position::with_cost(amount, cost)
 }
 
 /// Create a summary transaction for an account's opening balance.
@@ -382,7 +417,7 @@ fn create_summary_transaction(
     }
 
     // Create unique hash for the summary transaction
-    let hash_input = format!("summary:{}:{}", date_str, account);
+    let hash_input = format!("summary:{date_str}:{account}");
     let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
 
     serde_json::json!({

@@ -32,7 +32,7 @@ impl Response {
     }
 
     /// Create an error response.
-    pub fn error(id: Option<RequestId>, error: RpcError) -> Self {
+    pub const fn error(id: Option<RequestId>, error: RpcError) -> Self {
         Self {
             jsonrpc: "2.0",
             result: None,
@@ -80,7 +80,7 @@ impl Serialize for ResponseBatch {
 
 impl ResponseBatch {
     /// Create a single response.
-    pub fn single(response: Response) -> Self {
+    pub const fn single(response: Response) -> Self {
         Self::Single(response)
     }
 
@@ -97,7 +97,7 @@ impl ResponseBatch {
     }
 
     /// Check if this batch is empty (all notifications).
-    pub fn is_empty(&self) -> bool {
+    pub const fn is_empty(&self) -> bool {
         match self {
             Self::Single(_) => false,
             Self::Batch(responses) => responses.is_empty(),

@@ -14,9 +14,17 @@ use rustledger_plugin::{
 use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 
 use super::error::RpcError;
-use super::request::*;
+use super::request::{
+    BatchFileParams, BatchParams, ClampEntriesParams, CreateEntriesParams, CreateEntryParams,
+    FilterEntriesParams, FormatEntriesParams, FormatEntryParams, FormatFileParams,
+    FormatSourceParams, GetAccountTypeParams, IsEncryptedParams, LoadFileParams, LoadParams,
+    QueryFileParams, QueryParams, Request, ValidateFileParams, ValidateParams,
+};
 use super::response::Response;
-use super::response::results::*;
+use super::response::results::{
+    CreateEntriesResult, CreateEntryResult, FormatResult, GetAccountTypeResult, IsEncryptedResult,
+    VersionResult,
+};
 use crate::API_VERSION;
 use crate::commands::load::LoadFullOutput;
 use crate::commands::query::execute_query;
@@ -514,7 +522,7 @@ fn handle_format_entries(params: &serde_json::Value) -> Result<serde_json::Value
     }
 
     let result = FormatResult {
-        formatted: formatted_parts.join("\n"),
+        formatted: formatted_parts.concat(),
     };
     serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
 }
@@ -624,7 +632,13 @@ fn handle_types() -> Result<serde_json::Value, RpcError> {
             "custom",
         ],
         booking_methods: vec![
-            "STRICT", "NONE", "AVERAGE", "FIFO", "LIFO", "HIFO", "REDUCE",
+            "STRICT",
+            "STRICT_WITH_SIZE",
+            "NONE",
+            "AVERAGE",
+            "FIFO",
+            "LIFO",
+            "HIFO",
         ],
         missing: MissingSentinel {
             description: "Represents a missing/interpolated amount in a posting",
@@ -650,7 +664,10 @@ fn handle_is_encrypted(params: &serde_json::Value) -> Result<serde_json::Value, 
     let params: IsEncryptedParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
 
-    let encrypted = params.path.ends_with(".gpg") || params.path.ends_with(".asc");
+    let path = Path::new(&params.path);
+    let encrypted = path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("gpg") || ext.eq_ignore_ascii_case("asc"));
 
     let result = IsEncryptedResult { encrypted };
     serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))

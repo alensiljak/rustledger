@@ -716,9 +716,9 @@
           "columns": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/ColumnInfo"
             },
-            "description": "Column names"
+            "description": "Column metadata (name and datatype)"
           },
           "rows": {
             "type": "array",
@@ -834,9 +834,41 @@
               "type": "string"
             },
             "description": "Account type prefixes"
+          },
+          "missing": {
+            "$ref": "#/components/schemas/MissingSentinel",
+            "description": "Sentinel describing missing/interpolated amounts"
           }
         },
-        "required": ["api_version", "all_directives", "booking_methods", "account_types"]
+        "required": ["api_version", "all_directives", "booking_methods", "account_types", "missing"]
+      },
+      "MissingSentinel": {
+        "type": "object",
+        "description": "Describes how missing/interpolated amounts are represented",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "json_representation": {
+            "type": "string"
+          }
+        },
+        "required": ["description", "json_representation"]
+      },
+      "ColumnInfo": {
+        "type": "object",
+        "description": "Query column metadata",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Column name"
+          },
+          "datatype": {
+            "type": "string",
+            "description": "Column data type"
+          }
+        },
+        "required": ["name", "datatype"]
       },
       "IsEncryptedResult": {
         "type": "object",

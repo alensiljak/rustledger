@@ -46,7 +46,7 @@ impl Request {
     }
 
     /// Check if this is a notification (no response expected).
-    pub fn is_notification(&self) -> bool {
+    pub const fn is_notification(&self) -> bool {
         self.id.is_none()
     }
 }
@@ -72,13 +72,28 @@ impl RequestBatch {
 
         // Check if it's an array (batch) or object (single)
         if trimmed.starts_with('[') {
-            let requests: Vec<Request> = serde_json::from_str(trimmed)
+            // First parse into raw JSON values to avoid failing the entire batch
+            // on a single non-conforming element (per JSON-RPC 2.0 spec).
+            let raw_values: Vec<serde_json::Value> = serde_json::from_str(trimmed)
                 .map_err(|e| super::error::RpcError::parse_error(format!("Invalid JSON: {e}")))?;
 
-            if requests.is_empty() {
+            if raw_values.is_empty() {
                 return Err(super::error::RpcError::invalid_request(
                     "Empty batch request",
                 ));
+            }
+
+            // Validate and decode each element individually
+            let mut requests = Vec::with_capacity(raw_values.len());
+            for (index, value) in raw_values.into_iter().enumerate() {
+                match serde_json::from_value::<Request>(value) {
+                    Ok(request) => requests.push(request),
+                    Err(e) => {
+                        return Err(super::error::RpcError::invalid_request(format!(
+                            "Invalid request object at batch index {index}: {e}"
+                        )));
+                    }
+                }
             }
 
             Ok(Self::Batch(requests))
