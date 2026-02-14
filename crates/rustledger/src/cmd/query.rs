@@ -108,8 +108,10 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
 
 /// Run the query command with the given arguments.
 pub fn run(args: &Args) -> Result<()> {
-    // File is guaranteed to be Some here (checked in main)
-    let file = args.file.as_ref().expect("file required");
+    // File should be Some (required unless --generate-completions is used)
+    let Some(file) = args.file.as_ref() else {
+        anyhow::bail!("FILE argument is required");
+    };
 
     // Check if file exists
     if !file.exists() {

@@ -141,8 +141,10 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let mut stdout = io::stdout().lock();
     let start = std::time::Instant::now();
 
-    // File is guaranteed to be Some here (checked in main)
-    let file = args.file.as_ref().expect("file required");
+    // File should be Some (required unless --generate-completions is used)
+    let Some(file) = args.file.as_ref() else {
+        anyhow::bail!("FILE argument is required");
+    };
 
     // Check if file exists
     if !file.exists() {
