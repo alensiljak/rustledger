@@ -50,7 +50,7 @@ pub mod request;
 pub mod response;
 pub mod router;
 
-use request::RequestBatch;
+use request::{BatchElement, RequestBatch};
 use response::{Response, ResponseBatch};
 
 use std::io::{self, Read, Write};
@@ -94,15 +94,21 @@ pub fn process_request(input: &str) -> ResponseBatch {
                 ResponseBatch::single(router::route(&request))
             }
         }
-        RequestBatch::Batch(requests) => {
-            let responses: Vec<Response> = requests
-                .iter()
-                .filter_map(|req| {
-                    if req.is_notification() {
-                        router::route(req); // Process but discard
-                        None
-                    } else {
-                        Some(router::route(req))
+        RequestBatch::Batch(elements) => {
+            let responses: Vec<Response> = elements
+                .into_iter()
+                .filter_map(|element| match element {
+                    BatchElement::Valid(req) => {
+                        if req.is_notification() {
+                            router::route(&req); // Process but discard
+                            None
+                        } else {
+                            Some(router::route(&req))
+                        }
+                    }
+                    BatchElement::Invalid { error, id } => {
+                        // Per JSON-RPC 2.0 spec, return error response for invalid elements
+                        Some(Response::error(id, error))
                     }
                 })
                 .collect();
@@ -177,5 +183,29 @@ mod tests {
         let input = r#"{"jsonrpc":"2.0","method":"util.version","params":{}}"#;
         let response = process_request(input);
         assert!(response.is_empty());
+    }
+
+    #[test]
+    fn test_batch_with_invalid_element() {
+        // Per JSON-RPC 2.0 spec, invalid elements should return per-element errors
+        // without failing the entire batch
+        let input = r#"[
+            {"jsonrpc":"2.0","method":"util.version","id":1},
+            {"invalid":"not a valid request","id":2},
+            {"jsonrpc":"2.0","method":"util.version","id":3}
+        ]"#;
+        let response = process_request(input);
+        let json = serde_json::to_string(&response).unwrap();
+
+        // Should be an array with 3 responses
+        assert!(json.starts_with('['));
+
+        // First and third should succeed
+        assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"id\":3"));
+
+        // Second should be an error with the preserved ID
+        assert!(json.contains("\"id\":2"));
+        assert!(json.contains("-32600")); // Invalid Request error code
     }
 }

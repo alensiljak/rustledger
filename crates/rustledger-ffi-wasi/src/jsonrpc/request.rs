@@ -51,13 +51,25 @@ impl Request {
     }
 }
 
+/// Result of parsing a single request in a batch.
+#[derive(Debug, Clone)]
+pub enum BatchElement {
+    /// Successfully parsed request.
+    Valid(Request),
+    /// Failed to parse - contains error and optional ID if extractable.
+    Invalid {
+        error: super::error::RpcError,
+        id: Option<RequestId>,
+    },
+}
+
 /// Either a single request or a batch of requests.
 #[derive(Debug, Clone)]
 pub enum RequestBatch {
     /// Single request.
     Single(Request),
-    /// Batch of requests.
-    Batch(Vec<Request>),
+    /// Batch of requests (may include invalid elements with per-element errors).
+    Batch(Vec<BatchElement>),
 }
 
 impl RequestBatch {
@@ -83,20 +95,28 @@ impl RequestBatch {
                 ));
             }
 
-            // Validate and decode each element individually
-            let mut requests = Vec::with_capacity(raw_values.len());
-            for (index, value) in raw_values.into_iter().enumerate() {
-                match serde_json::from_value::<Request>(value) {
-                    Ok(request) => requests.push(request),
-                    Err(e) => {
-                        return Err(super::error::RpcError::invalid_request(format!(
-                            "Invalid request object at batch index {index}: {e}"
-                        )));
-                    }
-                }
-            }
+            // Validate and decode each element individually, collecting errors
+            let elements: Vec<BatchElement> = raw_values
+                .into_iter()
+                .map(|value| {
+                    // Try to extract ID even if the request is invalid
+                    let id = value
+                        .get("id")
+                        .and_then(|v| serde_json::from_value::<RequestId>(v.clone()).ok());
 
-            Ok(Self::Batch(requests))
+                    match serde_json::from_value::<Request>(value) {
+                        Ok(request) => BatchElement::Valid(request),
+                        Err(e) => BatchElement::Invalid {
+                            error: super::error::RpcError::invalid_request(format!(
+                                "Invalid request: {e}"
+                            )),
+                            id,
+                        },
+                    }
+                })
+                .collect();
+
+            Ok(Self::Batch(elements))
         } else {
             let request: Request = serde_json::from_str(trimmed)
                 .map_err(|e| super::error::RpcError::parse_error(format!("Invalid JSON: {e}")))?;
@@ -288,10 +308,16 @@ mod tests {
         ]"#;
         let batch = RequestBatch::parse(json).unwrap();
         match batch {
-            RequestBatch::Batch(reqs) => {
-                assert_eq!(reqs.len(), 2);
-                assert_eq!(reqs[0].method, "ledger.load");
-                assert_eq!(reqs[1].method, "util.version");
+            RequestBatch::Batch(elements) => {
+                assert_eq!(elements.len(), 2);
+                match &elements[0] {
+                    BatchElement::Valid(req) => assert_eq!(req.method, "ledger.load"),
+                    BatchElement::Invalid { .. } => panic!("Expected valid request"),
+                }
+                match &elements[1] {
+                    BatchElement::Valid(req) => assert_eq!(req.method, "util.version"),
+                    BatchElement::Invalid { .. } => panic!("Expected valid request"),
+                }
             }
             RequestBatch::Single(_) => panic!("Expected batch request"),
         }
@@ -336,6 +362,59 @@ mod tests {
                 assert_eq!(req.id, Some(RequestId::String("abc".to_string())));
             }
             RequestBatch::Batch(_) => panic!("Expected single request"),
+        }
+    }
+
+    #[test]
+    fn test_batch_with_invalid_element() {
+        // Per JSON-RPC 2.0 spec, invalid elements in batch should return per-element errors
+        let json = r#"[
+            {"jsonrpc":"2.0","method":"test","id":1},
+            {"invalid":"not a valid request","id":2},
+            {"jsonrpc":"2.0","method":"test2","id":3}
+        ]"#;
+        let batch = RequestBatch::parse(json).unwrap();
+        match batch {
+            RequestBatch::Batch(elements) => {
+                assert_eq!(elements.len(), 3);
+                // First element should be valid
+                assert!(matches!(&elements[0], BatchElement::Valid(req) if req.method == "test"));
+                // Second element should be invalid with preserved ID
+                match &elements[1] {
+                    BatchElement::Invalid { error, id } => {
+                        assert_eq!(*id, Some(RequestId::Number(2)));
+                        assert_eq!(error.code, crate::jsonrpc::error::ErrorCode::InvalidRequest);
+                    }
+                    BatchElement::Valid(_) => panic!("Expected invalid element"),
+                }
+                // Third element should be valid
+                assert!(matches!(&elements[2], BatchElement::Valid(req) if req.method == "test2"));
+            }
+            RequestBatch::Single(_) => panic!("Expected batch"),
+        }
+    }
+
+    #[test]
+    fn test_batch_invalid_element_no_id() {
+        // Invalid element without an ID should still work
+        let json = r#"[
+            {"jsonrpc":"2.0","method":"test","id":1},
+            {"totally":"broken"}
+        ]"#;
+        let batch = RequestBatch::parse(json).unwrap();
+        match batch {
+            RequestBatch::Batch(elements) => {
+                assert_eq!(elements.len(), 2);
+                assert!(matches!(&elements[0], BatchElement::Valid(_)));
+                match &elements[1] {
+                    BatchElement::Invalid { error, id } => {
+                        assert!(id.is_none());
+                        assert_eq!(error.code, crate::jsonrpc::error::ErrorCode::InvalidRequest);
+                    }
+                    BatchElement::Valid(_) => panic!("Expected invalid element"),
+                }
+            }
+            RequestBatch::Single(_) => panic!("Expected batch"),
         }
     }
 }

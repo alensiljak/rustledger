@@ -471,7 +471,7 @@
     {
       "name": "entry.clamp",
       "summary": "Clamp entries to date range",
-      "description": "Clamps entries to the specified date range. Both dates are optional.",
+      "description": "Clamps entries to the specified date range with opening balance summarization.",
       "params": [
         {
           "name": "entries",
@@ -486,8 +486,8 @@
         },
         {
           "name": "beginDate",
-          "description": "Optional begin date (inclusive, YYYY-MM-DD format)",
-          "required": false,
+          "description": "Begin date (inclusive, YYYY-MM-DD format)",
+          "required": true,
           "schema": {
             "type": "string",
             "format": "date"
@@ -495,8 +495,8 @@
         },
         {
           "name": "endDate",
-          "description": "Optional end date (exclusive, YYYY-MM-DD format)",
-          "required": false,
+          "description": "End date (exclusive, YYYY-MM-DD format)",
+          "required": true,
           "schema": {
             "type": "string",
             "format": "date"

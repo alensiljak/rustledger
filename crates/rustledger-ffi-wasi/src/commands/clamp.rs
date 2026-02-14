@@ -436,3 +436,264 @@ fn create_summary_transaction(
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_entry(entry_type: &str, date: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": entry_type,
+            "date": date,
+            "meta": {"filename": "test.beancount", "lineno": 1, "hash": "abc123"}
+        })
+    }
+
+    fn make_transaction(date: &str, postings: Vec<serde_json::Value>) -> serde_json::Value {
+        serde_json::json!({
+            "type": "transaction",
+            "date": date,
+            "flag": "*",
+            "payee": "Test",
+            "narration": "Test transaction",
+            "postings": postings,
+            "meta": {"filename": "test.beancount", "lineno": 1, "hash": format!("txn-{date}")}
+        })
+    }
+
+    fn make_posting(account: &str, number: &str, currency: &str) -> serde_json::Value {
+        serde_json::json!({
+            "account": account,
+            "units": {"number": number, "currency": currency}
+        })
+    }
+
+    // ==========================================================================
+    // filter_entries tests
+    // ==========================================================================
+
+    #[test]
+    fn test_filter_entries_basic() {
+        let entries = vec![
+            make_entry("open", "2024-01-01"),
+            make_entry("transaction", "2024-01-15"),
+            make_entry("transaction", "2024-02-15"),
+            make_entry("close", "2024-01-05"), // Before begin, should be excluded
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 1, 10).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 2, 20).unwrap();
+
+        let result = filter_entries(entries, begin, end);
+
+        // Should include: open (before end), txn on 1/15, txn on 2/15
+        // Should exclude: close (before begin)
+        assert_eq!(result.entries.len(), 3);
+    }
+
+    #[test]
+    fn test_filter_entries_excludes_commodity() {
+        let entries = vec![
+            make_entry("commodity", "2024-01-15"),
+            make_entry("transaction", "2024-01-15"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+
+        let result = filter_entries(entries, begin, end);
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["type"], "transaction");
+    }
+
+    #[test]
+    fn test_filter_entries_open_before_end() {
+        let entries = vec![
+            make_entry("open", "2024-01-01"),
+            make_entry("open", "2024-06-01"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 4, 1).unwrap();
+
+        let result = filter_entries(entries, begin, end);
+
+        // Open on 1/1 included (date < end)
+        // Open on 6/1 excluded (date >= end)
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["date"], "2024-01-01");
+    }
+
+    #[test]
+    fn test_filter_entries_close_after_begin() {
+        let entries = vec![
+            make_entry("close", "2024-01-01"),
+            make_entry("close", "2024-06-01"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+
+        let result = filter_entries(entries, begin, end);
+
+        // Close on 1/1 excluded (date < begin)
+        // Close on 6/1 included (date >= begin)
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["date"], "2024-06-01");
+    }
+
+    #[test]
+    fn test_filter_entries_drops_invalid_dates() {
+        let entries = vec![
+            make_entry("transaction", "2024-01-15"),
+            serde_json::json!({"type": "transaction", "date": "invalid"}),
+            serde_json::json!({"type": "transaction"}), // no date
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+
+        let result = filter_entries(entries, begin, end);
+
+        // Only the valid date entry should be included
+        assert_eq!(result.entries.len(), 1);
+    }
+
+    // ==========================================================================
+    // clamp_entries tests
+    // ==========================================================================
+
+    #[test]
+    fn test_clamp_entries_creates_opening_balances() {
+        let entries = vec![
+            make_entry("open", "2024-01-01"),
+            make_transaction(
+                "2024-01-15",
+                vec![
+                    make_posting("Assets:Bank", "100", "USD"),
+                    make_posting("Income:Salary", "-100", "USD"),
+                ],
+            ),
+            make_transaction(
+                "2024-02-15",
+                vec![
+                    make_posting("Expenses:Food", "20", "USD"),
+                    make_posting("Assets:Bank", "-20", "USD"),
+                ],
+            ),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+
+        let result = clamp_entries(entries, begin, end);
+
+        // Should have:
+        // - Open directive (from before begin)
+        // - Summary transaction for Assets:Bank opening balance
+        // - Earnings transaction for Income:Salary
+        // - Original transaction from 2/15
+        assert!(result.entries.len() >= 3);
+
+        // Check that a summary transaction was created
+        let summary_txns: Vec<_> = result
+            .entries
+            .iter()
+            .filter(|e| e["type"] == "transaction" && e["meta"]["filename"] == "<summarization>")
+            .collect();
+        assert!(!summary_txns.is_empty(), "Should have summary transactions");
+    }
+
+    #[test]
+    fn test_clamp_entries_preserves_prices() {
+        let entries = vec![
+            serde_json::json!({
+                "type": "price",
+                "date": "2024-01-15",
+                "currency": "BTC",
+                "amount": {"number": "50000", "currency": "USD"},
+                "meta": {"filename": "test.beancount", "lineno": 1, "hash": "price1"}
+            }),
+            serde_json::json!({
+                "type": "price",
+                "date": "2024-01-20",
+                "currency": "BTC",
+                "amount": {"number": "51000", "currency": "USD"},
+                "meta": {"filename": "test.beancount", "lineno": 2, "hash": "price2"}
+            }),
+            make_entry("transaction", "2024-02-15"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+
+        let result = clamp_entries(entries, begin, end);
+
+        // Should include the latest price before begin (1/20)
+        let prices: Vec<_> = result
+            .entries
+            .iter()
+            .filter(|e| e["type"] == "price")
+            .collect();
+        assert_eq!(prices.len(), 1);
+        assert_eq!(prices[0]["date"], "2024-01-20");
+    }
+
+    #[test]
+    fn test_clamp_entries_sorts_deterministically() {
+        let entries = vec![
+            make_entry("balance", "2024-02-15"),
+            make_entry("transaction", "2024-02-15"),
+            make_entry("open", "2024-02-15"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+
+        let result = clamp_entries(entries, begin, end);
+
+        // Same date entries should be sorted: open < balance < transaction
+        assert_eq!(result.entries[0]["type"], "open");
+        assert_eq!(result.entries[1]["type"], "balance");
+        assert_eq!(result.entries[2]["type"], "transaction");
+    }
+
+    #[test]
+    fn test_clamp_entries_excludes_commodity() {
+        let entries = vec![
+            make_entry("commodity", "2024-02-15"),
+            make_entry("transaction", "2024-02-15"),
+        ];
+
+        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
+        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+
+        let result = clamp_entries(entries, begin, end);
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.entries[0]["type"], "transaction");
+    }
+
+    // ==========================================================================
+    // Helper function tests
+    // ==========================================================================
+
+    #[test]
+    fn test_is_balance_sheet_account() {
+        assert!(is_balance_sheet_account("Assets:Bank"));
+        assert!(is_balance_sheet_account("Liabilities:CreditCard"));
+        assert!(is_balance_sheet_account("Equity:Opening-Balances"));
+        assert!(!is_balance_sheet_account("Income:Salary"));
+        assert!(!is_balance_sheet_account("Expenses:Food"));
+    }
+
+    #[test]
+    fn test_is_income_statement_account() {
+        assert!(is_income_statement_account("Income:Salary"));
+        assert!(is_income_statement_account("Expenses:Food"));
+        assert!(!is_income_statement_account("Assets:Bank"));
+        assert!(!is_income_statement_account("Liabilities:CreditCard"));
+        assert!(!is_income_statement_account("Equity:Opening-Balances"));
+    }
+}
