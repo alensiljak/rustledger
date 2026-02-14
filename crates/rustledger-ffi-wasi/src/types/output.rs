@@ -87,11 +87,6 @@ impl Error {
         self
     }
 
-    pub const fn with_entry_index(mut self, index: usize) -> Self {
-        self.entry_index = Some(index);
-        self
-    }
-
     #[allow(dead_code)]
     pub fn warning(mut self) -> Self {
         self.severity = "warning".to_string();
@@ -401,12 +396,6 @@ pub struct QueryOutput {
     pub columns: Vec<ColumnInfo>,
     pub rows: Vec<Vec<serde_json::Value>>,
     pub errors: Vec<Error>,
-}
-
-#[derive(Serialize)]
-pub struct VersionOutput {
-    pub api_version: &'static str,
-    pub version: String,
 }
 
 /// Output for batch command: load + multiple queries in one parse.
