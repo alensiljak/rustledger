@@ -1037,4 +1037,32 @@ mod tests {
             "Should have 70 ADA remaining in lot 2"
         );
     }
+
+    #[test]
+    fn test_book_no_cost_specs_fast_path() {
+        // Test that the fast path for transactions without cost specs
+        // returns correct empty gains and booked_indices.
+        let engine = BookingEngine::new();
+
+        // Simple expense transaction with no cost specs
+        let txn = Transaction::new(date(2024, 1, 15), "Groceries")
+            .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD")));
+
+        let result = engine.book(&txn).unwrap();
+
+        // Fast path should return empty gains and booked_indices
+        assert!(result.gains.is_empty(), "Should have no capital gains");
+        assert!(
+            result.booked_indices.is_empty(),
+            "Should have no booked indices"
+        );
+
+        // Transaction should be unchanged
+        assert_eq!(result.transaction.postings.len(), 2);
+        assert_eq!(
+            result.transaction.postings[0].units,
+            Some(IncompleteAmount::Complete(Amount::new(dec!(50), "USD")))
+        );
+    }
 }
