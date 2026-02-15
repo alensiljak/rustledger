@@ -44,9 +44,10 @@ release-build.yml builds binaries
      │
      ▼
 release-publish.yml distributes to:
+  • crates.io (all workspace crates)
   • npm (@rustledger/wasm, @rustledger/mcp-server)
   • Docker (ghcr.io/rustledger/rustledger)
-  • Homebrew, Scoop, COPR
+  • Homebrew, Scoop, COPR, AUR
 ```
 
 ## Release Process
@@ -122,7 +123,7 @@ semver_check = true           # Use conventional commits for versioning
 changelog_update = true       # Generate changelog
 git_tag_enable = true         # Create git tags
 git_release_enable = false    # release-build.yml handles GitHub releases
-publish = false               # release-build.yml handles crates.io publishing
+publish = false               # release-publish.yml handles crates.io publishing
 
 [changelog]
 commit_parsers = [...]        # Map commit types to changelog sections
@@ -133,8 +134,8 @@ commit_parsers = [...]        # Map commit types to changelog sections
 | File | Purpose |
 |------|---------|
 | `release-plz.yml` | Creates release PRs, syncs npm versions |
-| `release-build.yml` | Builds binaries, publishes to crates.io, creates GitHub Release |
-| `release-publish.yml` | Distributes to npm, Docker, Homebrew, Scoop, COPR |
+| `release-build.yml` | Builds binaries, creates GitHub Release |
+| `release-publish.yml` | Distributes to crates.io, npm, Docker, Homebrew, Scoop, COPR, AUR |
 
 ### Trusted Publishing
 
