@@ -117,6 +117,17 @@ impl BookingEngine {
     /// across multiple buy transactions), the posting is expanded into multiple postings,
     /// one for each matched lot. This matches Python beancount's behavior.
     pub fn book(&self, txn: &Transaction) -> Result<BookedTransaction, BookingError> {
+        // Fast path: if no postings have cost specs, no booking is needed.
+        // This avoids expensive inventory cloning for simple transactions.
+        let has_cost_specs = txn.postings.iter().any(|p| p.cost.is_some());
+        if !has_cost_specs {
+            return Ok(BookedTransaction {
+                transaction: txn.clone(),
+                gains: Vec::new(),
+                booked_indices: Vec::new(),
+            });
+        }
+
         let mut result = txn.clone();
         let mut gains = Vec::new();
         let mut booked_indices = std::collections::HashSet::with_capacity(txn.postings.len());
