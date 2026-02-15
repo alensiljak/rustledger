@@ -10,6 +10,7 @@
 # ---------------------
 # | Channel      | Repo/Registry                          |
 # |--------------|----------------------------------------|
+# | crates.io    | crates.io (all workspace crates)       |
 # | npm (wasm)   | @rustledger/wasm                       |
 # | npm (mcp)    | @rustledger/mcp-server                 |
 # | Docker       | ghcr.io/rustledger/rustledger          |
@@ -24,7 +25,7 @@
 # - BOT_APP_ID / BOT_PRIVATE_KEY: GitHub App for cross-repo dispatches (Homebrew, Scoop, website)
 # - COPR_LOGIN / COPR_TOKEN: COPR build trigger
 # - AUR_SSH_PRIVATE_KEY: SSH key for pushing to AUR (aur.archlinux.org)
-# - (npm uses OIDC trusted publishing, no token needed)
+# - (crates.io and npm use OIDC trusted publishing, no tokens needed)
 #
 name: Release Publish
 on:
@@ -38,13 +39,56 @@ on:
         type: string
 permissions:
   contents: read
-  id-token: write # Required for npm trusted publishing (OIDC)
+  id-token: write # Required for trusted publishing (OIDC) - npm and crates.io
   packages: write # Required for GitHub Container Registry
 env:
   CARGO_TERM_COLOR: always
   # Use input tag for workflow_dispatch, otherwise use the release tag
   RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
 jobs:
+  # Publish Rust crates to crates.io
+  publish-crates:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - name: Authenticate with crates.io (trusted publishing)
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1
+      - name: Publish crates to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
+        run: |
+          # Use cargo's native workspace publishing (Rust 1.90+)
+          # This automatically handles dependency ordering and waits for
+          # each crate to be indexed before publishing dependents.
+          # See: https://github.com/rust-lang/cargo/issues/10297
+          #
+          # Exclude rustledger-lsp: trusted publishing can't create new crates,
+          # so it must be published manually first with `cargo publish -p rustledger-lsp`
+          cargo publish --workspace --no-verify --exclude rustledger-lsp
+
+          # Try to publish rustledger-lsp (may fail if it's a new crate)
+          echo "Attempting to publish rustledger-lsp..."
+          if cargo publish -p rustledger-lsp --no-verify 2>&1 | tee /tmp/lsp-publish.log; then
+            echo "✓ rustledger-lsp published successfully"
+          elif grep -q "already been uploaded" /tmp/lsp-publish.log; then
+            echo "✓ rustledger-lsp already published (skipping)"
+          elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/lsp-publish.log; then
+            echo "⚠ rustledger-lsp is a new crate - must be published manually first"
+            echo "::warning::rustledger-lsp requires manual first publish: cargo publish -p rustledger-lsp"
+          else
+            echo "✗ Failed to publish rustledger-lsp"
+            cat /tmp/lsp-publish.log
+            exit 1
+          fi
+
+          echo "All crates published successfully!"
+
   # Publish WASM package to npm
   publish-npm-wasm:
     name: Publish to npm (@rustledger/wasm)
