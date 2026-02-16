@@ -70,7 +70,7 @@ jobs:
 
       - name: Verify version
         run: |
-          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
           EXPECTED="${{ needs.prepare.outputs.version }}"
           echo "Installed: $INSTALLED, Expected: $EXPECTED"
           if [ "$INSTALLED" != "$EXPECTED" ]; then
@@ -124,8 +124,12 @@ jobs:
 
       - name: Verify version
         run: |
-          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "Installed version: $INSTALLED"
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Warning: Version mismatch (tap may not be updated yet)"
+          fi
 
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
@@ -155,6 +159,7 @@ jobs:
       - name: Install yay
         run: |
           su - builder -c '
+            set -euo pipefail
             git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
             cd /tmp/yay-bin
             makepkg -si --noconfirm
@@ -182,8 +187,12 @@ jobs:
 
       - name: Verify version
         run: |
-          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-          echo "Installed version: $INSTALLED"
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Warning: Version mismatch (AUR may not be updated yet)"
+          fi
 
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
@@ -246,10 +255,16 @@ jobs:
           echo "Timeout waiting for Docker image"
           exit 1
 
-      - name: Test version
+      - name: Verify version
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          docker run --rm "ghcr.io/rustledger/rustledger:v$VERSION" --version
+          INSTALLED=$(docker run --rm "ghcr.io/rustledger/rustledger:v$VERSION" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="$VERSION"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
 
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
@@ -289,13 +304,19 @@ jobs:
           echo "Verifying checksum..."
           sha256sum -c "${ARCHIVE}.sha256"
 
-      - name: Extract and test
+      - name: Extract and verify version
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           tar -xzf "$ARCHIVE"
-          ./rledger --version
+          INSTALLED=$(./rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="$VERSION"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
 
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
@@ -324,18 +345,29 @@ jobs:
     steps:
       - name: Generate summary
         run: |
+          # Helper function to convert result to status emoji
+          status() {
+            case "$1" in
+              success) echo "✅ Passed" ;;
+              failure) echo "❌ Failed" ;;
+              skipped) echo "⏭️ Skipped" ;;
+              cancelled) echo "⚪ Cancelled" ;;
+              *) echo "❓ Unknown" ;;
+            esac
+          }
+
           echo "# Release Channel Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Channel | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Cargo (crates.io) | ${{ needs.test-cargo.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Homebrew | ${{ needs.test-homebrew.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| AUR | ${{ needs.test-aur.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| npm | ${{ needs.test-npm.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker | ${{ needs.test-docker.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | ${{ needs.test-github-release.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cargo (crates.io) | $(status "${{ needs.test-cargo.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Homebrew | $(status "${{ needs.test-homebrew.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| AUR | $(status "${{ needs.test-aur.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm | $(status "${{ needs.test-npm.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker | $(status "${{ needs.test-docker.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release | $(status "${{ needs.test-github-release.result }}") |" >> $GITHUB_STEP_SUMMARY
 
       - name: Check for failures
         if: contains(needs.*.result, 'failure')
