@@ -222,15 +222,15 @@ version = "0.2.2"
 criteria = "safe-to-run"
 
 [[exemptions.clap]]
-version = "4.5.57"
+version = "4.5.58"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.57"
+version = "4.5.58"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_complete]]
-version = "4.5.65"
+version = "4.5.66"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
@@ -238,7 +238,7 @@ version = "4.5.55"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
-version = "0.7.6"
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clipboard-win]]
@@ -954,7 +954,7 @@ version = "0.7.46"
 criteria = "safe-to-deploy"
 
 [[exemptions.rkyv]]
-version = "0.8.14"
+version = "0.8.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.rkyv_derive]]
@@ -962,7 +962,7 @@ version = "0.7.46"
 criteria = "safe-to-deploy"
 
 [[exemptions.rkyv_derive]]
-version = "0.8.14"
+version = "0.8.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.rmp]]
