@@ -90,8 +90,12 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "Assets:Bank"
 
+  # Note: This tests that rustledger can be installed via Homebrew, but does NOT
+  # validate that the just-released version is available. Homebrew-core updates
+  # require a PR to be submitted and merged, which happens asynchronously after
+  # the release workflow submits it via dawidd6/action-homebrew-bump-formula.
   test-homebrew:
-    name: Test Homebrew (Linux)
+    name: Test Homebrew install (Linux)
     needs: prepare
     runs-on: ubuntu-latest
     container: homebrew/brew:latest
@@ -102,15 +106,16 @@ jobs:
       - name: Install rustledger
         run: brew install rustledger
 
-      - name: Verify version
+      - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
           EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          # Note: homebrew-core updates require a PR and may lag behind releases
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
-            echo "Info: Version mismatch - homebrew-core may not be updated yet"
-            echo "This is expected for new releases until the homebrew-core PR is merged"
+          echo "Installed from homebrew-core: $INSTALLED"
+          echo "Just released: $EXPECTED"
+          if [ "$INSTALLED" = "$EXPECTED" ]; then
+            echo "✓ Homebrew has the latest version"
+          else
+            echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
           fi
 
       - name: Create test file
