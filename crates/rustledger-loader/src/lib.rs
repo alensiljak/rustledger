@@ -438,19 +438,64 @@ impl Loader {
         // Process includes (with glob pattern support)
         let base_dir = path.parent().unwrap_or(Path::new("."));
         for (include_path, _span) in &result.includes {
-            let full_path = base_dir.join(include_path);
-            let full_path_str = full_path.to_string_lossy();
+            // Check if the include path contains glob metacharacters
+            // (check on include_path, not full_path, to avoid false positives from directory names)
+            let has_glob = include_path.contains('*')
+                || include_path.contains('?')
+                || include_path.contains('[');
 
-            // Check if the path contains glob metacharacters
-            let has_glob = full_path_str.contains('*')
-                || full_path_str.contains('?')
-                || full_path_str.contains('[');
+            let full_path = base_dir.join(include_path);
+
+            // Path traversal protection: check BEFORE glob expansion to avoid
+            // enumerating files outside the allowed root directory
+            if self.enforce_path_security
+                && let Some(ref root) = self.root_dir
+            {
+                // For glob patterns, extract and check the non-glob prefix
+                let path_to_check = if has_glob {
+                    // Find where the first glob metacharacter is
+                    let glob_start = include_path
+                        .find(['*', '?', '['])
+                        .unwrap_or(include_path.len());
+                    // Get the directory prefix before the glob
+                    let prefix = &include_path[..glob_start];
+                    let prefix_path = if let Some(last_sep) = prefix.rfind('/') {
+                        base_dir.join(&include_path[..=last_sep])
+                    } else {
+                        base_dir.to_path_buf()
+                    };
+                    normalize_path(&prefix_path)
+                } else {
+                    normalize_path(&full_path)
+                };
+
+                if !path_to_check.starts_with(root) {
+                    errors.push(LoadError::PathTraversal {
+                        include_path: include_path.clone(),
+                        base_dir: root.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            let full_path_str = full_path.to_string_lossy();
 
             // Expand glob patterns or use literal path
             let paths_to_load: Vec<PathBuf> = if has_glob {
                 match glob::glob(&full_path_str) {
                     Ok(entries) => {
-                        let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
+                        let mut matched: Vec<PathBuf> = Vec::new();
+                        for entry in entries {
+                            match entry {
+                                Ok(p) => matched.push(p),
+                                Err(e) => {
+                                    errors.push(LoadError::GlobError {
+                                        pattern: include_path.clone(),
+                                        message: e.to_string(),
+                                    });
+                                }
+                            }
+                        }
                         // Sort for deterministic ordering
                         matched.sort();
                         matched
@@ -480,7 +525,8 @@ impl Loader {
                 // Use normalize_path for WASI compatibility (canonicalize not supported)
                 let canonical = normalize_path(&matched_path);
 
-                // Path traversal protection: ensure include stays within root directory
+                // Additional security check for each matched file
+                // (glob could still match files outside root via symlinks)
                 if self.enforce_path_security
                     && let Some(ref root) = self.root_dir
                     && !canonical.starts_with(root)
