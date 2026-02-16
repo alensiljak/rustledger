@@ -8,49 +8,50 @@ url="https://github.com/rustledger/rustledger"
 license=('GPL-3.0-only')
 depends=('glibc' 'libgcc')
 makedepends=('cargo')
+conflicts=('beancount')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/rustledger/rustledger/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('8a0f0e8b855045362374401bfc497ea2a21824bde41de91aeb9829979b336aa3')
 
 prepare() {
-    cd "$pkgname-$pkgver"
-    export RUSTUP_TOOLCHAIN=stable
-    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target host-tuple
 }
 
 build() {
-    cd "$pkgname-$pkgver"
-    export RUSTUP_TOOLCHAIN=stable
-    export CARGO_TARGET_DIR=target
-    cargo build --release --frozen --workspace
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --release --frozen --workspace
 }
 
 check() {
-    cd "$pkgname-$pkgver"
-    export RUSTUP_TOOLCHAIN=stable
-    export CARGO_TARGET_DIR=target
-    export PATH="$PWD/target/release:$PATH"
-    cargo test --release --frozen --workspace
+  cd "$pkgname-$pkgver"
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  export PATH="$PWD/target/release:$PATH"
+  cargo test --release --frozen --workspace
 }
 
 package() {
-    cd "$pkgname-$pkgver"
+  cd "$pkgname-$pkgver"
 
-    # Install main binaries
-    install -Dm755 "target/release/rledger" "$pkgdir/usr/bin/rledger"
-    install -Dm755 "target/release/rledger-lsp" "$pkgdir/usr/bin/rledger-lsp"
+  # Install main binaries
+  install -Dm755 "target/release/rledger" "$pkgdir/usr/bin/rledger"
+  install -Dm755 "target/release/rledger-lsp" "$pkgdir/usr/bin/rledger-lsp"
 
-    # Install beancount compatibility binaries
-    for bin in bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price; do
-        if [[ -f "target/release/$bin" ]]; then
-            install -Dm755 "target/release/$bin" "$pkgdir/usr/bin/$bin"
-        fi
-    done
+  # Install beancount compatibility binaries
+  for bin in bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price; do
+    if [[ -f "target/release/$bin" ]]; then
+      install -Dm755 "target/release/$bin" "$pkgdir/usr/bin/$bin"
+    fi
+  done
 
-    # Install shell completions
-    install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/rledger" < <(target/release/rledger completions bash)
-    install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_rledger" < <(target/release/rledger completions zsh)
-    install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/rledger.fish" < <(target/release/rledger completions fish)
+  # Install shell completions
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/rledger" < <(target/release/rledger completions bash)
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_rledger" < <(target/release/rledger completions zsh)
+  install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/rledger.fish" < <(target/release/rledger completions fish)
 
-    # Install license
-    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  # Install license
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
