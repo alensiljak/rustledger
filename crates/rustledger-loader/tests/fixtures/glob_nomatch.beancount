@@ -1,0 +1,6 @@
+; Test file with glob pattern that matches nothing
+option "title" "Glob No Match Test"
+
+include "nonexistent/*.beancount"
+
+2024-01-01 open Assets:Bank:Checking USD

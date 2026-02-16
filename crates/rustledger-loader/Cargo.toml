@@ -37,6 +37,7 @@ rustledger-parser.workspace = true
 rust_decimal.workspace = true
 thiserror.workspace = true
 chrono.workspace = true
+glob.workspace = true
 rkyv = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 rustc-hash.workspace = true

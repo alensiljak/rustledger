@@ -416,6 +416,54 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 }
                 error_count += 1;
             }
+            LoadError::GlobNoMatch { pattern } => {
+                if json_mode {
+                    diagnostics.push(JsonDiagnostic {
+                        file: file.display().to_string(),
+                        line: 1,
+                        column: 1,
+                        end_line: 1,
+                        end_column: 1,
+                        severity: "error".to_string(),
+                        code: "E0005".to_string(),
+                        message: format!("include pattern \"{pattern}\" does not match any files"),
+                        hint: Some(
+                            "check that the glob pattern is correct and files exist".to_string(),
+                        ),
+                        context: None,
+                    });
+                } else if !args.quiet {
+                    writeln!(
+                        stdout,
+                        "error: include pattern \"{pattern}\" does not match any files"
+                    )?;
+                }
+                error_count += 1;
+            }
+            LoadError::GlobError { pattern, message } => {
+                if json_mode {
+                    diagnostics.push(JsonDiagnostic {
+                        file: file.display().to_string(),
+                        line: 1,
+                        column: 1,
+                        end_line: 1,
+                        end_column: 1,
+                        severity: "error".to_string(),
+                        code: "E0006".to_string(),
+                        message: format!(
+                            "failed to expand include pattern \"{pattern}\": {message}"
+                        ),
+                        hint: None,
+                        context: None,
+                    });
+                } else if !args.quiet {
+                    writeln!(
+                        stdout,
+                        "error: failed to expand include pattern \"{pattern}\": {message}"
+                    )?;
+                }
+                error_count += 1;
+            }
         }
     }
 

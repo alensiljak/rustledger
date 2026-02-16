@@ -1,0 +1,6 @@
+; Transactions for 2025
+2025-02-01 * "Coffee"
+  Expenses:Coffee  5.00 USD
+  Assets:Bank:Checking
+
+2025-01-01 open Expenses:Coffee USD

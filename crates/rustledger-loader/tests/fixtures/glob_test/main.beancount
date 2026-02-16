@@ -1,0 +1,7 @@
+; Test file for glob include patterns
+option "title" "Glob Test"
+option "operating_currency" "USD"
+
+include "transactions/*.beancount"
+
+2024-01-01 open Assets:Bank:Checking USD
