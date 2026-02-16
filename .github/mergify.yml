@@ -21,8 +21,8 @@ pull_request_rules:
       - check-success=build
       - -draft
     actions:
-      merge:
-        method: squash
+      queue:
+        merge_method: squash
         commit_message_template: |
           {{ title }} (#{{ number }})
 
@@ -36,8 +36,8 @@ pull_request_rules:
       - check-success=build
       - -draft
     actions:
-      merge:
-        method: merge
+      queue:
+        merge_method: merge
         commit_message_template: |
           {{ title }} (#{{ number }})
 
