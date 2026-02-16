@@ -6,7 +6,7 @@
 //! while preserving comments and other non-directive content.
 
 use crate::cmd::completions::ShellType;
-use crate::format::{FormatConfig, format_directive};
+use crate::format::{FormatConfig, escape_string, format_directive};
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustledger_parser::{Span, Spanned, parse};
@@ -174,12 +174,15 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
             let between = &original_content[prev_end..item_start];
             // Count actual newline characters (not logical lines)
             let newline_count = between.chars().filter(|&c| c == '\n').count();
-            // If there's more than one newline, the extras are blank lines
-            // (one newline ends the previous item, additional newlines are blank lines)
-            if newline_count > 1 {
-                for _ in 0..(newline_count - 1) {
-                    formatted.push('\n');
-                }
+            // Special case: at start of file (prev_end == 0), preserve all leading blank lines
+            // Otherwise, one newline ends the previous item, extras are blank lines
+            let blank_lines = if prev_end == 0 {
+                newline_count
+            } else {
+                newline_count.saturating_sub(1)
+            };
+            for _ in 0..blank_lines {
+                formatted.push('\n');
             }
         }
 
@@ -189,16 +192,24 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
                 formatted.push_str(&format_directive(&d.value, &config));
             }
             FormattableItem::Option(key, value, _) => {
-                formatted.push_str(&format!("option \"{key}\" \"{value}\"\n"));
+                formatted.push_str(&format!(
+                    "option \"{}\" \"{}\"\n",
+                    escape_string(key),
+                    escape_string(value)
+                ));
             }
             FormattableItem::Include(path, _) => {
-                formatted.push_str(&format!("include \"{path}\"\n"));
+                formatted.push_str(&format!("include \"{}\"\n", escape_string(path)));
             }
             FormattableItem::Plugin(name, config_str, _) => {
                 if let Some(cfg) = config_str {
-                    formatted.push_str(&format!("plugin \"{name}\" \"{cfg}\"\n"));
+                    formatted.push_str(&format!(
+                        "plugin \"{}\" \"{}\"\n",
+                        escape_string(name),
+                        escape_string(cfg)
+                    ));
                 } else {
-                    formatted.push_str(&format!("plugin \"{name}\"\n"));
+                    formatted.push_str(&format!("plugin \"{}\"\n", escape_string(name)));
                 }
             }
             FormattableItem::Comment(c) => {

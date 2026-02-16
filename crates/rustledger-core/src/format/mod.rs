@@ -13,7 +13,8 @@ pub(crate) use directives::{
     format_balance, format_close, format_commodity, format_custom, format_document, format_event,
     format_note, format_open, format_pad, format_price, format_query,
 };
-pub(crate) use helpers::{escape_string, format_meta_value};
+pub use helpers::escape_string;
+pub(crate) use helpers::format_meta_value;
 pub(crate) use transaction::{format_incomplete_amount, format_transaction};
 
 use crate::Directive;

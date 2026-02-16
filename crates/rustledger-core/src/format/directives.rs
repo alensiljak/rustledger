@@ -9,9 +9,14 @@ use std::fmt::Write;
 /// Default indent for metadata (2 spaces).
 const META_INDENT: &str = "  ";
 
-/// Format metadata entries.
+/// Format metadata entries in deterministic (sorted) order.
 fn format_metadata(meta: &Metadata, out: &mut String) {
-    for (key, value) in meta {
+    // Sort keys for deterministic output order
+    let mut keys: Vec<_> = meta.keys().collect();
+    keys.sort();
+
+    for key in keys {
+        let value = &meta[key];
         writeln!(out, "{META_INDENT}{}: {}", key, format_meta_value(value)).unwrap();
     }
 }
