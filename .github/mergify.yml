@@ -4,10 +4,15 @@
 # Auto-merges PRs from trusted bots when CI passes.
 # Requires Mergify GitHub App: https://github.com/apps/mergify
 
+# Required for "Require branches to be up to date" branch protection
+merge_queue:
+  max_parallel_checks: 1
+
 # Queue rules define how PRs are merged
 queue_rules:
   - name: default
     merge_method: squash
+    batch_size: 1
     commit_message_template: |
       {{ title }} (#{{ number }})
 
@@ -15,6 +20,7 @@ queue_rules:
 
   - name: release
     merge_method: merge
+    batch_size: 1
     commit_message_template: |
       {{ title }} (#{{ number }})
 
