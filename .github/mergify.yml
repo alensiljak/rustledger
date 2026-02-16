@@ -16,8 +16,6 @@ queue_rules:
     commit_message_template: |
       {{ title }} (#{{ number }})
 
-      {{ body | get_section("Release notes") or body }}
-
   - name: release
     merge_method: merge
     batch_size: 1
