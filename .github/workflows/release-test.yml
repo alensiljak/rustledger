@@ -1,0 +1,340 @@
+name: Release Channel Testing
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to test (e.g., 0.8.9)'
+        required: true
+        type: string
+
+env:
+  VERSION: ${{ inputs.version || github.event.release.tag_name }}
+  TEST_BEANCOUNT: |
+    option "operating_currency" "USD"
+    2024-01-01 open Assets:Bank USD
+    2024-01-01 open Expenses:Food USD
+    2024-01-01 open Equity:Opening USD
+    2024-01-01 * "Opening"
+      Assets:Bank  1000 USD
+      Equity:Opening
+    2024-01-15 * "Groceries"
+      Expenses:Food  50 USD
+      Assets:Bank
+
+jobs:
+  # Strip 'v' prefix from version for comparisons
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          VERSION="${{ env.VERSION }}"
+          VERSION="${VERSION#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing version: $VERSION"
+
+  test-cargo:
+    name: Test Cargo (crates.io)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: rust:latest
+    steps:
+      - name: Wait for crates.io propagation
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Waiting for rustledger $VERSION on crates.io..."
+          for i in $(seq 1 30); do
+            AVAILABLE=$(cargo search rustledger 2>/dev/null | grep "^rustledger = " | head -1 || true)
+            if echo "$AVAILABLE" | grep -q "\"$VERSION\""; then
+              echo "Found: $AVAILABLE"
+              exit 0
+            fi
+            echo "Attempt $i/30: Not yet available, waiting 20s..."
+            sleep 20
+          done
+          echo "Timeout waiting for crates.io"
+          exit 1
+
+      - name: Install rustledger
+        run: cargo install rustledger
+
+      - name: Verify version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: rledger check /tmp/test.beancount
+
+      - name: Test rledger query
+        run: |
+          OUTPUT=$(rledger query /tmp/test.beancount "SELECT account, sum(position)")
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "Assets:Bank"
+
+  test-homebrew:
+    name: Test Homebrew (Linux)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: homebrew/brew:latest
+    steps:
+      - name: Update Homebrew
+        run: brew update
+
+      - name: Tap rustledger
+        run: brew tap rustledger/rustledger
+
+      - name: Wait for tap update
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Checking for rustledger $VERSION in tap..."
+          for i in $(seq 1 15); do
+            brew tap rustledger/rustledger --force 2>/dev/null || true
+            TAP_VERSION=$(brew info rustledger/rustledger/rustledger 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "not found")
+            echo "Tap version: $TAP_VERSION"
+            if [ "$TAP_VERSION" = "$VERSION" ]; then
+              echo "Tap is up to date"
+              exit 0
+            fi
+            echo "Attempt $i/15: Tap not updated, waiting 30s..."
+            sleep 30
+          done
+          echo "Warning: Tap may not be updated, proceeding anyway..."
+
+      - name: Install rustledger
+        run: brew install rustledger/rustledger/rustledger
+
+      - name: Verify version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "Installed version: $INSTALLED"
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: rledger check /tmp/test.beancount
+
+      - name: Test bean-check compatibility
+        run: bean-check /tmp/test.beancount
+
+  test-aur:
+    name: Test AUR (Arch Linux)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Setup Arch environment
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git sudo
+
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Install yay
+        run: |
+          su - builder -c '
+            git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
+            cd /tmp/yay-bin
+            makepkg -si --noconfirm
+          '
+
+      - name: Wait for AUR update
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Checking for rustledger-bin $VERSION on AUR..."
+          for i in $(seq 1 15); do
+            AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/?v=5&type=info&arg=rustledger-bin" | grep -oE '"Version":"[^"]+"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "not found")
+            echo "AUR version: $AUR_VERSION"
+            if [ "$AUR_VERSION" = "$VERSION" ]; then
+              echo "AUR is up to date"
+              exit 0
+            fi
+            echo "Attempt $i/15: AUR not updated, waiting 30s..."
+            sleep 30
+          done
+          echo "Warning: AUR may not be updated, proceeding anyway..."
+
+      - name: Install rustledger-bin
+        run: |
+          su - builder -c 'yay -S --noconfirm rustledger-bin'
+
+      - name: Verify version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+          echo "Installed version: $INSTALLED"
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger
+        run: rledger check /tmp/test.beancount
+
+  test-npm:
+    name: Test npm (@rustledger/wasm)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: node:lts
+    steps:
+      - name: Wait for npm propagation
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Waiting for @rustledger/wasm on npm..."
+          for i in $(seq 1 30); do
+            NPM_VERSION=$(npm view @rustledger/wasm version 2>/dev/null || echo "not found")
+            echo "npm version: $NPM_VERSION"
+            if [ "$NPM_VERSION" = "$VERSION" ]; then
+              echo "npm is up to date"
+              exit 0
+            fi
+            echo "Attempt $i/30: Not yet available, waiting 20s..."
+            sleep 20
+          done
+          echo "Timeout waiting for npm"
+          exit 1
+
+      - name: Install @rustledger/wasm
+        run: npm install -g @rustledger/wasm
+
+      - name: Test import
+        run: |
+          node -e "
+            const wasm = require('@rustledger/wasm');
+            console.log('WASM module loaded successfully');
+            console.log('Exports:', Object.keys(wasm));
+          "
+
+  test-docker:
+    name: Test Docker (ghcr.io)
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Docker image
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          IMAGE="ghcr.io/rustledger/rustledger:v$VERSION"
+          echo "Waiting for $IMAGE..."
+          for i in $(seq 1 20); do
+            if docker pull "$IMAGE" 2>/dev/null; then
+              echo "Image pulled successfully"
+              exit 0
+            fi
+            echo "Attempt $i/20: Image not available, waiting 30s..."
+            sleep 30
+          done
+          echo "Timeout waiting for Docker image"
+          exit 1
+
+      - name: Test version
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          docker run --rm "ghcr.io/rustledger/rustledger:v$VERSION" --version
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          docker run --rm -v /tmp/test.beancount:/data/test.beancount:ro \
+            "ghcr.io/rustledger/rustledger:v$VERSION" check /data/test.beancount
+
+  test-github-release:
+    name: Test GitHub Release (${{ matrix.target }})
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - x86_64-unknown-linux-musl
+    steps:
+      - name: Download release binary
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          URL="https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
+          echo "Downloading $URL"
+          curl -fsSL -o "$ARCHIVE" "$URL"
+          curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
+
+      - name: Verify checksum
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          echo "Verifying checksum..."
+          sha256sum -c "${ARCHIVE}.sha256"
+
+      - name: Extract and test
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          tar -xzf "$ARCHIVE"
+          ./rledger --version
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: ./rledger check /tmp/test.beancount
+
+      - name: Test rledger query
+        run: |
+          OUTPUT=$(./rledger query /tmp/test.beancount "SELECT account, sum(position)")
+          echo "$OUTPUT"
+          echo "$OUTPUT" | grep -q "Assets:Bank"
+
+  summary:
+    name: Test Summary
+    needs:
+      - prepare
+      - test-cargo
+      - test-homebrew
+      - test-aur
+      - test-npm
+      - test-docker
+      - test-github-release
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate summary
+        run: |
+          echo "# Release Channel Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Channel | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Cargo (crates.io) | ${{ needs.test-cargo.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Homebrew | ${{ needs.test-homebrew.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| AUR | ${{ needs.test-aur.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| npm | ${{ needs.test-npm.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker | ${{ needs.test-docker.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release | ${{ needs.test-github-release.result == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+
+      - name: Check for failures
+        if: contains(needs.*.result, 'failure')
+        run: |
+          echo "One or more release channels failed testing"
+          exit 1
