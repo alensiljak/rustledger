@@ -239,6 +239,103 @@ fn test_duplicate_include_ignored() {
 }
 
 // ============================================================================
+// Glob Include Pattern Tests
+// ============================================================================
+
+#[test]
+fn test_glob_include_pattern() {
+    let path = fixtures_path("glob_test/main.beancount");
+    let result = load_raw(&path).expect("should load file with glob include");
+
+    // Should have loaded files from the glob pattern
+    // main.beancount: 1 open directive
+    // transactions/2024.beancount: 1 open, 1 transaction
+    // transactions/2025.beancount: 1 open, 1 transaction
+    let opens = result
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+        .count();
+    assert_eq!(
+        opens, 3,
+        "expected 3 open directives (1 from main, 2 from transactions)"
+    );
+
+    let txns = result
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+        .count();
+    assert_eq!(txns, 2, "expected 2 transactions from glob-matched files");
+
+    // Source map should have 3 files
+    assert_eq!(
+        result.source_map.files().len(),
+        3,
+        "expected 3 files in source map (main + 2 from glob)"
+    );
+
+    // No errors expected
+    assert!(
+        result.errors.is_empty(),
+        "expected no errors, got: {:?}",
+        result.errors
+    );
+}
+
+#[test]
+fn test_glob_include_no_match() {
+    let path = fixtures_path("glob_nomatch.beancount");
+    let result = load_raw(&path).expect("should load file even with no-match glob");
+
+    // Should have GlobNoMatch error
+    let has_glob_error = result
+        .errors
+        .iter()
+        .any(|e| matches!(e, LoadError::GlobNoMatch { .. }));
+    assert!(
+        has_glob_error,
+        "expected GlobNoMatch error for pattern with no matches"
+    );
+
+    // Should still have the open directive from the main file
+    let opens = result
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+        .count();
+    assert_eq!(opens, 1, "expected 1 open directive from main file");
+}
+
+#[test]
+fn test_glob_include_deterministic_order() {
+    // Load twice and ensure same order
+    let path = fixtures_path("glob_test/main.beancount");
+
+    let result1 = load_raw(&path).expect("should load file");
+    let result2 = load_raw(&path).expect("should load file again");
+
+    // File order in source map should be deterministic
+    let files1: Vec<_> = result1
+        .source_map
+        .files()
+        .iter()
+        .map(|f| f.path.clone())
+        .collect();
+    let files2: Vec<_> = result2
+        .source_map
+        .files()
+        .iter()
+        .map(|f| f.path.clone())
+        .collect();
+
+    assert_eq!(
+        files1, files2,
+        "file order should be deterministic across loads"
+    );
+}
+
+// ============================================================================
 // Path Security Tests
 // ============================================================================
 
