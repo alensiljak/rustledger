@@ -343,10 +343,16 @@ jobs:
           client-payload: '{"version": "${{ env.RELEASE_TAG }}"}'
 
   # Update AUR packages (Arch Linux)
+  # Runs natively in Arch container for proper makepkg support
   update-aur:
     name: Update AUR packages
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
     steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm git openssh pacman-contrib
+
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
@@ -367,9 +373,7 @@ jobs:
         id: checksums
         run: |
           VERSION=${RELEASE_TAG#v}
-          # Source tarball
           SOURCE_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/archive/refs/tags/${RELEASE_TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
-          # Binary tarballs
           X86_64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
           AARCH64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
@@ -378,55 +382,52 @@ jobs:
           echo "aarch64_sha256=$AARCH64_SHA256" >> $GITHUB_OUTPUT
 
       - name: Update rustledger (source package)
+        env:
+          VERSION: ${{ steps.checksums.outputs.version }}
+          SOURCE_SHA256: ${{ steps.checksums.outputs.source_sha256 }}
         run: |
           git clone ssh://aur@aur.archlinux.org/rustledger.git /tmp/aur-rustledger
           cd /tmp/aur-rustledger
 
-          # Copy PKGBUILD from repo and update version/checksums
+          # Copy and update PKGBUILD
           cp "$GITHUB_WORKSPACE/packaging/arch/rustledger/PKGBUILD" PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-          sed -i "s/^sha256sums=.*/sha256sums=('${{ steps.checksums.outputs.source_sha256 }}')/" PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SOURCE_SHA256}')/" PKGBUILD
 
-          # Generate .SRCINFO using Docker with current user to avoid permission issues
-          mkdir -p /tmp/srcinfo-gen
-          cp PKGBUILD /tmp/srcinfo-gen/
-          docker run --rm --user "$(id -u):$(id -g)" -v "/tmp/srcinfo-gen:/pkg" -w /pkg archlinux:latest bash -c '
-            makepkg --printsrcinfo > .SRCINFO
-          '
-          cp /tmp/srcinfo-gen/.SRCINFO .SRCINFO
+          # Generate .SRCINFO natively (we're in Arch container)
+          makepkg --printsrcinfo > .SRCINFO
 
           # Commit and push
           git config user.name "rustledger-bot"
           git config user.email "bot@rustledger.dev"
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to v${{ steps.checksums.outputs.version }}"
+          git commit -m "Update to v${VERSION}"
           git push
 
       - name: Update rustledger-bin (binary package)
+        env:
+          VERSION: ${{ steps.checksums.outputs.version }}
+          X86_64_SHA256: ${{ steps.checksums.outputs.x86_64_sha256 }}
+          AARCH64_SHA256: ${{ steps.checksums.outputs.aarch64_sha256 }}
         run: |
           git clone ssh://aur@aur.archlinux.org/rustledger-bin.git /tmp/aur-rustledger-bin
           cd /tmp/aur-rustledger-bin
 
-          # Copy PKGBUILD from repo and update version/checksums
+          # Copy and update PKGBUILD
           cp "$GITHUB_WORKSPACE/packaging/arch/rustledger-bin/PKGBUILD" PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${{ steps.checksums.outputs.version }}/" PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s/^pkgrel=.*/pkgrel=1/" PKGBUILD
-          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${{ steps.checksums.outputs.x86_64_sha256 }}')/" PKGBUILD
-          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${{ steps.checksums.outputs.aarch64_sha256 }}')/" PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${X86_64_SHA256}')/" PKGBUILD
+          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${AARCH64_SHA256}')/" PKGBUILD
 
-          # Generate .SRCINFO using Docker with current user to avoid permission issues
-          mkdir -p /tmp/srcinfo-gen-bin
-          cp PKGBUILD /tmp/srcinfo-gen-bin/
-          docker run --rm --user "$(id -u):$(id -g)" -v "/tmp/srcinfo-gen-bin:/pkg" -w /pkg archlinux:latest bash -c '
-            makepkg --printsrcinfo > .SRCINFO
-          '
-          cp /tmp/srcinfo-gen-bin/.SRCINFO .SRCINFO
+          # Generate .SRCINFO natively
+          makepkg --printsrcinfo > .SRCINFO
 
           # Commit and push
           git config user.name "rustledger-bot"
           git config user.email "bot@rustledger.dev"
           git add PKGBUILD .SRCINFO
-          git commit -m "Update to v${{ steps.checksums.outputs.version }}"
+          git commit -m "Update to v${VERSION}"
           git push
 
