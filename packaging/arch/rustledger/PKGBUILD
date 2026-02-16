@@ -6,29 +6,34 @@ pkgdesc="Fast, pure Rust implementation of Beancount double-entry accounting"
 arch=('x86_64' 'aarch64')
 url="https://github.com/rustledger/rustledger"
 license=('GPL-3.0-only')
-depends=('gcc-libs')
-makedepends=('cargo' 'rust>=1.89')
-provides=('rledger')
-conflicts=('rustledger-bin')
+depends=('glibc' 'libgcc')
+makedepends=('cargo')
 source=("${pkgname}-${pkgver}.tar.gz::https://github.com/rustledger/rustledger/archive/refs/tags/v${pkgver}.tar.gz")
 sha256sums=('8a0f0e8b855045362374401bfc497ea2a21824bde41de91aeb9829979b336aa3')
 
+prepare() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
 build() {
-    cd "$srcdir/$pkgname-$pkgver"
+    cd "$pkgname-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    cargo build --release --locked --workspace
+    cargo build --release --frozen --workspace
 }
 
 check() {
-    cd "$srcdir/$pkgname-$pkgver"
+    cd "$pkgname-$pkgver"
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
-    cargo test --release --locked --workspace
+    export PATH="$PWD/target/release:$PATH"
+    cargo test --release --frozen --workspace
 }
 
 package() {
-    cd "$srcdir/$pkgname-$pkgver"
+    cd "$pkgname-$pkgver"
 
     # Install main binaries
     install -Dm755 "target/release/rledger" "$pkgdir/usr/bin/rledger"
@@ -40,6 +45,11 @@ package() {
             install -Dm755 "target/release/$bin" "$pkgdir/usr/bin/$bin"
         fi
     done
+
+    # Install shell completions
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/bash-completion/completions/rledger" < <(target/release/rledger completions bash)
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/zsh/site-functions/_rledger" < <(target/release/rledger completions zsh)
+    install -Dm644 /dev/stdin "$pkgdir/usr/share/fish/vendor_completions.d/rledger.fish" < <(target/release/rledger completions fish)
 
     # Install license
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
