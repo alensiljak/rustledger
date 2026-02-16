@@ -147,6 +147,22 @@ pub enum LoadError {
         /// Error message from GPG.
         message: String,
     },
+
+    /// Glob pattern did not match any files.
+    #[error("include pattern \"{pattern}\" does not match any files")]
+    GlobNoMatch {
+        /// The glob pattern that matched nothing.
+        pattern: String,
+    },
+
+    /// Glob pattern expansion failed.
+    #[error("failed to expand include pattern \"{pattern}\": {message}")]
+    GlobError {
+        /// The glob pattern that failed.
+        pattern: String,
+        /// The error message.
+        message: String,
+    },
 }
 
 /// Result of loading a beancount file.
@@ -419,29 +435,68 @@ impl Loader {
             });
         }
 
-        // Process includes
+        // Process includes (with glob pattern support)
         let base_dir = path.parent().unwrap_or(Path::new("."));
         for (include_path, _span) in &result.includes {
             let full_path = base_dir.join(include_path);
-            // Use normalize_path for WASI compatibility (canonicalize not supported)
-            let canonical = normalize_path(&full_path);
+            let full_path_str = full_path.to_string_lossy();
 
-            // Path traversal protection: ensure include stays within root directory
-            if self.enforce_path_security
-                && let Some(ref root) = self.root_dir
-                && !canonical.starts_with(root)
-            {
-                errors.push(LoadError::PathTraversal {
-                    include_path: include_path.clone(),
-                    base_dir: root.clone(),
+            // Check if the path contains glob metacharacters
+            let has_glob = full_path_str.contains('*')
+                || full_path_str.contains('?')
+                || full_path_str.contains('[');
+
+            // Expand glob patterns or use literal path
+            let paths_to_load: Vec<PathBuf> = if has_glob {
+                match glob::glob(&full_path_str) {
+                    Ok(entries) => {
+                        let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
+                        // Sort for deterministic ordering
+                        matched.sort();
+                        matched
+                    }
+                    Err(e) => {
+                        errors.push(LoadError::GlobError {
+                            pattern: include_path.clone(),
+                            message: e.to_string(),
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                vec![full_path.clone()]
+            };
+
+            // Check if glob matched nothing
+            if has_glob && paths_to_load.is_empty() {
+                errors.push(LoadError::GlobNoMatch {
+                    pattern: include_path.clone(),
                 });
                 continue;
             }
 
-            if let Err(e) =
-                self.load_recursive(&canonical, directives, options, plugins, source_map, errors)
-            {
-                errors.push(e);
+            // Load each matched file
+            for matched_path in paths_to_load {
+                // Use normalize_path for WASI compatibility (canonicalize not supported)
+                let canonical = normalize_path(&matched_path);
+
+                // Path traversal protection: ensure include stays within root directory
+                if self.enforce_path_security
+                    && let Some(ref root) = self.root_dir
+                    && !canonical.starts_with(root)
+                {
+                    errors.push(LoadError::PathTraversal {
+                        include_path: matched_path.to_string_lossy().into_owned(),
+                        base_dir: root.clone(),
+                    });
+                    continue;
+                }
+
+                if let Err(e) = self
+                    .load_recursive(&canonical, directives, options, plugins, source_map, errors)
+                {
+                    errors.push(e);
+                }
             }
         }
 
