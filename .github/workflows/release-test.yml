@@ -861,18 +861,18 @@ jobs:
           mkdir -p .github/badges
           VERSION="${{ needs.prepare.outputs.version }}"
 
-          # Function to create badge JSON
+          # Function to create badge JSON (shows version when passing)
           create_badge() {
             local name="$1"
             local result="$2"
             local label="$3"
 
             case "$result" in
-              success) color="brightgreen"; message="passing" ;;
-              failure) color="red"; message="failing" ;;
-              skipped) color="lightgrey"; message="skipped" ;;
-              cancelled) color="lightgrey"; message="cancelled" ;;
-              *) color="lightgrey"; message="unknown" ;;
+              success) color="brightgreen"; message="v${VERSION}" ;;
+              failure) color="red"; message="✗" ;;
+              skipped) color="lightgrey"; message="–" ;;
+              cancelled) color="lightgrey"; message="–" ;;
+              *) color="lightgrey"; message="?" ;;
             esac
 
             cat > ".github/badges/${name}.json" << EOF
