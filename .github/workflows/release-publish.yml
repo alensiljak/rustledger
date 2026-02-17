@@ -376,10 +376,15 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
 
       - name: Prepare PKGBUILD
-        id: prepare
         run: |
           VERSION=${RELEASE_TAG#v}
-          SOURCE_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/archive/refs/tags/${RELEASE_TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+          SOURCE_SHA256=$(curl -fsSL "https://github.com/rustledger/rustledger/archive/refs/tags/${RELEASE_TAG}.tar.gz" | sha256sum | cut -d' ' -f1)
+
+          # Validate checksum (should be 64 hex chars)
+          if ! echo "$SOURCE_SHA256" | grep -qE '^[a-f0-9]{64}$'; then
+            echo "::error::Invalid source checksum: $SOURCE_SHA256"
+            exit 1
+          fi
 
           # Update PKGBUILD with new version and checksum
           cp packaging/arch/rustledger/PKGBUILD /tmp/PKGBUILD
@@ -391,7 +396,7 @@ jobs:
           cat /tmp/PKGBUILD
 
       - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3
+        uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
         with:
           pkgname: rustledger
           pkgbuild: /tmp/PKGBUILD
@@ -411,8 +416,17 @@ jobs:
       - name: Prepare PKGBUILD
         run: |
           VERSION=${RELEASE_TAG#v}
-          X86_64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
-          AARCH64_SHA256=$(curl -sL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
+          X86_64_SHA256=$(curl -fsSL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-x86_64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
+          AARCH64_SHA256=$(curl -fsSL "https://github.com/rustledger/rustledger/releases/download/${RELEASE_TAG}/rustledger-${RELEASE_TAG}-aarch64-unknown-linux-gnu.tar.gz.sha256" | cut -d' ' -f1)
+
+          # Validate checksums (should be 64 hex chars)
+          for name in X86_64 AARCH64; do
+            val=$(eval echo "\$${name}_SHA256")
+            if ! echo "$val" | grep -qE '^[a-f0-9]{64}$'; then
+              echo "::error::Invalid ${name} checksum: $val"
+              exit 1
+            fi
+          done
 
           # Update PKGBUILD with new version and checksums
           cp packaging/arch/rustledger-bin/PKGBUILD /tmp/PKGBUILD
@@ -425,7 +439,7 @@ jobs:
           cat /tmp/PKGBUILD
 
       - name: Publish to AUR
-        uses: KSXGitHub/github-actions-deploy-aur@v3
+        uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
         with:
           pkgname: rustledger-bin
           pkgbuild: /tmp/PKGBUILD
