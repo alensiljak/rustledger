@@ -64,11 +64,16 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: |
-          # Publish each crate individually with error handling
+          # Publish each crate individually with error handling.
           # This allows re-running the workflow if some crates failed,
           # since already-published crates will be skipped gracefully.
           #
-          # Order matters: dependencies must be published before dependents
+          # IMPORTANT: Order matters! Dependencies must be published before dependents.
+          # To determine the correct order, run: cargo metadata --format-version=1 | jq -r '.packages[].name'
+          # and arrange so that each crate's dependencies appear before it.
+          # Current dependency tree (simplified):
+          #   core -> parser -> booking -> plugin -> validate -> loader -> query -> importer -> rustledger
+          #   wasm and ffi-wasi depend on most crates; lsp depends on query
           CRATES=(
             rustledger-core
             rustledger-parser
@@ -89,6 +94,9 @@ jobs:
             echo "::group::Publishing $crate"
             if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
               echo "✓ $crate published successfully"
+              # Wait for crates.io to index the crate before publishing dependents
+              echo "Waiting 30s for crates.io indexing..."
+              sleep 30
             elif grep -q "already been uploaded" /tmp/publish.log; then
               echo "✓ $crate already published (skipping)"
             elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/publish.log; then
