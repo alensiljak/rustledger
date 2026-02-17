@@ -187,33 +187,18 @@ jobs:
       - name: Check installed version
         shell: pwsh
         run: |
+          $output = rledger --version
+          if ($output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
+            $installed = $matches[1]
+          } else {
+            $installed = "unknown"
+          }
           $expected = "${{ needs.prepare.outputs.version }}"
-          # Try rledger first (new binary name), fall back to rledger-check (old name)
-          try {
-            $output = rledger --version 2>&1
-            if ($LASTEXITCODE -eq 0 -and $output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
-              $installed = $matches[1]
-              $binary = "rledger"
-            } else {
-              throw "rledger not found"
-            }
-          } catch {
-            # Fall back to old binary name
-            $output = rledger-check --version 2>&1
-            if ($output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
-              $installed = $matches[1]
-              $binary = "rledger-check"
-            } else {
-              $installed = "unknown"
-              $binary = "none"
-            }
-          }
-          Write-Host "Binary: $binary, Installed: $installed, Expected: $expected"
+          Write-Host "Installed: $installed, Expected: $expected"
           if ($installed -ne $expected) {
-            Write-Host "ℹ Scoop has an older version (bucket update may be pending)"
+            Write-Error "Version mismatch! Scoop bucket needs to be updated."
+            exit 1
           }
-          # Store which binary to use for later steps
-          echo "RLEDGER_BIN=$binary" >> $env:GITHUB_ENV
 
       - name: Create test file
         shell: pwsh
@@ -224,12 +209,7 @@ jobs:
 
       - name: Test rledger check
         shell: pwsh
-        run: |
-          if ($env:RLEDGER_BIN -eq "rledger") {
-            rledger check test.beancount
-          } else {
-            rledger-check test.beancount
-          }
+        run: rledger check test.beancount
 
   test-aur:
     name: Test AUR (Arch Linux)
