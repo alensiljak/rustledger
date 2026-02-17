@@ -89,11 +89,6 @@ Add to `~/.config/helix/languages.toml`:
 ```toml
 [[language]]
 name = "beancount"
-scope = "source.beancount"
-injection-regex = "beancount"
-file-types = ["beancount", "bean"]
-comment-token = ";"
-indent = { tab-width = 2, unit = "  " }
 language-servers = ["rledger-lsp"]
 
 [language-server.rledger-lsp]
