@@ -219,7 +219,7 @@ jobs:
       - name: Setup Arch environment
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git sudo
+          pacman -S --noconfirm base-devel git sudo curl
 
       - name: Create build user
         run: |
@@ -330,10 +330,17 @@ jobs:
       - name: Install @rustledger/mcp-server
         run: npm install @rustledger/mcp-server
 
-      - name: Test MCP server starts
+      - name: Test MCP server package
         run: |
-          # MCP server should respond to --help or --version
-          npx @rustledger/mcp-server --help || npx @rustledger/mcp-server --version || echo "MCP server installed successfully"
+          # Verify the package has a valid entry point
+          MAIN=$(node -e "console.log(require('@rustledger/mcp-server/package.json').main || 'index.js')")
+          if [ -f "node_modules/@rustledger/mcp-server/$MAIN" ]; then
+            echo "MCP server entry point found: $MAIN"
+          else
+            echo "Entry point not found: $MAIN"
+            ls -la node_modules/@rustledger/mcp-server/
+            exit 1
+          fi
 
   test-docker:
     name: Test Docker (ghcr.io)
@@ -687,12 +694,13 @@ jobs:
     name: Test AUR (rustledger from source)
     needs: prepare
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # Rust compilation can take 15-30 minutes
     container: archlinux:latest
     steps:
       - name: Setup Arch environment
         run: |
           pacman -Syu --noconfirm
-          pacman -S --noconfirm base-devel git sudo
+          pacman -S --noconfirm base-devel git sudo curl
 
       - name: Create build user
         run: |
