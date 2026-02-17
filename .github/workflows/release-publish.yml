@@ -64,27 +64,54 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
         run: |
-          # Use cargo's native workspace publishing (Rust 1.90+)
-          # This automatically handles dependency ordering and waits for
-          # each crate to be indexed before publishing dependents.
-          # See: https://github.com/rust-lang/cargo/issues/10297
+          # Publish each crate individually with error handling.
+          # This allows re-running the workflow if some crates failed,
+          # since already-published crates will be skipped gracefully.
           #
-          # Exclude rustledger-lsp: trusted publishing can't create new crates,
-          # so it must be published manually first with `cargo publish -p rustledger-lsp`
-          cargo publish --workspace --no-verify --exclude rustledger-lsp
+          # IMPORTANT: Order matters! Dependencies must be published before dependents.
+          # To determine the correct order, run: cargo metadata --format-version=1 | jq -r '.packages[].name'
+          # and arrange so that each crate's dependencies appear before it.
+          # Current dependency tree (simplified):
+          #   core -> parser -> booking -> plugin -> validate -> loader -> query -> importer -> rustledger
+          #   wasm and ffi-wasi depend on most crates; lsp depends on query
+          CRATES=(
+            rustledger-core
+            rustledger-parser
+            rustledger-booking
+            rustledger-plugin
+            rustledger-validate
+            rustledger-loader
+            rustledger-query
+            rustledger-importer
+            rustledger
+            rustledger-wasm
+            rustledger-ffi-wasi
+            rustledger-lsp
+          )
 
-          # Try to publish rustledger-lsp (may fail if it's a new crate)
-          echo "Attempting to publish rustledger-lsp..."
-          if cargo publish -p rustledger-lsp --no-verify 2>&1 | tee /tmp/lsp-publish.log; then
-            echo "✓ rustledger-lsp published successfully"
-          elif grep -q "already been uploaded" /tmp/lsp-publish.log; then
-            echo "✓ rustledger-lsp already published (skipping)"
-          elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/lsp-publish.log; then
-            echo "⚠ rustledger-lsp is a new crate - must be published manually first"
-            echo "::warning::rustledger-lsp requires manual first publish: cargo publish -p rustledger-lsp"
-          else
-            echo "✗ Failed to publish rustledger-lsp"
-            cat /tmp/lsp-publish.log
+          FAILED=()
+          for crate in "${CRATES[@]}"; do
+            echo "::group::Publishing $crate"
+            if cargo publish -p "$crate" --no-verify 2>&1 | tee /tmp/publish.log; then
+              echo "✓ $crate published successfully"
+              # Wait for crates.io to index the crate before publishing dependents
+              echo "Waiting 30s for crates.io indexing..."
+              sleep 30
+            elif grep -q "already been uploaded" /tmp/publish.log; then
+              echo "✓ $crate already published (skipping)"
+            elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/publish.log; then
+              echo "⚠ $crate is a new crate - must be published manually first"
+              echo "::warning::$crate requires manual first publish: cargo publish -p $crate"
+            else
+              echo "✗ Failed to publish $crate"
+              cat /tmp/publish.log
+              FAILED+=("$crate")
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ ${#FAILED[@]} -gt 0 ]; then
+            echo "::error::Failed to publish: ${FAILED[*]}"
             exit 1
           fi
 
