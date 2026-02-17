@@ -2,3 +2,5 @@
 # Financial term: Profit and Loss
 Pn = "Pn"
 pnl = "pnl"
+# Intentional typo in test (invalid SQL query)
+SELEKT = "SELEKT"
