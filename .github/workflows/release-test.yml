@@ -196,7 +196,8 @@ jobs:
           $expected = "${{ needs.prepare.outputs.version }}"
           Write-Host "Installed: $installed, Expected: $expected"
           if ($installed -ne $expected) {
-            Write-Host "ℹ Scoop may have an older version (bucket update may be pending)"
+            Write-Error "Version mismatch! Scoop bucket needs to be updated."
+            exit 1
           }
 
       - name: Create test file
@@ -586,10 +587,10 @@ jobs:
         include:
           - arch: x86_64
             target: x86_64-apple-darwin
-            runner: macos-13
+            runner: macos-15-intel
           - arch: aarch64
             target: aarch64-apple-darwin
-            runner: macos-latest
+            runner: macos-15
     steps:
       - name: Download release binary
         run: |
