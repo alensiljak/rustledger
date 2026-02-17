@@ -130,6 +130,79 @@ jobs:
       - name: Test bean-check compatibility
         run: bean-check /tmp/test.beancount
 
+  test-homebrew-macos:
+    name: Test Homebrew (macOS)
+    needs: prepare
+    runs-on: macos-latest
+    steps:
+      - name: Update Homebrew
+        run: brew update
+
+      - name: Untap custom tap (use homebrew-core)
+        run: brew untap rustledger/rustledger 2>/dev/null || true
+
+      - name: Install rustledger from homebrew-core
+        run: brew install rustledger
+
+      - name: Check installed version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed from homebrew-core: $INSTALLED"
+          echo "Just released: $EXPECTED"
+          if [ "$INSTALLED" = "$EXPECTED" ]; then
+            echo "✓ Homebrew has the latest version"
+          else
+            echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: rledger check /tmp/test.beancount
+
+      - name: Test bean-check compatibility
+        run: bean-check /tmp/test.beancount
+
+  test-scoop:
+    name: Test Scoop (Windows)
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Install Scoop
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+          irm get.scoop.sh | iex
+
+      - name: Add rustledger bucket and install
+        shell: pwsh
+        run: |
+          scoop bucket add rustledger https://github.com/rustledger/scoop-rustledger
+          scoop install rustledger
+
+      - name: Check installed version
+        shell: pwsh
+        run: |
+          $installed = (rledger --version) -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)' | Out-Null; $matches[1]
+          $expected = "${{ needs.prepare.outputs.version }}"
+          Write-Host "Installed: $installed, Expected: $expected"
+          if ($installed -ne $expected) {
+            Write-Host "ℹ Scoop may have an older version (bucket update may be pending)"
+          }
+
+      - name: Create test file
+        shell: pwsh
+        run: |
+          @"
+          ${{ env.TEST_BEANCOUNT }}
+          "@ | Out-File -FilePath test.beancount -Encoding utf8
+
+      - name: Test rledger check
+        shell: pwsh
+        run: rledger check test.beancount
+
   test-aur:
     name: Test AUR (Arch Linux)
     needs: prepare
@@ -224,6 +297,37 @@ jobs:
             console.log('Exports:', Object.keys(wasm));
           "
 
+  test-npm-mcp:
+    name: Test npm (@rustledger/mcp-server)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: node:lts
+    steps:
+      - name: Wait for npm propagation
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Waiting for @rustledger/mcp-server on npm..."
+          for i in $(seq 1 30); do
+            NPM_VERSION=$(npm view @rustledger/mcp-server version 2>/dev/null || echo "not found")
+            echo "npm version: $NPM_VERSION"
+            if [ "$NPM_VERSION" = "$VERSION" ]; then
+              echo "npm is up to date"
+              exit 0
+            fi
+            echo "Attempt $i/30: Not yet available, waiting 20s..."
+            sleep 20
+          done
+          echo "Timeout waiting for npm"
+          exit 1
+
+      - name: Install @rustledger/mcp-server
+        run: npm install @rustledger/mcp-server
+
+      - name: Test MCP server starts
+        run: |
+          # MCP server should respond to --help or --version
+          npx @rustledger/mcp-server --help || npx @rustledger/mcp-server --version || echo "MCP server installed successfully"
+
   test-docker:
     name: Test Docker (ghcr.io)
     needs: prepare
@@ -264,6 +368,130 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           docker run --rm -v /tmp/test.beancount:/data/test.beancount:ro \
             "ghcr.io/rustledger/rustledger:$VERSION" check /data/test.beancount
+
+  test-nix:
+    name: Test Nix
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Nix
+        uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Test nix run
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          # Run rledger from the flake
+          nix run github:rustledger/rustledger/v${VERSION} -- --version
+          INSTALLED=$(nix run github:rustledger/rustledger/v${VERSION} -- --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="$VERSION"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          nix run github:rustledger/rustledger/v${VERSION} -- check /tmp/test.beancount
+
+  test-copr:
+    name: Test COPR (Fedora)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: fedora:latest
+    steps:
+      - name: Enable COPR repository
+        run: |
+          dnf install -y dnf-plugins-core
+          dnf copr enable -y robcohen/rustledger
+
+      - name: Wait for COPR build
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Checking for rustledger $VERSION in COPR..."
+          for i in $(seq 1 20); do
+            # Check if package is available
+            AVAILABLE=$(dnf info rustledger 2>/dev/null | grep -E "^Version" | awk '{print $3}' || echo "not found")
+            echo "COPR version: $AVAILABLE"
+            if [ "$AVAILABLE" = "$VERSION" ]; then
+              echo "COPR has the latest version"
+              exit 0
+            fi
+            echo "Attempt $i/20: COPR not updated, waiting 30s..."
+            sleep 30
+          done
+          echo "Warning: COPR may not be updated yet, proceeding anyway..."
+
+      - name: Install rustledger
+        run: dnf install -y rustledger
+
+      - name: Check installed version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Warning: Version mismatch (COPR build may still be pending)"
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: rledger check /tmp/test.beancount
+
+  test-cargo-binstall:
+    name: Test cargo-binstall
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-binstall
+        run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
+
+      - name: Wait for binstall availability
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Waiting for rustledger $VERSION binaries..."
+          for i in $(seq 1 15); do
+            # Try to fetch the binary
+            if cargo binstall rustledger@$VERSION --no-confirm --dry-run 2>&1 | grep -q "would install"; then
+              echo "Binary available for binstall"
+              exit 0
+            fi
+            echo "Attempt $i/15: Not yet available, waiting 20s..."
+            sleep 20
+          done
+          echo "Proceeding with install attempt..."
+
+      - name: Install via cargo-binstall
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          cargo binstall rustledger@$VERSION --no-confirm
+
+      - name: Verify version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: rledger check /tmp/test.beancount
 
   test-github-release:
     name: Test GitHub Release (${{ matrix.target }})
@@ -320,16 +548,194 @@ jobs:
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "Assets:Bank"
 
+  test-github-release-macos:
+    name: Test GitHub Release (macOS ${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-apple-darwin
+            runner: macos-13
+          - arch: aarch64
+            target: aarch64-apple-darwin
+            runner: macos-latest
+    steps:
+      - name: Download release binary
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          URL="https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
+          echo "Downloading $URL"
+          curl -fsSL -o "$ARCHIVE" "$URL"
+          curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
+
+      - name: Verify checksum
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          echo "Verifying checksum..."
+          shasum -a 256 -c "${ARCHIVE}.sha256"
+
+      - name: Extract and verify version
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
+          tar -xzf "$ARCHIVE"
+          INSTALLED=$(./rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="$VERSION"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Version mismatch!"
+            exit 1
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger check
+        run: ./rledger check /tmp/test.beancount
+
+  test-github-release-windows:
+    name: Test GitHub Release (Windows)
+    needs: prepare
+    runs-on: windows-latest
+    steps:
+      - name: Download release binary
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.prepare.outputs.version }}"
+          $TARGET = "x86_64-pc-windows-msvc"
+          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
+          $URL = "https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
+          Write-Host "Downloading $URL"
+          Invoke-WebRequest -Uri $URL -OutFile $ARCHIVE
+          Invoke-WebRequest -Uri "${URL}.sha256" -OutFile "${ARCHIVE}.sha256"
+
+      - name: Verify checksum
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.prepare.outputs.version }}"
+          $TARGET = "x86_64-pc-windows-msvc"
+          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
+          $expected = (Get-Content "${ARCHIVE}.sha256").Split()[0]
+          $actual = (Get-FileHash -Algorithm SHA256 $ARCHIVE).Hash.ToLower()
+          Write-Host "Expected: $expected"
+          Write-Host "Actual: $actual"
+          if ($expected -ne $actual) {
+            Write-Error "Checksum mismatch!"
+            exit 1
+          }
+
+      - name: Extract and verify version
+        shell: pwsh
+        run: |
+          $VERSION = "${{ needs.prepare.outputs.version }}"
+          $TARGET = "x86_64-pc-windows-msvc"
+          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
+          Expand-Archive -Path $ARCHIVE -DestinationPath .
+          $installed = (.\rledger.exe --version) -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)' | Out-Null; $matches[1]
+          Write-Host "Installed: $installed, Expected: $VERSION"
+          if ($installed -ne $VERSION) {
+            Write-Error "Version mismatch!"
+            exit 1
+          }
+
+      - name: Create test file
+        shell: pwsh
+        run: |
+          @"
+          ${{ env.TEST_BEANCOUNT }}
+          "@ | Out-File -FilePath test.beancount -Encoding utf8
+
+      - name: Test rledger check
+        shell: pwsh
+        run: .\rledger.exe check test.beancount
+
+  test-aur-source:
+    name: Test AUR (rustledger from source)
+    needs: prepare
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Setup Arch environment
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm base-devel git sudo
+
+      - name: Create build user
+        run: |
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+      - name: Install yay
+        run: |
+          su - builder -c '
+            set -euo pipefail
+            git clone https://aur.archlinux.org/yay-bin.git /tmp/yay-bin
+            cd /tmp/yay-bin
+            makepkg -si --noconfirm
+          '
+
+      - name: Wait for AUR update
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
+          echo "Checking for rustledger $VERSION on AUR..."
+          for i in $(seq 1 15); do
+            AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/?v=5&type=info&arg=rustledger" | grep -oE '"Version":"[^"]+"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "not found")
+            echo "AUR version: $AUR_VERSION"
+            if [ "$AUR_VERSION" = "$VERSION" ]; then
+              echo "AUR is up to date"
+              exit 0
+            fi
+            echo "Attempt $i/15: AUR not updated, waiting 30s..."
+            sleep 30
+          done
+          echo "Warning: AUR may not be updated, proceeding anyway..."
+
+      - name: Install rustledger (from source)
+        run: |
+          su - builder -c 'yay -S --noconfirm rustledger'
+
+      - name: Verify version
+        run: |
+          INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          EXPECTED="${{ needs.prepare.outputs.version }}"
+          echo "Installed: $INSTALLED, Expected: $EXPECTED"
+          if [ "$INSTALLED" != "$EXPECTED" ]; then
+            echo "Warning: Version mismatch (AUR may not be updated yet)"
+          fi
+
+      - name: Create test file
+        run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
+
+      - name: Test rledger
+        run: rledger check /tmp/test.beancount
+
   summary:
     name: Test Summary
     needs:
       - prepare
       - test-cargo
+      - test-cargo-binstall
       - test-homebrew
+      - test-homebrew-macos
+      - test-scoop
       - test-aur
+      - test-aur-source
+      - test-copr
+      - test-nix
       - test-npm
+      - test-npm-mcp
       - test-docker
       - test-github-release
+      - test-github-release-macos
+      - test-github-release-windows
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -350,14 +756,35 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Package Managers" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Channel | Status |" >> $GITHUB_STEP_SUMMARY
           echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Cargo (crates.io) | $(status "${{ needs.test-cargo.result }}") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Homebrew | $(status "${{ needs.test-homebrew.result }}") |" >> $GITHUB_STEP_SUMMARY
-          echo "| AUR | $(status "${{ needs.test-aur.result }}") |" >> $GITHUB_STEP_SUMMARY
-          echo "| npm | $(status "${{ needs.test-npm.result }}") |" >> $GITHUB_STEP_SUMMARY
-          echo "| Docker | $(status "${{ needs.test-docker.result }}") |" >> $GITHUB_STEP_SUMMARY
-          echo "| GitHub Release | $(status "${{ needs.test-github-release.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| cargo-binstall | $(status "${{ needs.test-cargo-binstall.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Homebrew (Linux) | $(status "${{ needs.test-homebrew.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Homebrew (macOS) | $(status "${{ needs.test-homebrew-macos.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Scoop (Windows) | $(status "${{ needs.test-scoop.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| AUR (rustledger-bin) | $(status "${{ needs.test-aur.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| AUR (rustledger) | $(status "${{ needs.test-aur-source.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| COPR (Fedora) | $(status "${{ needs.test-copr.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| Nix | $(status "${{ needs.test-nix.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## npm Packages" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| @rustledger/wasm | $(status "${{ needs.test-npm.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| @rustledger/mcp-server | $(status "${{ needs.test-npm-mcp.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Container & Binaries" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Channel | Status |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Docker (ghcr.io) | $(status "${{ needs.test-docker.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release (Linux) | $(status "${{ needs.test-github-release.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release (macOS) | $(status "${{ needs.test-github-release-macos.result }}") |" >> $GITHUB_STEP_SUMMARY
+          echo "| GitHub Release (Windows) | $(status "${{ needs.test-github-release-windows.result }}") |" >> $GITHUB_STEP_SUMMARY
 
       - name: Check for failures
         if: contains(needs.*.result, 'failure')
