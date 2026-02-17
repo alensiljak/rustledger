@@ -825,3 +825,92 @@ jobs:
         run: |
           echo "One or more release channels failed testing"
           exit 1
+
+  update-badges:
+    name: Update Status Badges
+    needs:
+      - prepare
+      - test-cargo
+      - test-cargo-binstall
+      - test-homebrew
+      - test-homebrew-macos
+      - test-scoop
+      - test-aur
+      - test-aur-source
+      - test-copr
+      - test-nix
+      - test-npm
+      - test-npm-mcp
+      - test-docker
+      - test-github-release
+      - test-github-release-macos
+      - test-github-release-windows
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout badges branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
+        with:
+          ref: badges
+          fetch-depth: 1
+
+      - name: Generate badge JSON files
+        run: |
+          mkdir -p .github/badges
+          VERSION="${{ needs.prepare.outputs.version }}"
+
+          # Function to create badge JSON
+          create_badge() {
+            local name="$1"
+            local result="$2"
+            local label="$3"
+
+            case "$result" in
+              success) color="brightgreen"; message="passing" ;;
+              failure) color="red"; message="failing" ;;
+              skipped) color="lightgrey"; message="skipped" ;;
+              cancelled) color="lightgrey"; message="cancelled" ;;
+              *) color="lightgrey"; message="unknown" ;;
+            esac
+
+            cat > ".github/badges/${name}.json" << EOF
+          {
+            "schemaVersion": 1,
+            "label": "${label}",
+            "message": "${message}",
+            "color": "${color}"
+          }
+          EOF
+          }
+
+          # Create badges for each test job
+          create_badge "test-cargo" "${{ needs.test-cargo.result }}" "cargo"
+          create_badge "test-cargo-binstall" "${{ needs.test-cargo-binstall.result }}" "binstall"
+          create_badge "test-homebrew" "${{ needs.test-homebrew.result }}" "homebrew"
+          create_badge "test-homebrew-macos" "${{ needs.test-homebrew-macos.result }}" "macOS"
+          create_badge "test-scoop" "${{ needs.test-scoop.result }}" "scoop"
+          create_badge "test-aur" "${{ needs.test-aur.result }}" "AUR"
+          create_badge "test-aur-source" "${{ needs.test-aur-source.result }}" "AUR src"
+          create_badge "test-copr" "${{ needs.test-copr.result }}" "COPR"
+          create_badge "test-nix" "${{ needs.test-nix.result }}" "nix"
+          create_badge "test-npm" "${{ needs.test-npm.result }}" "npm"
+          create_badge "test-npm-mcp" "${{ needs.test-npm-mcp.result }}" "MCP"
+          create_badge "test-docker" "${{ needs.test-docker.result }}" "docker"
+          create_badge "test-github-release" "${{ needs.test-github-release.result }}" "linux"
+          create_badge "test-github-release-macos" "${{ needs.test-github-release-macos.result }}" "macOS"
+          create_badge "test-github-release-windows" "${{ needs.test-github-release-windows.result }}" "windows"
+
+          # Create a version file for reference
+          echo "$VERSION" > .github/badges/version.txt
+
+          ls -la .github/badges/
+
+      - name: Commit and push badges
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/badges/
+          git commit -m "Update release test badges for v${{ needs.prepare.outputs.version }}" || exit 0
+          git push

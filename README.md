@@ -63,18 +63,19 @@ Parse and validate your ledger faster than Python beancount.
 
 ## Install
 
-| Platform | Command |
-|----------|---------|
-| **macOS/Linux** | `brew install rustledger` |
-| **Arch Linux** | `yay -S rustledger-bin` or `yay -S rustledger` (from source) |
-| **Windows** | `scoop bucket add rustledger https://github.com/rustledger/scoop-rustledger && scoop install rustledger` |
-| **Cargo** | `cargo binstall rustledger` or `cargo install rustledger` |
-| **Fedora/RHEL** | `sudo dnf copr enable robcohen/rustledger && sudo dnf install rustledger` |
-| **Nix** | `nix run github:rustledger/rustledger` |
-| **Docker** | `docker run --rm -v "$PWD:/data" ghcr.io/rustledger/rustledger /data/ledger.beancount` |
-| **Binaries** | [GitHub Releases](https://github.com/rustledger/rustledger/releases) |
-| **npm (WASM)** | `npm install @rustledger/wasm` |
-| **npm (MCP)** | `npx @rustledger/mcp-server` ([Model Context Protocol](https://modelcontextprotocol.io) server) |
+| Platform | Command | Status |
+|----------|---------|:------:|
+| **macOS** | `brew install rustledger` | [![Homebrew macOS](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-homebrew-macos.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Linux** | `brew install rustledger` | [![Homebrew Linux](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-homebrew.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Arch Linux** | `yay -S rustledger-bin` | [![AUR](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-aur.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Fedora/RHEL** | `sudo dnf copr enable robcohen/rustledger && sudo dnf install rustledger` | [![COPR](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-copr.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Windows** | `scoop bucket add rustledger https://github.com/rustledger/scoop-rustledger && scoop install rustledger` | [![Scoop](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-scoop.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Cargo** | `cargo binstall rustledger` or `cargo install rustledger` | [![Cargo](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-cargo.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Nix** | `nix run github:rustledger/rustledger` | [![Nix](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-nix.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Docker** | `docker run --rm -v "$PWD:/data" ghcr.io/rustledger/rustledger /data/ledger.beancount` | [![Docker](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-docker.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **Binaries** | [GitHub Releases](https://github.com/rustledger/rustledger/releases) | [![Releases](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-github-release.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **npm (WASM)** | `npm install @rustledger/wasm` | [![npm WASM](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-npm.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
+| **npm (MCP)** | `npx @rustledger/mcp-server` ([Model Context Protocol](https://modelcontextprotocol.io) server) | [![npm MCP](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/badges/.github/badges/test-npm-mcp.json)](https://github.com/rustledger/rustledger/actions/workflows/release-test.yml) |
 
 <sub>Missing your platform? [Open an issue](https://github.com/rustledger/rustledger/issues/new) to request it.</sub>
 
