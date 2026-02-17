@@ -361,7 +361,7 @@ jobs:
           # Keys from: https://aur.archlinux.org/.ssh/known_hosts
           cat >> ~/.ssh/known_hosts << 'EOF'
           aur.archlinux.org ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEuBKrPzbawxA/k2g6NcyV5jmqwJ2s+zpgZGZ7tpLIcN
-          aur.archlinux.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDgkLJ5uGN4G9EYyy4DYE8pk9KfHBlKYSfb+eSXu7SLvKyP7v7YvC7tjlrfqP7kLJpDPmrKl8D8O5zL3QhEtjN1v5MHNqe8x3lXCy8jYvK9pL5p7W1NkTa3m95K98F3F1p9Hp9TDJnWv5X3QsRPkBl3F7tuxqQF3UDUzYHqVEPVBtHcPJ3p9fL4Oa3p2UZjNjp3jZi7iU3B7jCVmK3Z1o1G9KPgQj3qLFz7vYVWx4FU5+gCjvIVp+I1gF7BMpxPnCkr6v2r8E9WyJZlFvnTqV1pY/DqIGKN6J6zM6h3T7sDX3Jz4F6wB5g3DZ7OsRYU9S/4zEZ3FBvC7dU9V4p5Y7kT9H9R7p3TS9Zv5H8QM9QsO8rP5G7Dz3Fp9D5wJrV7bS3uL3J9pR6B3m7M9GFDJ7E3vMKt5zP4hN3m+D3zPL3Xo3Q3mR3yF7bS3Xk3T3m3O3xG3
+          aur.archlinux.org ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQDKF9vAFWdgm9Bi8uc+tYRBmXASBb5cB5iZsB7LOWWFeBrLp3r14w0/9S2vozjgqY5sJLDPONWoTTaVTbhe3vwO8CBKZTEt1AcWxuXNlRnk9FliR1/eNB9uz/7y1R0+c1Md+P98AJJSJWKN12nqIDIhjl2S1vOUvm7FNY43fU2knIhEbHybhwWeg+0wxpKwcAd/JeL5i92Uv03MYftOToUijd1pqyVFdJvQFhqD4v3M157jxS5FTOBrccAEjT+zYmFyD8WvKUa9vUclRddNllmBJdy4NyLB8SvVZULUPrP3QOlmzemeKracTlVOUG1wsDbxknF1BwSCU7CmU6UFP90kpWIyz66bP0bl67QAvlIc52Yix7pKJPbw85+zykvnfl2mdROsaT8p8R9nwCdFsBc9IiD0NhPEHcyHRwB8fokXTajk2QnGhL+zP5KnkmXnyQYOCUYo3EKMXIlVOVbPDgRYYT/XqvBuzq5S9rrU70KoI/S5lDnFfx/+lPLdtcnnEPk=
           aur.archlinux.org ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBLMiLrP8pVi5BFX2i3vepSUnpedeiewE5XptnUnau+ZoeUOPkpoCgZZuYfpaIQfhhJJI5qgnjJmr4hyJbe/zxow=
           EOF
           chmod 600 ~/.ssh/known_hosts
