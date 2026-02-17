@@ -232,7 +232,7 @@ jobs:
       - name: Wait for Docker image
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          IMAGE="ghcr.io/rustledger/rustledger:v$VERSION"
+          IMAGE="ghcr.io/rustledger/rustledger:$VERSION"
           echo "Waiting for $IMAGE..."
           for i in $(seq 1 20); do
             if docker pull "$IMAGE" 2>/dev/null; then
@@ -248,7 +248,7 @@ jobs:
       - name: Verify version
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          INSTALLED=$(docker run --rm "ghcr.io/rustledger/rustledger:v$VERSION" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          INSTALLED=$(docker run --rm "ghcr.io/rustledger/rustledger:$VERSION" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
           EXPECTED="$VERSION"
           echo "Installed: $INSTALLED, Expected: $EXPECTED"
           if [ "$INSTALLED" != "$EXPECTED" ]; then
@@ -263,7 +263,7 @@ jobs:
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           docker run --rm -v /tmp/test.beancount:/data/test.beancount:ro \
-            "ghcr.io/rustledger/rustledger:v$VERSION" check /data/test.beancount
+            "ghcr.io/rustledger/rustledger:$VERSION" check /data/test.beancount
 
   test-github-release:
     name: Test GitHub Release (${{ matrix.target }})
