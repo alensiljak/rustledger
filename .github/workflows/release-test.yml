@@ -861,25 +861,23 @@ jobs:
           mkdir -p .github/badges
           VERSION="${{ needs.prepare.outputs.version }}"
 
-          # Function to create badge JSON (shows version when passing)
+          # Function to create badge JSON (shows version with color indicating status)
           create_badge() {
             local name="$1"
             local result="$2"
             local label="$3"
 
             case "$result" in
-              success) color="brightgreen"; message="v${VERSION}" ;;
-              failure) color="red"; message="✗" ;;
-              skipped) color="lightgrey"; message="–" ;;
-              cancelled) color="lightgrey"; message="–" ;;
-              *) color="lightgrey"; message="?" ;;
+              success) color="brightgreen" ;;
+              failure) color="red" ;;
+              *) color="lightgrey" ;;
             esac
 
             cat > ".github/badges/${name}.json" << EOF
           {
             "schemaVersion": 1,
             "label": "${label}",
-            "message": "${message}",
+            "message": "v${VERSION}",
             "color": "${color}"
           }
           EOF
