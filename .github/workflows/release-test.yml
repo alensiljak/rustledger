@@ -847,6 +847,9 @@ jobs:
       - test-github-release-windows
     if: always()
     runs-on: ubuntu-latest
+    concurrency:
+      group: update-badges
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
