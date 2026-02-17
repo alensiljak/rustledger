@@ -103,8 +103,11 @@ jobs:
       - name: Update Homebrew
         run: brew update
 
-      - name: Install rustledger
-        run: brew install rustledger
+      - name: Untap custom tap (use homebrew-core)
+        run: brew untap rustledger/rustledger 2>/dev/null || true
+
+      - name: Install rustledger from homebrew-core
+        run: brew install homebrew/core/rustledger
 
       - name: Check installed version
         run: |
