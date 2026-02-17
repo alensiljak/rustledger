@@ -19,7 +19,12 @@ fn test_fixtures_dir() -> PathBuf {
 }
 
 fn rledger_binary() -> PathBuf {
-    project_root().join("target/debug/rledger")
+    // Use CARGO_BIN_EXE_rledger if available (set by cargo test),
+    // otherwise fall back to target/debug for manual runs
+    std::env::var("CARGO_BIN_EXE_rledger").map_or_else(
+        |_| project_root().join("target/debug/rledger"),
+        PathBuf::from,
+    )
 }
 
 // =============================================================================
