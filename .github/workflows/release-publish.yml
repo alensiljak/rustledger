@@ -387,19 +387,20 @@ jobs:
           fi
 
           # Update PKGBUILD with new version and checksum
-          cp packaging/arch/rustledger/PKGBUILD /tmp/PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" /tmp/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" /tmp/PKGBUILD
-          sed -i "s/^sha256sums=.*/sha256sums=('${SOURCE_SHA256}')/" /tmp/PKGBUILD
+          # Must be in workspace for Docker-based action to access it
+          cp packaging/arch/rustledger/PKGBUILD ./PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" ./PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" ./PKGBUILD
+          sed -i "s/^sha256sums=.*/sha256sums=('${SOURCE_SHA256}')/" ./PKGBUILD
 
           echo "Generated PKGBUILD:"
-          cat /tmp/PKGBUILD
+          cat ./PKGBUILD
 
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
         with:
           pkgname: rustledger
-          pkgbuild: /tmp/PKGBUILD
+          pkgbuild: ./PKGBUILD
           commit_username: rustledger-bot
           commit_email: bot@rustledger.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
@@ -429,20 +430,21 @@ jobs:
           done
 
           # Update PKGBUILD with new version and checksums
-          cp packaging/arch/rustledger-bin/PKGBUILD /tmp/PKGBUILD
-          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" /tmp/PKGBUILD
-          sed -i "s/^pkgrel=.*/pkgrel=1/" /tmp/PKGBUILD
-          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${X86_64_SHA256}')/" /tmp/PKGBUILD
-          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${AARCH64_SHA256}')/" /tmp/PKGBUILD
+          # Must be in workspace for Docker-based action to access it
+          cp packaging/arch/rustledger-bin/PKGBUILD ./PKGBUILD
+          sed -i "s/^pkgver=.*/pkgver=${VERSION}/" ./PKGBUILD
+          sed -i "s/^pkgrel=.*/pkgrel=1/" ./PKGBUILD
+          sed -i "s/^sha256sums_x86_64=.*/sha256sums_x86_64=('${X86_64_SHA256}')/" ./PKGBUILD
+          sed -i "s/^sha256sums_aarch64=.*/sha256sums_aarch64=('${AARCH64_SHA256}')/" ./PKGBUILD
 
           echo "Generated PKGBUILD:"
-          cat /tmp/PKGBUILD
+          cat ./PKGBUILD
 
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@2ac5a4c1d7035885d46b10e3193393be8460b6f1 # v4.1.1
         with:
           pkgname: rustledger-bin
-          pkgbuild: /tmp/PKGBUILD
+          pkgbuild: ./PKGBUILD
           commit_username: rustledger-bot
           commit_email: bot@rustledger.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
