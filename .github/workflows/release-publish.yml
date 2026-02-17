@@ -388,8 +388,8 @@ jobs:
           mkdir -p "$SSH_DIR"
           chmod 700 "$SSH_DIR"
 
-          # Write private key (use printf to avoid echo shell inconsistencies)
-          printf '%s' "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/aur"
+          # Write private key (printf %s\n ensures trailing newline required by SSH)
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/aur"
           chmod 600 "$SSH_DIR/aur"
 
           # Add AUR host keys (using printf to avoid YAML heredoc issues)
