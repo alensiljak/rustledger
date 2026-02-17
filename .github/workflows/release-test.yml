@@ -175,6 +175,8 @@ jobs:
         run: |
           Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
           irm get.scoop.sh | iex
+          # Ensure scoop is in PATH for subsequent steps
+          "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Add rustledger bucket and install
         shell: pwsh
@@ -185,7 +187,12 @@ jobs:
       - name: Check installed version
         shell: pwsh
         run: |
-          $installed = (rledger --version) -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)' | Out-Null; $matches[1]
+          $output = rledger --version
+          if ($output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
+            $installed = $matches[1]
+          } else {
+            $installed = "unknown"
+          }
           $expected = "${{ needs.prepare.outputs.version }}"
           Write-Host "Installed: $installed, Expected: $expected"
           if ($installed -ne $expected) {
@@ -382,9 +389,10 @@ jobs:
       - name: Test nix run
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
-          # Run rledger from the flake
-          nix run github:rustledger/rustledger/v${VERSION} -- --version
-          INSTALLED=$(nix run github:rustledger/rustledger/v${VERSION} -- --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
+          # Run rledger from the flake and capture output
+          OUTPUT=$(nix run github:rustledger/rustledger/v${VERSION} -- --version)
+          echo "$OUTPUT"
+          INSTALLED=$(echo "$OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
           EXPECTED="$VERSION"
           echo "Installed: $INSTALLED, Expected: $EXPECTED"
           if [ "$INSTALLED" != "$EXPECTED" ]; then
@@ -452,7 +460,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
 
       - name: Install cargo-binstall
         run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
@@ -500,9 +508,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
+        include:
+          - target: x86_64-unknown-linux-gnu
+            can_run: true
+          - target: x86_64-unknown-linux-musl
+            can_run: true
+          - target: aarch64-unknown-linux-gnu
+            can_run: false  # Can't run on x86_64 runner without QEMU
     steps:
       - name: Download release binary
         run: |
@@ -522,12 +534,18 @@ jobs:
           echo "Verifying checksum..."
           sha256sum -c "${ARCHIVE}.sha256"
 
-      - name: Extract and verify version
+      - name: Extract archive
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           tar -xzf "$ARCHIVE"
+          ls -la rledger*
+
+      - name: Verify version
+        if: matrix.can_run
+        run: |
+          VERSION="${{ needs.prepare.outputs.version }}"
           INSTALLED=$(./rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
           EXPECTED="$VERSION"
           echo "Installed: $INSTALLED, Expected: $EXPECTED"
@@ -537,12 +555,15 @@ jobs:
           fi
 
       - name: Create test file
+        if: matrix.can_run
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
 
       - name: Test rledger check
+        if: matrix.can_run
         run: ./rledger check /tmp/test.beancount
 
       - name: Test rledger query
+        if: matrix.can_run
         run: |
           OUTPUT=$(./rledger query /tmp/test.beancount "SELECT account, sum(position)")
           echo "$OUTPUT"
@@ -639,7 +660,12 @@ jobs:
           $TARGET = "x86_64-pc-windows-msvc"
           $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
           Expand-Archive -Path $ARCHIVE -DestinationPath .
-          $installed = (.\rledger.exe --version) -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)' | Out-Null; $matches[1]
+          $output = .\rledger.exe --version
+          if ($output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
+            $installed = $matches[1]
+          } else {
+            $installed = "unknown"
+          }
           Write-Host "Installed: $installed, Expected: $VERSION"
           if ($installed -ne $VERSION) {
             Write-Error "Version mismatch!"
