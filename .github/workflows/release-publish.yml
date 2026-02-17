@@ -369,6 +369,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: archlinux:latest
+    env:
+      # SSH paths for AUR authentication (container runs as root)
+      SSH_DIR: /root/.ssh
+      GIT_SSH_COMMAND: "ssh -F /root/.ssh/config -o UserKnownHostsFile=/root/.ssh/known_hosts -o BatchMode=yes"
     steps:
       - name: Install dependencies
         run: pacman -Syu --noconfirm git openssh pacman-contrib
@@ -381,13 +385,11 @@ jobs:
         env:
           AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
         run: |
-          # Use /root explicitly since container runs as root
-          SSH_DIR=/root/.ssh
           mkdir -p "$SSH_DIR"
           chmod 700 "$SSH_DIR"
 
-          # Write private key
-          echo "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/aur"
+          # Write private key (use printf to avoid echo shell inconsistencies)
+          printf '%s' "$AUR_SSH_PRIVATE_KEY" > "$SSH_DIR/aur"
           chmod 600 "$SSH_DIR/aur"
 
           # Add AUR host keys (using printf to avoid YAML heredoc issues)
@@ -444,7 +446,6 @@ jobs:
         env:
           VERSION: ${{ steps.checksums.outputs.version }}
           SOURCE_SHA256: ${{ steps.checksums.outputs.source_sha256 }}
-          GIT_SSH_COMMAND: "ssh -F /root/.ssh/config -o UserKnownHostsFile=/root/.ssh/known_hosts -o BatchMode=yes"
         run: |
           git clone ssh://aur@aur.archlinux.org/rustledger.git /tmp/aur-rustledger
           cd /tmp/aur-rustledger
@@ -470,7 +471,6 @@ jobs:
           VERSION: ${{ steps.checksums.outputs.version }}
           X86_64_SHA256: ${{ steps.checksums.outputs.x86_64_sha256 }}
           AARCH64_SHA256: ${{ steps.checksums.outputs.aarch64_sha256 }}
-          GIT_SSH_COMMAND: "ssh -F /root/.ssh/config -o UserKnownHostsFile=/root/.ssh/known_hosts -o BatchMode=yes"
         run: |
           git clone ssh://aur@aur.archlinux.org/rustledger-bin.git /tmp/aur-rustledger-bin
           cd /tmp/aur-rustledger-bin
