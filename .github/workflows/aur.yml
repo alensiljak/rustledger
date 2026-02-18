@@ -145,13 +145,14 @@ jobs:
             -v /tmp/sccache-bin:/usr/local/bin/sccache:ro \
             -e SCCACHE_DIR=/sccache-cache \
             -e RUSTC_WRAPPER=/usr/local/bin/sccache \
-            archlinux:latest \
+            archlinux:base-devel \
             bash -c '
               set -euo pipefail
 
               echo "=== Setting up Arch Linux build environment ==="
               pacman -Syu --noconfirm
-              pacman -S --noconfirm base-devel git sudo namcap
+              # base-devel already in image, just need git, namcap, and rust
+              pacman -S --noconfirm git sudo namcap rust
 
               # Verify sccache is available
               chmod +x /usr/local/bin/sccache
