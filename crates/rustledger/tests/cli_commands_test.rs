@@ -18,13 +18,39 @@ fn test_fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-fn rledger_binary() -> PathBuf {
-    // Use CARGO_BIN_EXE_rledger if available (set by cargo test),
-    // otherwise fall back to target/debug for manual runs
-    std::env::var("CARGO_BIN_EXE_rledger").map_or_else(
-        |_| project_root().join("target/debug/rledger"),
-        PathBuf::from,
-    )
+fn rledger_binary() -> Option<PathBuf> {
+    // Use CARGO_BIN_EXE_rledger if available (set by cargo test)
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
+        return Some(PathBuf::from(path));
+    }
+
+    // Check target/release first (for --release builds)
+    let release_path = project_root().join("target/release/rledger");
+    if release_path.exists() {
+        return Some(release_path);
+    }
+
+    // Fall back to target/debug
+    let debug_path = project_root().join("target/debug/rledger");
+    if debug_path.exists() {
+        return Some(debug_path);
+    }
+
+    // Binary not found (Nix builds, not yet built, etc.)
+    None
+}
+
+/// Helper macro to skip tests when rledger binary is not available
+macro_rules! require_rledger {
+    () => {
+        match rledger_binary() {
+            Some(path) => path,
+            None => {
+                eprintln!("Skipping: rledger binary not found");
+                return;
+            }
+        }
+    };
 }
 
 // =============================================================================
@@ -33,7 +59,7 @@ fn rledger_binary() -> PathBuf {
 
 #[test]
 fn test_check_version() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["check", "--version"])
         .output()
         .expect("Failed to run rledger check --version");
@@ -49,7 +75,7 @@ fn test_check_version() {
 
 #[test]
 fn test_check_help() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["check", "--help"])
         .output()
         .expect("Failed to run rledger check --help");
@@ -70,7 +96,7 @@ fn test_check_valid_file() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg(&path)
         .output()
@@ -81,7 +107,7 @@ fn test_check_valid_file() {
 
 #[test]
 fn test_check_nonexistent_file() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["check", "/nonexistent/file.beancount"])
         .output()
         .expect("Failed to run rledger check");
@@ -100,7 +126,7 @@ fn test_check_json_output() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg("--json")
         .arg(&path)
@@ -133,7 +159,7 @@ fn test_check_json_output() {
 
 #[test]
 fn test_query_version() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["query", "--version"])
         .output()
         .expect("Failed to run rledger query --version");
@@ -143,7 +169,7 @@ fn test_query_version() {
 
 #[test]
 fn test_query_help() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["query", "--help"])
         .output()
         .expect("Failed to run rledger query --help");
@@ -164,7 +190,7 @@ fn test_query_select_accounts() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("query")
         .arg(&path)
         .arg("SELECT DISTINCT account ORDER BY account")
@@ -187,7 +213,7 @@ fn test_query_sum_positions() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("query")
         .arg(&path)
         .arg("SELECT account, SUM(position) GROUP BY account ORDER BY account")
@@ -205,7 +231,7 @@ fn test_query_invalid_syntax() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("query")
         .arg(&path)
         .arg("SELEKT * FROM entries") // Intentional typo
@@ -223,7 +249,7 @@ fn test_query_json_output() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("query")
         .arg("--json")
         .arg(&path)
@@ -256,7 +282,7 @@ fn test_query_json_output() {
 
 #[test]
 fn test_format_version() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["format", "--version"])
         .output()
         .expect("Failed to run rledger format --version");
@@ -266,7 +292,7 @@ fn test_format_version() {
 
 #[test]
 fn test_format_help() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["format", "--help"])
         .output()
         .expect("Failed to run rledger format --help");
@@ -282,7 +308,7 @@ fn test_format_file() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("format")
         .arg(&path)
         .output()
@@ -306,7 +332,7 @@ fn test_format_check_mode() {
     }
 
     // --check mode should not modify file, just check if formatting needed
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("format")
         .arg("--check")
         .arg(&path)
@@ -324,7 +350,7 @@ fn test_format_check_mode() {
 
 #[test]
 fn test_doctor_version() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["doctor", "--version"])
         .output()
         .expect("Failed to run rledger doctor --version");
@@ -334,7 +360,7 @@ fn test_doctor_version() {
 
 #[test]
 fn test_doctor_help() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["doctor", "--help"])
         .output()
         .expect("Failed to run rledger doctor --help");
@@ -350,7 +376,7 @@ fn test_doctor_missing_open() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("doctor")
         .arg("missing-open")
         .arg(&path)
@@ -372,7 +398,7 @@ fn test_doctor_context() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("doctor")
         .arg("context")
         .arg(&path)
@@ -390,7 +416,7 @@ fn test_doctor_context() {
 
 #[test]
 fn test_report_version() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["report", "--version"])
         .output()
         .expect("Failed to run rledger report --version");
@@ -400,7 +426,7 @@ fn test_report_version() {
 
 #[test]
 fn test_report_help() {
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .args(["report", "--help"])
         .output()
         .expect("Failed to run rledger report --help");
@@ -416,7 +442,7 @@ fn test_report_balances() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("report")
         .arg(&path)
         .arg("balances")
@@ -450,7 +476,7 @@ fn test_report_trial_balance() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("report")
         .arg(&path)
         .arg("trial-balance")
@@ -474,7 +500,7 @@ fn test_report_journal() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("report")
         .arg(&path)
         .arg("journal")
@@ -509,7 +535,7 @@ fn test_error_message_includes_line_number() {
     let temp_file = temp_dir.join("error-line-test.beancount");
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg(&temp_file)
         .output()
@@ -541,7 +567,7 @@ fn test_error_message_includes_file_path() {
     let temp_file = temp_dir.join("error-path-test.beancount");
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg(&temp_file)
         .output()
@@ -574,7 +600,7 @@ fn test_check_with_native_plugin() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg("--native-plugin")
         .arg("auto_accounts")
@@ -596,7 +622,7 @@ fn test_check_with_unknown_plugin() {
         return;
     }
 
-    let output = Command::new(rledger_binary())
+    let output = Command::new(require_rledger!())
         .arg("check")
         .arg("--native-plugin")
         .arg("nonexistent_plugin_xyz_12345")
@@ -636,7 +662,7 @@ fn test_query_stdin_input() {
   Assets:Bank   -5.00 USD
 "#;
 
-    let mut child = Command::new(rledger_binary())
+    let mut child = Command::new(require_rledger!())
         .arg("query")
         .arg("-") // Read from stdin
         .arg("SELECT account")
