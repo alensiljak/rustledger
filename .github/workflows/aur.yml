@@ -144,8 +144,9 @@ jobs:
               namcap PKGBUILD || echo "namcap warnings (non-fatal)"
 
               echo ""
-              echo "=== Running makepkg (build + check + package) ==="
-              su builder -c "makepkg -sf --noconfirm"
+              echo "=== Running makepkg (build + package, skipping check) ==="
+              # Skip check() since tests already run in CI - this saves ~15 minutes
+              su builder -c "makepkg -sf --noconfirm --nocheck"
 
               echo ""
               echo "=== Build successful! ==="
