@@ -23,13 +23,33 @@ fn spec_fixtures_dir() -> PathBuf {
     project_root().join("tests/fixtures")
 }
 
-fn rledger_binary() -> PathBuf {
-    project_root().join("target/debug/rledger")
+fn rledger_binary() -> Option<PathBuf> {
+    // Use CARGO_BIN_EXE_rledger if available (set by cargo test)
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
+        return Some(PathBuf::from(path));
+    }
+
+    // Check target/release first (for --release builds like AUR PKGBUILD)
+    let release_path = project_root().join("target/release/rledger");
+    if release_path.exists() {
+        return Some(release_path);
+    }
+
+    // Fall back to target/debug
+    let debug_path = project_root().join("target/debug/rledger");
+    if debug_path.exists() {
+        return Some(debug_path);
+    }
+
+    // Binary not found (Nix builds, not yet built, etc.)
+    None
 }
 
 /// Run rledger check on a file and return (success, output).
-fn rledger_check(path: &Path) -> (bool, String) {
-    let output = Command::new(rledger_binary())
+/// Returns None if the rledger binary is not available.
+fn rledger_check(path: &Path) -> Option<(bool, String)> {
+    let binary = rledger_binary()?;
+    let output = Command::new(binary)
         .arg("check")
         .arg(path)
         .output()
@@ -41,12 +61,14 @@ fn rledger_check(path: &Path) -> (bool, String) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    (success, combined)
+    Some((success, combined))
 }
 
 /// Run rledger check with `auto_accounts` plugin (permissive mode like Python beancount).
-fn rledger_check_permissive(path: &Path) -> (bool, String) {
-    let output = Command::new(rledger_binary())
+/// Returns None if the rledger binary is not available.
+fn rledger_check_permissive(path: &Path) -> Option<(bool, String)> {
+    let binary = rledger_binary()?;
+    let output = Command::new(binary)
         .arg("check")
         .arg("--native-plugin")
         .arg("auto_accounts")
@@ -60,7 +82,7 @@ fn rledger_check_permissive(path: &Path) -> (bool, String) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    (success, combined)
+    Some((success, combined))
 }
 
 /// Parse a file with the parser and return (success, `error_count`).
@@ -124,7 +146,10 @@ fn test_booking_scenarios_validates() {
     }
 
     // Use permissive mode since this file may not have all Open directives
-    let (success, output) = rledger_check_permissive(&path);
+    let Some((success, output)) = rledger_check_permissive(&path) else {
+        eprintln!("Skipping: rledger binary not found");
+        return;
+    };
     // Note: This file tests booking scenarios which may require the booking
     // engine to fill in missing amounts. Some E3001 (unbalanced) errors are
     // expected if the booking engine hasn't processed the transactions.
@@ -169,7 +194,10 @@ fn test_validation_errors_produces_expected_errors() {
         return;
     }
 
-    let (success, output) = rledger_check(&path);
+    let Some((success, output)) = rledger_check(&path) else {
+        eprintln!("Skipping: rledger binary not found");
+        return;
+    };
 
     // This file should produce validation errors (not parse errors)
     assert!(
@@ -366,6 +394,12 @@ fn test_example_files_validate() {
         return;
     }
 
+    // Check if rledger binary is available before iterating
+    if rledger_binary().is_none() {
+        eprintln!("Skipping: rledger binary not found");
+        return;
+    }
+
     let mut failures = Vec::new();
     let mut skipped = 0;
 
@@ -378,7 +412,9 @@ fn test_example_files_validate() {
 
         // Use permissive mode (auto_accounts) since these examples don't always
         // have explicit Open directives - Python beancount auto-creates them
-        let (success, output) = rledger_check_permissive(path);
+        let Some((success, output)) = rledger_check_permissive(path) else {
+            continue; // Should not happen since we checked above
+        };
         if !success {
             // Truncate output for readability
             let short_output: String = output.lines().take(3).collect::<Vec<_>>().join("\n");
