@@ -63,3 +63,4 @@ book/
 tests/compatibility/synthetic/
 .playwright*
 .venv-plugins/
+packaging/arch/rustledger/.SRCINFO
