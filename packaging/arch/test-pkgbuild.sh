@@ -8,9 +8,8 @@ cd "$SCRIPT_DIR"
 echo "=== Testing PKGBUILD in Arch Linux container ==="
 
 # Run makepkg in a clean Arch container
-docker run --rm -it \
+docker run --rm \
   -v "$SCRIPT_DIR/rustledger:/pkg:ro" \
-  -w /build \
   archlinux:latest \
   bash -c '
     set -euo pipefail
@@ -23,24 +22,19 @@ docker run --rm -it \
     useradd -m builder
     echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-    # Copy PKGBUILD to build directory
-    cp -r /pkg/* .
-    chown -R builder:builder .
+    # Create build directory and copy PKGBUILD
+    mkdir -p /home/builder/build
+    cp -r /pkg/* /home/builder/build/
+    chown -R builder:builder /home/builder/build
+    cd /home/builder/build
 
-    # Build and test
     echo ""
     echo "=== Running makepkg ==="
     su builder -c "makepkg -sf --noconfirm"
 
     echo ""
-    echo "=== Running checks ==="
-    su builder -c "makepkg -sf --noconfirm --check" || {
-      echo "Check failed (may be expected - see output above)"
-    }
-
-    echo ""
     echo "=== Build successful ==="
-    ls -la *.pkg.tar.zst
+    ls -la *.pkg.tar.zst 2>/dev/null || ls -la *.pkg.tar.*
   '
 
 echo ""
