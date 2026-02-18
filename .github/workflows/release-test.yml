@@ -1,8 +1,10 @@
 name: Release Channel Testing
 
 on:
-  release:
-    types: [published]
+  # Run after Release Publish completes (ensures packages are actually published)
+  workflow_run:
+    workflows: ["Release Publish"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -15,7 +17,6 @@ permissions:
   packages: read
 
 env:
-  VERSION: ${{ inputs.version || github.event.release.tag_name }}
   TEST_BEANCOUNT: |
     option "operating_currency" "USD"
     2024-01-01 open Assets:Bank USD
@@ -29,16 +30,60 @@ env:
       Assets:Bank
 
 jobs:
-  # Strip 'v' prefix from version for comparisons
+  # Extract version and validate before running tests
   prepare:
     runs-on: ubuntu-latest
+    # Only run if triggered manually OR if the publish workflow succeeded
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Extract version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          # Pass potentially untrusted values via env vars to prevent injection
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
         run: |
-          VERSION="${{ env.VERSION }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # Manual trigger: use provided input
+            VERSION="$INPUT_VERSION"
+          else
+            # workflow_run trigger: fetch the tag from the triggering workflow
+            # The triggering workflow (Release Publish) runs on release events,
+            # so head_branch contains the tag name (e.g., v0.9.1)
+            VERSION="$HEAD_BRANCH"
+
+            # If head_branch doesn't look like a version tag, try to get it from
+            # the workflow run's inputs (for workflow_dispatch triggers of Release Publish)
+            if ! echo "$VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+              echo "head_branch '$VERSION' doesn't look like a version tag"
+              echo "Fetching from triggering workflow inputs..."
+              VERSION=$(gh api "repos/$REPO/actions/runs/$RUN_ID" \
+                --jq '.head_branch // empty')
+
+              # If still not a version, fail with clear error
+              if ! echo "$VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+                echo "::error::Could not determine version tag from triggering workflow"
+                echo "head_branch was: $HEAD_BRANCH"
+                exit 1
+              fi
+            fi
+          fi
+
+          # Validate version format
+          if ! echo "$VERSION" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::Invalid version format: $VERSION (expected semver like v1.2.3 or 1.2.3)"
+            exit 1
+          fi
+
+          # Strip 'v' prefix
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Testing version: $VERSION"
@@ -48,10 +93,11 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: rust:latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Wait for crates.io propagation
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Waiting for rustledger $VERSION on crates.io..."
           for i in $(seq 1 30); do
             AVAILABLE=$(cargo search rustledger 2>/dev/null | grep "^rustledger = " | head -1 || true)
@@ -71,9 +117,8 @@ jobs:
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -99,6 +144,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: homebrew/brew:latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Update Homebrew
         run: brew update
@@ -112,10 +159,9 @@ jobs:
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
           echo "Installed from homebrew-core: $INSTALLED"
-          echo "Just released: $EXPECTED"
-          if [ "$INSTALLED" = "$EXPECTED" ]; then
+          echo "Just released: $VERSION"
+          if [ "$INSTALLED" = "$VERSION" ]; then
             echo "✓ Homebrew has the latest version"
           else
             echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
@@ -134,6 +180,8 @@ jobs:
     name: Test Homebrew (macOS)
     needs: prepare
     runs-on: macos-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Update Homebrew
         run: brew update
@@ -147,10 +195,9 @@ jobs:
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
           echo "Installed from homebrew-core: $INSTALLED"
-          echo "Just released: $EXPECTED"
-          if [ "$INSTALLED" = "$EXPECTED" ]; then
+          echo "Just released: $VERSION"
+          if [ "$INSTALLED" = "$VERSION" ]; then
             echo "✓ Homebrew has the latest version"
           else
             echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
@@ -169,6 +216,8 @@ jobs:
     name: Test Scoop (Windows)
     needs: prepare
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Install Scoop
         shell: pwsh
@@ -193,9 +242,8 @@ jobs:
           } else {
             $installed = "unknown"
           }
-          $expected = "${{ needs.prepare.outputs.version }}"
-          Write-Host "Installed: $installed, Expected: $expected"
-          if ($installed -ne $expected) {
+          Write-Host "Installed: $installed, Expected: $env:VERSION"
+          if ($installed -ne $env:VERSION) {
             Write-Error "Version mismatch! Scoop bucket needs to be updated."
             exit 1
           }
@@ -216,6 +264,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: archlinux:latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Setup Arch environment
         run: |
@@ -238,7 +288,6 @@ jobs:
 
       - name: Wait for AUR update
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Checking for rustledger-bin $VERSION on AUR..."
           for i in $(seq 1 15); do
             AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/?v=5&type=info&arg=rustledger-bin" | grep -oE '"Version":"[^"]+"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "not found")
@@ -259,9 +308,8 @@ jobs:
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (AUR may not be updated yet)"
           fi
 
@@ -276,10 +324,11 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: node:lts
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Wait for npm propagation
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Waiting for @rustledger/wasm on npm..."
           for i in $(seq 1 30); do
             NPM_VERSION=$(npm view @rustledger/wasm version 2>/dev/null || echo "not found")
@@ -310,10 +359,11 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: node:lts
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Wait for npm propagation
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Waiting for @rustledger/mcp-server on npm..."
           for i in $(seq 1 30); do
             NPM_VERSION=$(npm view @rustledger/mcp-server version 2>/dev/null || echo "not found")
@@ -347,10 +397,11 @@ jobs:
     name: Test Docker (ghcr.io)
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Wait for Docker image
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           IMAGE="ghcr.io/rustledger/rustledger:$VERSION"
           echo "Waiting for $IMAGE..."
           for i in $(seq 1 20); do
@@ -366,11 +417,9 @@ jobs:
 
       - name: Verify version
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           INSTALLED=$(docker run --rm "ghcr.io/rustledger/rustledger:$VERSION" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="$VERSION"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -380,7 +429,6 @@ jobs:
 
       - name: Test rledger check
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           docker run --rm -v /tmp/test.beancount:/data/test.beancount:ro \
             "ghcr.io/rustledger/rustledger:$VERSION" check /data/test.beancount
 
@@ -388,6 +436,8 @@ jobs:
     name: Test Nix
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Install Nix
         uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
@@ -396,14 +446,12 @@ jobs:
 
       - name: Test nix run
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           # Run rledger from the flake and capture output
           OUTPUT=$(nix run github:rustledger/rustledger/v${VERSION} -- --version)
           echo "$OUTPUT"
           INSTALLED=$(echo "$OUTPUT" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="$VERSION"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -413,7 +461,6 @@ jobs:
 
       - name: Test rledger check
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           nix run github:rustledger/rustledger/v${VERSION} -- check /tmp/test.beancount
 
   test-copr:
@@ -421,6 +468,8 @@ jobs:
     needs: prepare
     runs-on: ubuntu-latest
     container: fedora:latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Enable COPR repository
         run: |
@@ -429,7 +478,6 @@ jobs:
 
       - name: Wait for COPR build
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Checking for rustledger $VERSION in COPR..."
           for i in $(seq 1 20); do
             # Check if package is available
@@ -450,9 +498,8 @@ jobs:
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (COPR build may still be pending)"
           fi
 
@@ -466,6 +513,8 @@ jobs:
     name: Test cargo-binstall
     needs: prepare
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
@@ -475,7 +524,6 @@ jobs:
 
       - name: Wait for binstall availability
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Waiting for rustledger $VERSION binaries..."
           for i in $(seq 1 15); do
             # Try to fetch the binary
@@ -490,15 +538,13 @@ jobs:
 
       - name: Install via cargo-binstall
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           cargo binstall rustledger@$VERSION --no-confirm
 
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -523,11 +569,13 @@ jobs:
             can_run: true
           - target: aarch64-unknown-linux-gnu
             can_run: false  # Can't run on x86_64 runner without QEMU
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Download release binary
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           URL="https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
           echo "Downloading $URL"
@@ -535,17 +583,17 @@ jobs:
           curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
 
       - name: Verify checksum
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           echo "Verifying checksum..."
           sha256sum -c "${ARCHIVE}.sha256"
 
       - name: Extract archive
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           tar -xzf "$ARCHIVE"
           ls -la rledger*
@@ -553,11 +601,9 @@ jobs:
       - name: Verify version
         if: matrix.can_run
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           INSTALLED=$(./rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="$VERSION"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -591,11 +637,13 @@ jobs:
           - arch: aarch64
             target: aarch64-apple-darwin
             runner: macos-15
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Download release binary
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           URL="https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
           echo "Downloading $URL"
@@ -603,23 +651,22 @@ jobs:
           curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
 
       - name: Verify checksum
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           echo "Verifying checksum..."
           shasum -a 256 -c "${ARCHIVE}.sha256"
 
       - name: Extract and verify version
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
-          TARGET="${{ matrix.target }}"
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           tar -xzf "$ARCHIVE"
           INSTALLED=$(./rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="$VERSION"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Version mismatch!"
             exit 1
           fi
@@ -634,14 +681,15 @@ jobs:
     name: Test GitHub Release (Windows)
     needs: prepare
     runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Download release binary
         shell: pwsh
         run: |
-          $VERSION = "${{ needs.prepare.outputs.version }}"
           $TARGET = "x86_64-pc-windows-msvc"
-          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
-          $URL = "https://github.com/rustledger/rustledger/releases/download/v${VERSION}/${ARCHIVE}"
+          $ARCHIVE = "rustledger-v$env:VERSION-${TARGET}.zip"
+          $URL = "https://github.com/rustledger/rustledger/releases/download/v$env:VERSION/${ARCHIVE}"
           Write-Host "Downloading $URL"
           Invoke-WebRequest -Uri $URL -OutFile $ARCHIVE
           Invoke-WebRequest -Uri "${URL}.sha256" -OutFile "${ARCHIVE}.sha256"
@@ -649,9 +697,8 @@ jobs:
       - name: Verify checksum
         shell: pwsh
         run: |
-          $VERSION = "${{ needs.prepare.outputs.version }}"
           $TARGET = "x86_64-pc-windows-msvc"
-          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
+          $ARCHIVE = "rustledger-v$env:VERSION-${TARGET}.zip"
           $expected = (Get-Content "${ARCHIVE}.sha256").Split()[0]
           $actual = (Get-FileHash -Algorithm SHA256 $ARCHIVE).Hash.ToLower()
           Write-Host "Expected: $expected"
@@ -664,9 +711,8 @@ jobs:
       - name: Extract and verify version
         shell: pwsh
         run: |
-          $VERSION = "${{ needs.prepare.outputs.version }}"
           $TARGET = "x86_64-pc-windows-msvc"
-          $ARCHIVE = "rustledger-v${VERSION}-${TARGET}.zip"
+          $ARCHIVE = "rustledger-v$env:VERSION-${TARGET}.zip"
           Expand-Archive -Path $ARCHIVE -DestinationPath .
           $output = .\rledger.exe --version
           if ($output -match '(\d+\.\d+\.\d+(-[a-zA-Z0-9.]+)?)') {
@@ -674,8 +720,8 @@ jobs:
           } else {
             $installed = "unknown"
           }
-          Write-Host "Installed: $installed, Expected: $VERSION"
-          if ($installed -ne $VERSION) {
+          Write-Host "Installed: $installed, Expected: $env:VERSION"
+          if ($installed -ne $env:VERSION) {
             Write-Error "Version mismatch!"
             exit 1
           }
@@ -697,6 +743,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45  # Rust compilation can take 15-30 minutes
     container: archlinux:latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Setup Arch environment
         run: |
@@ -719,7 +767,6 @@ jobs:
 
       - name: Wait for AUR update
         run: |
-          VERSION="${{ needs.prepare.outputs.version }}"
           echo "Checking for rustledger $VERSION on AUR..."
           for i in $(seq 1 15); do
             AUR_VERSION=$(curl -s "https://aur.archlinux.org/rpc/?v=5&type=info&arg=rustledger" | grep -oE '"Version":"[^"]+"' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "not found")
@@ -740,9 +787,8 @@ jobs:
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
-          EXPECTED="${{ needs.prepare.outputs.version }}"
-          echo "Installed: $INSTALLED, Expected: $EXPECTED"
-          if [ "$INSTALLED" != "$EXPECTED" ]; then
+          echo "Installed: $INSTALLED, Expected: $VERSION"
+          if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (AUR may not be updated yet)"
           fi
 
@@ -773,6 +819,8 @@ jobs:
       - test-github-release-windows
     if: always()
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Generate summary
         run: |
@@ -789,7 +837,7 @@ jobs:
 
           echo "# Release Channel Test Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Version:** ${{ needs.prepare.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Version:** $VERSION" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "## Package Managers" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -853,6 +901,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
     steps:
       - name: Checkout badges branch
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -863,7 +913,6 @@ jobs:
       - name: Generate badge JSON files
         run: |
           mkdir -p .github/badges
-          VERSION="${{ needs.prepare.outputs.version }}"
 
           # Function to create badge JSON (shows version with color indicating status)
           create_badge() {
@@ -914,5 +963,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .github/badges/
-          git commit -m "Update release test badges for v${{ needs.prepare.outputs.version }}" || exit 0
+          git commit -m "Update release test badges for v$VERSION" || exit 0
           git push
