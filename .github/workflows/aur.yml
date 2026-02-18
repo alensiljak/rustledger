@@ -16,6 +16,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -28,11 +31,11 @@ jobs:
       run: ${{ steps.decide.outputs.run }}
     steps:
       - name: Checkout for path filtering
-        uses: actions/checkout@v4
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
 
       - name: Check for packaging changes
         id: changes
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         with:
           filters: |
             packaging:
@@ -79,13 +82,13 @@ jobs:
       SCCACHE_GHA_ENABLED: true
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
 
       - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.9
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
 
       - name: Cache sccache for Arch container
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /tmp/sccache-cache
           key: aur-sccache-${{ hashFiles('Cargo.lock') }}
@@ -93,7 +96,7 @@ jobs:
             aur-sccache-
 
       - name: Cache cargo registry
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /tmp/cargo-cache
           key: aur-cargo-${{ hashFiles('Cargo.lock') }}
@@ -101,7 +104,7 @@ jobs:
             aur-cargo-
 
       - name: Set up Docker
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       # For release PRs, we need to create a test tarball since the version
       # won't be published to GitHub yet
