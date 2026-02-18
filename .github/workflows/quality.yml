@@ -96,3 +96,16 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  # Gate job - all quality checks must pass
+  quality:
+    name: quality
+    if: always()
+    needs: [semver, msrv, deny, coverage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all quality jobs
+        run: |
+          result="${{ (contains(needs.*.result, 'failure') && 'failure') || (contains(needs.*.result, 'cancelled') && 'cancelled') || 'success' }}"
+          echo "Quality gate result: $result"
+          [[ "$result" == "success" ]] || exit 1
