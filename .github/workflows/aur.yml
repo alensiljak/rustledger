@@ -75,9 +75,22 @@ jobs:
     runs-on: ubuntu-latest
     needs: should-run
     if: needs.should-run.outputs.run == 'true' && github.repository == 'rustledger/rustledger'
+    env:
+      SCCACHE_GHA_ENABLED: true
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - name: Cache sccache for Arch container
+        uses: actions/cache@v4
+        with:
+          path: /tmp/sccache-cache
+          key: aur-sccache-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            aur-sccache-
 
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
@@ -117,10 +130,21 @@ jobs:
           echo "=== Modified PKGBUILD ==="
           cat /tmp/pkgbuild-test/PKGBUILD
 
+      - name: Prepare sccache for container
+        run: |
+          # Create sccache cache directory
+          mkdir -p /tmp/sccache-cache
+          # Copy sccache binary (installed by sccache-action)
+          cp "$(which sccache)" /tmp/sccache-bin
+
       - name: Test PKGBUILD in Arch container
         run: |
           docker run --rm \
             -v /tmp/pkgbuild-test:/pkg:ro \
+            -v /tmp/sccache-cache:/sccache-cache \
+            -v /tmp/sccache-bin:/usr/local/bin/sccache:ro \
+            -e SCCACHE_DIR=/sccache-cache \
+            -e RUSTC_WRAPPER=/usr/local/bin/sccache \
             archlinux:latest \
             bash -c '
               set -euo pipefail
@@ -128,6 +152,10 @@ jobs:
               echo "=== Setting up Arch Linux build environment ==="
               pacman -Syu --noconfirm
               pacman -S --noconfirm base-devel git sudo namcap
+
+              # Verify sccache is available
+              chmod +x /usr/local/bin/sccache
+              echo "sccache version: $(/usr/local/bin/sccache --version)"
 
               # Create non-root build user (makepkg requirement)
               useradd -m builder
@@ -137,6 +165,7 @@ jobs:
               mkdir -p /home/builder/build
               cp /pkg/* /home/builder/build/
               chown -R builder:builder /home/builder/build
+              chown -R builder:builder /sccache-cache
               cd /home/builder/build
 
               echo ""
@@ -146,7 +175,12 @@ jobs:
               echo ""
               echo "=== Running makepkg (build + package, skipping check) ==="
               # Skip check() since tests already run in CI - this saves ~15 minutes
-              su builder -c "makepkg -sf --noconfirm --nocheck"
+              # RUSTC_WRAPPER is already set via -e flag
+              su builder -c "SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
+
+              echo ""
+              echo "=== sccache stats ==="
+              /usr/local/bin/sccache --show-stats || true
 
               echo ""
               echo "=== Build successful! ==="
