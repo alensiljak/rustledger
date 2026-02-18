@@ -191,7 +191,8 @@ jobs:
               echo ""
               echo "=== Running makepkg (build + package, skipping check) ==="
               # Skip check() since tests already run in CI - this saves ~15 minutes
-              su builder -c "CARGO_HOME=/cargo-cache SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
+              # Limit cargo jobs to prevent OOM during linking (multiple final binaries link concurrently)
+              su builder -c "CARGO_BUILD_JOBS=2 CARGO_HOME=/cargo-cache SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
 
               echo ""
               echo "=== sccache stats ==="
