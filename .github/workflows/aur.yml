@@ -1,0 +1,234 @@
+# AUR Package Testing
+# ===================
+# Tests the Arch Linux PKGBUILD in a Docker container before releases.
+# This prevents pushing broken packages to AUR.
+#
+# Triggers:
+# - Release PRs (release-plz-* branches)
+# - Changes to packaging/arch/**
+# - Manual dispatch
+#
+name: AUR
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Quick check to determine if we should run the full test
+  should-run:
+    name: Check if AUR test needed
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - name: Checkout for path filtering
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+
+      - name: Check for packaging changes
+        id: changes
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        with:
+          filters: |
+            packaging:
+              - 'packaging/arch/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+
+      - name: Decide whether to run
+        id: decide
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          PACKAGING_CHANGED: ${{ steps.changes.outputs.packaging }}
+        run: |
+          # Always run on release PRs
+          if [[ "$HEAD_REF" == release-plz-* ]]; then
+            echo "Release PR detected - will run AUR test"
+            echo "run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Always run on manual dispatch
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "Manual dispatch - will run AUR test"
+            echo "run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Run if packaging files changed
+          if [[ "$PACKAGING_CHANGED" == "true" ]]; then
+            echo "Packaging files changed - will run AUR test"
+            echo "run=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "No AUR-relevant changes - skipping test"
+          echo "run=false" >> $GITHUB_OUTPUT
+
+  test-pkgbuild:
+    name: Test PKGBUILD
+    runs-on: ubuntu-latest
+    needs: should-run
+    if: needs.should-run.outputs.run == 'true' && github.repository == 'rustledger/rustledger'
+    env:
+      SCCACHE_GHA_ENABLED: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+
+      - name: Set up sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+
+      - name: Cache sccache for Arch container
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/sccache-cache
+          key: aur-sccache-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            aur-sccache-
+
+      - name: Cache cargo registry
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /tmp/cargo-cache
+          key: aur-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            aur-cargo-
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      # For release PRs, we need to create a test tarball since the version
+      # won't be published to GitHub yet
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep -A5 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      # Create a tarball of the current source for testing
+      # This simulates what GitHub would provide for the release
+      - name: Create test tarball
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p /tmp/pkgbuild-test
+
+          # Create directory structure matching GitHub's release tarball
+          git archive --format=tar --prefix="rustledger-$VERSION/" HEAD | \
+            gzip > /tmp/pkgbuild-test/rustledger-$VERSION.tar.gz
+
+          # Calculate SHA256
+          SHA256=$(sha256sum /tmp/pkgbuild-test/rustledger-$VERSION.tar.gz | cut -d' ' -f1)
+          echo "SHA256: $SHA256"
+
+          # Copy PKGBUILD and update it for local testing
+          cp packaging/arch/rustledger/PKGBUILD /tmp/pkgbuild-test/
+
+          # Update PKGBUILD to use local tarball
+          sed -i "s|^pkgver=.*|pkgver=$VERSION|" /tmp/pkgbuild-test/PKGBUILD
+          sed -i "s|^sha256sums=.*|sha256sums=('$SHA256')|" /tmp/pkgbuild-test/PKGBUILD
+          sed -i "s|source=(.*)|source=(\"rustledger-$VERSION.tar.gz\")|" /tmp/pkgbuild-test/PKGBUILD
+
+          echo "=== Modified PKGBUILD ==="
+          cat /tmp/pkgbuild-test/PKGBUILD
+
+      - name: Prepare sccache for container
+        run: |
+          # Create cache directories
+          mkdir -p /tmp/sccache-cache
+          mkdir -p /tmp/cargo-cache
+          # Copy sccache binary (installed by sccache-action) and ensure executable
+          cp "$(which sccache)" /tmp/sccache-bin
+          chmod +x /tmp/sccache-bin
+
+      - name: Test PKGBUILD in Arch container
+        run: |
+          docker run --rm \
+            -v /tmp/pkgbuild-test:/pkg:ro \
+            -v /tmp/sccache-cache:/sccache-cache \
+            -v /tmp/sccache-bin:/usr/local/bin/sccache:ro \
+            -v /tmp/cargo-cache:/cargo-cache \
+            -e SCCACHE_DIR=/sccache-cache \
+            -e RUSTC_WRAPPER=/usr/local/bin/sccache \
+            -e CARGO_HOME=/cargo-cache \
+            archlinux:base-devel \
+            bash -c '
+              set -euo pipefail
+
+              echo "=== Setting up Arch Linux build environment ==="
+              pacman -Syu --noconfirm
+              # base-devel already in image, just need git, namcap, and rust
+              pacman -S --noconfirm git sudo namcap rust
+
+              # Verify sccache is available
+              echo "sccache version: $(/usr/local/bin/sccache --version)"
+
+              # Create non-root build user (makepkg requirement)
+              useradd -m builder
+              echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+
+              # Set up build directory and caches
+              mkdir -p /home/builder/build
+              cp /pkg/* /home/builder/build/
+              chown -R builder:builder /home/builder/build
+              chown -R builder:builder /sccache-cache
+              chown -R builder:builder /cargo-cache
+              cd /home/builder/build
+
+              echo ""
+              echo "=== Validating PKGBUILD with namcap ==="
+              namcap PKGBUILD || echo "namcap warnings (non-fatal)"
+
+              echo ""
+              echo "=== Running makepkg (build + package, skipping check) ==="
+              # Skip check() since tests already run in CI - this saves ~15 minutes
+              # Limit cargo jobs to prevent OOM during linking (multiple final binaries link concurrently)
+              su builder -c "CARGO_BUILD_JOBS=2 CARGO_HOME=/cargo-cache SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
+
+              echo ""
+              echo "=== sccache stats ==="
+              /usr/local/bin/sccache --show-stats || true
+
+              echo ""
+              echo "=== Build successful! ==="
+              ls -la *.pkg.tar.zst 2>/dev/null || ls -la *.pkg.tar.*
+
+              echo ""
+              echo "=== Validating built package with namcap ==="
+              namcap *.pkg.tar.zst || echo "namcap warnings (non-fatal)"
+
+              echo ""
+              echo "=== Testing package installation ==="
+              pacman -U --noconfirm *.pkg.tar.zst
+
+              echo ""
+              echo "=== Verifying installed binaries ==="
+              rledger --version
+              which rledger
+              which rledger-lsp || echo "rledger-lsp not in rustledger package (expected)"
+
+              echo ""
+              echo "=== PKGBUILD test passed ==="
+            '
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## AUR PKGBUILD Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ PKGBUILD builds and installs successfully" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ PKGBUILD test failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the logs above for details." >> $GITHUB_STEP_SUMMARY
+          fi

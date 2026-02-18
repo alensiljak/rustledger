@@ -487,3 +487,34 @@ release-build:
     cargo build --release
     @echo "Binaries at: target/release/rledger-*"
     @ls -lh target/release/rledger-*
+
+# ============================================================================
+# PACKAGING
+# ============================================================================
+
+# Test AUR PKGBUILD locally (requires Docker)
+test-aur:
+    ./packaging/arch/test-pkgbuild.sh
+
+# Push PKGBUILD to AUR (after testing!)
+push-aur:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd /tmp
+    rm -rf aur-rustledger-push
+    git clone ssh://aur@aur.archlinux.org/rustledger.git aur-rustledger-push
+    cp "$OLDPWD/packaging/arch/rustledger/PKGBUILD" aur-rustledger-push/
+    cd aur-rustledger-push
+    makepkg --printsrcinfo > .SRCINFO 2>/dev/null || echo "Warning: makepkg not available, .SRCINFO not updated"
+    git add -A
+    git diff --cached --stat
+    echo ""
+    read -p "Push to AUR? [y/N] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Yy]$ ]]; then
+        git commit -m "Update to $(grep pkgver= PKGBUILD | cut -d= -f2)"
+        git push origin master
+        echo "✓ Pushed to AUR"
+    else
+        echo "Aborted"
+    fi

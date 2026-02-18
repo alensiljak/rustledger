@@ -1,7 +1,7 @@
 # Maintainer: Rob Cohen <rob@robcohen.dev>
 pkgbase=rustledger
 pkgname=(rustledger rustledger-bean-compat)
-pkgver=0.8.6
+pkgver=0.9.0
 pkgrel=1
 pkgdesc="Fast, pure Rust implementation of Beancount double-entry accounting"
 arch=('x86_64' 'aarch64')
@@ -10,7 +10,7 @@ license=('GPL-3.0-only')
 depends=('glibc' 'libgcc')
 makedepends=('cargo')
 source=("${pkgbase}-${pkgver}.tar.gz::https://github.com/rustledger/rustledger/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=('8a0f0e8b855045362374401bfc497ea2a21824bde41de91aeb9829979b336aa3')
+sha256sums=('c55eb9f5295451b80b4904200922e1aab1cf4814561ab23f10be10dca0056e72')
 
 prepare() {
   cd "$pkgbase-$pkgver"
@@ -22,6 +22,8 @@ build() {
   cd "$pkgbase-$pkgver"
   export RUSTUP_TOOLCHAIN=stable
   export CARGO_TARGET_DIR=target
+  # Required for ring crate to build with LTO enabled
+  CFLAGS+=' -ffat-lto-objects'
   cargo build --release --frozen --workspace
 }
 
