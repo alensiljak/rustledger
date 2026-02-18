@@ -143,8 +143,9 @@ jobs:
           # Create cache directories
           mkdir -p /tmp/sccache-cache
           mkdir -p /tmp/cargo-cache
-          # Copy sccache binary (installed by sccache-action)
+          # Copy sccache binary (installed by sccache-action) and ensure executable
           cp "$(which sccache)" /tmp/sccache-bin
+          chmod +x /tmp/sccache-bin
 
       - name: Test PKGBUILD in Arch container
         run: |
@@ -166,7 +167,6 @@ jobs:
               pacman -S --noconfirm git sudo namcap rust
 
               # Verify sccache is available
-              chmod +x /usr/local/bin/sccache
               echo "sccache version: $(/usr/local/bin/sccache --version)"
 
               # Create non-root build user (makepkg requirement)
