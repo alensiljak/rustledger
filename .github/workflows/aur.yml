@@ -92,6 +92,14 @@ jobs:
           restore-keys: |
             aur-sccache-
 
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: /tmp/cargo-cache
+          key: aur-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            aur-cargo-
+
       - name: Set up Docker
         uses: docker/setup-buildx-action@v3
 
@@ -132,8 +140,9 @@ jobs:
 
       - name: Prepare sccache for container
         run: |
-          # Create sccache cache directory
+          # Create cache directories
           mkdir -p /tmp/sccache-cache
+          mkdir -p /tmp/cargo-cache
           # Copy sccache binary (installed by sccache-action)
           cp "$(which sccache)" /tmp/sccache-bin
 
@@ -143,8 +152,10 @@ jobs:
             -v /tmp/pkgbuild-test:/pkg:ro \
             -v /tmp/sccache-cache:/sccache-cache \
             -v /tmp/sccache-bin:/usr/local/bin/sccache:ro \
+            -v /tmp/cargo-cache:/cargo-cache \
             -e SCCACHE_DIR=/sccache-cache \
             -e RUSTC_WRAPPER=/usr/local/bin/sccache \
+            -e CARGO_HOME=/cargo-cache \
             archlinux:base-devel \
             bash -c '
               set -euo pipefail
@@ -162,11 +173,12 @@ jobs:
               useradd -m builder
               echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
 
-              # Set up build directory
+              # Set up build directory and caches
               mkdir -p /home/builder/build
               cp /pkg/* /home/builder/build/
               chown -R builder:builder /home/builder/build
               chown -R builder:builder /sccache-cache
+              chown -R builder:builder /cargo-cache
               cd /home/builder/build
 
               echo ""
@@ -176,8 +188,7 @@ jobs:
               echo ""
               echo "=== Running makepkg (build + package, skipping check) ==="
               # Skip check() since tests already run in CI - this saves ~15 minutes
-              # RUSTC_WRAPPER is already set via -e flag
-              su builder -c "SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
+              su builder -c "CARGO_HOME=/cargo-cache SCCACHE_DIR=/sccache-cache RUSTC_WRAPPER=/usr/local/bin/sccache makepkg -sf --noconfirm --nocheck"
 
               echo ""
               echo "=== sccache stats ==="
