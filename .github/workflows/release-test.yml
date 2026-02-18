@@ -1,8 +1,10 @@
 name: Release Channel Testing
 
 on:
-  release:
-    types: [published]
+  # Run after Release Publish completes (ensures packages are actually published)
+  workflow_run:
+    workflows: ["Release Publish"]
+    types: [completed]
   workflow_dispatch:
     inputs:
       version:
@@ -15,7 +17,9 @@ permissions:
   packages: read
 
 env:
-  VERSION: ${{ inputs.version || github.event.release.tag_name }}
+  # For workflow_run: extract version from the triggering workflow's head branch (tag name)
+  # For workflow_dispatch: use the input version
+  VERSION: ${{ inputs.version || github.event.workflow_run.head_branch }}
   TEST_BEANCOUNT: |
     option "operating_currency" "USD"
     2024-01-01 open Assets:Bank USD
@@ -32,6 +36,10 @@ jobs:
   # Strip 'v' prefix from version for comparisons
   prepare:
     runs-on: ubuntu-latest
+    # Only run if triggered manually OR if the publish workflow succeeded
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
