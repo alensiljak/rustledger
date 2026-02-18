@@ -127,7 +127,7 @@ jobs:
 
               echo "=== Setting up Arch Linux build environment ==="
               pacman -Syu --noconfirm
-              pacman -S --noconfirm base-devel git sudo
+              pacman -S --noconfirm base-devel git sudo namcap
 
               # Create non-root build user (makepkg requirement)
               useradd -m builder
@@ -140,12 +140,20 @@ jobs:
               cd /home/builder/build
 
               echo ""
+              echo "=== Validating PKGBUILD with namcap ==="
+              namcap PKGBUILD || echo "namcap warnings (non-fatal)"
+
+              echo ""
               echo "=== Running makepkg (build + check + package) ==="
               su builder -c "makepkg -sf --noconfirm"
 
               echo ""
               echo "=== Build successful! ==="
               ls -la *.pkg.tar.zst 2>/dev/null || ls -la *.pkg.tar.*
+
+              echo ""
+              echo "=== Validating built package with namcap ==="
+              namcap *.pkg.tar.zst || echo "namcap warnings (non-fatal)"
 
               echo ""
               echo "=== Testing package installation ==="
