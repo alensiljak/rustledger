@@ -1603,4 +1603,16 @@ mod tests {
             panic!("Expected Balance directive");
         }
     }
+
+    #[test]
+    fn test_parse_division_by_zero_does_not_panic() {
+        // Regression test: division by zero should not panic, just fail to parse
+        let source = "2024-01-01 balance Assets:Bank 1/0 USD\n";
+        let result = parse(source);
+        // Should have parse errors, not panic
+        assert!(
+            !result.errors.is_empty(),
+            "expected parse error for division by zero"
+        );
+    }
 }
