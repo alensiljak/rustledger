@@ -334,6 +334,9 @@ fn parse_term(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
             Token::Slash => {
                 stream.advance();
                 let rhs = parse_primary(stream)?;
+                if rhs.is_zero() {
+                    return Err(());
+                }
                 result /= rhs;
             }
             _ => break,
