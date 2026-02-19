@@ -154,7 +154,7 @@ jobs:
         run: brew untap rustledger/rustledger 2>/dev/null || true
 
       - name: Install rustledger from homebrew-core
-        run: brew install homebrew/core/rustledger
+        run: brew install rustledger
 
       - name: Check installed version
         run: |
