@@ -329,7 +329,7 @@ fn parse_term(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
             Token::Star => {
                 stream.advance();
                 let rhs = parse_primary(stream)?;
-                result *= rhs;
+                result = result.checked_mul(rhs).ok_or(())?;
             }
             Token::Slash => {
                 stream.advance();
@@ -337,7 +337,7 @@ fn parse_term(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
                 if rhs.is_zero() {
                     return Err(());
                 }
-                result /= rhs;
+                result = result.checked_div(rhs).ok_or(())?;
             }
             _ => break,
         }
@@ -354,12 +354,12 @@ fn parse_expr(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
             Token::Plus => {
                 stream.advance();
                 let rhs = parse_term(stream)?;
-                result += rhs;
+                result = result.checked_add(rhs).ok_or(())?;
             }
             Token::Minus => {
                 stream.advance();
                 let rhs = parse_term(stream)?;
-                result -= rhs;
+                result = result.checked_sub(rhs).ok_or(())?;
             }
             _ => break,
         }
