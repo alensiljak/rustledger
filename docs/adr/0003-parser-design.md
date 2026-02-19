@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted (Updated January 2026)
+Accepted (Updated February 2026)
 
 ## Context
 
@@ -22,7 +22,7 @@ Options considered:
 
 ## Decision
 
-Use **Logos for lexing** and **Chumsky for parsing** (parser combinators).
+Use **Logos for lexing** and **Winnow for parsing** (parser combinators).
 
 ### Lexer (Logos)
 
@@ -37,18 +37,18 @@ Tokens include:
 - Dates, numbers, strings, accounts, currencies
 - Operators and punctuation
 
-### Parser (Chumsky)
+### Parser (Winnow)
 
-The parser (`token_parser.rs`) uses Chumsky parser combinators:
+The parser (`winnow_parser.rs`) uses a manual token stream with winnow-style parsing:
 
 - Composable parsers for each directive type
-- Built-in error recovery mechanisms
-- Rich error types with expected/found tokens
-- Span tracking propagated automatically
+- Manual token stream for simplicity and performance
+- Error recovery continues parsing after errors
+- Span tracking propagated through all parse results
 
 Architecture:
 ```text
-Source (&str) → Logos tokenize() → Vec<SpannedToken> → Chumsky parser → Directives
+Source (&str) → Logos tokenize() → Vec<SpannedToken> → Winnow parser → Directives
 ```
 
 ## Consequences
@@ -56,33 +56,35 @@ Source (&str) → Logos tokenize() → Vec<SpannedToken> → Chumsky parser → 
 ### Positive
 
 - Logos provides excellent lexer performance (SIMD-accelerated)
-- Chumsky offers expressive, composable parser combinators
-- Good error recovery built into the framework
+- Winnow is lightweight with minimal compile-time overhead
+- Manual token stream approach is simpler than trait-based streams
 - Type-safe parser composition catches errors at compile time
 - No external grammar DSL files to maintain
 
 ### Negative
 
-- Chumsky has a learning curve for complex combinators
-- Compile times slightly longer due to heavy generics
-- Debug output can be verbose
+- Manual token stream requires more boilerplate
+- Less built-in error recovery than some frameworks
+- Must handle overflow/edge cases explicitly (e.g., checked arithmetic)
 
 ### Neutral
 
-- Parser is ~2000 lines, manageable for the grammar size
+- Parser is ~1500 lines, manageable for the grammar size
 - Error messages require tuning for user-friendliness
 
 ## Notes
 
 The parser is organized into sections:
 
-1. Token input types and helpers
+1. Token stream types and helpers
 2. Primitive parsers (date, number, string, account)
-3. Directive parsers (transaction, balance, open, etc.)
-4. Expression parsers (amount, cost, metadata, postings)
-5. Top-level file parser with error recovery
+3. Expression parsers (arithmetic with checked overflow)
+4. Amount and cost parsers
+5. Directive parsers (transaction, balance, open, etc.)
+6. Top-level file parser with error recovery
 
 ## History
 
 - **Original decision**: Hand-written recursive descent parser
-- **January 2026**: Migrated to Logos + Chumsky for better performance and maintainability
+- **January 2026**: Migrated to Logos + Chumsky for better performance
+- **February 2026**: Migrated from Chumsky to Winnow for faster compile times and simpler code
