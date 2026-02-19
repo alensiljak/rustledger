@@ -91,9 +91,19 @@
           # Crane lib with our toolchain
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchainWithWasm;
 
+          # Source filter that includes test fixtures (.beancount files)
+          srcFilter = path: type:
+            (craneLib.filterCargoSources path type) ||
+            (builtins.match ".*\\.beancount$" path != null);
+
+          src = lib.cleanSourceWith {
+            src = ./.;
+            filter = srcFilter;
+          };
+
           # Common arguments for crane builds
           commonArgs = {
-            src = craneLib.cleanCargoSource ./.;
+            inherit src;
             strictDeps = true;
 
             buildInputs = [
