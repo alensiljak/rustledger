@@ -1,13 +1,13 @@
 # Beancount Compatibility Report
 
-This document describes the compatibility between rustledger and Python beancount, based on testing 600+ real-world beancount files from multiple sources.
+This document describes the compatibility between rustledger and Python beancount, based on testing 694 real-world beancount files from multiple sources.
 
 ## Summary
 
 | Metric | Value |
 |--------|-------|
-| Files tested | 609 |
-| Check exit match | **100%** (609/609) |
+| Files tested | 694 |
+| Check exit match | **99.86%** (693/694) |
 | BQL query data match | **99%** (544/550) |
 
 ## Test Sources
@@ -23,7 +23,7 @@ Files were collected from:
 
 ## Compatibility Status
 
-With 100% check compatibility on 609 files, rustledger matches Python beancount's validation behavior exactly on the tested corpus. The test suite includes files from:
+With 99.86% check compatibility on 694 files (1 failure due to decimal precision limits), rustledger matches Python beancount's validation behavior on the tested corpus. The test suite includes files from:
 
 - Official beancount v2/v3 repositories
 - Parser conformance tests
@@ -180,5 +180,5 @@ If you encounter a file that works with Python beancount but not rustledger:
 
 ---
 
-*Generated: January 2026*
-*Test environment: Beancount 3.2.0, beanquery 0.2.0, rustledger 0.5.2*
+*Generated: February 2026*
+*Test environment: Beancount 3.2.0, beanquery 0.2.0, rustledger 0.9.1*

@@ -2,5 +2,7 @@
 # Financial term: Profit and Loss
 Pn = "Pn"
 pnl = "pnl"
+# Financial term: Health Savings Account
+HSA = "HSA"
 # Intentional typo in test (invalid SQL query)
 SELEKT = "SELEKT"
