@@ -30,6 +30,9 @@
 //! | [`rustledger-query`](https://docs.rs/rustledger-query) | BQL query engine |
 //! | [`rustledger-plugin`](https://docs.rs/rustledger-plugin) | Native and WASM plugin system |
 //! | [`rustledger-wasm`](https://docs.rs/rustledger-wasm) | WebAssembly library target |
+//! | [`rustledger-importer`](https://docs.rs/rustledger-importer) | Import framework for bank statements |
+//! | [`rustledger-lsp`](https://docs.rs/rustledger-lsp) | Language Server Protocol implementation |
+//! | [`rustledger-ffi-wasi`](https://docs.rs/rustledger-ffi-wasi) | FFI via WASI for embedding |
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
