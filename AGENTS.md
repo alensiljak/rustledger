@@ -19,9 +19,11 @@ The project is a Cargo workspace with these crates:
 | `rustledger-validate` | Validation with 27 error codes |
 | `rustledger-query` | BQL query engine |
 | `rustledger-plugin` | Native and WASM plugin system (20 plugins) |
+| `rustledger-importer` | Import framework for bank statements |
 | `rustledger` | CLI tool (`rledger check`, `rledger query`, etc.) |
 | `rustledger-wasm` | WebAssembly library target |
 | `rustledger-lsp` | Language Server Protocol implementation |
+| `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
 
 ## Rust-Specific Patterns
 
