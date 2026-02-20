@@ -199,22 +199,27 @@ rledger check ledger.beancount             # Use cache (default)
 
 ---
 
-## Phase 6: Lexer + Arena Allocator
+## Phase 6: Lexer + Parser Rewrite ✅ MOSTLY DONE
 
-**Goal**: Replace parser combinators with fast lexer, use arena for AST
-**Expected Impact**: 30-50% faster parsing
+**Goal**: Replace Chumsky parser combinators with fast lexer + manual parser
+**Result**: Logos lexer + Winnow manual parser now in use
 
-### 6.1 Logos Lexer + Winnow Parser ✅ DONE
-- Use [logos](https://github.com/maciejhirsz/logos) crate for SIMD-accelerated tokenization
-- Use [winnow](https://github.com/winnow-rs/winnow) parser combinators (replaced Chumsky)
-- Zero-copy token stream - no allocations during lexing
-- Manual token stream for simplicity and performance
+### 6.1 Logos Lexer ✅
+- SIMD-accelerated tokenization via [logos](https://github.com/maciejhirsz/logos)
+- Zero-copy token stream - tokens reference source directly
+- Implemented in `logos_lexer.rs`
 
-### 6.2 Bumpalo Arena for AST Nodes
+### 6.2 Winnow Manual Parser ✅
+- Replaced Chumsky parser combinators with manual recursive descent
+- Uses Logos token stream as input
+- Chumsky kept as legacy for benchmarking (`parse_chumsky()`)
+
+### 6.3 Bumpalo Arena for AST Nodes (Future)
 - Use [bumpalo](https://github.com/fitzgen/bumpalo) for AST allocation
 - Only 11 instructions per allocation (vs ~100 for malloc)
 - Mass deallocation: just reset the bump pointer
 - Perfect for phase-oriented allocation (parse → use → discard)
+- **Status**: Not yet implemented
 
 ---
 
@@ -240,8 +245,8 @@ rledger check ledger.beancount             # Use cache (default)
 | 3 | Full interning | ✅ Done | +6% |
 | 4 | Parallelization (rayon) | ✅ Done | +5% |
 | 5 | Binary cache (rkyv) | ✅ Done | 2.3x on cache hit |
-| 6.1 | Logos + Winnow parser | ✅ Done | Replaced Chumsky |
-| 6.2 | Bumpalo arena | 🔮 Future | +40% projected |
+| 6 | Logos lexer + Winnow parser | ✅ Done | Replaced Chumsky |
+| 6.3 | Bumpalo arena | 🔮 Future | +20% projected |
 | 7 | Memory-mapped files | 🔮 Future | Large files only |
 
 ## Actual Performance
@@ -361,9 +366,9 @@ cargo bench --bench pipeline_bench
 ## Research & References
 
 ### Parser Performance
-- [Winnow](https://epage.github.io/blog/2023/07/winnow-0-5-the-fastest-rust-parser-combinator-library/) - current parser, faster compile times than Chumsky
-- [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated tokenization
-- [Chumsky](https://github.com/zesterer/chumsky) - previous parser, kept for benchmarking
+- [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated DFA
+- [Winnow](https://epage.github.io/blog/2023/07/winnow-0-5-the-fastest-rust-parser-combinator-library/) - current parser approach (manual recursive descent)
+- [Chumsky](https://github.com/zesterer/chumsky) - previous parser (kept as legacy for comparison)
 
 ### Serialization
 - [rkyv](https://github.com/rkyv/rkyv) - zero-copy deserialization, [faster than bincode](https://david.kolo.ski/blog/rkyv-is-faster-than/)
