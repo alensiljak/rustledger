@@ -83,6 +83,7 @@ This document describes rustledger's crate structure and data flow.
 |-------|---------|
 | `rustledger` | CLI binary (`rledger`, `bean-*` commands) |
 | `rustledger-wasm` | WebAssembly bindings for JS/TS |
+| `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
 
 ## Data Flow
 
