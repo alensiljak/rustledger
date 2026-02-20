@@ -22,7 +22,7 @@ Generate a comprehensive weekly report for the rustledger project and post it to
 ## Context
 
 rustledger is a Rust implementation of Beancount (double-entry bookkeeping) with:
-- 9 crates in a cargo workspace
+- 12 crates in a cargo workspace
 - CLI tool (`rledger`) with multiple commands
 - WASM library target
 - 694 compatibility tests against Python beancount (99.86% pass rate)
