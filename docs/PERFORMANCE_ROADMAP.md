@@ -199,22 +199,24 @@ rledger check ledger.beancount             # Use cache (default)
 
 ---
 
-## Phase 6: Lexer + Arena Allocator (Future)
+## Phase 6: Lexer + Arena Allocator ✅ PARTIAL
 
 **Goal**: Replace parser combinators with fast lexer, use arena for AST
 **Expected Impact**: 30-50% faster parsing
 
-### 6.1 Logos Lexer + Chumsky Parser via logosky
-- Use [logos](https://github.com/maciejhirsz/logos) crate for SIMD-accelerated tokenization
-- Use [logosky](https://crates.io/crates/logosky) to bridge Logos output to Chumsky
+### 6.1 Logos Lexer + Winnow Parser ✅ DONE
+- Using [Logos](https://github.com/maciejhirsz/logos) for SIMD-accelerated tokenization
+- Using [Winnow](https://github.com/winnow-rs/winnow) for manual recursive descent parsing
+- Replaced Chumsky parser combinators (kept as `parse_chumsky()` for benchmarking)
 - Zero-copy token stream - no allocations during lexing
-- Enable existing `lexer.rs` (currently disabled)
+- Implemented in `logos_lexer.rs` and `winnow_parser.rs`
 
-### 6.2 Bumpalo Arena for AST Nodes
+### 6.2 Bumpalo Arena for AST Nodes 🔮 FUTURE
 - Use [bumpalo](https://github.com/fitzgen/bumpalo) for AST allocation
 - Only 11 instructions per allocation (vs ~100 for malloc)
 - Mass deallocation: just reset the bump pointer
 - Perfect for phase-oriented allocation (parse → use → discard)
+- **Projected**: +20% parsing improvement
 
 ---
 
@@ -240,7 +242,8 @@ rledger check ledger.beancount             # Use cache (default)
 | 3 | Full interning | ✅ Done | +6% |
 | 4 | Parallelization (rayon) | ✅ Done | +5% |
 | 5 | Binary cache (rkyv) | ✅ Done | 2.3x on cache hit |
-| 6 | Logos + Bumpalo | 🔮 Future | +40% projected |
+| 6.1 | Logos + Winnow parser | ✅ Done | Replaced Chumsky |
+| 6.2 | Bumpalo arena | 🔮 Future | +20% projected |
 | 7 | Memory-mapped files | 🔮 Future | Large files only |
 
 ## Actual Performance
@@ -360,9 +363,9 @@ cargo bench --bench pipeline_bench
 ## Research & References
 
 ### Parser Performance
-- [Winnow](https://epage.github.io/blog/2023/07/winnow-0-5-the-fastest-rust-parser-combinator-library/) - potentially faster than Chumsky for some use cases
-- [Chumsky](https://github.com/zesterer/chumsky) - current parser, good error recovery
-- [logosky](https://crates.io/crates/logosky) - zero-copy bridge from Logos to Chumsky
+- [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated DFA
+- [Winnow](https://github.com/winnow-rs/winnow) - current parser, manual recursive descent
+- [Chumsky](https://github.com/zesterer/chumsky) - legacy parser (kept as `parse_chumsky()` for benchmarking)
 
 ### Serialization
 - [rkyv](https://github.com/rkyv/rkyv) - zero-copy deserialization, [faster than bincode](https://david.kolo.ski/blog/rkyv-is-faster-than/)
