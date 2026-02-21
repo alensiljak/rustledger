@@ -2,8 +2,10 @@
 
 use crate::ImportResult;
 use crate::csv_importer::CsvImporter;
-use anyhow::Result;
-use std::path::Path;
+use anyhow::{Context, Result};
+use format_num_pattern::{Locale, NumberFormat, NumberSymbols, core::parse_sym, fmt_to, parse_fmt};
+use rust_decimal::Decimal;
+use std::{fmt::Display, ops::Neg, path::Path};
 
 /// Configuration for an importer.
 #[derive(Debug, Clone)]
@@ -12,6 +14,8 @@ pub struct ImporterConfig {
     pub account: String,
     /// The currency for amounts (if not specified in the file).
     pub currency: Option<String>,
+    /// Amount parser
+    pub amount_format: AmountFormat,
     /// The importer type and its specific configuration.
     pub importer_type: ImporterType,
 }
@@ -36,6 +40,10 @@ pub struct CsvConfig {
     pub payee_column: Option<ColumnSpec>,
     /// The column name or index for the amount.
     pub amount_column: Option<ColumnSpec>,
+    /// Amount locale, see <https://docs.rs/format_num_pattern/latest/format_num_pattern/index.html>
+    pub amount_locale: Option<Locale>,
+    /// Amount format, see <https://docs.rs/format_num_pattern/latest/format_num_pattern/index.html>
+    pub amount_format: Option<String>,
     /// The column name or index for debit amounts (if separate from credit).
     pub debit_column: Option<ColumnSpec>,
     /// The column name or index for credit amounts (if separate from debit).
@@ -58,6 +66,8 @@ impl Default for CsvConfig {
             narration_column: Some(ColumnSpec::Name("Description".to_string())),
             payee_column: None,
             amount_column: Some(ColumnSpec::Name("Amount".to_string())),
+            amount_locale: Some(Locale::POSIX),
+            amount_format: None,
             debit_column: None,
             credit_column: None,
             has_header: true,
@@ -75,6 +85,72 @@ pub enum ColumnSpec {
     Name(String),
     /// Column specified by zero-based index.
     Index(usize),
+}
+
+/// Localized/custom amount parsing
+#[derive(Debug, Clone)]
+pub enum AmountFormat {
+    /// Override only symbols.
+    Symbols(NumberSymbols),
+    /// Override format.
+    Format(NumberFormat),
+}
+
+impl AmountFormat {
+    /// Attempt to parse a string using the given format.
+    pub fn parse(&self, amount: &str) -> Result<Decimal> {
+        let value: Decimal = match self {
+            Self::Symbols(number_symbols) => parse_sym(amount, number_symbols)
+                .with_context(|| format!("unable to parse using symbols: {number_symbols:?}")),
+            Self::Format(number_format) => parse_fmt(amount, number_format)
+                .with_context(|| format!("unable to parse using given format: {number_format}")),
+        }?;
+
+        if amount.trim().starts_with('(') && amount.trim().ends_with(')') {
+            Ok(value.neg())
+        } else {
+            Ok(value)
+        }
+    }
+
+    /// Apply formatting to a decimal amount, making it printable.
+    pub const fn apply(&self, amount: Decimal) -> FormattedAmount<'_> {
+        FormattedAmount {
+            amount,
+            formatter: self,
+        }
+    }
+
+    fn fmt_into<W: core::fmt::Write>(&self, amount: Decimal, writer: &mut W) {
+        match self {
+            Self::Symbols(number_symbols) => fmt_to(
+                amount,
+                &NumberFormat::news("###,##0.##", *number_symbols).unwrap(),
+                writer,
+            ),
+            Self::Format(number_format) => fmt_to(amount, number_format, writer),
+        }
+    }
+}
+
+/// Formatted wrapper around a decimal, making it printable.
+#[derive(Debug, Clone)]
+pub struct FormattedAmount<'a> {
+    amount: Decimal,
+    formatter: &'a AmountFormat,
+}
+
+impl Display for FormattedAmount<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.formatter.fmt_into(self.amount, f);
+        Ok(())
+    }
+}
+
+impl Default for AmountFormat {
+    fn default() -> Self {
+        Self::Symbols(NumberSymbols::monetary(Locale::POSIX))
+    }
 }
 
 impl ImporterConfig {
@@ -130,6 +206,18 @@ impl CsvConfigBuilder {
     /// Set the currency for amounts.
     pub fn currency(mut self, currency: impl Into<String>) -> Self {
         self.currency = Some(currency.into());
+        self
+    }
+
+    /// Set the amount locale
+    pub fn amount_locale(mut self, locale: impl Into<Locale>) -> Self {
+        self.config.amount_locale = Some(locale.into());
+        self
+    }
+
+    /// Set the amount format
+    pub fn amount_format(mut self, format: impl Into<String>) -> Self {
+        self.config.amount_format = Some(format.into());
         self
     }
 
@@ -224,14 +312,25 @@ impl CsvConfigBuilder {
     }
 
     /// Build the importer configuration.
-    pub fn build(self) -> ImporterConfig {
-        ImporterConfig {
+    pub fn build(self) -> Result<ImporterConfig> {
+        Ok(ImporterConfig {
             account: self
                 .account
                 .unwrap_or_else(|| "Expenses:Unknown".to_string()),
+            amount_format: match (&self.config.amount_format, &self.config.amount_locale) {
+                (None, None) => AmountFormat::Symbols(NumberSymbols::monetary(Locale::POSIX)),
+                (None, Some(locale)) => AmountFormat::Symbols(NumberSymbols::monetary(*locale)),
+                (Some(fmt), None) => AmountFormat::Format(
+                    NumberFormat::new(fmt).with_context(|| "invalid amount_format")?,
+                ),
+                (Some(fmt), Some(locale)) => AmountFormat::Format(
+                    NumberFormat::news(fmt, NumberSymbols::monetary(*locale))
+                        .with_context(|| "invalid number format")?,
+                ),
+            },
             currency: self.currency,
             importer_type: ImporterType::Csv(self.config),
-        }
+        })
     }
 }
 
@@ -280,19 +379,20 @@ mod tests {
     fn test_csv_config_builder_account() {
         let config = CsvConfigBuilder::new()
             .account("Assets:Bank:Checking")
-            .build();
+            .build()
+            .unwrap();
         assert_eq!(config.account, "Assets:Bank:Checking");
     }
 
     #[test]
     fn test_csv_config_builder_default_account() {
-        let config = CsvConfigBuilder::new().build();
+        let config = CsvConfigBuilder::new().build().unwrap();
         assert_eq!(config.account, "Expenses:Unknown");
     }
 
     #[test]
     fn test_csv_config_builder_currency() {
-        let config = CsvConfigBuilder::new().currency("EUR").build();
+        let config = CsvConfigBuilder::new().currency("EUR").build().unwrap();
         assert_eq!(config.currency, Some("EUR".to_string()));
     }
 
@@ -300,7 +400,8 @@ mod tests {
     fn test_csv_config_builder_date_column() {
         let config = CsvConfigBuilder::new()
             .date_column("TransactionDate")
-            .build();
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(
             matches!(csv_config.date_column, ColumnSpec::Name(ref s) if s == "TransactionDate")
@@ -309,21 +410,30 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_date_column_index() {
-        let config = CsvConfigBuilder::new().date_column_index(0).build();
+        let config = CsvConfigBuilder::new()
+            .date_column_index(0)
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(csv_config.date_column, ColumnSpec::Index(0)));
     }
 
     #[test]
     fn test_csv_config_builder_date_format() {
-        let config = CsvConfigBuilder::new().date_format("%m/%d/%Y").build();
+        let config = CsvConfigBuilder::new()
+            .date_format("%m/%d/%Y")
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert_eq!(csv_config.date_format, "%m/%d/%Y");
     }
 
     #[test]
     fn test_csv_config_builder_narration_column() {
-        let config = CsvConfigBuilder::new().narration_column("Memo").build();
+        let config = CsvConfigBuilder::new()
+            .narration_column("Memo")
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(
             matches!(csv_config.narration_column, Some(ColumnSpec::Name(ref s)) if s == "Memo")
@@ -332,7 +442,10 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_narration_column_index() {
-        let config = CsvConfigBuilder::new().narration_column_index(2).build();
+        let config = CsvConfigBuilder::new()
+            .narration_column_index(2)
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(
             csv_config.narration_column,
@@ -342,7 +455,10 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_payee_column() {
-        let config = CsvConfigBuilder::new().payee_column("Merchant").build();
+        let config = CsvConfigBuilder::new()
+            .payee_column("Merchant")
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(
             matches!(csv_config.payee_column, Some(ColumnSpec::Name(ref s)) if s == "Merchant")
@@ -351,7 +467,10 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_payee_column_index() {
-        let config = CsvConfigBuilder::new().payee_column_index(3).build();
+        let config = CsvConfigBuilder::new()
+            .payee_column_index(3)
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(
             csv_config.payee_column,
@@ -361,14 +480,20 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_amount_column() {
-        let config = CsvConfigBuilder::new().amount_column("Value").build();
+        let config = CsvConfigBuilder::new()
+            .amount_column("Value")
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(csv_config.amount_column, Some(ColumnSpec::Name(ref s)) if s == "Value"));
     }
 
     #[test]
     fn test_csv_config_builder_amount_column_index() {
-        let config = CsvConfigBuilder::new().amount_column_index(4).build();
+        let config = CsvConfigBuilder::new()
+            .amount_column_index(4)
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(
             csv_config.amount_column,
@@ -381,7 +506,8 @@ mod tests {
         let config = CsvConfigBuilder::new()
             .debit_column("Debit")
             .credit_column("Credit")
-            .build();
+            .build()
+            .unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(matches!(csv_config.debit_column, Some(ColumnSpec::Name(ref s)) if s == "Debit"));
         assert!(matches!(csv_config.credit_column, Some(ColumnSpec::Name(ref s)) if s == "Credit"));
@@ -389,28 +515,28 @@ mod tests {
 
     #[test]
     fn test_csv_config_builder_has_header() {
-        let config = CsvConfigBuilder::new().has_header(false).build();
+        let config = CsvConfigBuilder::new().has_header(false).build().unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(!csv_config.has_header);
     }
 
     #[test]
     fn test_csv_config_builder_delimiter() {
-        let config = CsvConfigBuilder::new().delimiter(';').build();
+        let config = CsvConfigBuilder::new().delimiter(';').build().unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert_eq!(csv_config.delimiter, ';');
     }
 
     #[test]
     fn test_csv_config_builder_skip_rows() {
-        let config = CsvConfigBuilder::new().skip_rows(3).build();
+        let config = CsvConfigBuilder::new().skip_rows(3).build().unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert_eq!(csv_config.skip_rows, 3);
     }
 
     #[test]
     fn test_csv_config_builder_invert_sign() {
-        let config = CsvConfigBuilder::new().invert_sign(true).build();
+        let config = CsvConfigBuilder::new().invert_sign(true).build().unwrap();
         let ImporterType::Csv(csv_config) = &config.importer_type;
         assert!(csv_config.invert_sign);
     }
@@ -429,7 +555,8 @@ mod tests {
             .delimiter(',')
             .skip_rows(1)
             .invert_sign(false)
-            .build();
+            .build()
+            .unwrap();
 
         assert_eq!(config.account, "Assets:Bank:Checking");
         assert_eq!(config.currency, Some("USD".to_string()));
@@ -451,7 +578,7 @@ mod tests {
     #[test]
     fn test_importer_config_csv() {
         let builder = ImporterConfig::csv();
-        let config = builder.build();
+        let config = builder.build().unwrap();
         assert!(matches!(config.importer_type, ImporterType::Csv(_)));
     }
 
@@ -463,7 +590,8 @@ mod tests {
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv = "Date,Description,Amount\n2024-01-15,Test,-10.00\n";
         let result = config.extract_from_string(csv).unwrap();
