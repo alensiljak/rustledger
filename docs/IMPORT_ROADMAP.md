@@ -1245,6 +1245,13 @@ Level 5: AUDITED
 | [**Plaid**](https://plaid.com/) | Transaction enrichment, merchant normalization |
 | [**Teller**](https://teller.io/) | Direct bank API integration (no scraping) |
 
+### Beancount Import Ecosystem
+
+| Project | What We Learn |
+|---------|---------------|
+| [**beangulp**](https://github.com/beancount/beangulp) | Official Beancount importer framework: `identify()`, `account()`, `extract()` pattern, self-running importers with subcommands |
+| [**smart_importer**](https://github.com/beancount/smart_importer) | ML-augmented importers using scikit-learn SVM for account/payee prediction, hooks system for wrapping importers |
+
 ### Document Extraction
 
 | Project | What We Learn |
@@ -1808,8 +1815,12 @@ Recent unmatched from API:
 ### Bank Data
 - [SimpleFIN Protocol](https://www.simplefin.org/protocol.html)
 - [Teller API](https://teller.io/)
-- [beangulp](https://github.com/beancount/beangulp)
 - [hledger CSV import](https://hledger.org/import-csv.html)
+
+### Beancount Import Ecosystem
+- [beangulp](https://github.com/beancount/beangulp) - Official Beancount v3 importer framework with `identify()`, `account()`, `extract()` interface
+- [smart_importer](https://github.com/beancount/smart_importer) - ML-augmented importers using scikit-learn SVM for account prediction
+- [beancount_reds_importers](https://github.com/redstreet/beancount_reds_importers) - Community importers framework
 
 ### Transparency & Integrity
 - [Sigstore Rekor](https://docs.sigstore.dev/logging/overview/)
