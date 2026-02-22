@@ -508,7 +508,7 @@ More info
 
         if let Directive::Transaction(txn) = &result.directives[1] {
             let amount = txn.postings[0].amount().unwrap();
-            assert_eq!(amount.number, Decimal::from(-25000000));
+            assert_eq!(amount.number, Decimal::from(-25_000_000));
         }
     }
 
