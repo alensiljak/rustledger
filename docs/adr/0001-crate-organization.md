@@ -26,8 +26,11 @@ Organize the codebase as a workspace with multiple focused crates:
 - **rustledger-booking**: Balance booking algorithms, depends on core
 - **rustledger-query**: BQL query language, depends on core
 - **rustledger-plugin**: Plugin infrastructure, depends on core
-- **rustledger**: Umbrella crate re-exporting all functionality
-- **rustledger-wasm**: WebAssembly bindings
+- **rustledger-importer**: Bank statement import framework (CSV, OFX)
+- **rustledger**: CLI binary (`rledger`, `bean-*` commands)
+- **rustledger-wasm**: WebAssembly bindings for JS/TS
+- **rustledger-lsp**: Language Server Protocol for editor integration
+- **rustledger-ffi-wasi**: FFI via WASI for embedding in any language
 
 ## Consequences
 

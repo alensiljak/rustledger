@@ -58,7 +58,7 @@ This document describes rustledger's crate structure and data flow.
 | Crate | Purpose | Key Types |
 |-------|---------|-----------|
 | `rustledger-core` | Fundamental types | `Amount`, `Position`, `Inventory`, `Decimal`, `Account`, `Currency` |
-| `rustledger-parser` | Lexer and recursive descent parser | `Directive`, `Transaction`, `Posting`, `ParseError` |
+| `rustledger-parser` | Logos lexer + Winnow parser | `Directive`, `Transaction`, `Posting`, `ParseError` |
 
 ### Processing Layer
 
@@ -83,6 +83,7 @@ This document describes rustledger's crate structure and data flow.
 |-------|---------|
 | `rustledger` | CLI binary (`rledger`, `bean-*` commands) |
 | `rustledger-wasm` | WebAssembly bindings for JS/TS |
+| `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
 
 ## Data Flow
 

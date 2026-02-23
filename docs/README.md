@@ -23,6 +23,7 @@ This directory contains developer documentation for rustledger.
 ### Roadmaps
 | Document | Description |
 |----------|-------------|
+| [IMPORT_ROADMAP.md](IMPORT_ROADMAP.md) | Bank statement import feature roadmap |
 | [PERFORMANCE_ROADMAP.md](PERFORMANCE_ROADMAP.md) | Performance optimization phases and measured results |
 | [TESTING_ROADMAP.md](TESTING_ROADMAP.md) | Testing infrastructure improvement plan |
 

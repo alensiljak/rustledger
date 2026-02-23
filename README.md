@@ -6,10 +6,14 @@
 
 Parse and validate your ledger faster than Python beancount.
 
+[![crates.io](https://img.shields.io/crates/v/rustledger)](https://crates.io/crates/rustledger)
+[![npm](https://img.shields.io/npm/v/@rustledger/wasm)](https://www.npmjs.com/package/@rustledger/wasm)
+[![Packaging status](https://repology.org/badge/tiny-repos/rustledger.svg)](https://repology.org/project/rustledger/versions)
+[![docs.rs](https://img.shields.io/docsrs/rustledger-core)](https://docs.rs/rustledger-core)
+
 [![CI](https://github.com/rustledger/rustledger/actions/workflows/ci.yml/badge.svg)](https://github.com/rustledger/rustledger/actions/workflows/ci.yml)
 [![Compatibility](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/rustledger/rustledger/compatibility/.github/badges/compat-badge.json)](https://github.com/rustledger/rustledger/actions/workflows/compat.yml)
-[![docs.rs](https://img.shields.io/docsrs/rustledger-core)](https://docs.rs/rustledger-core)
-[![GitHub Release](https://img.shields.io/github/v/release/rustledger/rustledger)](https://github.com/rustledger/rustledger/releases)
+
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Liberapay](https://img.shields.io/liberapay/gives/rustledger.svg?logo=liberapay)](https://liberapay.com/rustledger)
 
@@ -195,6 +199,7 @@ rledger format --in-place ledger.beancount
 | `rustledger-importer` | CSV/OFX import framework |
 | `rustledger-lsp` | Language Server Protocol for editor integration |
 | `rustledger-wasm` | WebAssembly bindings for JavaScript/TypeScript |
+| `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
 
 <details>
 <summary><strong>Booking methods (7)</strong></summary>

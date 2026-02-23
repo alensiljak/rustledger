@@ -1,4 +1,4 @@
-//! Beancount parser using chumsky parser combinators.
+//! Beancount parser using Logos lexer and Winnow manual parser.
 //!
 //! This crate provides a parser for the Beancount file format. It produces
 //! a stream of [`Directive`]s from source text, along with any parse errors.
