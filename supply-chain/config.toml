@@ -425,6 +425,10 @@ criteria = "safe-to-deploy"
 version = "0.1.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.format_num_pattern]]
+version = "0.9.4"
+criteria = "safe-to-deploy"
+
 [[exemptions.fs-set-times]]
 version = "0.20.3"
 criteria = "safe-to-deploy"
@@ -827,6 +831,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ptr_meta]]
 version = "0.1.4"
+criteria = "safe-to-deploy"
+
+[[exemptions.pure-rust-locales]]
+version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ptr_meta]]
