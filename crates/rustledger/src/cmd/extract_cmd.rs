@@ -62,7 +62,7 @@ pub struct Args {
     #[arg(long, default_value = "Amount")]
     amount_column: String,
 
-    /// Locale used to parse amounts, e.g. en_US
+    /// Locale used to parse amounts, e.g. `en_US`
     #[arg(long)]
     amount_locale: Option<String>,
 
