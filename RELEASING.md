@@ -20,7 +20,17 @@ Version bumps are determined by commit messages:
 |-------------|--------------|---------|
 | `fix:` | Patch (0.0.x) | `fix: handle empty input` |
 | `feat:` | Minor (0.x.0) | `feat: add new report type` |
-| `feat!:` or `BREAKING CHANGE:` | Major (x.0.0) | `feat!: change API` |
+| `feat!:` or `fix!:` | Major (x.0.0) | `feat!: change API` |
+
+**Important:** Only `feat` and `fix` are "releasable" commit types. Other types (`chore`, `docs`, `refactor`, `test`, etc.) do NOT trigger version bumps, even with the `!` breaking change marker.
+
+```bash
+# ✅ Correct - triggers major version bump
+git commit -m "feat!: add new required field to Config"
+
+# ❌ Wrong - chore doesn't trigger releases, breaking change ignored
+git commit -m "chore!: add new required field to Config"
+```
 
 ### Automated Flow
 
@@ -209,3 +219,46 @@ We follow [Semantic Versioning](https://semver.org/):
 - **Major** (1.0.0): Breaking API changes
 - **Minor** (0.2.0): New features, backward compatible
 - **Patch** (0.1.1): Bug fixes, backward compatible
+
+### What Counts as a Breaking Change?
+
+cargo-semver-checks runs on every PR and will catch these:
+
+| Change | Breaking? | Why |
+|--------|-----------|-----|
+| Adding a public field to a struct | **Yes** | Existing code using struct literals breaks |
+| Removing a public field/method | **Yes** | Existing code using it breaks |
+| Changing a function signature | **Yes** | Existing callers break |
+| Adding a new public method | No | Existing code still works |
+| Adding a new optional parameter with default | No | Existing code still works |
+
+**Tip:** Use `#[non_exhaustive]` on public structs to allow adding fields without breaking changes:
+
+```rust
+#[non_exhaustive]
+pub struct Config {
+    pub name: String,
+    // Future fields won't break consumers
+}
+```
+
+### Forgot to Mark a Breaking Change?
+
+If a breaking change was merged without the `!` marker, and release-plz proposed a minor version instead of major:
+
+```bash
+# 1. Create a branch with an empty commit using feat!:
+git checkout main && git pull
+git checkout -b fix/mark-breaking-change
+git commit --allow-empty -m "feat(crate-name)!: description of breaking change
+
+BREAKING CHANGE: Describe what breaks and how to migrate."
+
+# 2. Create and merge a PR
+git push -u origin fix/mark-breaking-change
+gh pr create --title "feat(crate-name)!: mark as breaking change"
+
+# 3. After merge, release-plz will update the release PR with correct version
+```
+
+**Important:** Use `feat!:` not `chore!:` - only `feat` and `fix` trigger releases.
