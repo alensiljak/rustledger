@@ -204,22 +204,19 @@ rledger check ledger.beancount             # Use cache (default)
 **Goal**: Replace Chumsky parser combinators with fast lexer + manual parser
 **Result**: Logos lexer + Winnow manual parser now in use
 
-### 6.1 Logos Lexer ✅
-- SIMD-accelerated tokenization via [logos](https://github.com/maciejhirsz/logos)
-- Zero-copy token stream - tokens reference source directly
-- Implemented in `logos_lexer.rs`
+### 6.1 Logos Lexer + Winnow Parser ✅ DONE
+- Using [Logos](https://github.com/maciejhirsz/logos) for SIMD-accelerated tokenization
+- Using [Winnow](https://github.com/winnow-rs/winnow) for manual recursive descent parsing
+- Replaced Chumsky parser combinators (kept as `parse_chumsky()` for benchmarking)
+- Zero-copy token stream - no allocations during lexing
+- Implemented in `logos_lexer.rs` and `winnow_parser.rs`
 
-### 6.2 Winnow Manual Parser ✅
-- Replaced Chumsky parser combinators with manual recursive descent
-- Uses Logos token stream as input
-- Chumsky kept as legacy for benchmarking (`parse_chumsky()`)
-
-### 6.3 Bumpalo Arena for AST Nodes (Future)
+### 6.2 Bumpalo Arena for AST Nodes 🔮 FUTURE
 - Use [bumpalo](https://github.com/fitzgen/bumpalo) for AST allocation
 - Only 11 instructions per allocation (vs ~100 for malloc)
 - Mass deallocation: just reset the bump pointer
 - Perfect for phase-oriented allocation (parse → use → discard)
-- **Status**: Not yet implemented
+- **Projected**: +20% parsing improvement
 
 ---
 
@@ -367,8 +364,8 @@ cargo bench --bench pipeline_bench
 
 ### Parser Performance
 - [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated DFA
-- [Winnow](https://epage.github.io/blog/2023/07/winnow-0-5-the-fastest-rust-parser-combinator-library/) - current parser approach (manual recursive descent)
-- [Chumsky](https://github.com/zesterer/chumsky) - previous parser (kept as legacy for comparison)
+- [Winnow](https://github.com/winnow-rs/winnow) - current parser, manual recursive descent
+- [Chumsky](https://github.com/zesterer/chumsky) - legacy parser (kept as `parse_chumsky()` for benchmarking)
 
 ### Serialization
 - [rkyv](https://github.com/rkyv/rkyv) - zero-copy deserialization, [faster than bincode](https://david.kolo.ski/blog/rkyv-is-faster-than/)
