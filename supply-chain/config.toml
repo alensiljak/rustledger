@@ -833,10 +833,6 @@ criteria = "safe-to-deploy"
 version = "0.1.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.pure-rust-locales]]
-version = "0.8.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.ptr_meta]]
 version = "0.3.1"
 criteria = "safe-to-deploy"
@@ -847,6 +843,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ptr_meta_derive]]
 version = "0.3.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.pure-rust-locales]]
+version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.quick-error]]
