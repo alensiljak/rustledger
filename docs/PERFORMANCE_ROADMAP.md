@@ -199,10 +199,10 @@ rledger check ledger.beancount             # Use cache (default)
 
 ---
 
-## Phase 6: Lexer + Parser Rewrite ✅ MOSTLY DONE
+## Phase 6: Lexer + Arena Allocator ✅ PARTIAL
 
-**Goal**: Replace Chumsky parser combinators with fast lexer + manual parser
-**Result**: Logos lexer + Winnow manual parser now in use
+**Goal**: Replace parser combinators with fast lexer, use arena for AST
+**Expected Impact**: 30-50% faster parsing
 
 ### 6.1 Logos Lexer + Winnow Parser ✅ DONE
 - Using [Logos](https://github.com/maciejhirsz/logos) for SIMD-accelerated tokenization
@@ -242,8 +242,8 @@ rledger check ledger.beancount             # Use cache (default)
 | 3 | Full interning | ✅ Done | +6% |
 | 4 | Parallelization (rayon) | ✅ Done | +5% |
 | 5 | Binary cache (rkyv) | ✅ Done | 2.3x on cache hit |
-| 6 | Logos lexer + Winnow parser | ✅ Done | Replaced Chumsky |
-| 6.3 | Bumpalo arena | 🔮 Future | +20% projected |
+| 6.1 | Logos + Winnow parser | ✅ Done | Replaced Chumsky |
+| 6.2 | Bumpalo arena | 🔮 Future | +20% projected |
 | 7 | Memory-mapped files | 🔮 Future | Large files only |
 
 ## Actual Performance
