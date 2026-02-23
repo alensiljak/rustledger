@@ -11,13 +11,15 @@
 //! ```
 
 use crate::cmd::completions::ShellType;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::Parser;
+use format_num_pattern::Locale;
 use rustledger_core::{FormatConfig, format_directive};
 use rustledger_importer::ImporterConfig;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
+use std::str::FromStr;
 
 /// Extract transactions from bank files.
 #[derive(Parser, Debug)]
@@ -59,6 +61,14 @@ pub struct Args {
     /// Amount column name or index
     #[arg(long, default_value = "Amount")]
     amount_column: String,
+
+    /// Locale used to parse amounts, e.g. `en_US`
+    #[arg(long)]
+    amount_locale: Option<String>,
+
+    /// Custom formatting for parsing amounts.
+    #[arg(long)]
+    amount_format: Option<String>,
 
     /// Debit column (for separate debit/credit columns)
     #[arg(long)]
@@ -140,7 +150,19 @@ pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
         builder = builder.credit_column(credit);
     }
 
-    let config = builder.build();
+    if let Some(locale) = &args.amount_locale {
+        let Ok(locale) = Locale::from_str(locale) else {
+            return Err(anyhow!("{locale} is not a valid locale"));
+        };
+
+        builder = builder.amount_locale(locale);
+    }
+
+    if let Some(format) = &args.amount_format {
+        builder = builder.amount_format(format);
+    }
+
+    let config = builder.build()?;
 
     // Extract transactions
     let result = config.extract(file)?;

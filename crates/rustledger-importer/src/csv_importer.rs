@@ -10,7 +10,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::str::FromStr;
 
 #[allow(unused_imports)]
 use rustledger_core::InternedStr;
@@ -200,14 +199,14 @@ impl CsvImporter {
 
             if let Some(debit_col) = &csv_config.debit_column
                 && let Ok(debit_str) = self.get_column(record, debit_col, header_map)
-                && let Some(val) = parse_money_string(debit_str)
+                && let Ok(val) = self.config.amount_format.parse(debit_str)
             {
                 amount -= val; // Debits are negative
             }
 
             if let Some(credit_col) = &csv_config.credit_column
                 && let Ok(credit_str) = self.get_column(record, credit_col, header_map)
-                && let Some(val) = parse_money_string(credit_str)
+                && let Ok(val) = self.config.amount_format.parse(credit_str)
             {
                 amount += val; // Credits are positive
             }
@@ -222,60 +221,50 @@ impl CsvImporter {
             .context("No amount column configured")?;
 
         let amount_str = self.get_column(record, amount_col, header_map)?;
-        parse_money_string(amount_str).context("Failed to parse amount")
-    }
-}
 
-/// Parse a money string, handling currency symbols, parentheses for negatives, etc.
-fn parse_money_string(s: &str) -> Option<Decimal> {
-    let s = s.trim();
-    if s.is_empty() {
-        return None;
-    }
-
-    // Check for parentheses indicating negative
-    let (is_negative, s) = if s.starts_with('(') && s.ends_with(')') {
-        (true, &s[1..s.len() - 1])
-    } else {
-        (false, s)
-    };
-
-    // Remove currency symbols and commas
-    let cleaned: String = s
-        .chars()
-        .filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')
-        .collect();
-
-    if cleaned.is_empty() {
-        return None;
-    }
-
-    let value = Decimal::from_str(&cleaned).ok()?;
-
-    if is_negative {
-        Some(-value)
-    } else {
-        Some(value)
+        self.config
+            .amount_format
+            .parse(amount_str)
+            .context("Failed to parse amount")
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use format_num_pattern::{Locale, NumberFormat};
+
     use super::*;
-    use crate::config::ImporterType;
+    use crate::config::{AmountFormat, ImporterType};
+    use std::str::FromStr;
 
     #[test]
     fn test_parse_money_string() {
-        assert_eq!(parse_money_string("100.00"), Some(Decimal::from(100)));
-        assert_eq!(parse_money_string("$100.00"), Some(Decimal::from(100)));
+        let amount_format = AmountFormat::default();
+
+        assert_eq!(amount_format.parse("100.00").unwrap(), Decimal::from(100));
+        assert_eq!(amount_format.parse("$100.00").unwrap(), Decimal::from(100));
         assert_eq!(
-            parse_money_string("1,234.56"),
-            Some(Decimal::from_str("1234.56").unwrap())
+            amount_format.parse("1,234.56").unwrap(),
+            Decimal::from_str("1234.56").unwrap()
         );
-        assert_eq!(parse_money_string("-50.00"), Some(Decimal::from(-50)));
-        assert_eq!(parse_money_string("(50.00)"), Some(Decimal::from(-50)));
-        assert_eq!(parse_money_string(""), None);
-        assert_eq!(parse_money_string("N/A"), None);
+        assert_eq!(amount_format.parse("-50.00").unwrap(), Decimal::from(-50));
+        assert_eq!(amount_format.parse("(50.00)").unwrap(), Decimal::from(-50));
+        assert!(amount_format.parse("").is_err());
+        assert!(amount_format.parse("N/A").is_err());
+    }
+
+    #[test]
+    fn test_parse_custom_format() {
+        let amount_format = AmountFormat::Format(NumberFormat::new("0,0,0,0.0").unwrap());
+
+        assert_eq!(
+            amount_format.parse("1,2,3,4.0").unwrap(),
+            Decimal::from(1234)
+        );
+
+        assert_eq!(amount_format.parse("1,2,3,4").unwrap(), Decimal::from(1234));
+        assert_eq!(amount_format.parse("1,2,3").unwrap(), Decimal::from(123));
+        assert!(amount_format.parse("1,2,3.0").is_err(),);
     }
 
     #[test]
@@ -287,7 +276,8 @@ mod tests {
             .narration_column("Description")
             .amount_column("Amount")
             .date_format("%m/%d/%Y")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 01/15/2024,Coffee Shop,-4.50
@@ -310,7 +300,8 @@ mod tests {
             .debit_column("Debit")
             .credit_column("Credit")
             .date_format("%Y-%m-%d")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Debit,Credit
 2024-01-15,Coffee Shop,4.50,
@@ -342,7 +333,8 @@ mod tests {
             .narration_column("Description")
             .amount_column("Amount")
             .skip_rows(2)
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 Some header info
@@ -364,7 +356,8 @@ More info
             .narration_column("Description")
             .amount_column("Amount")
             .invert_sign(true)
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Purchase,50.00
@@ -388,7 +381,8 @@ More info
             .narration_column("Description")
             .amount_column("Amount")
             .delimiter(';')
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date;Description;Amount
 2024-01-15;Coffee;-5.00
@@ -407,7 +401,8 @@ More info
             .narration_column_index(1)
             .amount_column_index(2)
             .has_header(false)
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"2024-01-15,Coffee,-5.00
 2024-01-16,Lunch,-10.00
@@ -426,7 +421,8 @@ More info
             .payee_column("Payee")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Payee,Description,Amount
 2024-01-15,Coffee Shop,Morning coffee,-5.00
@@ -449,7 +445,8 @@ More info
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = "Date,Description,Amount\n";
 
@@ -465,7 +462,8 @@ More info
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Purchase,$100.00
@@ -482,6 +480,39 @@ More info
     }
 
     #[test]
+    fn test_csv_import_with_special_locale() {
+        // da_DK locale uses '.' for thousands separation and ',' for decimals.
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .amount_locale(Locale::da_DK)
+            .delimiter(';')
+            .build()
+            .unwrap();
+
+        let csv_content = r"Date;Description;Amount
+2024-01-15;Purchase;1.000,00
+2024-01-16;Refund;-25.000.000,00
+";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 2);
+
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            let amount = txn.postings[0].amount().unwrap();
+            assert_eq!(amount.number, Decimal::from(1000));
+        }
+
+        if let Directive::Transaction(txn) = &result.directives[1] {
+            let amount = txn.postings[0].amount().unwrap();
+            assert_eq!(amount.number, Decimal::from(-25_000_000));
+        }
+    }
+
+    #[test]
     fn test_csv_import_parentheses_negative() {
         let config = ImporterConfig::csv()
             .account("Assets:Bank")
@@ -489,7 +520,8 @@ More info
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Withdrawal,(50.00)
@@ -512,7 +544,8 @@ More info
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r#"Date,Description,Amount
 2024-01-15,Large deposit,"1,234.56"
@@ -529,7 +562,10 @@ More info
 
     #[test]
     fn test_csv_importer_new() {
-        let config = ImporterConfig::csv().account("Assets:Bank").build();
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .build()
+            .unwrap();
         let importer = CsvImporter::new(config);
         // Verify construction succeeds by using the importer
         let empty_result = importer.extract_string("Date,Amount\n", &CsvConfig::default());
@@ -538,14 +574,21 @@ More info
 
     #[test]
     fn test_parse_money_string_edge_cases() {
+        let amount_format = AmountFormat::default();
         // Whitespace
-        assert_eq!(parse_money_string("  100.00  "), Some(Decimal::from(100)));
+        assert_eq!(
+            amount_format.parse("  100.00  ").unwrap(),
+            Decimal::from(100)
+        );
         // Empty after strip
-        assert_eq!(parse_money_string("   "), None);
+        assert!(amount_format.parse("   ").is_err());
         // Just currency symbol
-        assert_eq!(parse_money_string("$"), None);
+        assert!(amount_format.parse("$").is_err());
         // Negative with currency
-        assert_eq!(parse_money_string("-$100.00"), Some(Decimal::from(-100)));
+        assert_eq!(
+            amount_format.parse("-$100.00").unwrap(),
+            Decimal::from(-100)
+        );
     }
 
     #[test]
@@ -556,7 +599,8 @@ More info
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 not-a-date,Coffee,-5.00
@@ -579,7 +623,8 @@ not-a-date,Coffee,-5.00
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 ,Empty date row,-5.00
@@ -600,7 +645,8 @@ not-a-date,Coffee,-5.00
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Zero amount,0.00
@@ -623,7 +669,8 @@ not-a-date,Coffee,-5.00
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Coffee,-5.00
@@ -647,7 +694,8 @@ not-a-date,Coffee,-5.00
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Salary,2500.00
@@ -677,7 +725,8 @@ not-a-date,Coffee,-5.00
             .payee_column("Payee")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Payee,Description,Amount
 2024-01-15,,Empty payee,-5.00
@@ -706,7 +755,8 @@ not-a-date,Coffee,-5.00
             .date_column("NonExistentColumn")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Coffee,-5.00
@@ -729,7 +779,7 @@ not-a-date,Coffee,-5.00
             .narration_column_index(1)
             .amount_column_index(99) // Out of bounds
             .has_header(false)
-            .build();
+            .build().unwrap();
 
         let csv_content = r"2024-01-15,Coffee,-5.00
 ";
@@ -750,6 +800,8 @@ not-a-date,Coffee,-5.00
             narration_column: Some(ColumnSpec::Name("Description".to_string())),
             payee_column: None,
             amount_column: None,
+            amount_format: None,
+            amount_locale: None,
             debit_column: None,
             credit_column: None,
             has_header: true,
@@ -760,6 +812,7 @@ not-a-date,Coffee,-5.00
 
         let importer = CsvImporter::new(ImporterConfig {
             account: "Assets:Bank".to_string(),
+            amount_format: AmountFormat::default(),
             currency: Some("USD".to_string()),
             importer_type: ImporterType::Csv(csv_config.clone()),
         });
@@ -784,7 +837,7 @@ not-a-date,Coffee,-5.00
             .narration_column("Description")
             .debit_column("Debit")
             // No credit column
-            .build();
+            .build().unwrap();
 
         let csv_content = r"Date,Description,Debit
 2024-01-15,Withdrawal,100.00
@@ -809,7 +862,7 @@ not-a-date,Coffee,-5.00
             .narration_column("Description")
             .credit_column("Credit")
             // No debit column
-            .build();
+            .build().unwrap();
 
         let csv_content = r"Date,Description,Credit
 2024-01-15,Deposit,100.00
@@ -834,7 +887,8 @@ not-a-date,Coffee,-5.00
             .narration_column("Description")
             .debit_column("Debit")
             .credit_column("Credit")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Debit,Credit
 2024-01-15,Empty both,,
@@ -853,7 +907,8 @@ not-a-date,Coffee,-5.00
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = r"Date,Description,Amount
 2024-01-15,Deposit,+100.00

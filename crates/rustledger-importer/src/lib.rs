@@ -177,7 +177,8 @@ mod tests {
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = "Date,Description,Amount\n2024-01-15,Coffee,-5.00\n";
         let result = extract_from_string(csv_content, &config).unwrap();
@@ -192,7 +193,8 @@ mod tests {
             .date_column("Date")
             .narration_column("Description")
             .amount_column("Amount")
-            .build();
+            .build()
+            .unwrap();
 
         let csv_content = "Date,Description,Amount\n";
         let result = extract_from_string(csv_content, &config).unwrap();

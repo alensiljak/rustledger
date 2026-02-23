@@ -85,6 +85,7 @@ anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 rust_decimal.workspace = true
+format_num_pattern.workspace = true
 chrono.workspace = true
 ureq.workspace = true
 rayon.workspace = true
