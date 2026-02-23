@@ -1,5 +1,24 @@
 # Rustledger Import System Roadmap
 
+## Current Status
+
+| Component | Status | Details |
+|-----------|--------|---------|
+| Import Trait System | ✅ Done | `Importer` trait, `ImportResult`, registry |
+| CSV Importer | ✅ Done | Column mapping, date formats, debit/credit split |
+| OFX Importer | ✅ Done | OFX/QFX file parsing |
+| Institution Profiles | 🔮 Future | YAML-based bank definitions |
+| Balance Validation | 🔮 Future | Statement balance assertions |
+| Multi-Source Matching | 🔮 Future | Cross-validate sources |
+| PDF Extraction | 🔮 Future | Document AI / local OCR |
+| API Integration | 🔮 Future | SimpleFIN, Plaid |
+| Categorization | 🔮 Future | Rule-based + ML |
+| Source Archive | 🔮 Future | SQLite append-only store |
+
+**Current version**: Basic import framework (Phase 1 partial)
+
+---
+
 ## Vision
 
 Build a **dependable, multi-source validated** import system that eliminates the brittleness of traditional PTA import tools. Instead of trusting a single CSV, we cross-validate against multiple data sources to achieve high confidence in imported data.
@@ -1226,6 +1245,13 @@ Level 5: AUDITED
 | [**Plaid**](https://plaid.com/) | Transaction enrichment, merchant normalization |
 | [**Teller**](https://teller.io/) | Direct bank API integration (no scraping) |
 
+### Beancount Import Ecosystem
+
+| Project | What We Learn |
+|---------|---------------|
+| [**beangulp**](https://github.com/beancount/beangulp) | Official Beancount importer framework: `identify()`, `account()`, `extract()` pattern, self-running importers with subcommands |
+| [**smart_importer**](https://github.com/beancount/smart_importer) | ML-augmented importers using scikit-learn SVM for account/payee prediction, hooks system for wrapping importers |
+
 ### Document Extraction
 
 | Project | What We Learn |
@@ -1394,11 +1420,11 @@ impl BlockStore {
 
 ## Implementation Phases
 
-### Phase 1: Foundation (v0.7.x)
+### Phase 1: Foundation (v0.7.x) - IN PROGRESS
 
 **Goal**: Basic import with balance validation
 
-#### 1.1 Transaction Schema
+#### 1.1 Transaction Schema ✅
 ```rust
 pub struct ImportedTransaction {
     // Core fields
@@ -1425,7 +1451,8 @@ pub struct TransactionFingerprint {
 ```
 
 #### 1.2 CSV Parser Framework
-- [ ] Generic CSV parser with column mapping
+- [x] Generic CSV parser with column mapping ✅
+- [x] OFX/QFX parser ✅
 - [ ] Institution profile loader (YAML/TOML)
 - [ ] Built-in profiles for top 20 US banks
 - [ ] Balance extraction and validation
@@ -1788,8 +1815,12 @@ Recent unmatched from API:
 ### Bank Data
 - [SimpleFIN Protocol](https://www.simplefin.org/protocol.html)
 - [Teller API](https://teller.io/)
-- [beangulp](https://github.com/beancount/beangulp)
 - [hledger CSV import](https://hledger.org/import-csv.html)
+
+### Beancount Import Ecosystem
+- [beangulp](https://github.com/beancount/beangulp) - Official Beancount v3 importer framework with `identify()`, `account()`, `extract()` interface
+- [smart_importer](https://github.com/beancount/smart_importer) - ML-augmented importers using scikit-learn SVM for account prediction
+- [beancount_reds_importers](https://github.com/redstreet/beancount_reds_importers) - Community importers framework
 
 ### Transparency & Integrity
 - [Sigstore Rekor](https://docs.sigstore.dev/logging/overview/)
