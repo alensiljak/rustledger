@@ -1,26 +1,10 @@
 # Mergify configuration
 # https://docs.mergify.com/configuration/file-format/
 #
-# Auto-merges PRs from trusted bots when CI passes.
+# Handles auto-approval and housekeeping for PRs.
+# Merging is handled by GitHub's native merge queue.
+#
 # Requires Mergify GitHub App: https://github.com/apps/mergify
-
-# Required for "Require branches to be up to date" branch protection
-merge_queue:
-  max_parallel_checks: 1
-
-# Queue rules define how PRs are merged
-queue_rules:
-  - name: default
-    merge_method: squash
-    batch_size: 1
-    commit_message_template: |
-      {{ title }} (#{{ number }})
-
-  - name: release
-    merge_method: merge
-    batch_size: 1
-    commit_message_template: |
-      {{ title }} (#{{ number }})
 
 pull_request_rules:
   # Auto-assign all PRs to maintainer
@@ -31,27 +15,6 @@ pull_request_rules:
       assign:
         users:
           - robcohen
-
-  # Auto-merge Dependabot PRs (dependency updates)
-  - name: Auto-merge Dependabot PRs
-    conditions:
-      - author=dependabot[bot]
-      - check-success=build
-      - -draft
-    actions:
-      queue:
-        name: default
-
-  # Auto-merge release-plz PRs (version bumps and changelog)
-  - name: Auto-merge release-plz PRs
-    conditions:
-      - author=github-actions[bot]
-      - label=release
-      - check-success=build
-      - -draft
-    actions:
-      queue:
-        name: release
 
   # Auto-approve Dependabot PRs (minor/patch updates only)
   - name: Auto-approve Dependabot minor/patch
@@ -66,6 +29,17 @@ pull_request_rules:
       review:
         type: APPROVE
         message: Auto-approved minor/patch dependency update.
+
+  # Auto-approve release-plz PRs
+  - name: Auto-approve release-plz PRs
+    conditions:
+      - author=github-actions[bot]
+      - label=release
+      - check-success=build
+    actions:
+      review:
+        type: APPROVE
+        message: Auto-approved release PR.
 
   # Request review for major Dependabot updates
   - name: Request review for major updates
