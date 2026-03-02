@@ -1,22 +1,13 @@
 # release-plz configuration
-# https://release-plz.ieni.dev/docs/config
+# https://release-plz.dev/docs/config
 #
-# release-plz automates:
-# 1. Version bumping based on conventional commits
-# 2. Changelog generation
-# 3. Release PR creation
-# 4. Publishing to crates.io
+# Based on working configs from:
+# - https://github.com/Quantinuum/hugr
+# - https://github.com/release-plz/release-plz
 
 [workspace]
-# Use conventional commits to determine version bumps
-# feat: -> minor, fix: -> patch
+# Enable semver checking for API breaking changes
 semver_check = true
-
-# For pre-1.0 versions, breaking changes bump the minor version (0.9.x -> 0.10.0)
-# Matches: feat!:, fix!:, feat(scope)!:, fix(importer)!:, etc.
-# Also matches BREAKING CHANGE in commit body
-# Note: When ready for 1.0, change this to custom_major_increment_regex
-custom_minor_increment_regex = "^\\w+(\\(.*\\))?!:|BREAKING CHANGE:"
 
 # Create changelog entries from conventional commits
 changelog_update = true
@@ -36,11 +27,10 @@ pr_labels = ["release"]
 # Don't publish to crates.io from release-plz (handled by release-build.yml)
 publish = false
 
-# Allow releasing from main
+# Disallow releasing with uncommitted changes
 allow_dirty = false
 
 [changelog]
-# Changelog header
 header = """# Changelog
 
 All notable changes to this project will be documented in this file.
@@ -50,21 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 """
 
-# Commit types to include in changelog
-# Breaking changes (with !) are listed first
+# Sort commits oldest first (like hugr)
+sort_commits = "oldest"
+
+# Ensure breaking change commits are never filtered out
+protect_breaking_commits = true
+
+# Commit types to include in changelog (based on hugr)
 commit_parsers = [
-  { message = "^\\w+(\\(.*\\))?!:", group = "Breaking Changes" },
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Bug Fixes" },
   { message = "^perf", group = "Performance" },
   { message = "^refactor", group = "Refactoring" },
   { message = "^doc", group = "Documentation" },
   { message = "^test", group = "Testing" },
-  { message = "^chore\\(deps\\)", group = "Dependencies" },
-  { message = "^chore", group = "Miscellaneous" },
-]
-
-# Exclude these from changelog
-commit_preprocessors = [
-  { pattern = "^chore: release", replace = "" },
+  { message = "^chore", group = "Miscellaneous", skip = true },
+  { message = "^ci", group = "CI", skip = true },
 ]
