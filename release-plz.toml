@@ -9,8 +9,13 @@
 
 [workspace]
 # Use conventional commits to determine version bumps
-# feat: -> minor, fix: -> patch, BREAKING CHANGE: -> major
+# feat: -> minor, fix: -> patch, BREAKING CHANGE: or type!: -> major
 semver_check = true
+
+# Detect breaking changes from conventional commit '!' marker
+# Matches: feat!:, fix!:, feat(scope)!:, fix(importer)!:, etc.
+# Also matches BREAKING CHANGE in commit body
+custom_major_increment_regex = "^\\w+(\\(.*\\))?!:|BREAKING CHANGE:"
 
 # Create changelog entries from conventional commits
 changelog_update = true
@@ -45,7 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 """
 
 # Commit types to include in changelog
+# Breaking changes (with !) are listed first
 commit_parsers = [
+  { message = "^\\w+(\\(.*\\))?!:", group = "Breaking Changes" },
   { message = "^feat", group = "Features" },
   { message = "^fix", group = "Bug Fixes" },
   { message = "^perf", group = "Performance" },
