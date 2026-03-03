@@ -257,14 +257,6 @@ criteria = "safe-to-deploy"
 version = "0.2.17"
 criteria = "safe-to-deploy"
 
-[[exemptions.crc]]
-version = "3.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.crc-catalog]]
-version = "2.4.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.crc32fast]]
 version = "1.5.0"
 criteria = "safe-to-deploy"
@@ -562,7 +554,7 @@ version = "0.97.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.lzma-rust2]]
-version = "0.15.7"
+version = "0.16.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.mach2]]
@@ -1286,7 +1278,7 @@ version = "0.11.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
-version = "7.4.0"
+version = "8.1.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zlib-rs]]

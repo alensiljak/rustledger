@@ -6,3 +6,5 @@ pnl = "pnl"
 HSA = "HSA"
 # Intentional typo in test (invalid SQL query)
 SELEKT = "SELEKT"
+# Crate name (deflate compression)
+flate = "flate"
