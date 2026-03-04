@@ -195,6 +195,10 @@ impl fmt::Display for Posting {
         if let Some(price) = &self.price {
             write!(f, " {price}")?;
         }
+        // Posting-level metadata
+        for (key, value) in &self.meta {
+            write!(f, "\n    {key}: {value}")?;
+        }
         Ok(())
     }
 }
@@ -610,6 +614,10 @@ impl fmt::Display for Transaction {
         }
         for link in &self.links {
             write!(f, " ^{link}")?;
+        }
+        // Transaction-level metadata
+        for (key, value) in &self.meta {
+            write!(f, "\n  {key}: {value}")?;
         }
         for posting in &self.postings {
             write!(f, "\n{posting}")?;
@@ -1427,5 +1435,62 @@ mod tests {
                 "Flag '{flag}' should be invalid"
             );
         }
+    }
+
+    #[test]
+    fn test_transaction_display_includes_metadata() {
+        let mut meta = Metadata::default();
+        meta.insert(
+            "document".to_string(),
+            MetaValue::String("myfile.pdf".to_string()),
+        );
+
+        let txn = Transaction {
+            date: date(2026, 2, 23),
+            flag: '*',
+            payee: None,
+            narration: "Example".into(),
+            tags: vec![],
+            links: vec![],
+            meta,
+            postings: vec![
+                Posting::new("Assets:Bank", Amount::new(dec!(-2), "USD")),
+                Posting::auto("Expenses:Example"),
+            ],
+        };
+
+        let output = txn.to_string();
+        assert!(
+            output.contains("document: \"myfile.pdf\""),
+            "Transaction Display should include metadata: {output}"
+        );
+        assert!(
+            output.contains("Assets:Bank"),
+            "Transaction Display should include postings: {output}"
+        );
+    }
+
+    #[test]
+    fn test_posting_display_includes_metadata() {
+        let mut meta = Metadata::default();
+        meta.insert(
+            "category".to_string(),
+            MetaValue::String("groceries".to_string()),
+        );
+
+        let posting = Posting {
+            account: "Expenses:Food".into(),
+            units: Some(IncompleteAmount::Complete(Amount::new(dec!(50), "USD"))),
+            cost: None,
+            price: None,
+            flag: None,
+            meta,
+        };
+
+        let output = posting.to_string();
+        assert!(
+            output.contains("category: \"groceries\""),
+            "Posting Display should include metadata: {output}"
+        );
     }
 }
