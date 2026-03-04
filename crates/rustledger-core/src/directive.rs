@@ -1238,6 +1238,25 @@ impl fmt::Display for Custom {
     }
 }
 
+impl fmt::Display for Directive {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Transaction(t) => write!(f, "{t}"),
+            Self::Balance(b) => write!(f, "{b}"),
+            Self::Open(o) => write!(f, "{o}"),
+            Self::Close(c) => write!(f, "{c}"),
+            Self::Commodity(c) => write!(f, "{c}"),
+            Self::Pad(p) => write!(f, "{p}"),
+            Self::Event(e) => write!(f, "{e}"),
+            Self::Query(q) => write!(f, "{q}"),
+            Self::Note(n) => write!(f, "{n}"),
+            Self::Document(d) => write!(f, "{d}"),
+            Self::Price(p) => write!(f, "{p}"),
+            Self::Custom(c) => write!(f, "{c}"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1492,5 +1511,28 @@ mod tests {
             output.contains("category: \"groceries\""),
             "Posting Display should include metadata: {output}"
         );
+    }
+
+    #[test]
+    fn test_directive_display() {
+        // Test that Directive enum delegates to inner type's Display
+        let txn = Transaction::new(date(2024, 1, 15), "Test transaction");
+        let dir = Directive::Transaction(txn.clone());
+
+        // Directive::Display should produce same output as Transaction::Display
+        assert_eq!(format!("{dir}"), format!("{txn}"));
+
+        // Test other directive types
+        let open = Open::new(date(2024, 1, 1), "Assets:Bank");
+        let dir_open = Directive::Open(open.clone());
+        assert_eq!(format!("{dir_open}"), format!("{open}"));
+
+        let balance = Balance::new(
+            date(2024, 1, 1),
+            "Assets:Bank",
+            Amount::new(dec!(100), "USD"),
+        );
+        let dir_balance = Directive::Balance(balance.clone());
+        assert_eq!(format!("{dir_balance}"), format!("{balance}"));
     }
 }
