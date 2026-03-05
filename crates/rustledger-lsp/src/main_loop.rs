@@ -38,6 +38,7 @@ use crate::handlers::type_hierarchy::{
     handle_prepare_type_hierarchy, handle_subtypes, handle_supertypes,
 };
 use crate::handlers::workspace_symbols::handle_workspace_symbols;
+use crate::ledger_state::{LedgerState, SharedLedgerState, new_shared_ledger_state};
 use crate::snapshot::bump_revision;
 use crate::vfs::Vfs;
 use crossbeam_channel::{Receiver, Sender};
@@ -135,6 +136,10 @@ pub struct MainLoopState {
     pub diagnostics: HashMap<Uri, Vec<lsp_types::Diagnostic>>,
     /// Whether shutdown was requested.
     pub shutdown_requested: bool,
+    /// Full ledger state (loaded from journal file if configured).
+    pub ledger_state: SharedLedgerState,
+    /// Path to the journal file (if configured).
+    pub journal_file: Option<PathBuf>,
 }
 
 /// Default empty parse result for missing documents.
@@ -144,12 +149,34 @@ fn empty_parse_result() -> Arc<ParseResult> {
 
 impl MainLoopState {
     /// Create a new main loop state.
-    pub fn new(sender: Sender<lsp_server::Message>) -> Self {
+    pub fn new(sender: Sender<lsp_server::Message>, journal_file: Option<PathBuf>) -> Self {
+        let ledger_state = new_shared_ledger_state();
+
+        // Load journal file if configured
+        if let Some(ref path) = journal_file {
+            let mut state = ledger_state.write();
+            if let Err(e) = state.load(path) {
+                tracing::error!("Failed to load journal file: {e}");
+            }
+        }
+
         Self {
             vfs: Arc::new(RwLock::new(Vfs::new())),
             sender,
             diagnostics: HashMap::new(),
             shutdown_requested: false,
+            ledger_state,
+            journal_file,
+        }
+    }
+
+    /// Reload the journal file (e.g., after a file change).
+    pub fn reload_journal(&mut self) {
+        if let Some(ref path) = self.journal_file {
+            let mut state = self.ledger_state.write();
+            if let Err(e) = state.load(path) {
+                tracing::error!("Failed to reload journal file: {e}");
+            }
         }
     }
 
@@ -1193,8 +1220,17 @@ impl MainLoopState {
 }
 
 /// Run the main event loop.
-pub fn run_main_loop(receiver: Receiver<lsp_server::Message>, sender: Sender<lsp_server::Message>) {
-    let mut state = MainLoopState::new(sender);
+///
+/// # Arguments
+/// * `receiver` - Channel to receive LSP messages from the client
+/// * `sender` - Channel to send LSP messages to the client
+/// * `journal_file` - Optional path to the root journal file for multi-file support
+pub fn run_main_loop(
+    receiver: Receiver<lsp_server::Message>,
+    sender: Sender<lsp_server::Message>,
+    journal_file: Option<PathBuf>,
+) {
+    let mut state = MainLoopState::new(sender, journal_file);
 
     tracing::info!("Main loop started");
 

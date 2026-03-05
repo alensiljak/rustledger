@@ -3095,6 +3095,7 @@ dependencies = [
  "parking_lot",
  "ropey",
  "rustledger-core",
+ "rustledger-loader",
  "rustledger-parser",
  "serde",
  "serde_json",

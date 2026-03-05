@@ -30,12 +30,14 @@
 
 pub mod db;
 pub mod handlers;
+pub mod ledger_state;
 pub mod main_loop;
 
 mod server;
 mod snapshot;
 mod vfs;
 
+pub use ledger_state::{LedgerState, LspConfig, SharedLedgerState, new_shared_ledger_state};
 pub use main_loop::run_main_loop;
 pub use server::{Server, start_stdio};
 pub use snapshot::Snapshot;

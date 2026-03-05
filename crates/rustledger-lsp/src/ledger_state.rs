@@ -1,0 +1,260 @@
+//! Ledger state management for multi-file support.
+//!
+//! This module provides the [`LedgerState`] which loads and maintains
+//! the full ledger state from a root journal file and all its includes.
+
+use parking_lot::RwLock;
+use rustledger_core::Directive;
+use rustledger_loader::{Ledger, LoadOptions, load};
+use rustledger_parser::Spanned;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+/// Configuration for the LSP server, parsed from initialization options.
+#[derive(Debug, Clone, Default)]
+pub struct LspConfig {
+    /// Path to the root journal file (e.g., "main.bean").
+    /// When set, the LSP loads this file and all its includes for
+    /// complete diagnostics and completions across the entire ledger.
+    pub journal_file: Option<PathBuf>,
+}
+
+impl LspConfig {
+    /// Parse configuration from LSP initialization options.
+    pub fn from_init_options(options: Option<&serde_json::Value>) -> Self {
+        let mut config = Self::default();
+
+        if let Some(opts) = options {
+            // Support both camelCase and snake_case
+            if let Some(path) = opts
+                .get("journalFile")
+                .or_else(|| opts.get("journal_file"))
+                .and_then(|v| v.as_str())
+            {
+                config.journal_file = Some(PathBuf::from(path));
+            }
+        }
+
+        config
+    }
+}
+
+/// Holds the loaded ledger state from the root journal file.
+///
+/// This is used to provide cross-file completions, diagnostics, and navigation.
+pub struct LedgerState {
+    /// The loaded ledger (if a journal file is configured).
+    ledger: Option<Ledger>,
+    /// All files that are part of this ledger (main + includes).
+    included_files: HashSet<PathBuf>,
+    /// Accounts extracted from the full ledger.
+    accounts: Vec<String>,
+    /// Currencies extracted from the full ledger.
+    currencies: Vec<String>,
+    /// Payees extracted from the full ledger.
+    payees: Vec<String>,
+    /// Account to file mapping for go-to-definition.
+    account_locations: HashMap<String, (PathBuf, u32)>,
+}
+
+impl Default for LedgerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LedgerState {
+    /// Create a new empty ledger state.
+    pub fn new() -> Self {
+        Self {
+            ledger: None,
+            included_files: HashSet::new(),
+            accounts: Vec::new(),
+            currencies: Vec::new(),
+            payees: Vec::new(),
+            account_locations: HashMap::new(),
+        }
+    }
+
+    /// Load the ledger from a journal file.
+    ///
+    /// Returns the set of files that were loaded (for file watching).
+    pub fn load(&mut self, journal_path: &Path) -> Result<HashSet<PathBuf>, String> {
+        tracing::info!("Loading journal file: {}", journal_path.display());
+
+        let options = LoadOptions::default();
+        match load(journal_path, &options) {
+            Ok(ledger) => {
+                // Extract included files from source map
+                self.included_files.clear();
+                for file in ledger.source_map.files() {
+                    self.included_files.insert(file.path.clone());
+                }
+
+                // Extract accounts, currencies, payees for completions
+                self.extract_completion_data(&ledger.directives);
+
+                // Extract account locations for go-to-definition
+                self.extract_account_locations(&ledger);
+
+                let files = self.included_files.clone();
+                self.ledger = Some(ledger);
+
+                tracing::info!(
+                    "Loaded {} files, {} accounts, {} currencies",
+                    self.included_files.len(),
+                    self.accounts.len(),
+                    self.currencies.len()
+                );
+
+                Ok(files)
+            }
+            Err(e) => {
+                tracing::error!("Failed to load journal: {e}");
+                Err(e.to_string())
+            }
+        }
+    }
+
+    /// Check if a file is part of this ledger.
+    pub fn contains_file(&self, path: &Path) -> bool {
+        self.included_files.contains(path)
+    }
+
+    /// Get all accounts from the full ledger.
+    pub fn accounts(&self) -> &[String] {
+        &self.accounts
+    }
+
+    /// Get all currencies from the full ledger.
+    pub fn currencies(&self) -> &[String] {
+        &self.currencies
+    }
+
+    /// Get all payees from the full ledger.
+    pub fn payees(&self) -> &[String] {
+        &self.payees
+    }
+
+    /// Get all directives from the full ledger.
+    pub fn directives(&self) -> Option<&[Spanned<Directive>]> {
+        self.ledger.as_ref().map(|l| l.directives.as_slice())
+    }
+
+    /// Get the loaded ledger.
+    pub fn ledger(&self) -> Option<&Ledger> {
+        self.ledger.as_ref()
+    }
+
+    /// Get all included files.
+    pub fn included_files(&self) -> &HashSet<PathBuf> {
+        &self.included_files
+    }
+
+    /// Find where an account is defined.
+    pub fn find_account_definition(&self, account: &str) -> Option<(PathBuf, u32)> {
+        self.account_locations.get(account).cloned()
+    }
+
+    /// Extract completion data from directives.
+    fn extract_completion_data(&mut self, directives: &[Spanned<Directive>]) {
+        self.accounts.clear();
+        self.currencies.clear();
+        self.payees.clear();
+
+        let mut accounts_set: HashSet<String> = HashSet::new();
+        let mut currencies_set: HashSet<String> = HashSet::new();
+        let mut payees_set: HashSet<String> = HashSet::new();
+
+        for spanned in directives {
+            match &spanned.value {
+                Directive::Open(open) => {
+                    accounts_set.insert(open.account.to_string());
+                    for currency in &open.currencies {
+                        currencies_set.insert(currency.to_string());
+                    }
+                }
+                Directive::Close(close) => {
+                    accounts_set.insert(close.account.to_string());
+                }
+                Directive::Balance(balance) => {
+                    accounts_set.insert(balance.account.to_string());
+                    currencies_set.insert(balance.amount.currency.to_string());
+                }
+                Directive::Pad(pad) => {
+                    accounts_set.insert(pad.account.to_string());
+                    accounts_set.insert(pad.source_account.to_string());
+                }
+                Directive::Transaction(txn) => {
+                    if let Some(payee) = &txn.payee {
+                        payees_set.insert(payee.to_string());
+                    }
+                    for posting in &txn.postings {
+                        accounts_set.insert(posting.account.to_string());
+                        if let Some(units) = &posting.units {
+                            currencies_set.insert(units.currency.to_string());
+                        }
+                        if let Some(cost) = &posting.cost {
+                            if let Some(currency) = &cost.currency {
+                                currencies_set.insert(currency.to_string());
+                            }
+                        }
+                        if let Some(price) = &posting.price {
+                            currencies_set.insert(price.currency.to_string());
+                        }
+                    }
+                }
+                Directive::Commodity(commodity) => {
+                    currencies_set.insert(commodity.currency.to_string());
+                }
+                Directive::Document(doc) => {
+                    accounts_set.insert(doc.account.to_string());
+                }
+                Directive::Note(note) => {
+                    accounts_set.insert(note.account.to_string());
+                }
+                _ => {}
+            }
+        }
+
+        self.accounts = accounts_set.into_iter().collect();
+        self.accounts.sort();
+        self.currencies = currencies_set.into_iter().collect();
+        self.currencies.sort();
+        self.payees = payees_set.into_iter().collect();
+        self.payees.sort();
+    }
+
+    /// Extract account definition locations from the ledger.
+    fn extract_account_locations(&mut self, ledger: &Ledger) {
+        self.account_locations.clear();
+
+        // Build a map of cumulative offsets for each file
+        let files = ledger.source_map.files();
+        if files.is_empty() {
+            return;
+        }
+
+        for spanned in &ledger.directives {
+            if let Directive::Open(open) = &spanned.value {
+                // For now, find the file by checking which file's source range contains this span
+                // This is a simplified approach - we use the first file as default
+                // A more robust solution would track file offsets properly
+                if let Some(file) = files.first() {
+                    let (line, _col) = file.line_col(spanned.span.start);
+                    self.account_locations
+                        .insert(open.account.to_string(), (file.path.clone(), line as u32));
+                }
+            }
+        }
+    }
+}
+
+/// Thread-safe wrapper for ledger state.
+pub type SharedLedgerState = Arc<RwLock<LedgerState>>;
+
+/// Create a new shared ledger state.
+pub fn new_shared_ledger_state() -> SharedLedgerState {
+    Arc::new(RwLock::new(LedgerState::new()))
+}
