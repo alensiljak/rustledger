@@ -649,8 +649,8 @@ fn test_document_discovery_from_option() {
 }
 
 #[test]
-fn test_document_discovery_empty_dir() {
-    // Test that document discovery works even with no matching files
+fn test_document_discovery_no_option() {
+    // Test that document discovery doesn't happen when option "documents" is not set
     let path = fixtures_path("simple.beancount");
     let options = LoadOptions::default();
 
@@ -669,24 +669,34 @@ fn test_document_discovery_empty_dir() {
 
 #[test]
 fn test_document_discovery_no_duplicates() {
-    // Test that document discovery doesn't create duplicates if document already exists
-    let path = fixtures_path("doc_discovery.beancount");
+    // Test that document discovery doesn't create duplicates if a document directive
+    // already exists for one of the discoverable files.
+    //
+    // The `doc_discovery_with_explicit.beancount` fixture:
+    //   * Enables document discovery for `documents/` directory
+    //   * Contains an explicit `document` directive for one file that would also be discovered
+    //
+    // If de-duplication is working correctly, the explicitly referenced file must not
+    // be added again by discovery.
+    let path = fixtures_path("doc_discovery_with_explicit.beancount");
     let options = LoadOptions::default();
 
-    // Load twice - discovered documents should be consistent
-    let ledger1 = load(&path, &options).expect("should load");
-    let ledger2 = load(&path, &options).expect("should load again");
+    let ledger = load(&path, &options).expect("should load");
 
-    let count1 = ledger1
-        .directives
-        .iter()
-        .filter(|d| matches!(d.value, rustledger_core::Directive::Document(_)))
-        .count();
-    let count2 = ledger2
+    let doc_count = ledger
         .directives
         .iter()
         .filter(|d| matches!(d.value, rustledger_core::Directive::Document(_)))
         .count();
 
-    assert_eq!(count1, count2, "document counts should be consistent");
+    // The fixture has 3 document files in the directory:
+    //   - documents/Assets/Bank/Checking/2024-01-15.statement.pdf
+    //   - documents/Assets/Bank/Checking/2024-02-15.statement.pdf
+    //   - documents/Expenses/Food/2024-03-10.receipt.jpg
+    // One of them (2024-01-15.statement.pdf) is explicitly declared in the file.
+    // If duplicates were being created, we'd see 4 documents instead of 3.
+    assert_eq!(
+        doc_count, 3,
+        "document discovery should not create duplicate Document directives"
+    );
 }
