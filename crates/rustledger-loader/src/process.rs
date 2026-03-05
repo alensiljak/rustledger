@@ -210,11 +210,16 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
 
     // 3. Run plugins
     #[cfg(feature = "plugins")]
-    if options.run_plugins || !options.extra_plugins.is_empty() || options.auto_accounts {
+    if options.run_plugins
+        || !options.extra_plugins.is_empty()
+        || options.auto_accounts
+        || !raw.options.documents.is_empty()
+    {
         run_plugins(
             &mut directives,
             &raw.plugins,
             &raw.options,
+            &raw.source_map,
             options,
             &mut errors,
         )?;
@@ -271,15 +276,36 @@ fn run_plugins(
     directives: &mut Vec<Spanned<Directive>>,
     file_plugins: &[Plugin],
     file_options: &Options,
+    source_map: &SourceMap,
     options: &LoadOptions,
     errors: &mut Vec<LedgerError>,
 ) -> Result<(), ProcessError> {
     use rustledger_plugin::{
-        NativePluginRegistry, PluginInput, PluginOptions, directives_to_wrappers,
-        wrappers_to_directives,
+        DocumentDiscoveryPlugin, NativePlugin, NativePluginRegistry, PluginInput, PluginOptions,
+        directives_to_wrappers, wrappers_to_directives,
     };
 
     let registry = NativePluginRegistry::new();
+
+    // Resolve document directories relative to the main file's directory
+    let base_dir = source_map
+        .files()
+        .first()
+        .and_then(|f| f.path.parent())
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    let resolved_documents: Vec<String> = file_options
+        .documents
+        .iter()
+        .map(|d| {
+            let path = std::path::Path::new(d);
+            if path.is_absolute() {
+                d.clone()
+            } else {
+                base_dir.join(path).to_string_lossy().to_string()
+            }
+        })
+        .collect();
 
     // Build list of plugins to run
     let mut plugins_to_run: Vec<(String, Option<String>)> = Vec::new();
@@ -328,7 +354,9 @@ fn run_plugins(
         plugins_to_run.push((plugin_name.clone(), config));
     }
 
-    if plugins_to_run.is_empty() {
+    // Check if we have any work to do
+    let has_document_dirs = !resolved_documents.is_empty();
+    if plugins_to_run.is_empty() && !has_document_dirs {
         return Ok(());
     }
 
@@ -340,6 +368,32 @@ fn run_plugins(
         operating_currencies: file_options.operating_currency.clone(),
         title: file_options.title.clone(),
     };
+
+    // Run document discovery plugin if documents directories are configured
+    if has_document_dirs {
+        let doc_plugin = DocumentDiscoveryPlugin::new(resolved_documents);
+        let input = PluginInput {
+            directives: wrappers.clone(),
+            options: plugin_options.clone(),
+            config: None,
+        };
+        let output = doc_plugin.process(input);
+
+        // Collect plugin errors
+        for err in output.errors {
+            let ledger_err = match err.severity {
+                rustledger_plugin::PluginErrorSeverity::Error => {
+                    LedgerError::error("PLUGIN", err.message)
+                }
+                rustledger_plugin::PluginErrorSeverity::Warning => {
+                    LedgerError::warning("PLUGIN", err.message)
+                }
+            };
+            errors.push(ledger_err);
+        }
+
+        wrappers = output.directives;
+    }
 
     // Run each plugin
     for (plugin_name, plugin_config) in &plugins_to_run {
