@@ -6,6 +6,7 @@ use crate::handlers::semantic_tokens::get_capabilities as get_semantic_tokens_ca
 use crate::handlers::signature_help::TRIGGER_CHARACTERS as SIGNATURE_TRIGGER_CHARACTERS;
 use crate::ledger_state::{LspConfig, discover_journal_file};
 use crate::main_loop::run_main_loop;
+use crate::uri_to_path;
 use lsp_server::Connection;
 use lsp_types::InitializeParams;
 
@@ -95,13 +96,7 @@ impl Server {
             .workspace_folders
             .as_ref()
             .and_then(|folders| folders.first())
-            .and_then(|folder| {
-                folder
-                    .uri
-                    .as_str()
-                    .strip_prefix("file://")
-                    .map(std::path::PathBuf::from)
-            })
+            .and_then(|folder| uri_to_path(&folder.uri))
     }
 
     /// Resolve an explicitly configured journal path.

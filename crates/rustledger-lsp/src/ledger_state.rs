@@ -279,18 +279,10 @@ impl LedgerState {
     fn extract_account_locations(&mut self, ledger: &Ledger) {
         self.account_locations.clear();
 
-        // Build a map of cumulative offsets for each file
-        let files = ledger.source_map.files();
-        if files.is_empty() {
-            return;
-        }
-
         for spanned in &ledger.directives {
             if let Directive::Open(open) = &spanned.value {
-                // For now, find the file by checking which file's source range contains this span
-                // This is a simplified approach - we use the first file as default
-                // A more robust solution would track file offsets properly
-                if let Some(file) = files.first() {
+                // Use file_id from the spanned directive to get the correct source file
+                if let Some(file) = ledger.source_map.get(spanned.file_id as usize) {
                     let (line, _col) = file.line_col(spanned.span.start);
                     self.account_locations
                         .insert(open.account.to_string(), (file.path.clone(), line as u32));

@@ -40,6 +40,7 @@ use crate::handlers::type_hierarchy::{
 use crate::handlers::workspace_symbols::handle_workspace_symbols;
 use crate::ledger_state::{SharedLedgerState, new_shared_ledger_state};
 use crate::snapshot::bump_revision;
+use crate::uri_to_path;
 use crate::vfs::Vfs;
 use crossbeam_channel::{Receiver, Sender};
 use lsp_types::notification::{
@@ -78,22 +79,6 @@ use rustledger_parser::{ParseResult, parse};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-
-/// Convert a URI to a file path.
-#[cfg(not(windows))]
-fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
-    uri.as_str().strip_prefix("file://").map(PathBuf::from)
-}
-
-/// Convert a URI to a file path (Windows version).
-#[cfg(windows)]
-fn uri_to_path(uri: &Uri) -> Option<PathBuf> {
-    uri.as_str()
-        .strip_prefix("file://")
-        // Handle Windows paths like file:///C:/...
-        .map(|p| p.strip_prefix('/').unwrap_or(p))
-        .map(PathBuf::from)
-}
 
 /// Events processed by the main loop.
 #[derive(Debug)]
@@ -1114,6 +1099,7 @@ impl MainLoopState {
         tracing::info!("Watched files changed: {} files", params.changes.len());
 
         let mut should_reload_journal = false;
+        let mut should_revalidate = false;
 
         for change in params.changes {
             tracing::debug!("File {:?}: {:?}", change.uri.as_str(), change.typ);
@@ -1126,11 +1112,10 @@ impl MainLoopState {
                 }
             }
 
-            // If a .beancount file changed externally, re-validate open documents
-            // that might include this file
+            // If a .beancount or .bean file changed externally, mark for revalidation
             if change.uri.as_str().ends_with(".beancount") || change.uri.as_str().ends_with(".bean")
             {
-                self.revalidate_open_documents();
+                should_revalidate = true;
             }
         }
 
@@ -1138,6 +1123,11 @@ impl MainLoopState {
         if should_reload_journal {
             tracing::info!("Reloading journal due to external file changes");
             self.reload_journal();
+        }
+
+        // Re-validate open documents once after processing all changes
+        if should_revalidate {
+            self.revalidate_open_documents();
         }
     }
 
