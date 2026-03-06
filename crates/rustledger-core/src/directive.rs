@@ -103,6 +103,12 @@ pub struct Posting {
     pub flag: Option<char>,
     /// Posting metadata
     pub meta: Metadata,
+    /// Comments that appear before this posting (one per line)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<String>,
+    /// Trailing comment(s) on the same line as the posting
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trailing_comments: Vec<String>,
 }
 
 impl Posting {
@@ -116,6 +122,8 @@ impl Posting {
             price: None,
             flag: None,
             meta: Metadata::default(),
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
         }
     }
 
@@ -129,6 +137,8 @@ impl Posting {
             price: None,
             flag: None,
             meta: Metadata::default(),
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
         }
     }
 
@@ -142,6 +152,8 @@ impl Posting {
             price: None,
             flag: None,
             meta: Metadata::default(),
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
         }
     }
 
@@ -466,6 +478,9 @@ pub struct Transaction {
     pub meta: Metadata,
     /// Postings (account entries)
     pub postings: Vec<Posting>,
+    /// Comments that appear after all postings
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trailing_comments: Vec<String>,
 }
 
 impl Transaction {
@@ -481,6 +496,7 @@ impl Transaction {
             links: Vec::new(),
             meta: Metadata::default(),
             postings: Vec::new(),
+            trailing_comments: Vec::new(),
         }
     }
 
@@ -1476,6 +1492,7 @@ mod tests {
                 Posting::new("Assets:Bank", Amount::new(dec!(-2), "USD")),
                 Posting::auto("Expenses:Example"),
             ],
+            trailing_comments: Vec::new(),
         };
 
         let output = txn.to_string();
@@ -1504,6 +1521,8 @@ mod tests {
             price: None,
             flag: None,
             meta,
+            comments: Vec::new(),
+            trailing_comments: Vec::new(),
         };
 
         let output = posting.to_string();
