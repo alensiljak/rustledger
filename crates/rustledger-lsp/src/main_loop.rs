@@ -38,7 +38,7 @@ use crate::handlers::type_hierarchy::{
     handle_prepare_type_hierarchy, handle_subtypes, handle_supertypes,
 };
 use crate::handlers::workspace_symbols::handle_workspace_symbols;
-use crate::ledger_state::{LedgerState, SharedLedgerState, new_shared_ledger_state};
+use crate::ledger_state::{SharedLedgerState, new_shared_ledger_state};
 use crate::snapshot::bump_revision;
 use crate::vfs::Vfs;
 use crossbeam_channel::{Receiver, Sender};
@@ -322,7 +322,15 @@ impl MainLoopState {
         let uri = &params.text_document_position.text_document.uri;
         let (text, parse_result) = self.get_document_data(uri);
 
-        let response = handle_completion(&params, &text, &parse_result);
+        // Get ledger state for multi-file completions
+        let ledger_guard = self.ledger_state.read();
+        let ledger_state = if ledger_guard.ledger().is_some() {
+            Some(&*ledger_guard)
+        } else {
+            None
+        };
+
+        let response = handle_completion(&params, &text, &parse_result, ledger_state);
 
         serde_json::to_value(response).map_err(|e| e.to_string())
     }
@@ -1105,15 +1113,31 @@ impl MainLoopState {
     fn on_did_change_watched_files(&mut self, params: lsp_types::DidChangeWatchedFilesParams) {
         tracing::info!("Watched files changed: {} files", params.changes.len());
 
+        let mut should_reload_journal = false;
+
         for change in params.changes {
             tracing::debug!("File {:?}: {:?}", change.uri.as_str(), change.typ);
 
+            // Check if the changed file is part of our journal
+            if let Some(path) = uri_to_path(&change.uri) {
+                let ledger_guard = self.ledger_state.read();
+                if ledger_guard.contains_file(&path) {
+                    should_reload_journal = true;
+                }
+            }
+
             // If a .beancount file changed externally, re-validate open documents
             // that might include this file
-            if change.uri.as_str().ends_with(".beancount") {
+            if change.uri.as_str().ends_with(".beancount") || change.uri.as_str().ends_with(".bean")
+            {
                 self.revalidate_open_documents();
-                break; // Only need to revalidate once
             }
+        }
+
+        // Reload the journal if any of its files changed
+        if should_reload_journal {
+            tracing::info!("Reloading journal due to external file changes");
+            self.reload_journal();
         }
     }
 

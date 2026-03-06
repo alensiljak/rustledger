@@ -4,12 +4,25 @@
 //! the full ledger state from a root journal file and all its includes.
 
 use parking_lot::RwLock;
-use rustledger_core::Directive;
+use rustledger_core::{Directive, PriceAnnotation};
 use rustledger_loader::{Ledger, LoadOptions, load};
 use rustledger_parser::Spanned;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// Extract currency from a price annotation if available.
+fn extract_price_currency(price: &PriceAnnotation) -> Option<String> {
+    match price {
+        PriceAnnotation::Unit(amount) | PriceAnnotation::Total(amount) => {
+            Some(amount.currency.to_string())
+        }
+        PriceAnnotation::UnitIncomplete(inc) | PriceAnnotation::TotalIncomplete(inc) => {
+            inc.currency().map(|c| c.to_string())
+        }
+        PriceAnnotation::UnitEmpty | PriceAnnotation::TotalEmpty => None,
+    }
+}
 
 /// Configuration for the LSP server, parsed from initialization options.
 #[derive(Debug, Clone, Default)]
@@ -192,16 +205,21 @@ impl LedgerState {
                     }
                     for posting in &txn.postings {
                         accounts_set.insert(posting.account.to_string());
-                        if let Some(units) = &posting.units {
-                            currencies_set.insert(units.currency.to_string());
+                        if let Some(units) = &posting.units
+                            && let Some(currency) = units.currency()
+                        {
+                            currencies_set.insert(currency.to_string());
                         }
-                        if let Some(cost) = &posting.cost {
-                            if let Some(currency) = &cost.currency {
-                                currencies_set.insert(currency.to_string());
-                            }
+                        if let Some(cost) = &posting.cost
+                            && let Some(currency) = &cost.currency
+                        {
+                            currencies_set.insert(currency.to_string());
                         }
-                        if let Some(price) = &posting.price {
-                            currencies_set.insert(price.currency.to_string());
+                        // Extract currency from price annotation
+                        if let Some(price) = &posting.price
+                            && let Some(currency) = extract_price_currency(price)
+                        {
+                            currencies_set.insert(currency);
                         }
                     }
                 }
