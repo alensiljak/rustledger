@@ -11,6 +11,37 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// Common root journal filenames to check, in priority order.
+const COMMON_ROOT_NAMES: &[&str] = &[
+    "main.bean",
+    "main.beancount",
+    "ledger.bean",
+    "ledger.beancount",
+    "journal.bean",
+    "journal.beancount",
+    "index.bean",
+    "index.beancount",
+];
+
+/// Discover the root journal file in a workspace directory.
+///
+/// Checks for common root filenames in the workspace root directory.
+/// Returns the first one found that exists.
+pub fn discover_journal_file(workspace_root: &Path) -> Option<PathBuf> {
+    for name in COMMON_ROOT_NAMES {
+        let candidate = workspace_root.join(name);
+        if candidate.exists() && candidate.is_file() {
+            tracing::info!("Auto-discovered journal file: {}", candidate.display());
+            return Some(candidate);
+        }
+    }
+    tracing::debug!(
+        "No journal file found in workspace root: {}",
+        workspace_root.display()
+    );
+    None
+}
+
 /// Extract currency from a price annotation if available.
 fn extract_price_currency(price: &PriceAnnotation) -> Option<String> {
     match price {
