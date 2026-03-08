@@ -15,7 +15,7 @@ use rustledger_loader::{
 use rustledger_plugin::PluginManager;
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::python::{PythonRuntime, is_python_available, suggest_module_path};
-use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions, wrappers_to_directives};
+use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions};
 use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 use serde::Serialize;
 use std::io::{self, Write};
@@ -649,7 +649,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Extract directives and spans in a single pass for efficiency
     // We need the spans for validation error reporting
-    let (mut directives, directive_spans): (Vec<_>, Vec<(rustledger_parser::Span, u16)>) =
+    let (directives, directive_spans): (Vec<_>, Vec<(rustledger_parser::Span, u16)>) =
         spanned_directives
             .into_iter()
             .map(|s| (s.value, (s.span, s.file_id)))
@@ -708,12 +708,32 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     #[cfg(not(feature = "python-plugin-wasm"))]
     let has_python_plugins = false;
 
+    // Declare spanned_directives before the plugin block so it's available afterwards.
+    // Allow useless_let_if_seq because refactoring this to an expression would make
+    // the code much harder to read given the complexity of both branches.
+    #[allow(clippy::useless_let_if_seq)]
+    let mut spanned_directives: Vec<rustledger_parser::Spanned<Directive>>;
+
     if !native_plugins_to_run.is_empty() || has_wasm_plugins || has_python_plugins {
         if args.verbose && !args.quiet {
             eprintln!("Running plugins...");
         }
 
-        let wrappers = rustledger_plugin::directives_to_wrappers(&directives);
+        // Convert directives to wrappers WITH source locations for proper error reporting
+        let wrappers: Vec<_> = directives
+            .iter()
+            .zip(directive_spans.iter())
+            .map(|(directive, (span, file_id))| {
+                let (filename, lineno) = if let Some(file) = source_map.get(*file_id as usize) {
+                    let (line, _col) = file.line_col(span.start);
+                    (Some(file.path.display().to_string()), Some(line as u32))
+                } else {
+                    (None, None)
+                };
+                rustledger_plugin::directive_to_wrapper_with_location(directive, filename, lineno)
+            })
+            .collect();
+
         let plugin_input = PluginInput {
             directives: wrappers,
             options: PluginOptions {
@@ -869,39 +889,66 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             }
         }
 
-        match wrappers_to_directives(&current_input.directives) {
-            Ok(converted) => {
-                directives = converted;
-            }
-            Err(e) => {
-                if !args.quiet {
-                    writeln!(stdout, "error: failed to convert plugin output: {e}")?;
-                }
-                error_count += 1;
-            }
-        }
-    }
+        // Convert wrappers back to Spanned directives, preserving source locations.
+        // This matches the pattern in process.rs - convert per-wrapper in the loop
+        // to handle errors properly and reconstruct spans from filename/lineno.
+        let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
+            .files()
+            .iter()
+            .map(|f| (f.path.display().to_string(), f.id as u16))
+            .collect();
 
-    // Convert directives back to Spanned form BEFORE sorting and booking.
-    // This ensures spans stay associated with directives even when reordered.
-    // If directive count matches original, re-associate original spans
-    // Otherwise use default spans (plugins may have added/removed directives)
-    let mut spanned_directives: Vec<rustledger_parser::Spanned<Directive>> =
-        if directives.len() == directive_spans.len() {
-            directives
-                .into_iter()
-                .zip(directive_spans)
-                .map(|(d, (span, file_id))| {
-                    rustledger_parser::Spanned::new(d, span).with_file_id(file_id as usize)
-                })
-                .collect()
-        } else {
-            // Directive count changed (plugins modified list), use default spans
-            directives
-                .into_iter()
-                .map(|d| rustledger_parser::Spanned::new(d, rustledger_parser::Span::new(0, 0)))
-                .collect()
-        };
+        let mut spanned_directives_from_plugins: Vec<rustledger_parser::Spanned<Directive>> =
+            Vec::new();
+        for wrapper in &current_input.directives {
+            // Convert wrapper to directive
+            let directive = match rustledger_plugin::wrapper_to_directive(wrapper) {
+                Ok(d) => d,
+                Err(e) => {
+                    if !args.quiet {
+                        writeln!(stdout, "error: failed to convert plugin output: {e}")?;
+                    }
+                    error_count += 1;
+                    continue;
+                }
+            };
+
+            // Reconstruct span from wrapper's filename/lineno
+            let (span, file_id) =
+                if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
+                    if let Some(&fid) = filename_to_file_id.get(filename) {
+                        if let Some(file) = source_map.get(fid as usize) {
+                            let span_start = file.line_start(lineno as usize).unwrap_or(0);
+                            (rustledger_parser::Span::new(span_start, span_start), fid)
+                        } else {
+                            (rustledger_parser::Span::new(0, 0), 0)
+                        }
+                    } else {
+                        // Unknown file (plugin-generated) - use zero span
+                        (rustledger_parser::Span::new(0, 0), 0)
+                    }
+                } else {
+                    // No location info - use zero span
+                    (rustledger_parser::Span::new(0, 0), 0)
+                };
+
+            spanned_directives_from_plugins.push(
+                rustledger_parser::Spanned::new(directive, span).with_file_id(file_id as usize),
+            );
+        }
+
+        // Use the reconstructed spanned directives
+        spanned_directives = spanned_directives_from_plugins;
+    } else {
+        // No plugins ran - restore original spanned directives from directive_spans
+        spanned_directives = directives
+            .into_iter()
+            .zip(directive_spans)
+            .map(|(d, (span, file_id))| {
+                rustledger_parser::Spanned::new(d, span).with_file_id(file_id as usize)
+            })
+            .collect();
+    }
 
     // Report interpolation errors from booking (which ran before plugins)
     if !interpolation_errors.is_empty() {
