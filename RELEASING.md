@@ -271,6 +271,10 @@ release-plz set-version \
   rustledger-ffi-wasi@0.10.0 \
   rustledger-lsp@0.10.0
 
+# IMPORTANT: Also update the workspace version in root Cargo.toml
+# release-plz set-version only updates individual crates, not [workspace.package].version
+sed -i 's/^version = ".*"/version = "0.10.0"/' Cargo.toml
+
 # This updates both Cargo.toml and CHANGELOG.md files
 # Then commit and create a PR
 git add -A
@@ -280,6 +284,8 @@ BREAKING CHANGE: <describe the breaking change>"
 git push -u origin chore/bump-v0.10.0
 gh pr create --title "chore: release v0.10.0"
 ```
+
+> **Note:** The `sed` command updates the `[workspace.package].version` field in the root `Cargo.toml`. This is required because `release-plz set-version` only updates individual crate versions, not the workspace version.
 
 ### When to Use Manual Version Bumping
 
