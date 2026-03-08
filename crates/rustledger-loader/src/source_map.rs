@@ -167,6 +167,22 @@ mod tests {
     }
 
     #[test]
+    fn test_line_start() {
+        let source: Arc<str> = "line 1\nline 2\nline 3".into();
+        let file = SourceFile::new(0, PathBuf::from("test.beancount"), source);
+
+        // Happy path - valid line numbers
+        assert_eq!(file.line_start(1), Some(0)); // Line 1 starts at byte 0
+        assert_eq!(file.line_start(2), Some(7)); // Line 2 starts at byte 7 (after "line 1\n")
+        assert_eq!(file.line_start(3), Some(14)); // Line 3 starts at byte 14
+
+        // Boundary conditions
+        assert_eq!(file.line_start(0), None); // Line 0 is invalid (1-based)
+        assert_eq!(file.line_start(4), None); // Line 4 is out of range
+        assert_eq!(file.line_start(100), None); // Way out of range
+    }
+
+    #[test]
     fn test_source_map() {
         let mut sm = SourceMap::new();
         let id = sm.add_file(PathBuf::from("test.beancount"), "content".into());

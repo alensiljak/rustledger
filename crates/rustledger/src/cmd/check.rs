@@ -15,7 +15,7 @@ use rustledger_loader::{
 use rustledger_plugin::PluginManager;
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::python::{PythonRuntime, is_python_available, suggest_module_path};
-use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions, wrappers_to_directives};
+use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions};
 use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 use serde::Serialize;
 use std::io::{self, Write};
@@ -649,7 +649,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Extract directives and spans in a single pass for efficiency
     // We need the spans for validation error reporting
-    let (mut directives, directive_spans): (Vec<_>, Vec<(rustledger_parser::Span, u16)>) =
+    let (directives, directive_spans): (Vec<_>, Vec<(rustledger_parser::Span, u16)>) =
         spanned_directives
             .into_iter()
             .map(|s| (s.value, (s.span, s.file_id)))
@@ -889,21 +889,9 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             }
         }
 
-        match wrappers_to_directives(&current_input.directives) {
-            Ok(converted) => {
-                directives = converted;
-            }
-            Err(e) => {
-                if !args.quiet {
-                    writeln!(stdout, "error: failed to convert plugin output: {e}")?;
-                }
-                error_count += 1;
-            }
-        }
-
-        // Convert directives back to Spanned form using location info from wrappers.
-        // When plugins modify directives, they preserve filename/lineno in the wrappers,
-        // so we can reconstruct proper source locations for error reporting.
+        // Convert wrappers back to Spanned directives, preserving source locations.
+        // This matches the pattern in process.rs - convert per-wrapper in the loop
+        // to handle errors properly and reconstruct spans from filename/lineno.
         let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
             .files()
             .iter()
@@ -912,7 +900,19 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
         let mut spanned_directives_from_plugins: Vec<rustledger_parser::Spanned<Directive>> =
             Vec::new();
-        for (directive, wrapper) in directives.into_iter().zip(current_input.directives.iter()) {
+        for wrapper in &current_input.directives {
+            // Convert wrapper to directive
+            let directive = match rustledger_plugin::wrapper_to_directive(wrapper) {
+                Ok(d) => d,
+                Err(e) => {
+                    if !args.quiet {
+                        writeln!(stdout, "error: failed to convert plugin output: {e}")?;
+                    }
+                    error_count += 1;
+                    continue;
+                }
+            };
+
             // Reconstruct span from wrapper's filename/lineno
             let (span, file_id) =
                 if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
