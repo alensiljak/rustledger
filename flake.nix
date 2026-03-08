@@ -91,10 +91,12 @@
           # Crane lib with our toolchain
           craneLib = (inputs.crane.mkLib pkgs).overrideToolchain rustToolchainWithWasm;
 
-          # Source filter that includes test fixtures (.beancount files)
+          # Source filter that includes test fixtures (.beancount files and test data)
+          # Note: The regex must match both the directory and its contents for Nix to traverse into it
           srcFilter = path: type:
             (craneLib.filterCargoSources path type) ||
-            (builtins.match ".*\\.beancount$" path != null);
+            (builtins.match ".*\\.beancount$" path != null) ||
+            (builtins.match ".*/tests/fixtures(/.*)?$" path != null);
 
           src = lib.cleanSourceWith {
             src = ./.;
