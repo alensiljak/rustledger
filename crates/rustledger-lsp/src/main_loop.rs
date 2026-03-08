@@ -14,7 +14,7 @@ use crate::handlers::completion::handle_completion;
 use crate::handlers::completion_resolve::handle_completion_resolve;
 use crate::handlers::declaration::handle_goto_declaration;
 use crate::handlers::definition::handle_goto_definition;
-use crate::handlers::diagnostics::parse_errors_to_diagnostics;
+use crate::handlers::diagnostics::all_diagnostics;
 use crate::handlers::document_color::{handle_color_presentation, handle_document_color};
 use crate::handlers::document_highlight::handle_document_highlight;
 use crate::handlers::document_links::{handle_document_link_resolve, handle_document_links};
@@ -1193,13 +1193,13 @@ impl MainLoopState {
         tracing::info!("Registered file watchers for *.beancount and *.bean files");
     }
 
-    /// Parse document and publish diagnostics.
+    /// Parse document and publish diagnostics (parse errors + validation errors).
     fn publish_diagnostics(&mut self, uri: &Uri, text: &str) {
         // Parse the document
         let result = parse(text);
 
-        // Convert errors to LSP diagnostics
-        let diagnostics = parse_errors_to_diagnostics(&result, text);
+        // Convert parse errors and validation errors to LSP diagnostics
+        let diagnostics = all_diagnostics(&result, text);
 
         tracing::debug!(
             "Publishing {} diagnostics for {}",
