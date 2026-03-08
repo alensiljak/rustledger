@@ -41,7 +41,7 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
       - name: Validate tag matches Cargo.toml version
         run: |
           # Extract version from tag (strip 'v' prefix)
