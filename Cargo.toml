@@ -14,7 +14,7 @@ members = [
   "crates/rustledger-ffi-wasi",
   "crates/rustledger-lsp",
 ]
-# Exclude wasm and lsp from default builds (they have special build requirements)
+# Exclude wasm from default builds (requires wasm32 target)
 default-members = [
   "crates/rustledger-core",
   "crates/rustledger-parser",
@@ -25,6 +25,7 @@ default-members = [
   "crates/rustledger-plugin",
   "crates/rustledger-importer",
   "crates/rustledger",
+  "crates/rustledger-lsp",
 ]
 
 [workspace.package]
