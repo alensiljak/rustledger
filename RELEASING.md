@@ -273,7 +273,8 @@ release-plz set-version \
 
 # IMPORTANT: Also update the workspace version in root Cargo.toml
 # release-plz set-version only updates individual crates, not [workspace.package].version
-sed -i 's/^version = ".*"/version = "0.10.0"/' Cargo.toml
+# Use -i.bak for macOS compatibility, then remove backup
+sed -i.bak 's/^version = ".*"/version = "0.10.0"/' Cargo.toml && rm Cargo.toml.bak
 
 # This updates both Cargo.toml and CHANGELOG.md files
 # Then commit and create a PR

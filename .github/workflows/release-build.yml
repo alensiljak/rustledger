@@ -32,7 +32,7 @@ env:
   CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 jobs:
-  # Validate that tag version matches Cargo.toml version
+  # Validate that tag version matches rustledger crate version
   validate-version:
     name: Validate Version
     runs-on: ubuntu-latest
@@ -42,7 +42,7 @@ jobs:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
-      - name: Validate tag matches Cargo.toml version
+      - name: Validate tag matches rustledger crate version
         run: |
           # Extract version from tag (strip 'v' prefix)
           TAG_VERSION="${RELEASE_TAG#v}"
@@ -51,6 +51,13 @@ jobs:
           # This is more robust than grepping Cargo.toml as it handles workspace inheritance
           CARGO_VERSION=$(cargo metadata --no-deps --format-version 1 | \
             jq -r '.packages[] | select(.name == "rustledger") | .version')
+
+          # Check if version extraction succeeded
+          if [ -z "$CARGO_VERSION" ] || [ "$CARGO_VERSION" = "null" ]; then
+            echo "::error::Failed to extract rustledger crate version from cargo metadata."
+            echo "::error::Ensure that the 'rustledger' package exists in the workspace."
+            exit 1
+          fi
 
           echo "Tag version: $TAG_VERSION"
           echo "rustledger crate version: $CARGO_VERSION"
