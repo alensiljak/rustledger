@@ -36,6 +36,21 @@ pub enum ConversionError {
     UnknownDirective(String),
 }
 
+/// Convert a directive to its serializable wrapper with source location.
+///
+/// The `filename` and `lineno` parameters are used for error reporting
+/// when the directive is later processed by plugins.
+pub fn directive_to_wrapper_with_location(
+    directive: &Directive,
+    filename: Option<String>,
+    lineno: Option<u32>,
+) -> DirectiveWrapper {
+    let mut wrapper = directive_to_wrapper(directive);
+    wrapper.filename = filename;
+    wrapper.lineno = lineno;
+    wrapper
+}
+
 /// Convert a directive to its serializable wrapper.
 ///
 /// Note: This does not set filename/lineno - those must be set by the caller
@@ -196,6 +211,8 @@ mod tests {
                     price: None,
                     flag: None,
                     meta: Metadata::default(),
+                    comments: Vec::new(),
+                    trailing_comments: Vec::new(),
                 },
                 Posting {
                     account: "Assets:Checking".into(),
@@ -204,8 +221,11 @@ mod tests {
                     price: None,
                     flag: None,
                     meta: Metadata::default(),
+                    comments: Vec::new(),
+                    trailing_comments: Vec::new(),
                 },
             ],
+            trailing_comments: Vec::new(),
         };
 
         let directive = Directive::Transaction(txn);

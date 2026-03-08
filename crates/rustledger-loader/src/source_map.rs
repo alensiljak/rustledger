@@ -74,6 +74,17 @@ impl SourceFile {
     pub const fn num_lines(&self) -> usize {
         self.line_starts.len()
     }
+
+    /// Get the byte offset where a line starts (1-based line number).
+    ///
+    /// Returns `None` if the line number is out of range.
+    #[must_use]
+    pub fn line_start(&self, line_num: usize) -> Option<usize> {
+        if line_num == 0 || line_num > self.line_starts.len() {
+            return None;
+        }
+        Some(self.line_starts[line_num - 1])
+    }
 }
 
 /// A map of source files for error reporting.
@@ -153,6 +164,22 @@ mod tests {
         assert_eq!(file.line(3), Some("line 3"));
         assert_eq!(file.line(0), None);
         assert_eq!(file.line(4), None);
+    }
+
+    #[test]
+    fn test_line_start() {
+        let source: Arc<str> = "line 1\nline 2\nline 3".into();
+        let file = SourceFile::new(0, PathBuf::from("test.beancount"), source);
+
+        // Happy path - valid line numbers
+        assert_eq!(file.line_start(1), Some(0)); // Line 1 starts at byte 0
+        assert_eq!(file.line_start(2), Some(7)); // Line 2 starts at byte 7 (after "line 1\n")
+        assert_eq!(file.line_start(3), Some(14)); // Line 3 starts at byte 14
+
+        // Boundary conditions
+        assert_eq!(file.line_start(0), None); // Line 0 is invalid (1-based)
+        assert_eq!(file.line_start(4), None); // Line 4 is out of range
+        assert_eq!(file.line_start(100), None); // Way out of range
     }
 
     #[test]

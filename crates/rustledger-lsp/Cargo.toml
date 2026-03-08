@@ -28,6 +28,8 @@ parking_lot.workspace = true
 # Our crates
 rustledger-parser.workspace = true
 rustledger-core.workspace = true
+rustledger-loader.workspace = true
+rustledger-validate.workspace = true
 
 # Utilities
 tracing.workspace = true

@@ -61,10 +61,10 @@ pub mod runtime;
 pub mod types;
 
 pub use convert::{
-    ConversionError, directive_to_wrapper, directives_to_wrappers, wrapper_to_directive,
-    wrappers_to_directives,
+    ConversionError, directive_to_wrapper, directive_to_wrapper_with_location,
+    directives_to_wrappers, wrapper_to_directive, wrappers_to_directives,
 };
-pub use native::{NativePlugin, NativePluginRegistry};
+pub use native::{DocumentDiscoveryPlugin, NativePlugin, NativePluginRegistry};
 #[cfg(feature = "wasm-runtime")]
 pub use runtime::{
     Plugin, PluginManager, RuntimeConfig, WatchingPluginManager, validate_plugin_module,

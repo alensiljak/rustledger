@@ -208,7 +208,9 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
         run_booking(&mut directives, options, &mut errors);
     }
 
-    // 3. Run plugins
+    // 3. Run plugins (including document discovery when run_plugins is enabled)
+    // Note: Document discovery only runs when run_plugins is true to respect raw mode semantics.
+    // LoadOptions::raw() sets run_plugins=false to prevent any directive mutations.
     #[cfg(feature = "plugins")]
     if options.run_plugins || !options.extra_plugins.is_empty() || options.auto_accounts {
         run_plugins(
@@ -216,6 +218,7 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
             &raw.plugins,
             &raw.options,
             options,
+            &raw.source_map,
             &mut errors,
         )?;
     }
@@ -272,124 +275,195 @@ fn run_plugins(
     file_plugins: &[Plugin],
     file_options: &Options,
     options: &LoadOptions,
+    source_map: &SourceMap,
     errors: &mut Vec<LedgerError>,
 ) -> Result<(), ProcessError> {
     use rustledger_plugin::{
-        NativePluginRegistry, PluginInput, PluginOptions, directives_to_wrappers,
-        wrappers_to_directives,
+        DocumentDiscoveryPlugin, NativePlugin, NativePluginRegistry, PluginInput, PluginOptions,
+        directive_to_wrapper_with_location, wrapper_to_directive,
     };
 
-    let registry = NativePluginRegistry::new();
+    // Resolve document directories relative to the main file's directory
+    // Document discovery only runs when run_plugins is true (respects raw mode)
+    let base_dir = source_map
+        .files()
+        .first()
+        .and_then(|f| f.path.parent())
+        .unwrap_or_else(|| std::path::Path::new("."));
 
-    // Build list of plugins to run
-    let mut plugins_to_run: Vec<(String, Option<String>)> = Vec::new();
+    let has_document_dirs = options.run_plugins && !file_options.documents.is_empty();
+    let resolved_documents: Vec<String> = if has_document_dirs {
+        file_options
+            .documents
+            .iter()
+            .map(|d| {
+                let path = std::path::Path::new(d);
+                if path.is_absolute() {
+                    d.clone()
+                } else {
+                    base_dir.join(path).to_string_lossy().to_string()
+                }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    // Collect raw plugin names first (we'll resolve them with the registry later)
+    let mut raw_plugins: Vec<(String, Option<String>)> = Vec::new();
 
     // Add auto_accounts first if requested
     if options.auto_accounts {
-        plugins_to_run.push(("auto_accounts".to_string(), None));
+        raw_plugins.push(("auto_accounts".to_string(), None));
     }
 
     // Add plugins from the file
     if options.run_plugins {
         for plugin in file_plugins {
-            // Check if we have a native implementation
-            let plugin_name = if registry.find(&plugin.name).is_some() {
-                plugin.name.clone()
-            } else if let Some(short_name) = plugin.name.strip_prefix("beancount.plugins.") {
-                if registry.find(short_name).is_some() {
-                    short_name.to_string()
-                } else {
-                    // No native implementation - skip for now (TODO: Python execution)
-                    continue;
-                }
-            } else if let Some(short_name) = plugin.name.strip_prefix("beancount_reds_plugins.") {
-                if registry.find(short_name).is_some() {
-                    short_name.to_string()
-                } else {
-                    continue;
-                }
-            } else if let Some(short_name) = plugin.name.strip_prefix("beancount_lazy_plugins.") {
-                if registry.find(short_name).is_some() {
-                    short_name.to_string()
-                } else {
-                    continue;
-                }
-            } else {
-                continue;
-            };
-
-            plugins_to_run.push((plugin_name, plugin.config.clone()));
+            raw_plugins.push((plugin.name.clone(), plugin.config.clone()));
         }
     }
 
     // Add extra plugins from options
     for (i, plugin_name) in options.extra_plugins.iter().enumerate() {
         let config = options.extra_plugin_configs.get(i).cloned().flatten();
-        plugins_to_run.push((plugin_name.clone(), config));
+        raw_plugins.push((plugin_name.clone(), config));
     }
 
-    if plugins_to_run.is_empty() {
+    // Check if we have any work to do - early return before creating registry
+    if raw_plugins.is_empty() && !has_document_dirs {
         return Ok(());
     }
 
-    // Convert directives to plugin format (without spans for now)
-    let plain_directives: Vec<Directive> = directives.iter().map(|s| s.value.clone()).collect();
-    let mut wrappers = directives_to_wrappers(&plain_directives);
+    // Convert directives to plugin format with source locations
+    let mut wrappers: Vec<_> = directives
+        .iter()
+        .map(|spanned| {
+            let (filename, lineno) = if let Some(file) = source_map.get(spanned.file_id as usize) {
+                let (line, _col) = file.line_col(spanned.span.start);
+                (Some(file.path.display().to_string()), Some(line as u32))
+            } else {
+                (None, None)
+            };
+            directive_to_wrapper_with_location(&spanned.value, filename, lineno)
+        })
+        .collect();
 
     let plugin_options = PluginOptions {
         operating_currencies: file_options.operating_currency.clone(),
         title: file_options.title.clone(),
     };
 
-    // Run each plugin
-    for (plugin_name, plugin_config) in &plugins_to_run {
-        if let Some(plugin) = registry.find(plugin_name) {
-            let input = PluginInput {
-                directives: wrappers.clone(),
-                options: plugin_options.clone(),
-                config: plugin_config.clone(),
+    // Run document discovery plugin if documents directories are configured
+    if has_document_dirs {
+        let doc_plugin = DocumentDiscoveryPlugin::new(resolved_documents, base_dir.to_path_buf());
+        let input = PluginInput {
+            directives: wrappers.clone(),
+            options: plugin_options.clone(),
+            config: None,
+        };
+        let output = doc_plugin.process(input);
+
+        // Collect plugin errors
+        for err in output.errors {
+            let ledger_err = match err.severity {
+                rustledger_plugin::PluginErrorSeverity::Error => {
+                    LedgerError::error("PLUGIN", err.message)
+                }
+                rustledger_plugin::PluginErrorSeverity::Warning => {
+                    LedgerError::warning("PLUGIN", err.message)
+                }
+            };
+            errors.push(ledger_err);
+        }
+
+        wrappers = output.directives;
+    }
+
+    // Run each plugin (only create registry if we have plugins to run)
+    if !raw_plugins.is_empty() {
+        let registry = NativePluginRegistry::new();
+
+        for (raw_name, plugin_config) in &raw_plugins {
+            // Resolve the plugin name - try direct match first, then prefixed variants
+            let resolved_name = if registry.find(raw_name).is_some() {
+                Some(raw_name.as_str())
+            } else if let Some(short_name) = raw_name.strip_prefix("beancount.plugins.") {
+                registry.find(short_name).is_some().then_some(short_name)
+            } else if let Some(short_name) = raw_name.strip_prefix("beancount_reds_plugins.") {
+                registry.find(short_name).is_some().then_some(short_name)
+            } else if let Some(short_name) = raw_name.strip_prefix("beancount_lazy_plugins.") {
+                registry.find(short_name).is_some().then_some(short_name)
+            } else {
+                None
             };
 
-            let output = plugin.process(input);
-
-            // Collect plugin errors
-            for err in output.errors {
-                let ledger_err = match err.severity {
-                    rustledger_plugin::PluginErrorSeverity::Error => {
-                        LedgerError::error("PLUGIN", err.message)
-                    }
-                    rustledger_plugin::PluginErrorSeverity::Warning => {
-                        LedgerError::warning("PLUGIN", err.message)
-                    }
+            if let Some(name) = resolved_name
+                && let Some(plugin) = registry.find(name)
+            {
+                let input = PluginInput {
+                    directives: wrappers.clone(),
+                    options: plugin_options.clone(),
+                    config: plugin_config.clone(),
                 };
-                errors.push(ledger_err);
+
+                let output = plugin.process(input);
+
+                // Collect plugin errors
+                for err in output.errors {
+                    let ledger_err = match err.severity {
+                        rustledger_plugin::PluginErrorSeverity::Error => {
+                            LedgerError::error("PLUGIN", err.message)
+                        }
+                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                            LedgerError::warning("PLUGIN", err.message)
+                        }
+                    };
+                    errors.push(ledger_err);
+                }
+
+                wrappers = output.directives;
             }
-
-            wrappers = output.directives;
         }
     }
 
-    // Convert back to directives
-    let processed = wrappers_to_directives(&wrappers)
-        .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+    // Build a filename -> file_id lookup for restoring locations
+    let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
+        .files()
+        .iter()
+        .map(|f| (f.path.display().to_string(), f.id as u16))
+        .collect();
 
-    // Replace directives, preserving spans where possible
-    if processed.len() == directives.len() {
-        // Same count - update in place
-        for (i, new_directive) in processed.into_iter().enumerate() {
-            directives[i].value = new_directive;
-        }
-    } else {
-        // Count changed - plugins added/removed directives.
-        // Use synthetic zero spans for plugin-generated directives since we cannot
-        // reliably map them back to source locations. Error reporting for these
-        // directives will show the plugin name instead of a file location.
-        *directives = processed
-            .into_iter()
-            .map(|d| Spanned::new(d, rustledger_parser::Span::new(0, 0)))
-            .collect();
+    // Convert back to directives, preserving source locations from wrappers
+    let mut new_directives = Vec::with_capacity(wrappers.len());
+    for wrapper in &wrappers {
+        let directive = wrapper_to_directive(wrapper)
+            .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+
+        // Reconstruct span from filename/lineno if available
+        let (span, file_id) =
+            if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
+                if let Some(&fid) = filename_to_file_id.get(filename) {
+                    // Found the file - reconstruct approximate span from line number
+                    if let Some(file) = source_map.get(fid as usize) {
+                        let span_start = file.line_start(lineno as usize).unwrap_or(0);
+                        (rustledger_parser::Span::new(span_start, span_start), fid)
+                    } else {
+                        (rustledger_parser::Span::new(0, 0), 0)
+                    }
+                } else {
+                    // Unknown file (plugin-generated) - use zero span
+                    (rustledger_parser::Span::new(0, 0), 0)
+                }
+            } else {
+                // No location info - use zero span
+                (rustledger_parser::Span::new(0, 0), 0)
+            };
+
+        new_directives.push(Spanned::new(directive, span).with_file_id(file_id as usize));
     }
 
+    *directives = new_directives;
     Ok(())
 }
 
