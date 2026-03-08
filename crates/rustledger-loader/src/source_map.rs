@@ -74,6 +74,17 @@ impl SourceFile {
     pub const fn num_lines(&self) -> usize {
         self.line_starts.len()
     }
+
+    /// Get the byte offset where a line starts (1-based line number).
+    ///
+    /// Returns `None` if the line number is out of range.
+    #[must_use]
+    pub fn line_start(&self, line_num: usize) -> Option<usize> {
+        if line_num == 0 || line_num > self.line_starts.len() {
+            return None;
+        }
+        Some(self.line_starts[line_num - 1])
+    }
 }
 
 /// A map of source files for error reporting.

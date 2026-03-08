@@ -217,8 +217,8 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
             &mut directives,
             &raw.plugins,
             &raw.options,
-            &raw.source_map,
             options,
+            &raw.source_map,
             &mut errors,
         )?;
     }
@@ -274,13 +274,13 @@ fn run_plugins(
     directives: &mut Vec<Spanned<Directive>>,
     file_plugins: &[Plugin],
     file_options: &Options,
-    source_map: &SourceMap,
     options: &LoadOptions,
+    source_map: &SourceMap,
     errors: &mut Vec<LedgerError>,
 ) -> Result<(), ProcessError> {
     use rustledger_plugin::{
         DocumentDiscoveryPlugin, NativePlugin, NativePluginRegistry, PluginInput, PluginOptions,
-        directives_to_wrappers, wrappers_to_directives,
+        directive_to_wrapper_with_location, wrapper_to_directive,
     };
 
     // Resolve document directories relative to the main file's directory
@@ -335,9 +335,19 @@ fn run_plugins(
         return Ok(());
     }
 
-    // Convert directives to plugin format (without spans for now)
-    let plain_directives: Vec<Directive> = directives.iter().map(|s| s.value.clone()).collect();
-    let mut wrappers = directives_to_wrappers(&plain_directives);
+    // Convert directives to plugin format with source locations
+    let mut wrappers: Vec<_> = directives
+        .iter()
+        .map(|spanned| {
+            let (filename, lineno) = if let Some(file) = source_map.get(spanned.file_id as usize) {
+                let (line, _col) = file.line_col(spanned.span.start);
+                (Some(file.path.display().to_string()), Some(line as u32))
+            } else {
+                (None, None)
+            };
+            directive_to_wrapper_with_location(&spanned.value, filename, lineno)
+        })
+        .collect();
 
     let plugin_options = PluginOptions {
         operating_currencies: file_options.operating_currency.clone(),
@@ -417,27 +427,43 @@ fn run_plugins(
         }
     }
 
-    // Convert back to directives
-    let processed = wrappers_to_directives(&wrappers)
-        .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+    // Build a filename -> file_id lookup for restoring locations
+    let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
+        .files()
+        .iter()
+        .map(|f| (f.path.display().to_string(), f.id as u16))
+        .collect();
 
-    // Replace directives, preserving spans where possible
-    if processed.len() == directives.len() {
-        // Same count - update in place
-        for (i, new_directive) in processed.into_iter().enumerate() {
-            directives[i].value = new_directive;
-        }
-    } else {
-        // Count changed - plugins added/removed directives.
-        // Use synthetic zero spans for plugin-generated directives since we cannot
-        // reliably map them back to source locations. Error reporting for these
-        // directives will show the plugin name instead of a file location.
-        *directives = processed
-            .into_iter()
-            .map(|d| Spanned::new(d, rustledger_parser::Span::new(0, 0)))
-            .collect();
+    // Convert back to directives, preserving source locations from wrappers
+    let mut new_directives = Vec::with_capacity(wrappers.len());
+    for wrapper in &wrappers {
+        let directive = wrapper_to_directive(wrapper)
+            .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+
+        // Reconstruct span from filename/lineno if available
+        let (span, file_id) =
+            if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
+                if let Some(&fid) = filename_to_file_id.get(filename) {
+                    // Found the file - reconstruct approximate span from line number
+                    if let Some(file) = source_map.get(fid as usize) {
+                        let span_start = file.line_start(lineno as usize).unwrap_or(0);
+                        (rustledger_parser::Span::new(span_start, span_start), fid)
+                    } else {
+                        (rustledger_parser::Span::new(0, 0), 0)
+                    }
+                } else {
+                    // Unknown file (plugin-generated) - use zero span
+                    (rustledger_parser::Span::new(0, 0), 0)
+                }
+            } else {
+                // No location info - use zero span
+                (rustledger_parser::Span::new(0, 0), 0)
+            };
+
+        new_directives.push(Spanned::new(directive, span).with_file_id(file_id as usize));
     }
 
+    *directives = new_directives;
     Ok(())
 }
 
