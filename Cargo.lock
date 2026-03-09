@@ -3094,6 +3094,7 @@ dependencies = [
  "lsp-types",
  "parking_lot",
  "ropey",
+ "rustledger-booking",
  "rustledger-core",
  "rustledger-loader",
  "rustledger-parser",
