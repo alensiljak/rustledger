@@ -601,10 +601,6 @@ criteria = "safe-to-deploy"
 version = "0.4.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.num-conv]]
-version = "0.2.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.object]]
 version = "0.32.2"
 criteria = "safe-to-deploy"
@@ -961,14 +957,6 @@ criteria = "safe-to-deploy"
 version = "0.3.47"
 criteria = "safe-to-deploy"
 
-[[exemptions.time-core]]
-version = "0.1.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-macros]]
-version = "0.2.27"
-criteria = "safe-to-deploy"
-
 [[exemptions.tinystr]]
 version = "0.8.2"
 criteria = "safe-to-deploy"
@@ -1234,7 +1222,7 @@ version = "0.53.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.winnow]]
-version = "0.7.14"
+version = "0.7.15"
 criteria = "safe-to-deploy"
 
 [[exemptions.winx]]
