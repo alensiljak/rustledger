@@ -29,6 +29,7 @@ parking_lot.workspace = true
 rustledger-parser.workspace = true
 rustledger-core.workspace = true
 rustledger-loader.workspace = true
+rustledger-booking.workspace = true
 rustledger-validate.workspace = true
 
 # Utilities
