@@ -19,8 +19,8 @@ use std::process::ExitCode;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The beancount file(s) to format
-    #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
+    /// The beancount file(s) to format (uses config default if not specified)
+    #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,
 
     /// Generate shell completions and exit
@@ -56,8 +56,8 @@ pub struct Args {
     pub num_width: Option<usize>,
 
     /// Number of spaces for posting indentation (default: 2)
-    #[arg(long, default_value = "2")]
-    pub indent: usize,
+    #[arg(long)]
+    pub indent: Option<usize>,
 
     /// Show verbose output
     #[arg(short, long)]
@@ -66,6 +66,10 @@ pub struct Args {
 
 /// Run the format command with the given arguments.
 pub fn run(args: &Args) -> Result<ExitCode> {
+    if args.files.is_empty() {
+        anyhow::bail!("FILE is required (or set default.file in config)");
+    }
+
     if args.output.is_some() && args.files.len() > 1 {
         anyhow::bail!(
             "--output can only be used with a single input file. Use --in-place for multiple files."
@@ -161,7 +165,7 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
         a_start.cmp(&b_start)
     });
 
-    let config = FormatConfig::new(args.column, args.indent);
+    let config = FormatConfig::new(args.column, args.indent.unwrap_or(2));
     let mut formatted = String::new();
     let mut prev_end: usize = 0;
 

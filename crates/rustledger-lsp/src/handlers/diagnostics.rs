@@ -1,7 +1,8 @@
 //! Diagnostics handler for publishing parse and validation errors.
 
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
-use rustledger_core::Directive;
+use rustledger_booking::BookingEngine;
+use rustledger_core::{BookingMethod, Directive};
 use rustledger_parser::{ParseError, ParseResult, Spanned};
 use rustledger_validate::{
     Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
@@ -44,12 +45,42 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 }
 
 /// Run validation on parsed directives and convert errors to LSP diagnostics.
+///
+/// This function runs booking/interpolation before validation to mirror the
+/// ordering used by `rledger check`. Without booking, transactions with
+/// auto-filled postings (e.g., a posting with no amount) would be incorrectly
+/// flagged as unbalanced.
 pub fn validation_errors_to_diagnostics(
     directives: &[Spanned<Directive>],
     source: &str,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
-    let validation_errors = validate_spanned_with_options(directives, ValidationOptions::default());
+
+    // Clone and sort directives by date (required for correct lot matching during booking)
+    let mut booked_directives: Vec<Spanned<Directive>> = directives.to_vec();
+    booked_directives.sort_by(|a, b| {
+        a.value
+            .date()
+            .cmp(&b.value.date())
+            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    });
+
+    // Run booking/interpolation on transactions before validation.
+    // This fills in missing amounts (auto-balancing) so validation sees the complete picture.
+    // Use Strict booking method to match rledger check's default behavior.
+    let mut booking_engine = BookingEngine::with_method(BookingMethod::Strict);
+    for spanned in &mut booked_directives {
+        if let Directive::Transaction(txn) = &mut spanned.value
+            && let Ok(result) = booking_engine.book_and_interpolate(txn)
+        {
+            booking_engine.apply(&result.transaction);
+            *txn = result.transaction;
+        }
+        // If booking fails, we leave the transaction as-is and let validation catch it
+    }
+
+    let validation_errors =
+        validate_spanned_with_options(&booked_directives, ValidationOptions::default());
 
     validation_errors
         .iter()
@@ -229,5 +260,57 @@ mod tests {
                 code
             );
         }
+    }
+
+    #[test]
+    fn test_auto_filled_postings_do_not_trigger_false_positive() {
+        // Regression test for issue #475 follow-up comment:
+        // A valid file with auto-filled postings should NOT have E3001 errors.
+        // The second posting has no amount, which should be auto-filled to -5000 USD.
+        let source = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary
+
+2024-01-16 balance Assets:Bank:Checking 5000 USD
+"#;
+
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        let diagnostics = all_diagnostics(&result, source);
+
+        // Helper to get code string from a diagnostic
+        fn get_code(d: &Diagnostic) -> String {
+            match d.code.as_ref().unwrap() {
+                lsp_types::NumberOrString::String(s) => s.clone(),
+                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
+            }
+        }
+
+        // Filter to only ERROR severity diagnostics (allow warnings/info)
+        let error_diagnostics: Vec<&Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Some(DiagnosticSeverity::ERROR)))
+            .collect();
+
+        let error_codes: Vec<_> = error_diagnostics.iter().map(|d| get_code(d)).collect();
+
+        // Specifically, there should be NO E3001 (unbalanced transaction) error
+        // because the booking step should auto-fill the missing amount
+        assert!(
+            !error_codes.iter().any(|c| c == "E3001"),
+            "Should NOT have E3001 - the transaction is balanced after booking fills in the missing amount. Got codes: {:?}",
+            error_codes
+        );
+
+        // The file should have no ERROR-severity diagnostics (but may have warnings/info)
+        assert!(
+            error_diagnostics.is_empty(),
+            "Valid file should have no ERROR diagnostics, but got: {:?}",
+            error_codes
+        );
     }
 }

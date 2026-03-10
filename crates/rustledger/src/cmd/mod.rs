@@ -5,6 +5,7 @@
 
 pub mod check;
 pub mod completions;
+pub mod config_cmd;
 pub mod doctor;
 pub mod extract_cmd;
 pub mod format;

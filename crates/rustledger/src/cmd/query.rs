@@ -31,13 +31,13 @@ use std::process::ExitCode;
 #[command(name = "query")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The beancount file to query
-    #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
-    file: Option<PathBuf>,
+    /// The beancount file to query (uses config default if not specified)
+    #[arg(value_name = "FILE")]
+    pub file: Option<PathBuf>,
 
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL", hide = true)]
-    generate_completions: Option<ShellType>,
+    pub generate_completions: Option<ShellType>,
 
     /// BQL query to execute (if not provided, enters interactive mode)
     #[arg(value_name = "QUERY", trailing_var_arg = true, num_args = 0..)]
@@ -52,8 +52,8 @@ pub struct Args {
     output: Option<PathBuf>,
 
     /// Output format (text, csv, json, beancount)
-    #[arg(short = 'f', long, default_value = "text")]
-    format: OutputFormat,
+    #[arg(short = 'f', long)]
+    pub format: Option<OutputFormat>,
 
     /// Numberify output (remove currencies, output raw numbers)
     #[arg(short = 'm', long)]
@@ -68,11 +68,16 @@ pub struct Args {
     verbose: bool,
 }
 
+/// Output format for query results.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum OutputFormat {
+pub enum OutputFormat {
+    /// Plain text output (default).
     Text,
+    /// CSV output.
     Csv,
+    /// JSON output.
     Json,
+    /// Beancount directive output.
     Beancount,
 }
 
@@ -178,11 +183,25 @@ struct ShellSettings {
 impl ShellSettings {
     fn from_args(args: &Args, display_context: DisplayContext) -> Self {
         Self {
-            format: args.format,
+            format: args.format.unwrap_or(OutputFormat::Text),
             numberify: args.numberify,
             pager: true,
             output_file: args.output.clone(),
             display_context,
+        }
+    }
+}
+
+impl OutputFormat {
+    /// Parse from a string (for config file values).
+    #[must_use]
+    pub fn from_str_config(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "text" => Some(Self::Text),
+            "csv" => Some(Self::Csv),
+            "json" => Some(Self::Json),
+            "beancount" => Some(Self::Beancount),
+            _ => None,
         }
     }
 }

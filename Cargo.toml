@@ -31,7 +31,7 @@ default-members = [
 [workspace.package]
 version = "0.10.0"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.90"
 license = "GPL-3.0-only"
 repository = "https://github.com/rustledger/rustledger"
 homepage = "https://rustledger.github.io"
@@ -66,6 +66,7 @@ logosky = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 rmp-serde = "1"
+toml = "0.8"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -78,8 +79,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # WASM
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
-wasmtime = "41"
-wasmtime-wasi = "41"
+wasmtime = "41.0.4"
+wasmtime-wasi = "41.0.4"
 wat = "1"
 
 # Parallelization
