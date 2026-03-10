@@ -23,8 +23,9 @@ use super::super::NativePlugin;
 
 /// Regex for parsing config key-value pairs.
 /// Format: `'pattern': 'replacement'`
-static CONFIG_KV_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'([^']+)'\s*:\s*'([^']*)'").unwrap());
+static CONFIG_KV_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*'([^']*)'").expect("CONFIG_KV_RE: invalid regex pattern")
+});
 
 /// Plugin for renaming accounts using regex patterns.
 pub struct RenameAccountsPlugin;

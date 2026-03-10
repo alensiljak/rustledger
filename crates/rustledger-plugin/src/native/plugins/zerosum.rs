@@ -21,20 +21,24 @@ use std::str::FromStr;
 use std::sync::LazyLock;
 
 /// Regex for parsing zerosum account entries.
-/// Format: `'AccountName': ('TargetAccount', days)`
-static ACCOUNT_ENTRY_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'([^']+)'\s*:\s*\(\s*'([^']*)'\s*,\s*(\d+)\s*\)").unwrap());
+/// Format: `'AccountName': ('TargetAccount', days)` where `TargetAccount` may be empty (`''`).
+static ACCOUNT_ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*\(\s*'([^']*)'\s*,\s*(\d+)\s*\)")
+        .expect("ACCOUNT_ENTRY_RE: invalid regex pattern")
+});
 
 /// Regex for parsing `account_name_replace`.
 /// Format: `'account_name_replace': ('from', 'to')`
 static ACCOUNT_REPLACE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"'account_name_replace'\s*:\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*\)").unwrap()
+    Regex::new(r"'account_name_replace'\s*:\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*\)")
+        .expect("ACCOUNT_REPLACE_RE: invalid regex pattern")
 });
 
 /// Regex for parsing tolerance.
 /// Format: `'tolerance': 0.01`
-static TOLERANCE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"'tolerance'\s*:\s*([0-9.]+)").unwrap());
+static TOLERANCE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'tolerance'\s*:\s*([0-9.]+)").expect("TOLERANCE_RE: invalid regex pattern")
+});
 
 use crate::types::{
     DirectiveData, DirectiveWrapper, OpenData, PluginError, PluginErrorSeverity, PluginInput,

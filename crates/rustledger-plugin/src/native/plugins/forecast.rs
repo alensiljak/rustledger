@@ -41,7 +41,7 @@ static FORECAST_PATTERN_RE: LazyLock<Regex> = LazyLock::new(|| {
         \]
     ",
     )
-    .unwrap()
+    .expect("FORECAST_PATTERN_RE: invalid regex pattern")
 });
 
 /// Plugin for generating recurring forecast transactions.

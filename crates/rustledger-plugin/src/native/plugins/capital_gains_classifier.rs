@@ -35,7 +35,8 @@ use super::super::NativePlugin;
 /// Regex for parsing capital gains config entries.
 /// Format: `'pattern': ['to_replace', 'repl1', 'repl2']`
 static CONFIG_ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"'([^']+)'\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\]").unwrap()
+    Regex::new(r"'([^']+)'\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\]")
+        .expect("CONFIG_ENTRY_RE: invalid regex pattern")
 });
 
 /// Plugin for classifying capital gains into long/short term categories.

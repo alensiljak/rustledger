@@ -21,7 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 /// Format: `'Prefix': {'earlier': 'Account1', 'later': 'Account2'}`
 static HOLDING_ACCOUNT_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"'([^']+)'\s*:\s*\{\s*'earlier'\s*:\s*'([^']+)'\s*,\s*'later'\s*:\s*'([^']+)'\s*\}")
-        .unwrap()
+        .expect("HOLDING_ACCOUNT_RE: invalid regex pattern")
 });
 
 use crate::types::{
