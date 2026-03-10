@@ -403,4 +403,49 @@ mod tests {
             "Mismatched balance should not show codelens (diagnostic handles it)"
         );
     }
+
+    #[test]
+    fn test_code_lens_resolve_with_auto_filled_posting() {
+        // This tests that booking is run before balance calculation.
+        // The Income:Salary posting has no amount - it should be auto-filled to -100 USD.
+        // After booking, Assets:Bank should have 100 USD and balance should pass.
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 open Income:Salary USD
+2024-01-15 * "Deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary
+2024-01-31 balance Assets:Bank 100 USD
+"#;
+        let result = parse(source);
+
+        let lens = CodeLens {
+            range: Range {
+                start: Position::new(5, 0),
+                end: Position::new(5, 0),
+            },
+            command: None,
+            data: Some(serde_json::json!({
+                "kind": "balance",
+                "account": "Assets:Bank",
+                "date": "2024-01-31",
+                "expected_amount": "100",
+                "expected_currency": "USD",
+            })),
+        };
+
+        let resolved = handle_code_lens_resolve(lens, &result);
+
+        // With booking, the auto-filled posting is counted and balance should pass
+        assert!(
+            resolved.command.is_some(),
+            "Balance with auto-filled posting should pass after booking"
+        );
+
+        let cmd = resolved.command.unwrap();
+        assert!(
+            cmd.title.contains("✓"),
+            "Should show checkmark for passing balance. Got: {}",
+            cmd.title
+        );
+    }
 }
