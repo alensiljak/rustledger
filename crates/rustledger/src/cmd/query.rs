@@ -31,13 +31,13 @@ use std::process::ExitCode;
 #[command(name = "query")]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The beancount file to query
-    #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
-    file: Option<PathBuf>,
+    /// The beancount file to query (uses config default if not specified)
+    #[arg(value_name = "FILE")]
+    pub file: Option<PathBuf>,
 
     /// Generate shell completions and exit
     #[arg(long, value_name = "SHELL", hide = true)]
-    generate_completions: Option<ShellType>,
+    pub generate_completions: Option<ShellType>,
 
     /// BQL query to execute (if not provided, enters interactive mode)
     #[arg(value_name = "QUERY", trailing_var_arg = true, num_args = 0..)]

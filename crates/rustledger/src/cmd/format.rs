@@ -19,8 +19,8 @@ use std::process::ExitCode;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The beancount file(s) to format
-    #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
+    /// The beancount file(s) to format (uses config default if not specified)
+    #[arg(value_name = "FILE")]
     pub files: Vec<PathBuf>,
 
     /// Generate shell completions and exit

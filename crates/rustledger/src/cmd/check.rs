@@ -94,8 +94,8 @@ fn byte_offset_to_line_col(source: &str, offset: usize) -> (usize, usize) {
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// The beancount file to check
-    #[arg(value_name = "FILE", required_unless_present = "generate_completions")]
+    /// The beancount file to check (uses config default if not specified)
+    #[arg(value_name = "FILE")]
     pub file: Option<PathBuf>,
 
     /// Generate shell completions and exit
