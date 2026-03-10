@@ -158,33 +158,22 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
             .copied()
             .unwrap_or_default();
 
-        // Check if balance matches
-        let (title, status) = if actual_amount == expected_amount {
-            (
-                format!("✓ Balance: {} {}", expected_amount, expected_currency),
-                "verified",
-            )
-        } else {
-            let diff = actual_amount - expected_amount;
-            (
-                format!(
-                    "✗ Balance: expected {} {}, actual {} {} (diff: {})",
-                    expected_amount, expected_currency, actual_amount, expected_currency, diff
-                ),
-                "mismatch",
-            )
-        };
-
-        resolved.command = Some(Command {
-            title,
-            command: "rledger.showBalanceDetails".to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "account": account,
-                "status": status,
-                "expected": format!("{} {}", expected_amount, expected_currency),
-                "actual": format!("{} {}", actual_amount, expected_currency),
-            })]),
-        });
+        // Only show codelens for passing balance assertions.
+        // Failed assertions are shown as diagnostics (standard IDE behavior).
+        // Showing both would duplicate information (issue #491).
+        if actual_amount == expected_amount {
+            resolved.command = Some(Command {
+                title: format!("✓ Balance: {} {}", expected_amount, expected_currency),
+                command: "rledger.showBalanceDetails".to_string(),
+                arguments: Some(vec![serde_json::json!({
+                    "account": account,
+                    "status": "verified",
+                    "expected": format!("{} {}", expected_amount, expected_currency),
+                    "actual": format!("{} {}", actual_amount, expected_currency),
+                })]),
+            });
+        }
+        // For mismatches, leave command as None - diagnostic will show the error
     }
 
     // If no data to resolve, return as-is (already has command)
@@ -377,10 +366,12 @@ mod tests {
         };
 
         let resolved = handle_code_lens_resolve(lens, &result);
-        assert!(resolved.command.is_some());
 
-        let cmd = resolved.command.unwrap();
-        assert!(cmd.title.contains("✗")); // Should show X for mismatch
-        assert!(cmd.title.contains("diff"));
+        // For mismatched balances, codelens should NOT have a command.
+        // The error is shown via diagnostics instead (issue #491).
+        assert!(
+            resolved.command.is_none(),
+            "Mismatched balance should not show codelens (diagnostic handles it)"
+        );
     }
 }
