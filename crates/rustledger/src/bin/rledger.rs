@@ -244,11 +244,17 @@ fn main() -> ExitCode {
         }
     };
 
+    // Get effective profile: CLI flag takes precedence, then env var
+    let profile = cli
+        .profile
+        .or_else(|| std::env::var("RLEDGER_PROFILE").ok());
+    let profile_ref = profile.as_deref();
+
     match cli.command {
         Commands::Check { mut args } => {
             // If no file specified, try to get from config
             if args.file.is_none() && args.generate_completions.is_none() {
-                args.file = config.effective_file_path(cli.profile.as_deref());
+                args.file = config.effective_file_path(profile_ref);
             }
             match rustledger::cmd::check::run(&args) {
                 Ok(code) => code,
@@ -261,7 +267,7 @@ fn main() -> ExitCode {
         Commands::Query { mut args } => {
             // If no file specified, try to get from config
             if args.file.is_none() && args.generate_completions.is_none() {
-                args.file = config.effective_file_path(cli.profile.as_deref());
+                args.file = config.effective_file_path(profile_ref);
             }
             // Apply command-specific format default from config
             if args.format.is_none()
@@ -281,7 +287,7 @@ fn main() -> ExitCode {
             // If no files specified, try to get from config
             if args.files.is_empty()
                 && args.generate_completions.is_none()
-                && let Some(file) = config.effective_file_path(cli.profile.as_deref())
+                && let Some(file) = config.effective_file_path(profile_ref)
             {
                 args.files.push(file);
             }
@@ -301,7 +307,7 @@ fn main() -> ExitCode {
         }
         Commands::Report { mut args } => {
             // Report requires file and report subcommand
-            let file = match require_file(args.file.as_ref(), &config, cli.profile.as_deref()) {
+            let file = match require_file(args.file.as_ref(), &config, profile_ref) {
                 Ok(f) => f,
                 Err(code) => return code,
             };
@@ -338,7 +344,7 @@ fn main() -> ExitCode {
             }
         }
         Commands::Extract { args } => {
-            let file = match require_file(args.file.as_ref(), &config, cli.profile.as_deref()) {
+            let file = match require_file(args.file.as_ref(), &config, profile_ref) {
                 Ok(f) => f,
                 Err(code) => return code,
             };

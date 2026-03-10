@@ -181,17 +181,19 @@ impl std::fmt::Display for ConfigSource {
 pub struct LoadedConfig {
     /// The merged configuration.
     pub config: Config,
-    /// Paths that were loaded (in order of precedence).
+    /// Paths that were loaded, from lowest to highest precedence.
     pub sources: Vec<ConfigSource>,
 }
 
 impl Config {
     /// Load configuration from all sources.
     ///
-    /// Searches for config files in the following order (highest priority first):
-    /// 1. Project config (`.rledger.toml` searching upward from cwd)
+    /// Loads configuration layers in the following order (lowest priority first),
+    /// with later layers overriding earlier ones:
+    /// 1. System config (`/etc/rledger/config.toml`)
     /// 2. User config (`~/.config/rledger/config.toml`)
-    /// 3. System config (`/etc/rledger/config.toml`)
+    /// 3. Project config (`.rledger.toml` searching upward from cwd)
+    /// 4. Environment variables (highest priority)
     pub fn load() -> Result<LoadedConfig> {
         let mut merged = Self::default();
         let mut sources = Vec::new();
@@ -383,33 +385,45 @@ impl Config {
     }
 }
 
+impl OutputConfig {
+    /// Merge another output config into this one.
+    #[must_use]
+    fn merge(mut self, other: Self) -> Self {
+        if other.format.is_some() {
+            self.format = other.format;
+        }
+        if other.color.is_some() {
+            self.color = other.color;
+        }
+        if other.pager.is_some() {
+            self.pager = other.pager;
+        }
+        if other.sort.is_some() {
+            self.sort = other.sort;
+        }
+        self
+    }
+}
+
+impl CommandConfig {
+    /// Merge another command config into this one.
+    #[must_use]
+    fn merge(mut self, other: Self) -> Self {
+        self.output = self.output.merge(other.output);
+        if other.verbose.is_some() {
+            self.verbose = other.verbose;
+        }
+        self
+    }
+}
+
 impl CommandsConfig {
     /// Merge another commands config into this one.
     #[must_use]
     fn merge(mut self, other: Self) -> Self {
-        // Merge query config
-        if other.query.output.format.is_some() {
-            self.query.output.format = other.query.output.format;
-        }
-        if other.query.verbose.is_some() {
-            self.query.verbose = other.query.verbose;
-        }
-
-        // Merge check config
-        if other.check.output.format.is_some() {
-            self.check.output.format = other.check.output.format;
-        }
-        if other.check.verbose.is_some() {
-            self.check.verbose = other.check.verbose;
-        }
-
-        // Merge report config
-        if other.report.output.format.is_some() {
-            self.report.output.format = other.report.output.format;
-        }
-        if other.report.verbose.is_some() {
-            self.report.verbose = other.report.verbose;
-        }
+        self.query = self.query.merge(other.query);
+        self.check = self.check.merge(other.check);
+        self.report = self.report.merge(other.report);
 
         // Merge format config
         if other.format.backup.is_some() {
@@ -487,11 +501,16 @@ pub fn find_project_config_from(start: &Path) -> Option<PathBuf> {
 pub fn config_search_paths() -> Vec<(String, PathBuf, bool)> {
     let mut paths = Vec::new();
 
-    // Project config
+    // Project config - show actual found path or default location
     if let Ok(cwd) = env::current_dir() {
-        let project_path = cwd.join(".rledger.toml");
-        let exists = find_project_config().is_some();
-        paths.push(("project".to_string(), project_path, exists));
+        if let Some(found_path) = find_project_config_from(&cwd) {
+            // Report the actual found project config path
+            paths.push(("project".to_string(), found_path, true));
+        } else {
+            // No project config found; report the default path in the current directory
+            let project_path = cwd.join(".rledger.toml");
+            paths.push(("project".to_string(), project_path, false));
+        }
     }
 
     // User config

@@ -43,11 +43,11 @@ pub enum ConfigCommand {
     /// Open config file in editor.
     Edit {
         /// Edit project config instead of user config.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "system")]
         project: bool,
 
         /// Edit system config instead of user config.
-        #[arg(long)]
+        #[arg(long, conflicts_with = "project")]
         system: bool,
     },
 
@@ -82,10 +82,10 @@ fn run_show(raw: bool, format: &str) -> Result<()> {
     let loaded = Config::load()?;
 
     if raw {
-        // Show each config source separately
-        println!("# Configuration sources (in order of precedence)\n");
+        // Show each config source separately, highest precedence first
+        println!("# Configuration sources (highest precedence first)\n");
 
-        for source in &loaded.sources {
+        for source in loaded.sources.iter().rev() {
             match source {
                 config::ConfigSource::Project(path)
                 | config::ConfigSource::User(path)
@@ -150,13 +150,14 @@ fn print_config(loaded: &LoadedConfig, format: &str) -> Result<()> {
     Ok(())
 }
 
-/// Format source list for display.
+/// Format source list for display (highest precedence first).
 fn format_sources(sources: &[config::ConfigSource]) -> String {
     if sources.is_empty() {
         "default".to_string()
     } else {
         sources
             .iter()
+            .rev() // Reverse to show highest precedence first
             .map(|s| match s {
                 config::ConfigSource::Cli => "cli".to_string(),
                 config::ConfigSource::Environment => "env".to_string(),
@@ -237,8 +238,16 @@ fn run_edit(project: bool, system: bool) -> Result<()> {
 
     println!("Opening {} with {editor}...", path.display());
 
-    let status = Command::new(&editor)
-        .arg(&path)
+    // Split editor into command and args (handles "code --wait" style editors)
+    let mut parts = editor.split_whitespace();
+    let cmd = parts.next().unwrap_or("nano");
+    let mut command = Command::new(cmd);
+    for arg in parts {
+        command.arg(arg);
+    }
+    command.arg(&path);
+
+    let status = command
         .status()
         .with_context(|| format!("Failed to run editor: {editor}"))?;
 
@@ -331,11 +340,13 @@ mod tests {
 
     #[test]
     fn test_format_sources() {
+        // Sources are stored in load order (lowest to highest precedence)
         let sources = vec![
-            config::ConfigSource::Project("/test/.rledger.toml".into()),
             config::ConfigSource::User("/home/user/.config/rledger/config.toml".into()),
+            config::ConfigSource::Project("/test/.rledger.toml".into()),
         ];
 
+        // format_sources reverses to show highest precedence first
         let formatted = format_sources(&sources);
         assert_eq!(formatted, "project > user");
     }

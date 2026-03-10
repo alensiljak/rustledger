@@ -66,6 +66,10 @@ pub struct Args {
 
 /// Run the format command with the given arguments.
 pub fn run(args: &Args) -> Result<ExitCode> {
+    if args.files.is_empty() {
+        anyhow::bail!("FILE is required (or set default.file in config)");
+    }
+
     if args.output.is_some() && args.files.len() > 1 {
         anyhow::bail!(
             "--output can only be used with a single input file. Use --in-place for multiple files."
