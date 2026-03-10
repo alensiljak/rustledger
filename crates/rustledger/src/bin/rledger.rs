@@ -473,4 +473,265 @@ mod tests {
             vec!["rledger", "-P", "business", "report", "balances"]
         );
     }
+
+    #[test]
+    fn test_parse_alias_expansion_empty() {
+        let parts = parse_alias_expansion("");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_alias_expansion_whitespace_only() {
+        let parts = parse_alias_expansion("   \t   ");
+        assert!(parts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_alias_expansion_tabs() {
+        let parts = parse_alias_expansion("report\tbalances\t-f\tcsv");
+        assert_eq!(parts, vec!["report", "balances", "-f", "csv"]);
+    }
+
+    #[test]
+    fn test_parse_alias_expansion_mixed_quotes() {
+        let parts = parse_alias_expansion("query 'single' \"double\"");
+        assert_eq!(parts, vec!["query", "single", "double"]);
+    }
+
+    #[test]
+    fn test_parse_alias_expansion_complex_query() {
+        let parts = parse_alias_expansion(
+            "query 'SELECT account, sum(position) WHERE account ~ \"Expenses:Food\"'",
+        );
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0], "query");
+        assert!(parts[1].contains("Expenses:Food"));
+    }
+
+    #[test]
+    fn test_expand_aliases_empty_args() {
+        let config = Config::default();
+        let args: Vec<String> = vec![];
+        let expanded = expand_aliases(args.clone(), &config);
+        assert_eq!(expanded, args);
+    }
+
+    #[test]
+    fn test_expand_aliases_only_program_name() {
+        let config = Config::default();
+        let args = vec!["rledger".to_string()];
+        let expanded = expand_aliases(args.clone(), &config);
+        assert_eq!(expanded, args);
+    }
+
+    #[test]
+    fn test_expand_aliases_flag_only() {
+        let config = Config::default();
+        let args = vec!["rledger".to_string(), "--help".to_string()];
+        let expanded = expand_aliases(args.clone(), &config);
+        assert_eq!(expanded, args);
+    }
+
+    #[test]
+    fn test_expand_aliases_with_long_profile() {
+        let config = Config {
+            aliases: {
+                let mut aliases = std::collections::HashMap::new();
+                aliases.insert("bal".to_string(), "report balances".to_string());
+                aliases
+            },
+            ..Default::default()
+        };
+
+        let args = vec![
+            "rledger".to_string(),
+            "--profile".to_string(),
+            "work".to_string(),
+            "bal".to_string(),
+        ];
+
+        let expanded = expand_aliases(args, &config);
+        assert_eq!(
+            expanded,
+            vec!["rledger", "--profile", "work", "report", "balances"]
+        );
+    }
+
+    #[test]
+    fn test_expand_aliases_preserves_trailing_args() {
+        let config = Config {
+            aliases: {
+                let mut aliases = std::collections::HashMap::new();
+                aliases.insert("is".to_string(), "report income".to_string());
+                aliases
+            },
+            ..Default::default()
+        };
+
+        let args = vec![
+            "rledger".to_string(),
+            "is".to_string(),
+            "-f".to_string(),
+            "csv".to_string(),
+            "--verbose".to_string(),
+        ];
+
+        let expanded = expand_aliases(args, &config);
+        assert_eq!(
+            expanded,
+            vec!["rledger", "report", "income", "-f", "csv", "--verbose"]
+        );
+    }
+
+    #[test]
+    fn test_expand_aliases_with_quoted_alias() {
+        let config = Config {
+            aliases: {
+                let mut aliases = std::collections::HashMap::new();
+                aliases.insert(
+                    "expenses".to_string(),
+                    "query 'SELECT account, sum(position)'".to_string(),
+                );
+                aliases
+            },
+            ..Default::default()
+        };
+
+        let args = vec!["rledger".to_string(), "expenses".to_string()];
+
+        let expanded = expand_aliases(args, &config);
+        assert_eq!(expanded.len(), 3);
+        assert_eq!(expanded[0], "rledger");
+        assert_eq!(expanded[1], "query");
+        assert_eq!(expanded[2], "SELECT account, sum(position)");
+    }
+
+    #[test]
+    fn test_expand_aliases_builtin_not_overridden() {
+        // Even if user defines an alias named "check", it shouldn't conflict
+        // since the actual command "check" isn't an alias
+        let config = Config::default();
+
+        let args = vec![
+            "rledger".to_string(),
+            "check".to_string(),
+            "file.beancount".to_string(),
+        ];
+
+        let expanded = expand_aliases(args.clone(), &config);
+        assert_eq!(expanded, args);
+    }
+
+    #[test]
+    fn test_cli_parsing_profile_flag() {
+        use clap::Parser;
+
+        let cli =
+            Cli::try_parse_from(["rledger", "-P", "work", "check", "file.beancount"]).unwrap();
+        assert_eq!(cli.profile, Some("work".to_string()));
+
+        let cli = Cli::try_parse_from([
+            "rledger",
+            "--profile",
+            "business",
+            "check",
+            "file.beancount",
+        ])
+        .unwrap();
+        assert_eq!(cli.profile, Some("business".to_string()));
+    }
+
+    #[test]
+    fn test_cli_parsing_no_profile() {
+        use clap::Parser;
+
+        let cli = Cli::try_parse_from(["rledger", "check", "file.beancount"]).unwrap();
+        assert_eq!(cli.profile, None);
+    }
+
+    #[test]
+    fn test_require_file_with_config() {
+        let config = Config {
+            default: rustledger::config::DefaultConfig {
+                file: Some("/test/file.beancount".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // When file is None, should get from config
+        let result = require_file(None, &config, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/test/file.beancount"));
+    }
+
+    #[test]
+    fn test_require_file_with_profile() {
+        let config = Config {
+            default: rustledger::config::DefaultConfig {
+                file: Some("/default.beancount".to_string()),
+                ..Default::default()
+            },
+            profiles: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "work".to_string(),
+                    rustledger::config::ProfileConfig {
+                        file: Some("/work.beancount".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+
+        // With profile, should get profile's file
+        let result = require_file(None, &config, Some("work"));
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/work.beancount"));
+    }
+
+    #[test]
+    fn test_require_file_cli_overrides_config() {
+        let config = Config {
+            default: rustledger::config::DefaultConfig {
+                file: Some("/config.beancount".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let cli_file = PathBuf::from("/cli.beancount");
+        let result = require_file(Some(&cli_file), &config, None);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PathBuf::from("/cli.beancount"));
+    }
+
+    #[test]
+    fn test_require_file_no_file_no_config() {
+        let config = Config::default();
+        let result = require_file(None, &config, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_file_with_tilde_expansion() {
+        let config = Config {
+            default: rustledger::config::DefaultConfig {
+                file: Some("~/ledger.beancount".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let result = get_file(None, &config, None);
+        assert!(result.is_some());
+
+        // Should be expanded (if home dir is available)
+        let path = result.unwrap();
+        if let Some(home) = dirs::home_dir() {
+            assert_eq!(path, home.join("ledger.beancount"));
+        }
+    }
 }

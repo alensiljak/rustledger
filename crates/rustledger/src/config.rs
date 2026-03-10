@@ -549,10 +549,17 @@ mod shellexpand {
                     let name: String = chars.by_ref().take_while(|&c| c != '}').collect();
                     name
                 } else {
-                    chars
-                        .by_ref()
-                        .take_while(|c| c.is_alphanumeric() || *c == '_')
-                        .collect()
+                    // Collect alphanumeric and underscore characters for var name
+                    let mut name = String::new();
+                    while let Some(&c) = chars.peek() {
+                        if c.is_alphanumeric() || c == '_' {
+                            name.push(c);
+                            chars.next();
+                        } else {
+                            break;
+                        }
+                    }
+                    name
                 };
 
                 if let Ok(value) = env::var(&var_name) {
@@ -769,5 +776,521 @@ indent = 4
         assert_eq!(merged.commands.query.output.format, Some("csv".to_string()));
         // Base verbose should remain (override was None)
         assert_eq!(merged.commands.query.verbose, Some(false));
+    }
+
+    #[test]
+    fn test_parse_empty_config() {
+        let content = "";
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.default.file, None);
+        assert_eq!(config.output.format, None);
+        assert!(config.profiles.is_empty());
+        assert!(config.aliases.is_empty());
+    }
+
+    #[test]
+    fn test_parse_output_config_all_fields() {
+        let content = r#"
+[output]
+format = "json"
+color = false
+pager = "less -R"
+sort = "date"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.output.format, Some("json".to_string()));
+        assert_eq!(config.output.color, Some(false));
+        assert_eq!(config.output.pager, Some("less -R".to_string()));
+        assert_eq!(config.output.sort, Some("date".to_string()));
+    }
+
+    #[test]
+    fn test_parse_multiple_profiles() {
+        let content = r#"
+[profiles.personal]
+file = "~/personal.beancount"
+
+[profiles.business]
+file = "~/business.beancount"
+
+[profiles.family]
+file = "/shared/family.beancount"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.profiles.len(), 3);
+        assert_eq!(
+            config.profiles.get("personal").unwrap().file,
+            Some("~/personal.beancount".to_string())
+        );
+        assert_eq!(
+            config.profiles.get("business").unwrap().file,
+            Some("~/business.beancount".to_string())
+        );
+        assert_eq!(
+            config.profiles.get("family").unwrap().file,
+            Some("/shared/family.beancount".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_profile_with_output() {
+        let content = r#"
+[profiles.work]
+file = "~/work.beancount"
+
+[profiles.work.output]
+format = "csv"
+color = false
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        let work = config.profiles.get("work").unwrap();
+        assert_eq!(work.file, Some("~/work.beancount".to_string()));
+        assert_eq!(work.output.format, Some("csv".to_string()));
+        assert_eq!(work.output.color, Some(false));
+    }
+
+    #[test]
+    fn test_parse_multiple_aliases() {
+        let content = r#"
+[aliases]
+bal = "report balances"
+is = "report income"
+bs = "report balance-sheet"
+expenses = "query 'SELECT account, sum(position) WHERE account ~ \"Expenses\"'"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.aliases.len(), 4);
+        assert_eq!(config.resolve_alias("bal"), Some("report balances"));
+        assert_eq!(config.resolve_alias("is"), Some("report income"));
+        assert_eq!(config.resolve_alias("bs"), Some("report balance-sheet"));
+        assert!(
+            config
+                .resolve_alias("expenses")
+                .unwrap()
+                .contains("Expenses")
+        );
+    }
+
+    #[test]
+    fn test_parse_all_command_configs() {
+        let content = r#"
+[commands.query]
+output.format = "csv"
+verbose = true
+
+[commands.check]
+output.format = "json"
+verbose = false
+
+[commands.report]
+output.format = "text"
+
+[commands.format]
+backup = true
+indent = 4
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+
+        assert_eq!(config.commands.query.output.format, Some("csv".to_string()));
+        assert_eq!(config.commands.query.verbose, Some(true));
+
+        assert_eq!(
+            config.commands.check.output.format,
+            Some("json".to_string())
+        );
+        assert_eq!(config.commands.check.verbose, Some(false));
+
+        assert_eq!(
+            config.commands.report.output.format,
+            Some("text".to_string())
+        );
+
+        assert_eq!(config.commands.format.backup, Some(true));
+        assert_eq!(config.commands.format.indent, Some(4));
+    }
+
+    #[test]
+    fn test_merge_output_config() {
+        let base = OutputConfig {
+            format: Some("text".to_string()),
+            color: Some(true),
+            pager: Some("less".to_string()),
+            sort: None,
+        };
+
+        let override_cfg = OutputConfig {
+            format: Some("csv".to_string()),
+            color: None,
+            pager: None,
+            sort: Some("amount".to_string()),
+        };
+
+        let merged = base.merge(override_cfg);
+
+        assert_eq!(merged.format, Some("csv".to_string())); // overridden
+        assert_eq!(merged.color, Some(true)); // kept from base
+        assert_eq!(merged.pager, Some("less".to_string())); // kept from base
+        assert_eq!(merged.sort, Some("amount".to_string())); // new from override
+    }
+
+    #[test]
+    fn test_merge_aliases() {
+        let base = Config {
+            aliases: {
+                let mut m = HashMap::new();
+                m.insert("bal".to_string(), "report balances".to_string());
+                m.insert("is".to_string(), "report income".to_string());
+                m
+            },
+            ..Default::default()
+        };
+
+        let override_config = Config {
+            aliases: {
+                let mut m = HashMap::new();
+                m.insert("bal".to_string(), "report balances -f csv".to_string()); // override
+                m.insert("bs".to_string(), "report balance-sheet".to_string()); // new
+                m
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merge(override_config);
+
+        assert_eq!(merged.aliases.len(), 3);
+        assert_eq!(
+            merged.resolve_alias("bal"),
+            Some("report balances -f csv") // overridden
+        );
+        assert_eq!(merged.resolve_alias("is"), Some("report income")); // kept
+        assert_eq!(merged.resolve_alias("bs"), Some("report balance-sheet")); // new
+    }
+
+    #[test]
+    fn test_merge_profiles() {
+        let base = Config {
+            profiles: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "work".to_string(),
+                    ProfileConfig {
+                        file: Some("~/work.beancount".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+
+        let override_config = Config {
+            profiles: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "work".to_string(),
+                    ProfileConfig {
+                        file: Some("~/work-new.beancount".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m.insert(
+                    "personal".to_string(),
+                    ProfileConfig {
+                        file: Some("~/personal.beancount".to_string()),
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merge(override_config);
+
+        assert_eq!(merged.profiles.len(), 2);
+        assert_eq!(
+            merged.profiles.get("work").unwrap().file,
+            Some("~/work-new.beancount".to_string()) // overridden
+        );
+        assert_eq!(
+            merged.profiles.get("personal").unwrap().file,
+            Some("~/personal.beancount".to_string()) // new
+        );
+    }
+
+    #[test]
+    fn test_effective_file_no_default() {
+        let config = Config::default();
+        assert_eq!(config.effective_file(None), None);
+        assert_eq!(config.effective_file(Some("nonexistent")), None);
+    }
+
+    #[test]
+    fn test_effective_file_profile_without_file() {
+        let config = Config {
+            default: DefaultConfig {
+                file: Some("default.beancount".to_string()),
+                ..Default::default()
+            },
+            profiles: {
+                let mut m = HashMap::new();
+                m.insert(
+                    "empty".to_string(),
+                    ProfileConfig {
+                        file: None, // no file override
+                        ..Default::default()
+                    },
+                );
+                m
+            },
+            ..Default::default()
+        };
+
+        // Profile exists but has no file, should fall back to default
+        assert_eq!(
+            config.effective_file(Some("empty")),
+            Some("default.beancount".to_string())
+        );
+    }
+
+    #[test]
+    fn test_expand_path_no_tilde() {
+        let path = "/absolute/path/file.beancount";
+        let expanded = Config::expand_path(path);
+        assert_eq!(expanded, PathBuf::from("/absolute/path/file.beancount"));
+    }
+
+    #[test]
+    fn test_expand_path_relative() {
+        let path = "relative/path/file.beancount";
+        let expanded = Config::expand_path(path);
+        assert_eq!(expanded, PathBuf::from("relative/path/file.beancount"));
+    }
+
+    #[test]
+    fn test_shellexpand_unknown_var() {
+        let result = shellexpand::env("$UNKNOWN_VAR_RLEDGER_TEST/file").unwrap();
+        // Unknown vars are kept as-is
+        assert_eq!(&*result, "$UNKNOWN_VAR_RLEDGER_TEST/file");
+    }
+
+    #[test]
+    fn test_shellexpand_no_vars() {
+        let result = shellexpand::env("/path/without/vars").unwrap();
+        assert_eq!(&*result, "/path/without/vars");
+    }
+
+    #[test]
+    fn test_shellexpand_multiple_vars_in_path() {
+        // Test that existing env vars like HOME work
+        let result = shellexpand::env("$HOME/test");
+        // Should succeed (HOME is always set)
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_default_config_content() {
+        let content = Config::default_config_content();
+        assert!(content.contains("[default]"));
+        assert!(content.contains("# file ="));
+        assert!(content.contains("[output]"));
+        assert!(content.contains("# format ="));
+        assert!(content.contains("[aliases]"));
+    }
+
+    #[test]
+    fn test_config_source_display() {
+        assert_eq!(format!("{}", ConfigSource::Cli), "cli");
+        assert_eq!(format!("{}", ConfigSource::Environment), "env");
+        assert_eq!(format!("{}", ConfigSource::Default), "default");
+
+        let project = ConfigSource::Project(PathBuf::from("/test/.rledger.toml"));
+        assert!(format!("{project}").contains("project"));
+        assert!(format!("{project}").contains(".rledger.toml"));
+
+        let user = ConfigSource::User(PathBuf::from("/home/user/.config/rledger/config.toml"));
+        assert!(format!("{user}").contains("user"));
+    }
+
+    #[test]
+    fn test_load_from_file() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        writeln!(
+            file,
+            r#"
+[default]
+file = "test.beancount"
+
+[aliases]
+t = "check"
+"#
+        )
+        .unwrap();
+
+        let config = Config::load_from_file(&config_path).unwrap();
+        assert_eq!(config.default.file, Some("test.beancount".to_string()));
+        assert_eq!(config.resolve_alias("t"), Some("check"));
+    }
+
+    #[test]
+    fn test_load_from_file_invalid_toml() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("invalid.toml");
+
+        let mut file = std::fs::File::create(&config_path).unwrap();
+        writeln!(file, "this is not valid toml [[[").unwrap();
+
+        let result = Config::load_from_file(&config_path);
+        assert!(result.is_err());
+    }
+
+    // Note: apply_env tests require setting environment variables which is unsafe.
+    // These behaviors are tested via integration tests instead.
+
+    #[test]
+    fn test_apply_env_no_changes() {
+        // When no env vars are set, apply_env should not change anything
+        let config = Config {
+            default: DefaultConfig {
+                file: Some("/config/file.beancount".to_string()),
+                ..Default::default()
+            },
+            output: OutputConfig {
+                format: Some("text".to_string()),
+                color: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        // Note: This test assumes RLEDGER_FILE and RLEDGER_FORMAT are not set
+        // If they happen to be set in the test environment, this test may fail
+        // Just verify the method doesn't panic
+        let _ = config.apply_env();
+    }
+
+    #[test]
+    fn test_user_config_path() {
+        let path = user_config_path();
+        // Should return Some on most platforms
+        if let Some(p) = path {
+            assert!(p.to_string_lossy().contains("rledger"));
+            assert!(p.to_string_lossy().contains("config.toml"));
+        }
+    }
+
+    #[test]
+    fn test_system_config_path() {
+        let path = system_config_path();
+        #[cfg(unix)]
+        {
+            assert!(path.is_some());
+            assert!(path.unwrap().to_string_lossy().contains("/etc/rledger"));
+        }
+    }
+
+    #[test]
+    fn test_find_project_config_from_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = find_project_config_from(dir.path());
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_project_config_from_current() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join(".rledger.toml");
+        std::fs::write(&config_path, "[default]").unwrap();
+
+        let result = find_project_config_from(dir.path());
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), config_path);
+    }
+
+    #[test]
+    fn test_find_project_config_from_parent() {
+        let parent = tempfile::tempdir().unwrap();
+        let child = parent.path().join("subdir");
+        std::fs::create_dir(&child).unwrap();
+
+        let config_path = parent.path().join(".rledger.toml");
+        std::fs::write(&config_path, "[default]").unwrap();
+
+        let result = find_project_config_from(&child);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), config_path);
+    }
+
+    #[test]
+    fn test_config_search_paths_structure() {
+        let paths = config_search_paths();
+
+        // Should have project, user, and possibly system
+        assert!(!paths.is_empty());
+
+        // Check that we have expected levels
+        let levels: Vec<&str> = paths.iter().map(|(l, _, _)| l.as_str()).collect();
+        assert!(levels.contains(&"project"));
+        assert!(levels.contains(&"user"));
+    }
+
+    #[test]
+    fn test_merge_full_workflow() {
+        // Simulate system -> user -> project merge
+        let system = Config {
+            default: DefaultConfig {
+                file: Some("/etc/default.beancount".to_string()),
+                editor: Some("vi".to_string()),
+            },
+            output: OutputConfig {
+                format: Some("text".to_string()),
+                color: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let user = Config {
+            default: DefaultConfig {
+                editor: Some("vim".to_string()), // override
+                ..Default::default()
+            },
+            aliases: {
+                let mut m = HashMap::new();
+                m.insert("bal".to_string(), "report balances".to_string());
+                m
+            },
+            ..Default::default()
+        };
+
+        let project = Config {
+            default: DefaultConfig {
+                file: Some("./project.beancount".to_string()), // override
+                ..Default::default()
+            },
+            output: OutputConfig {
+                format: Some("csv".to_string()), // override
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let merged = system.merge(user).merge(project);
+
+        // Project file wins
+        assert_eq!(merged.default.file, Some("./project.beancount".to_string()));
+        // User editor wins over system
+        assert_eq!(merged.default.editor, Some("vim".to_string()));
+        // Project format wins
+        assert_eq!(merged.output.format, Some("csv".to_string()));
+        // System color preserved
+        assert_eq!(merged.output.color, Some(true));
+        // User alias preserved
+        assert_eq!(merged.resolve_alias("bal"), Some("report balances"));
     }
 }

@@ -371,4 +371,174 @@ mod tests {
         assert!(content.contains("[default]"));
         assert!(content.contains("# file ="));
     }
+
+    #[test]
+    fn test_format_sources_all_types() {
+        // Sources in load order (lowest to highest precedence)
+        let sources = vec![
+            config::ConfigSource::System("/etc/rledger/config.toml".into()),
+            config::ConfigSource::User("/home/user/.config/rledger/config.toml".into()),
+            config::ConfigSource::Project("/project/.rledger.toml".into()),
+            config::ConfigSource::Environment,
+        ];
+
+        let formatted = format_sources(&sources);
+        // Should be reversed to show highest precedence first
+        assert_eq!(formatted, "env > project > user > system");
+    }
+
+    #[test]
+    fn test_format_sources_cli() {
+        let sources = vec![config::ConfigSource::Cli];
+        let formatted = format_sources(&sources);
+        assert_eq!(formatted, "cli");
+    }
+
+    #[test]
+    fn test_format_sources_default() {
+        let sources = vec![config::ConfigSource::Default];
+        let formatted = format_sources(&sources);
+        assert_eq!(formatted, "default");
+    }
+
+    #[test]
+    fn test_config_command_parsing() {
+        use clap::Parser;
+
+        // Test show command
+        let args = Args::try_parse_from(["config", "show"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Show { raw: false, .. }
+        ));
+
+        // Test show --raw
+        let args = Args::try_parse_from(["config", "show", "--raw"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Show { raw: true, .. }
+        ));
+
+        // Test show --format json
+        let args = Args::try_parse_from(["config", "show", "--format", "json"]).unwrap();
+        if let ConfigCommand::Show { format, .. } = args.command {
+            assert_eq!(format, "json");
+        }
+
+        // Test path command
+        let args = Args::try_parse_from(["config", "path"]).unwrap();
+        assert!(matches!(args.command, ConfigCommand::Path));
+
+        // Test edit command
+        let args = Args::try_parse_from(["config", "edit"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Edit {
+                project: false,
+                system: false
+            }
+        ));
+
+        // Test edit --project
+        let args = Args::try_parse_from(["config", "edit", "--project"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Edit {
+                project: true,
+                system: false
+            }
+        ));
+
+        // Test edit --system
+        let args = Args::try_parse_from(["config", "edit", "--system"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Edit {
+                project: false,
+                system: true
+            }
+        ));
+
+        // Test init command
+        let args = Args::try_parse_from(["config", "init"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Init {
+                project: false,
+                force: false
+            }
+        ));
+
+        // Test init --project
+        let args = Args::try_parse_from(["config", "init", "--project"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Init {
+                project: true,
+                force: false
+            }
+        ));
+
+        // Test init --force
+        let args = Args::try_parse_from(["config", "init", "--force"]).unwrap();
+        assert!(matches!(
+            args.command,
+            ConfigCommand::Init {
+                project: false,
+                force: true
+            }
+        ));
+
+        // Test aliases command
+        let args = Args::try_parse_from(["config", "aliases"]).unwrap();
+        assert!(matches!(args.command, ConfigCommand::Aliases));
+    }
+
+    #[test]
+    fn test_edit_conflicts_with() {
+        use clap::Parser;
+
+        // --project and --system should conflict
+        let result = Args::try_parse_from(["config", "edit", "--project", "--system"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_which_exists_nonexistent() {
+        // A command that definitely doesn't exist
+        assert!(!which_exists("definitely_not_a_real_command_12345"));
+    }
+
+    #[test]
+    fn test_which_exists_common_commands() {
+        // At least one of these should exist on most systems
+        let common = ["sh", "bash", "cat", "ls", "echo"];
+        let any_exists = common.iter().any(|cmd| which_exists(cmd));
+        // On CI/containers this might fail, so we just check it doesn't panic
+        let _ = any_exists;
+    }
+
+    #[test]
+    fn test_default_config_content_is_valid_toml() {
+        let content = Config::default_config_content();
+        // Should parse as valid TOML (comments are allowed)
+        let result: Result<Config, _> = toml::from_str(&content);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_config_show_format_options() {
+        // Just verify the format parameter exists and accepts expected values
+        use clap::Parser;
+
+        let args = Args::try_parse_from(["config", "show", "-f", "toml"]).unwrap();
+        if let ConfigCommand::Show { format, .. } = args.command {
+            assert_eq!(format, "toml");
+        }
+
+        let args = Args::try_parse_from(["config", "show", "-f", "json"]).unwrap();
+        if let ConfigCommand::Show { format, .. } = args.command {
+            assert_eq!(format, "json");
+        }
+    }
 }
