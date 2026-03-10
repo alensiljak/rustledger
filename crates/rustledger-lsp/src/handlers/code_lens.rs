@@ -8,8 +8,9 @@
 //! Supports resolve for lazy-loading expensive balance calculations.
 
 use lsp_types::{CodeLens, CodeLensParams, Command, Position, Range};
-use rustledger_core::{Decimal, Directive};
-use rustledger_parser::ParseResult;
+use rustledger_booking::BookingEngine;
+use rustledger_core::{BookingMethod, Decimal, Directive};
+use rustledger_parser::{ParseResult, Spanned};
 use std::collections::HashMap;
 
 use super::utils::LineIndex;
@@ -172,8 +173,11 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
                     "actual": format!("{} {}", actual_amount, expected_currency),
                 })]),
             });
+        } else {
+            // For mismatches, explicitly clear command - diagnostic will show the error.
+            // This handles edge cases where a cached lens might have a stale command.
+            resolved.command = None;
         }
-        // For mismatches, leave command as None - diagnostic will show the error
     }
 
     // If no data to resolve, return as-is (already has command)
@@ -181,14 +185,39 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
 }
 
 /// Calculate the balance of an account at a specific date.
+///
+/// This function runs booking/interpolation before calculating balances,
+/// matching the behavior of validation. Without booking, auto-filled postings
+/// would not be counted in the balance.
 fn calculate_balance_at_date(
     parse_result: &ParseResult,
     account: &str,
     date: Option<chrono::NaiveDate>,
 ) -> HashMap<String, Decimal> {
+    // Clone and sort directives by date (required for correct booking)
+    let mut directives: Vec<Spanned<Directive>> = parse_result.directives.clone();
+    directives.sort_by(|a, b| {
+        a.value
+            .date()
+            .cmp(&b.value.date())
+            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    });
+
+    // Run booking/interpolation to fill in missing amounts
+    let mut booking_engine = BookingEngine::with_method(BookingMethod::Strict);
+    for spanned in &mut directives {
+        if let Directive::Transaction(txn) = &mut spanned.value
+            && let Ok(result) = booking_engine.book_and_interpolate(txn)
+        {
+            booking_engine.apply(&result.transaction);
+            *txn = result.transaction;
+        }
+    }
+
+    // Calculate balance from booked transactions
     let mut balances: HashMap<String, Decimal> = HashMap::new();
 
-    for spanned in &parse_result.directives {
+    for spanned in &directives {
         if let Directive::Transaction(txn) = &spanned.value {
             // Only include transactions before the balance date
             if let Some(d) = date
