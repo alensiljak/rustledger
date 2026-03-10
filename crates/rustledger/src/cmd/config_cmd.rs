@@ -61,6 +61,9 @@ pub enum ConfigCommand {
         #[arg(long, short)]
         force: bool,
     },
+
+    /// List configured aliases.
+    Aliases,
 }
 
 /// Run the config command.
@@ -70,6 +73,7 @@ pub fn run(args: &Args) -> Result<()> {
         ConfigCommand::Path => run_path(),
         ConfigCommand::Edit { project, system } => run_edit(*project, *system),
         ConfigCommand::Init { project, force } => run_init(*project, *force),
+        ConfigCommand::Aliases => run_aliases(),
     }
 }
 
@@ -286,6 +290,36 @@ fn run_init(project: bool, force: bool) -> Result<()> {
         "  rledger config edit{}",
         if project { " --project" } else { "" }
     );
+
+    Ok(())
+}
+
+/// List configured aliases.
+fn run_aliases() -> Result<()> {
+    let loaded = Config::load()?;
+
+    if loaded.config.aliases.is_empty() {
+        println!("No aliases configured.");
+        println!();
+        println!("Add aliases to your config file:");
+        println!("  [aliases]");
+        println!("  bal = \"report balances\"");
+        println!("  inc = \"report income\"");
+        return Ok(());
+    }
+
+    println!("Configured aliases:\n");
+
+    // Sort aliases by name for consistent output
+    let mut aliases: Vec<_> = loaded.config.aliases.iter().collect();
+    aliases.sort_by_key(|(name, _)| *name);
+
+    for (name, expansion) in aliases {
+        println!("  {name} = \"{expansion}\"");
+    }
+
+    println!();
+    println!("Usage: rledger <alias> [additional args]");
 
     Ok(())
 }

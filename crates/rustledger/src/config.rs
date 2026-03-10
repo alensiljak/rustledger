@@ -697,4 +697,58 @@ bal = "report balances"
         assert_eq!(config.resolve_alias("bal"), Some("report balances"));
         assert_eq!(config.resolve_alias("unknown"), None);
     }
+
+    #[test]
+    fn test_command_specific_config() {
+        let content = r#"
+[commands.query]
+output.format = "csv"
+verbose = true
+
+[commands.format]
+indent = 4
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.commands.query.output.format, Some("csv".to_string()));
+        assert_eq!(config.commands.query.verbose, Some(true));
+        assert_eq!(config.commands.format.indent, Some(4));
+    }
+
+    #[test]
+    fn test_merge_command_configs() {
+        let base = Config {
+            commands: CommandsConfig {
+                query: CommandConfig {
+                    output: OutputConfig {
+                        format: Some("text".to_string()),
+                        ..Default::default()
+                    },
+                    verbose: Some(false),
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let override_config = Config {
+            commands: CommandsConfig {
+                query: CommandConfig {
+                    output: OutputConfig {
+                        format: Some("csv".to_string()),
+                        ..Default::default()
+                    },
+                    verbose: None,
+                },
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merge(override_config);
+
+        // Override format should win
+        assert_eq!(merged.commands.query.output.format, Some("csv".to_string()));
+        // Base verbose should remain (override was None)
+        assert_eq!(merged.commands.query.verbose, Some(false));
+    }
 }

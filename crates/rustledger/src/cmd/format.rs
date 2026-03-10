@@ -56,8 +56,8 @@ pub struct Args {
     pub num_width: Option<usize>,
 
     /// Number of spaces for posting indentation (default: 2)
-    #[arg(long, default_value = "2")]
-    pub indent: usize,
+    #[arg(long)]
+    pub indent: Option<usize>,
 
     /// Show verbose output
     #[arg(short, long)]
@@ -161,7 +161,7 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
         a_start.cmp(&b_start)
     });
 
-    let config = FormatConfig::new(args.column, args.indent);
+    let config = FormatConfig::new(args.column, args.indent.unwrap_or(2));
     let mut formatted = String::new();
     let mut prev_end: usize = 0;
 

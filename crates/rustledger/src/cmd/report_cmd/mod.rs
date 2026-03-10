@@ -64,8 +64,8 @@ pub struct Args {
     pub verbose: bool,
 
     /// Output format (text, csv, json)
-    #[arg(short = 'f', long, global = true, default_value = "text")]
-    pub format: OutputFormat,
+    #[arg(short = 'f', long, global = true)]
+    pub format: Option<OutputFormat>,
 }
 
 /// Output format for reports.
@@ -78,6 +78,19 @@ pub enum OutputFormat {
     Csv,
     /// JSON output.
     Json,
+}
+
+impl OutputFormat {
+    /// Parse from a string (for config file values).
+    #[must_use]
+    pub fn from_str_config(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "text" => Some(Self::Text),
+            "csv" => Some(Self::Csv),
+            "json" => Some(Self::Json),
+            _ => None,
+        }
+    }
 }
 
 /// Available report types.
@@ -154,7 +167,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    match run(&file, &report, args.verbose, &args.format) {
+    let format = args.format.unwrap_or_default();
+    match run(&file, &report, args.verbose, &format) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
