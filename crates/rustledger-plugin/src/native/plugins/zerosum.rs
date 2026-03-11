@@ -14,9 +14,31 @@
 //! }"
 //! ```
 
+use regex::Regex;
 use rust_decimal::Decimal;
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
+use std::sync::LazyLock;
+
+/// Regex for parsing zerosum account entries.
+/// Format: `'AccountName': ('TargetAccount', days)` where `TargetAccount` may be empty (`''`).
+static ACCOUNT_ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*\(\s*'([^']*)'\s*,\s*(\d+)\s*\)")
+        .expect("ACCOUNT_ENTRY_RE: invalid regex pattern")
+});
+
+/// Regex for parsing `account_name_replace`.
+/// Format: `'account_name_replace': ('from', 'to')`
+static ACCOUNT_REPLACE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'account_name_replace'\s*:\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*\)")
+        .expect("ACCOUNT_REPLACE_RE: invalid regex pattern")
+});
+
+/// Regex for parsing tolerance.
+/// Format: `'tolerance': 0.01`
+static TOLERANCE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'tolerance'\s*:\s*([0-9.]+)").expect("TOLERANCE_RE: invalid regex pattern")
+});
 
 use crate::types::{
     DirectiveData, DirectiveWrapper, OpenData, PluginError, PluginErrorSeverity, PluginInput,
@@ -345,10 +367,7 @@ fn parse_config(
         // Parse individual account entries
         // Format: 'AccountName': ('TargetAccount', days)
         // or: 'AccountName': ('', days)
-        let re = regex::Regex::new(r"'([^']+)'\s*:\s*\(\s*'([^']*)'\s*,\s*(\d+)\s*\)")
-            .map_err(|e| e.to_string())?;
-
-        for cap in re.captures_iter(dict_str) {
+        for cap in ACCOUNT_ENTRY_RE.captures_iter(dict_str) {
             let account = cap[1].to_string();
             let target = if cap[2].is_empty() {
                 None
@@ -361,23 +380,18 @@ fn parse_config(
     }
 
     // Extract account_name_replace
-    if let Some(start) = config.find("'account_name_replace'") {
-        let re =
-            regex::Regex::new(r"'account_name_replace'\s*:\s*\(\s*'([^']*)'\s*,\s*'([^']*)'\s*\)")
-                .map_err(|e| e.to_string())?;
-        if let Some(cap) = re.captures(&config[start..]) {
-            account_replace = Some((cap[1].to_string(), cap[2].to_string()));
-        }
+    if let Some(start) = config.find("'account_name_replace'")
+        && let Some(cap) = ACCOUNT_REPLACE_RE.captures(&config[start..])
+    {
+        account_replace = Some((cap[1].to_string(), cap[2].to_string()));
     }
 
     // Extract tolerance
-    if let Some(start) = config.find("'tolerance'") {
-        let re = regex::Regex::new(r"'tolerance'\s*:\s*([0-9.]+)").map_err(|e| e.to_string())?;
-        if let Some(cap) = re.captures(&config[start..])
-            && let Ok(t) = Decimal::from_str(&cap[1])
-        {
-            tolerance = t;
-        }
+    if let Some(start) = config.find("'tolerance'")
+        && let Some(cap) = TOLERANCE_RE.captures(&config[start..])
+        && let Ok(t) = Decimal::from_str(&cap[1])
+    {
+        tolerance = t;
     }
 
     Ok((zerosum_accounts, account_replace, tolerance))

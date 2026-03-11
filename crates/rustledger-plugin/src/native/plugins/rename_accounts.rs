@@ -13,12 +13,19 @@
 //! renamed using the corresponding replacement.
 
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::types::{
     DirectiveData, DirectiveWrapper, PadData, PluginInput, PluginOutput, PostingData,
 };
 
 use super::super::NativePlugin;
+
+/// Regex for parsing config key-value pairs.
+/// Format: `'pattern': 'replacement'`
+static CONFIG_KV_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*'([^']*)'").expect("CONFIG_KV_RE: invalid regex pattern")
+});
 
 /// Plugin for renaming accounts using regex patterns.
 pub struct RenameAccountsPlugin;
@@ -147,10 +154,8 @@ fn parse_config(config: &str) -> Result<Vec<RenameRule>, String> {
     let mut rules = Vec::new();
 
     // Parse Python-style dict: {'key': 'value', ...}
-    // Use regex to extract key-value pairs
-    let re = Regex::new(r"'([^']+)'\s*:\s*'([^']*)'").map_err(|e| e.to_string())?;
-
-    for cap in re.captures_iter(config) {
+    // Use cached regex to extract key-value pairs
+    for cap in CONFIG_KV_RE.captures_iter(config) {
         let pattern_str = &cap[1];
         let replacement = cap[2].to_string();
 

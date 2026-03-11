@@ -21,10 +21,28 @@
 
 use chrono::{Datelike, NaiveDate};
 use regex::Regex;
+use std::sync::LazyLock;
 
 use crate::types::{DirectiveData, PluginInput, PluginOutput};
 
 use super::super::NativePlugin;
+
+/// Regex for parsing forecast patterns in narrations.
+/// Matches: `[MONTHLY]`, `[WEEKLY SKIP 2 TIMES]`, `[MONTHLY UNTIL 2025-12-31]`, etc.
+static FORECAST_PATTERN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r"(?x)
+        (^.*?)                             # narration prefix
+        \[
+        (MONTHLY|YEARLY|WEEKLY|DAILY)     # interval type
+        (?:\s+SKIP\s+(\d+)\s+TIMES?)?     # optional SKIP n TIMES
+        (?:\s+REPEAT\s+(\d+)\s+TIMES?)?   # optional REPEAT n TIMES
+        (?:\s+UNTIL\s+(\d{4}-\d{2}-\d{2}))? # optional UNTIL date
+        \]
+    ",
+    )
+    .expect("FORECAST_PATTERN_RE: invalid regex pattern")
+});
 
 /// Plugin for generating recurring forecast transactions.
 pub struct ForecastPlugin;
@@ -47,20 +65,6 @@ impl NativePlugin for ForecastPlugin {
     }
 
     fn process(&self, input: PluginInput) -> PluginOutput {
-        // Regex to parse forecast patterns
-        let pattern = Regex::new(
-            r"(?x)
-            (^.*?)                             # narration prefix
-            \[
-            (MONTHLY|YEARLY|WEEKLY|DAILY)     # interval type
-            (?:\s+SKIP\s+(\d+)\s+TIMES?)?     # optional SKIP n TIMES
-            (?:\s+REPEAT\s+(\d+)\s+TIMES?)?   # optional REPEAT n TIMES
-            (?:\s+UNTIL\s+(\d{4}-\d{2}-\d{2}))? # optional UNTIL date
-            \]
-        ",
-        )
-        .unwrap();
-
         let mut forecast_entries = Vec::new();
         let mut filtered_entries = Vec::new();
 
@@ -85,7 +89,7 @@ impl NativePlugin for ForecastPlugin {
 
         for directive in forecast_entries {
             if let DirectiveData::Transaction(ref txn) = directive.data {
-                if let Some(caps) = pattern.captures(&txn.narration) {
+                if let Some(caps) = FORECAST_PATTERN_RE.captures(&txn.narration) {
                     let narration_prefix = caps.get(1).map_or("", |m| m.as_str().trim());
                     let interval_str = caps.get(2).map_or("MONTHLY", |m| m.as_str());
                     let skip_count: usize = caps

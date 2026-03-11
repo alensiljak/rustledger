@@ -12,8 +12,17 @@
 //! }"
 //! ```
 
+use regex::Regex;
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Regex for parsing holding account configuration entries.
+/// Format: `'Prefix': {'earlier': 'Account1', 'later': 'Account2'}`
+static HOLDING_ACCOUNT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*\{\s*'earlier'\s*:\s*'([^']+)'\s*,\s*'later'\s*:\s*'([^']+)'\s*\}")
+        .expect("HOLDING_ACCOUNT_RE: invalid regex pattern")
+});
 
 use crate::types::{
     AmountData, DirectiveData, DirectiveWrapper, MetaValueData, OpenData, PluginInput,
@@ -298,12 +307,7 @@ fn parse_config(config: &str) -> Result<HashMap<String, (String, String)>, Strin
     let mut result = HashMap::new();
 
     // Parse format: {'Prefix': {'earlier': 'Account1', 'later': 'Account2'}, ...}
-    let re = regex::Regex::new(
-        r"'([^']+)'\s*:\s*\{\s*'earlier'\s*:\s*'([^']+)'\s*,\s*'later'\s*:\s*'([^']+)'\s*\}",
-    )
-    .map_err(|e| e.to_string())?;
-
-    for cap in re.captures_iter(config) {
+    for cap in HOLDING_ACCOUNT_RE.captures_iter(config) {
         let prefix = cap[1].to_string();
         let earlier = cap[2].to_string();
         let later = cap[3].to_string();

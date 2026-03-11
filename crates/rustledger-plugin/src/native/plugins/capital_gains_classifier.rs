@@ -23,6 +23,7 @@ use regex::Regex;
 use rust_decimal::Decimal;
 use std::collections::HashSet;
 use std::str::FromStr;
+use std::sync::LazyLock;
 
 use crate::types::{
     AmountData, DirectiveData, DirectiveWrapper, OpenData, PluginInput, PluginOutput, PostingData,
@@ -30,6 +31,13 @@ use crate::types::{
 };
 
 use super::super::NativePlugin;
+
+/// Regex for parsing capital gains config entries.
+/// Format: `'pattern': ['to_replace', 'repl1', 'repl2']`
+static CONFIG_ENTRY_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"'([^']+)'\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\]")
+        .expect("CONFIG_ENTRY_RE: invalid regex pattern")
+});
 
 /// Plugin for classifying capital gains into long/short term categories.
 pub struct CapitalGainsLongShortPlugin;
@@ -444,10 +452,7 @@ fn process_gain_loss(input: PluginInput) -> PluginOutput {
 /// Format: `{'pattern': ['to_replace', 'short_repl', 'long_repl']}`
 fn parse_long_short_config(config: &str) -> Option<LongShortConfig> {
     // Parse pattern: 'key': ['val1', 'val2', 'val3']
-    let re =
-        Regex::new(r"'([^']+)'\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\]").ok()?;
-
-    let cap = re.captures(config)?;
+    let cap = CONFIG_ENTRY_RE.captures(config)?;
     let pattern = Regex::new(&cap[1]).ok()?;
     let account_to_replace = cap[2].to_string();
     let short_replacement = cap[3].to_string();
@@ -465,10 +470,7 @@ fn parse_long_short_config(config: &str) -> Option<LongShortConfig> {
 /// Format: `{'pattern': ['to_replace', 'gains_repl', 'losses_repl']}`
 fn parse_gain_loss_config(config: &str) -> Option<GainLossConfig> {
     // Parse pattern: 'key': ['val1', 'val2', 'val3']
-    let re =
-        Regex::new(r"'([^']+)'\s*:\s*\[\s*'([^']*)'\s*,\s*'([^']*)'\s*,\s*'([^']*)'\s*\]").ok()?;
-
-    let cap = re.captures(config)?;
+    let cap = CONFIG_ENTRY_RE.captures(config)?;
     let pattern = Regex::new(&cap[1]).ok()?;
     let account_to_replace = cap[2].to_string();
     let gains_replacement = cap[3].to_string();
