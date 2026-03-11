@@ -41,8 +41,8 @@ host's `beancount-plugin` crate types for serialization to work.
 
 ## Testing
 
-You can test your plugin using the rustledger CLI (once plugin support is integrated):
+You can test your plugin using the rustledger CLI:
 
 ```bash
-bean-check --plugin ./target/wasm32-unknown-unknown/release/example_plugin.wasm ledger.beancount
+rledger check --plugin ./target/wasm32-unknown-unknown/release/example_plugin.wasm ledger.beancount
 ```

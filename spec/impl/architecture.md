@@ -18,7 +18,7 @@ This document describes the high-level architecture of rustledger.
 │         └──────────────────┴────────┬─────────┴──────────────────┘         │
 │                                     │                                       │
 │                          ┌──────────▼──────────┐                           │
-│                          │   beancount-core    │                           │
+│                          │  rustledger-core    │                           │
 │                          │  (Processing Pipeline)                          │
 │                          └──────────┬──────────┘                           │
 │                                     │                                       │
@@ -43,14 +43,14 @@ This document describes the high-level architecture of rustledger.
 ```
 rustledger/
 ├── crates/
-│   ├── beancount-core/       # Core types and traits
-│   ├── beancount-parser/     # Lexer and parser
-│   ├── beancount-loader/     # File loading and includes
-│   ├── beancount-booking/    # Interpolation and booking engine
-│   ├── beancount-validate/   # Validation rules
-│   ├── beancount-query/      # BQL query engine
-│   ├── beancount-plugin/     # WASM plugin runtime
-│   └── beancount-cli/        # CLI tools
+│   ├── rustledger-core/       # Core types and traits
+│   ├── rustledger-parser/     # Lexer and parser
+│   ├── rustledger-loader/     # File loading and includes
+│   ├── rustledger-booking/    # Interpolation and booking engine
+│   ├── rustledger-validate/   # Validation rules
+│   ├── rustledger-query/      # BQL query engine
+│   ├── rustledger-plugin/     # WASM plugin runtime
+│   └── rustledger/            # CLI tools
 ├── Cargo.toml                # Workspace definition
 └── spec/                     # Specifications (this folder)
 ```
@@ -59,7 +59,7 @@ rustledger/
 
 ```
                     ┌─────────────────┐
-                    │  beancount-cli  │
+                    │   rustledger    │
                     └────────┬────────┘
                              │
               ┌──────────────┼──────────────┐
@@ -73,22 +73,22 @@ rustledger/
            │         │             │         │
            ▼         ▼             │         ▼
     ┌─────────────────────┐        │  ┌─────────────┐
-    │  beancount-booking  │        │  │  wasmtime   │
+    │ rustledger-booking  │        │  │  wasmtime   │
     └──────────┬──────────┘        │  └─────────────┘
                │                   │
                ▼                   │
     ┌─────────────────────┐        │
-    │  beancount-loader   │◄───────┘
+    │ rustledger-loader   │◄───────┘
     └──────────┬──────────┘
                │
                ▼
     ┌─────────────────────┐
-    │  beancount-parser   │
+    │ rustledger-parser   │
     └──────────┬──────────┘
                │
                ▼
     ┌─────────────────────┐
-    │   beancount-core    │
+    │  rustledger-core    │
     └─────────────────────┘
                │
                ▼

@@ -77,7 +77,7 @@ The project is a Cargo workspace with 12 crates:
 | `rustledger-booking` | Interpolation and booking engine (7 methods) |
 | `rustledger-validate` | Validation with 27 error codes |
 | `rustledger-query` | BQL query engine |
-| `rustledger-plugin` | Native and WASM plugin system (20 plugins) |
+| `rustledger-plugin` | Native and WASM plugin system (30 plugins) |
 | `rustledger-importer` | Import framework for bank statements |
 | `rustledger` | CLI tool (`rledger check`, `rledger query`, etc.) |
 | `rustledger-wasm` | WebAssembly library target |
@@ -218,6 +218,3 @@ cargo deny check                           # Security audit
 
 **Practical impact**: None for real-world usage. No legitimate ledger has 28-decimal-place amounts.
 
-## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for the full project roadmap including near-term, medium-term, and long-term goals.

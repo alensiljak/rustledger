@@ -40,7 +40,7 @@ sudo apt update
 sudo apt install rustledger
 ```
 
-**Package location:** `debian/`
+**Package location:** `debian/` (TODO: not yet implemented)
 
 **PPA:** https://launchpad.net/~robcohen/+archive/ubuntu/rustledger
 

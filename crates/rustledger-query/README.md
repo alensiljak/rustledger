@@ -24,12 +24,13 @@ LIMIT 10
 ## Example
 
 ```rust
-use rustledger_query::{parse_query, execute};
+use rustledger_query::{parse, Executor};
 
-let query = parse_query("SELECT account, SUM(position) GROUP BY account")?;
-let results = execute(&query, &entries)?;
+let query = parse("SELECT account, SUM(position) GROUP BY account")?;
+let mut executor = Executor::new(&directives);
+let results = executor.execute(&query)?;
 
-for row in results {
+for row in &results.rows {
     println!("{:?}", row);
 }
 ```
