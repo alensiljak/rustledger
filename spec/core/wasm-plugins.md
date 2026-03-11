@@ -145,7 +145,7 @@ interface plugin {
     process: func(input: plugin-input) -> plugin-output;
 }
 
-world beancount-plugin {
+world rustledger-plugin {
     export plugin;
 }
 ```
@@ -279,7 +279,7 @@ pub extern "C" fn process(input_ptr: *const u8, input_len: usize) -> *mut u8 {
 ### AssemblyScript Plugin Template
 
 ```typescript
-import { Directive, PluginInput, PluginOutput, Error } from "beancount-plugin-sdk";
+import { Directive, PluginInput, PluginOutput, Error } from "rustledger-plugin-sdk";
 
 export function process(input: PluginInput): PluginOutput {
     const directives = input.directives;

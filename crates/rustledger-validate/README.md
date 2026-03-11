@@ -19,9 +19,14 @@ Beancount validation with 27 error codes for ledger correctness.
 ## Example
 
 ```rust
-use rustledger_validate::{validate, ValidationError};
+use rustledger_validate::{validate, validate_with_options, ValidationOptions};
 
-let errors = validate(&directives, &options);
+// Simple validation
+let errors = validate(&directives);
+
+// Validation with options
+let options = ValidationOptions::default();
+let errors = validate_with_options(&directives, options);
 
 for error in errors {
     eprintln!("{}: {}", error.code(), error.message());

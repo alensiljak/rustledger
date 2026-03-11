@@ -40,4 +40,3 @@ The [adr/](adr/) directory contains Architecture Decision Records documenting ke
 - **[spec/](../spec/)** - Technical specifications (syntax, algorithms, validation)
 - **[spec/tla/](../spec/tla/)** - TLA+ formal specifications
 - **[CONTRIBUTING.md](../CONTRIBUTING.md)** - Contribution guidelines
-- **[ROADMAP.md](../ROADMAP.md)** - Project roadmap

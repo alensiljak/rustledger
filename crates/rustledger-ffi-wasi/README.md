@@ -136,4 +136,4 @@ cargo build -p rustledger-ffi-wasi --target wasm32-wasip1 --release
 
 ## License
 
-MIT
+GPL-3.0

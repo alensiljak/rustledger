@@ -13,9 +13,10 @@ Beancount file loader with include resolution, options parsing, and binary cachi
 ## Example
 
 ```rust
-use rustledger_loader::load_file;
+use rustledger_loader::load;
+use std::path::Path;
 
-let result = load_file("ledger.beancount")?;
+let result = load(Path::new("ledger.beancount"))?;
 
 println!("Loaded {} directives", result.directives.len());
 println!("Options: {:?}", result.options);

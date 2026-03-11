@@ -15,7 +15,7 @@ This document specifies the public API for embedding rustledger and the serializ
 ### Loading a Ledger
 
 ```rust
-use beancount::{Ledger, LoadOptions, Error};
+use rustledger::{Ledger, LoadOptions, Error};
 
 // Simple loading
 let ledger = Ledger::load("ledger.beancount")?;
@@ -296,7 +296,7 @@ impl WasmLedger {
 JavaScript usage:
 
 ```javascript
-import init, { WasmLedger } from 'beancount-wasm';
+import init, { WasmLedger } from 'rustledger-wasm';
 
 await init();
 

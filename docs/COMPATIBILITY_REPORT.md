@@ -50,12 +50,15 @@ Rustledger does not execute Python plugins. Files using `plugin "some_python_plu
 - Report error E8001 "Plugin not found" for unknown plugins
 - This matches Python beancount's behavior of failing on missing plugins
 
-Rustledger supports 20 native plugins that match Python beancount behavior:
-- `auto_accounts`, `auto_tag`, `check_closing`, `check_commodity`
-- `check_drained`, `check_average_cost`, `close_tree`, `coherent_cost`
-- `commodity_attr`, `currency_accounts`, `implicit_prices`, `leafonly`
-- `noduplicates`, `nounused`, `onecommodity`, `pedantic`
-- `sellgains`, `unique_prices`, `unrealized`, `document_discovery`
+Rustledger supports 30 native plugins that match Python beancount behavior:
+- `auto_accounts`, `auto_tag`, `box_accrual`, `capital_gains_gain_loss`
+- `capital_gains_long_short`, `check_average_cost`, `check_closing`, `check_commodity`
+- `check_drained`, `close_tree`, `coherent_cost`, `commodity_attr`
+- `currency_accounts`, `document_discovery`, `effective_date`, `forecast`
+- `generate_base_ccy_prices`, `implicit_prices`, `leafonly`, `noduplicates`
+- `nounused`, `onecommodity`, `pedantic`, `rename_accounts`
+- `rxtxn`, `sellgains`, `split_expenses`, `unique_prices`
+- `unrealized`, `valuation`, `zerosum`
 
 **Workaround**: Use rustledger's native plugins where available, or remove unsupported plugin directives.
 
@@ -181,4 +184,4 @@ If you encounter a file that works with Python beancount but not rustledger:
 ---
 
 *Generated: February 2026*
-*Test environment: Beancount 3.2.0, beanquery 0.2.0, rustledger 0.9.1*
+*Test environment: Beancount 3.2.0, beanquery 0.2.0, rustledger 0.10.0*

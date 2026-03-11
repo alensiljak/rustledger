@@ -29,7 +29,7 @@ mod tests {
 Location: `crates/*/tests/*.rs`
 
 ```rust
-// crates/beancount-parser/tests/parse_fixtures.rs
+// crates/rustledger-parser/tests/parse_fixtures.rs
 #[test]
 fn test_parse_syntax_edge_cases() {
     let content = include_str!("../../tests/fixtures/syntax-edge-cases.beancount");
@@ -240,7 +240,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --target wasm32-unknown-unknown --release -p beancount-wasm
+      - run: cargo build --target wasm32-unknown-unknown --release -p rustledger-wasm
 
   bench:
     name: Benchmarks
@@ -277,13 +277,13 @@ jobs:
 ```
 rustledger/
 ├── crates/
-│   ├── beancount-core/
+│   ├── rustledger-core/
 │   │   ├── src/
 │   │   │   ├── lib.rs          # Unit tests inline
 │   │   │   └── ...
 │   │   └── tests/
 │   │       └── integration.rs  # Integration tests
-│   ├── beancount-parser/
+│   ├── rustledger-parser/
 │   │   ├── src/
 │   │   └── tests/
 │   │       ├── fixtures.rs     # Golden tests
@@ -328,7 +328,7 @@ open target/llvm-cov/html/index.html
 
 ```bash
 # Single crate
-cargo test -p beancount-parser
+cargo test -p rustledger-parser
 
 # Single test
 cargo test test_parse_transaction
