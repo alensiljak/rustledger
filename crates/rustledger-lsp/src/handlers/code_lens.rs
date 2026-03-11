@@ -133,10 +133,13 @@ pub fn handle_code_lens(
 /// Computes expensive balance verification on demand.
 pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> CodeLens {
     let mut resolved = lens.clone();
+    let mut processed_balance = false;
 
     if let Some(data) = &lens.data
         && data.get("kind").and_then(|v| v.as_str()) == Some("balance")
     {
+        processed_balance = true;
+
         let account = data.get("account").and_then(|v| v.as_str()).unwrap_or("");
         let date_str = data.get("date").and_then(|v| v.as_str()).unwrap_or("");
         let expected_amount = data
@@ -173,14 +176,22 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
                     "actual": format!("{} {}", actual_amount, expected_currency),
                 })]),
             });
-        } else {
-            // For mismatches, explicitly clear command - diagnostic will show the error.
-            // This handles edge cases where a cached lens might have a stale command.
-            resolved.command = None;
         }
+        // For mismatches, command stays None - diagnostic will show the error.
     }
 
-    // If no data to resolve, return as-is (already has command)
+    // Ensure a command is set for non-balance lenses or malformed balance data.
+    // This prevents "Unresolved lens ..." from appearing in the editor.
+    // We don't apply this to processed balance assertions - those intentionally
+    // have no command when mismatched (shown via diagnostics instead).
+    if !processed_balance && resolved.command.is_none() {
+        resolved.command = Some(Command {
+            title: "Balance assertion".to_string(),
+            command: "rledger.noop".to_string(),
+            arguments: None,
+        });
+    }
+
     resolved
 }
 
@@ -446,6 +457,55 @@ mod tests {
             cmd.title.contains("✓"),
             "Should show checkmark for passing balance. Got: {}",
             cmd.title
+        );
+    }
+
+    #[test]
+    fn test_code_lens_resolve_missing_data() {
+        // Test that resolve always returns a command, even with missing/malformed data.
+        // This prevents "Unresolved lens ..." from appearing in the editor.
+        let source = r#"2024-01-01 open Assets:Bank USD"#;
+        let result = parse(source);
+
+        // Lens with no data at all
+        let lens = CodeLens {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+            command: None,
+            data: None,
+        };
+
+        let resolved = handle_code_lens_resolve(lens, &result);
+        assert!(
+            resolved.command.is_some(),
+            "Lens must always have a command after resolve"
+        );
+    }
+
+    #[test]
+    fn test_code_lens_resolve_wrong_kind() {
+        // Test that resolve handles data with wrong/missing "kind" field
+        let source = r#"2024-01-01 open Assets:Bank USD"#;
+        let result = parse(source);
+
+        let lens = CodeLens {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+            command: None,
+            data: Some(serde_json::json!({
+                "kind": "unknown",
+                "account": "Assets:Bank",
+            })),
+        };
+
+        let resolved = handle_code_lens_resolve(lens, &result);
+        assert!(
+            resolved.command.is_some(),
+            "Lens must always have a command after resolve"
         );
     }
 }
