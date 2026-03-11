@@ -54,11 +54,13 @@ Rustledger supports 30 native plugins that match Python beancount behavior:
 - `auto_accounts`, `auto_tag`, `box_accrual`, `capital_gains_gain_loss`
 - `capital_gains_long_short`, `check_average_cost`, `check_closing`, `check_commodity`
 - `check_drained`, `close_tree`, `coherent_cost`, `commodity_attr`
-- `currency_accounts`, `document_discovery`, `effective_date`, `forecast`
-- `generate_base_ccy_prices`, `implicit_prices`, `leafonly`, `noduplicates`
-- `nounused`, `onecommodity`, `pedantic`, `rename_accounts`
-- `rxtxn`, `sellgains`, `split_expenses`, `unique_prices`
-- `unrealized`, `valuation`, `zerosum`
+- `currency_accounts`, `effective_date`, `forecast`, `generate_base_ccy_prices`
+- `implicit_prices`, `leafonly`, `noduplicates`, `nounused`
+- `onecommodity`, `pedantic`, `rename_accounts`, `rxtxn`
+- `sellgains`, `split_expenses`, `unique_prices`, `unrealized`
+- `valuation`, `zerosum`
+
+Additionally, `document_discovery` auto-discovers documents from `option "documents"` directories.
 
 **Workaround**: Use rustledger's native plugins where available, or remove unsupported plugin directives.
 

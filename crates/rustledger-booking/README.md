@@ -32,7 +32,13 @@ let result = engine.book_and_interpolate(&transaction)?;
 
 // Using the batch function for multiple transactions
 use rustledger_booking::book_transactions;
-let booked = book_transactions(&transactions, BookingMethod::Fifo)?;
+let results = book_transactions(&transactions, BookingMethod::Fifo);
+for result in results {
+    match result {
+        Ok(booked) => { /* handle successfully booked transaction */ }
+        Err(err) => { /* handle booking error */ }
+    }
+}
 ```
 
 ## License

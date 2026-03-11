@@ -19,7 +19,6 @@ Beancount plugin system with 30 native plugins and WASM support.
 | `coherent_cost` | Enforce cost OR price (not both) |
 | `commodity_attr` | Validate commodity attributes |
 | `currency_accounts` | Enforce currency constraints |
-| `document_discovery` | Auto-discover document files |
 | `effective_date` | Override posting date via metadata |
 | `forecast` | Generate recurring transactions |
 | `generate_base_ccy_prices` | Create base currency price entries |
@@ -37,6 +36,8 @@ Beancount plugin system with 30 native plugins and WASM support.
 | `unrealized` | Calculate unrealized gains |
 | `valuation` | Mark-to-market valuation |
 | `zerosum` | Group transactions that sum to zero |
+
+Additionally, `document_discovery` is available for auto-discovering document files from directories specified in `option "documents"`.
 
 ## Example
 

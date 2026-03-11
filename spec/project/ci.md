@@ -29,12 +29,15 @@ mod tests {
 Location: `crates/*/tests/*.rs`
 
 ```rust
-// crates/rustledger-parser/tests/parse_fixtures.rs
+// crates/rustledger-parser/tests/parser_integration_test.rs
+use rustledger_parser::parse;
+
 #[test]
-fn test_parse_syntax_edge_cases() {
-    let content = include_str!("../../tests/fixtures/syntax-edge-cases.beancount");
-    let result = parse(content);
+fn test_parse_open_directive() {
+    let source = r"2024-01-01 open Assets:Bank:Checking USD, EUR";
+    let result = parse(source);
     assert!(result.errors.is_empty());
+    assert_eq!(result.directives.len(), 1);
 }
 ```
 

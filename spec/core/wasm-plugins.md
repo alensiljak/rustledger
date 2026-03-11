@@ -145,7 +145,7 @@ interface plugin {
     process: func(input: plugin-input) -> plugin-output;
 }
 
-world rustledger-plugin {
+world beancount-plugin {
     export plugin;
 }
 ```

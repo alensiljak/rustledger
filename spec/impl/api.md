@@ -15,27 +15,25 @@ This document specifies the public API for embedding rustledger and the serializ
 ### Loading a Ledger
 
 ```rust
-use rustledger::{Ledger, LoadOptions, Error};
+// Note: This shows the intended high-level API design.
+// Current implementation uses rustledger_loader crate directly.
+use rustledger_loader::{load, LoadOptions};
+use std::path::Path;
 
-// Simple loading
-let ledger = Ledger::load("ledger.beancount")?;
+// Simple loading with processing
+let ledger = load(Path::new("ledger.beancount"), &LoadOptions::default())?;
 
-// With options
-let ledger = Ledger::builder()
-    .path("ledger.beancount")
-    .encoding(Encoding::Utf8)
-    .include_documents(false)
-    .build()?;
+// Raw loading without processing
+use rustledger_loader::Loader;
+let result = Loader::new().load(Path::new("ledger.beancount"))?;
 
-// From string
-let ledger = Ledger::parse(source_text)?;
-
-// Streaming (for large ledgers)
-let loader = Ledger::stream("ledger.beancount")?;
-for directive in loader {
-    let directive = directive?;
-    process(directive);
-}
+// With custom options
+let options = LoadOptions {
+    validate: true,
+    run_plugins: true,
+    ..Default::default()
+};
+let ledger = load(Path::new("ledger.beancount"), &options)?;
 ```
 
 ### Ledger Structure
@@ -296,7 +294,7 @@ impl WasmLedger {
 JavaScript usage:
 
 ```javascript
-import init, { WasmLedger } from 'rustledger-wasm';
+import init, { WasmLedger } from '@rustledger/wasm';
 
 await init();
 
