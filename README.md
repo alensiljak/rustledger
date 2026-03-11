@@ -33,7 +33,7 @@ Parse and validate your ledger faster than Python beancount.
 | **AI-ready** | MCP server for Claude, Cursor, and other AI assistants |
 | **Runs anywhere** | WebAssembly support for browser and Node.js |
 | **Better errors** | Detailed error messages with source locations |
-| **20 built-in plugins** | Plus Python plugin compatibility via WASI sandbox |
+| **30 built-in plugins** | Plus Python plugin compatibility via WASI sandbox |
 
 <details>
 <summary><strong>Comparison with other tools</strong></summary>
@@ -195,7 +195,7 @@ rledger format --in-place ledger.beancount
 | `rustledger-booking` | Interpolation and 7 booking methods |
 | `rustledger-validate` | 27 validation error codes |
 | `rustledger-query` | BQL query engine |
-| `rustledger-plugin` | 20 built-in plugins + Python plugin support |
+| `rustledger-plugin` | 30 built-in plugins + Python plugin support |
 | `rustledger-importer` | CSV/OFX import framework |
 | `rustledger-lsp` | Language Server Protocol for editor integration |
 | `rustledger-wasm` | WebAssembly bindings for JavaScript/TypeScript |
@@ -217,12 +217,15 @@ rledger format --in-place ledger.beancount
 </details>
 
 <details>
-<summary><strong>Built-in plugins (20)</strong></summary>
+<summary><strong>Built-in plugins (30)</strong></summary>
 
 | Plugin | Description |
 |--------|-------------|
 | `auto_accounts` | Auto-generate Open directives |
 | `auto_tag` | Automatically tag transactions |
+| `box_accrual` | Accrual accounting for boxed periods |
+| `capital_gains_gain_loss` | Split capital gains into gain/loss accounts |
+| `capital_gains_long_short` | Split capital gains by holding period |
 | `check_average_cost` | Validate average cost bookings |
 | `check_closing` | Zero balance assertion on account close |
 | `check_commodity` | Validate commodity declarations |
@@ -231,16 +234,25 @@ rledger format --in-place ledger.beancount
 | `coherent_cost` | Enforce cost OR price (not both) |
 | `commodity_attr` | Validate commodity attributes |
 | `currency_accounts` | Enforce currency constraints on accounts |
-| `document_discovery` | Auto-discover document files |
+| `effective_date` | Override posting date via metadata |
+| `forecast` | Generate recurring transactions |
+| `generate_base_ccy_prices` | Create base currency price entries |
 | `implicit_prices` | Generate price entries from transaction costs |
 | `leafonly` | Error on postings to non-leaf accounts |
 | `noduplicates` | Hash-based duplicate transaction detection |
 | `nounused` | Warn on unused accounts |
 | `onecommodity` | Single commodity per account |
 | `pedantic` | Enable all strict validations |
+| `rename_accounts` | Rename accounts via metadata |
+| `rxtxn` | Link related transactions |
 | `sellgains` | Cross-check capital gains against sales |
+| `split_expenses` | Split expenses across accounts |
 | `unique_prices` | One price per day per commodity pair |
 | `unrealized` | Calculate unrealized gains |
+| `valuation` | Mark-to-market valuation |
+| `zerosum` | Group transactions that sum to zero |
+
+Additionally, `document_discovery` auto-discovers documents from `option "documents"` directories.
 
 **Python plugins**: Run existing Python beancount plugins via CPython-WASI sandbox.
 
