@@ -1,12 +1,12 @@
 # Release-plz Workflow
 # ====================
 # Manual release workflow using release-plz:
-# - Creates release PRs with changelog updates (manual trigger only)
+# - Creates/updates release PRs with changelog updates (manual trigger only)
 # - Syncs npm package versions
 # - Creates git tags and GitHub releases
 #
 # Flow:
-# 1. Manual trigger: Creates a release PR
+# 1. Manual trigger: Creates/updates a release PR
 # 2. On PR merge: Creates git tag and GitHub release
 # 3. Tag triggers release-build.yml and release-publish.yml
 #
@@ -251,12 +251,12 @@ jobs:
     # No dependency on release-plz job - runs independently on push
     # Run if this is a merge of a release-plz PR OR a manual release PR
     # - Automatic: "Merge pull request #N from rustledger/release-plz-..."
-    # - Manual: Commit message contains "chore: release" (per RELEASING.md)
+    # - Manual: Commit message starts with "chore: release" (per RELEASING.md)
     if: |
       github.repository == 'rustledger/rustledger' &&
       github.event_name == 'push' &&
       (contains(github.event.head_commit.message, 'release-plz-') ||
-       contains(github.event.head_commit.message, 'chore: release'))
+       startsWith(github.event.head_commit.message, 'chore: release'))
     steps:
       - name: Generate GitHub App token
         id: app-token

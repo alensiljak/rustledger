@@ -39,7 +39,7 @@ git commit -m "chore!: add new required field to Config"
 You trigger Release-plz workflow manually
      │
      ▼
-release-plz creates Release PR
+release-plz creates/updates Release PR
   • Bumps versions in Cargo.toml
   • Generates CHANGELOG.md entries
   • Syncs npm package.json versions
