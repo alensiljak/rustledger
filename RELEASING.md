@@ -4,11 +4,12 @@ This document describes how to release a new version of rustledger.
 
 ## Overview
 
-Releases are automated via [release-plz](https://release-plz.ieni.dev/) and GitHub Actions:
+Releases use [release-plz](https://release-plz.ieni.dev/) with **manual trigger**:
 
-1. **Automatic**: release-plz creates a release PR from conventional commits
-2. **You**: Review and merge the release PR
-3. **Automatic**: Tag is created, triggering build and publish workflows
+1. **You**: Trigger the release workflow manually
+2. **Automatic**: release-plz creates a release PR from conventional commits
+3. **You**: Review and merge the release PR
+4. **Automatic**: Tag is created, triggering build and publish workflows
 
 ## How It Works
 
@@ -32,10 +33,10 @@ git commit -m "feat!: add new required field to Config"
 git commit -m "chore!: add new required field to Config"
 ```
 
-### Automated Flow
+### Release Flow
 
 ```
-Push to main
+You trigger Release-plz workflow manually
      │
      ▼
 release-plz creates/updates Release PR
@@ -70,22 +71,31 @@ git commit -m "fix: handle unicode in account names"
 git push origin main
 ```
 
-### 2. Review the release PR
+### 2. Trigger the release workflow
 
-release-plz automatically creates a PR titled "chore: release". Review:
+Go to **Actions** → **Release-plz** → **Run workflow** → Enable "Create release PR" → **Run**
+
+Or use the CLI:
+```bash
+gh workflow run release-plz.yml -f create_pr=true
+```
+
+### 3. Review the release PR
+
+release-plz creates a PR titled "chore: release". Review:
 
 - Version bump is correct
 - Changelog entries look good
 - CI passes
 
-### 3. Merge the PR
+### 4. Merge the PR
 
 Merge via the merge queue. release-plz will:
 
 1. Create a git tag (e.g., `v0.9.0`)
 2. Create a GitHub Release with changelog
 
-### 4. Monitor the release
+### 5. Monitor the release
 
 ```bash
 # Watch the build
