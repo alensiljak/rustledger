@@ -1205,16 +1205,21 @@ impl MainLoopState {
         // Get ledger state and file_id for multi-file validation
         let ledger_guard = self.ledger_state.read();
         let (ledger_state, current_file_id) = if ledger_guard.ledger().is_some() {
-            // Find the file_id for this URI by matching against included files
+            // Find the file_id for this URI by matching against included files.
+            // We canonicalize the URI path to handle path normalization differences
+            // (e.g., /a/b/../c vs /a/c, or symlinks).
             let file_id = uri_to_path(uri).and_then(|uri_path| {
+                // Canonicalize to resolve symlinks and normalize path components
+                let canonical_uri_path = uri_path.canonicalize().ok()?;
                 ledger_guard.ledger().and_then(|ledger| {
-                    // Search the source map for this file
-                    ledger
-                        .source_map
-                        .files()
-                        .iter()
-                        .position(|f| f.path == uri_path)
-                        .map(|idx| idx as u16)
+                    // Search the source map for this file using canonical path comparison
+                    ledger.source_map.files().iter().find_map(|f| {
+                        f.path
+                            .canonicalize()
+                            .ok()
+                            .filter(|canonical_f| *canonical_f == canonical_uri_path)
+                            .map(|_| f.id as u16)
+                    })
                 })
             });
             (Some(&*ledger_guard), file_id)

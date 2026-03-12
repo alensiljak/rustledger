@@ -68,8 +68,14 @@ pub fn validation_errors_to_diagnostics(
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
 
-    // Use full directives if available, otherwise fall back to single-file directives
-    let directives_to_validate = full_directives.unwrap_or(directives);
+    // Only use full directives if we can identify this file in the ledger.
+    // If current_file_id is None, we can't filter errors properly and would
+    // produce diagnostics with incorrect line numbers (wrong file's LineIndex).
+    let directives_to_validate = if current_file_id.is_some() {
+        full_directives.unwrap_or(directives)
+    } else {
+        directives
+    };
 
     // Clone and sort directives by date (required for correct lot matching during booking)
     let mut booked_directives: Vec<Spanned<Directive>> = directives_to_validate.to_vec();
@@ -97,11 +103,13 @@ pub fn validation_errors_to_diagnostics(
     let validation_errors =
         validate_spanned_with_options(&booked_directives, ValidationOptions::default());
 
-    // Filter errors to only those in the current file (if file_id filtering is enabled)
+    // Filter errors to only those in the current file (if file_id filtering is enabled).
+    // Also include errors with file_id == None, as these are global errors (e.g., duplicate
+    // account opens across files) that should be shown to the user.
     let filtered_errors: Vec<_> = if let Some(file_id) = current_file_id {
         validation_errors
             .into_iter()
-            .filter(|e| e.file_id == Some(file_id))
+            .filter(|e| e.file_id == Some(file_id) || e.file_id.is_none())
             .collect()
     } else {
         validation_errors
