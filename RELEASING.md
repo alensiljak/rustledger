@@ -88,6 +88,28 @@ release-plz creates a PR titled "chore: release". Review:
 - Changelog entries look good
 - CI passes
 
+#### Fixing missing version bumps
+
+If release-plz missed a crate (e.g., internal bug fixes that don't change the API), manually bump it on the release PR branch:
+
+```bash
+# Checkout the release PR branch
+git fetch origin
+git checkout release-plz-<timestamp>
+
+# Bump the crate version
+sed -i 's/^version = "0.10.0"/version = "0.10.1"/' crates/<crate-name>/Cargo.toml
+
+# Add changelog entry
+# Edit crates/<crate-name>/CHANGELOG.md to add the new version section
+
+# Update Cargo.lock and push
+cargo check -p <crate-name>
+git add -A
+git commit -m "chore(<crate>): bump <crate-name> to 0.10.1"
+git push
+```
+
 ### 4. Merge the PR
 
 Merge via the merge queue. release-plz will:
