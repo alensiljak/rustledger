@@ -9,6 +9,7 @@ use rustledger_validate::{
 };
 
 use super::utils::LineIndex;
+use crate::ledger_state::LedgerState;
 
 /// Convert parse errors to LSP diagnostics.
 pub fn parse_errors_to_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
@@ -50,14 +51,28 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// ordering used by `rledger check`. Without booking, transactions with
 /// auto-filled postings (e.g., a posting with no amount) would be incorrectly
 /// flagged as unbalanced.
+///
+/// # Arguments
+/// * `directives` - Directives from the current file (used for line number mapping)
+/// * `source` - Source text of the current file
+/// * `full_directives` - Optional: All directives from all files (for multi-file validation)
+/// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+///
+/// When `full_directives` is provided, validation runs on the complete ledger
+/// but only returns errors for the current file.
 pub fn validation_errors_to_diagnostics(
     directives: &[Spanned<Directive>],
     source: &str,
+    full_directives: Option<&[Spanned<Directive>]>,
+    current_file_id: Option<u16>,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
 
+    // Use full directives if available, otherwise fall back to single-file directives
+    let directives_to_validate = full_directives.unwrap_or(directives);
+
     // Clone and sort directives by date (required for correct lot matching during booking)
-    let mut booked_directives: Vec<Spanned<Directive>> = directives.to_vec();
+    let mut booked_directives: Vec<Spanned<Directive>> = directives_to_validate.to_vec();
     booked_directives.sort_by(|a, b| {
         a.value
             .date()
@@ -82,7 +97,17 @@ pub fn validation_errors_to_diagnostics(
     let validation_errors =
         validate_spanned_with_options(&booked_directives, ValidationOptions::default());
 
-    validation_errors
+    // Filter errors to only those in the current file (if file_id filtering is enabled)
+    let filtered_errors: Vec<_> = if let Some(file_id) = current_file_id {
+        validation_errors
+            .into_iter()
+            .filter(|e| e.file_id == Some(file_id))
+            .collect()
+    } else {
+        validation_errors
+    };
+
+    filtered_errors
         .iter()
         .map(|e| validation_error_to_diagnostic(e, &line_index))
         .collect()
@@ -149,7 +174,22 @@ const MAX_VALIDATION_FILE_SIZE: usize = 500 * 1024;
 ///
 /// Validation is skipped for files larger than `MAX_VALIDATION_FILE_SIZE` to
 /// avoid blocking the LSP main loop on very large files.
-pub fn all_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
+///
+/// # Arguments
+/// * `result` - Parse result for the current file
+/// * `source` - Source text of the current file
+/// * `ledger_state` - Optional: Full ledger state for multi-file validation
+/// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+///
+/// When `ledger_state` is provided, validation considers all files in the ledger,
+/// providing accurate diagnostics for balance assertions that depend on transactions
+/// in other files.
+pub fn all_diagnostics(
+    result: &ParseResult,
+    source: &str,
+    ledger_state: Option<&LedgerState>,
+    current_file_id: Option<u16>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = parse_errors_to_diagnostics(result, source);
 
     // Only run validation if:
@@ -157,8 +197,15 @@ pub fn all_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
     // 2. File is not too large (to keep LSP responsive)
     if result.errors.is_empty() {
         if source.len() <= MAX_VALIDATION_FILE_SIZE {
-            let validation_diagnostics =
-                validation_errors_to_diagnostics(&result.directives, source);
+            // Get full directives from ledger state if available
+            let full_directives = ledger_state.and_then(|ls| ls.directives());
+
+            let validation_diagnostics = validation_errors_to_diagnostics(
+                &result.directives,
+                source,
+                full_directives,
+                current_file_id,
+            );
             diagnostics.extend(validation_diagnostics);
         } else {
             tracing::debug!(
@@ -208,7 +255,8 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
-        let diagnostics = all_diagnostics(&result, source);
+        // Single-file validation (no ledger state)
+        let diagnostics = all_diagnostics(&result, source, None, None);
 
         // Should have at least these validation errors:
         // - E1001: Account Income:Typo was never opened
@@ -280,7 +328,8 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
-        let diagnostics = all_diagnostics(&result, source);
+        // Single-file validation (no ledger state)
+        let diagnostics = all_diagnostics(&result, source, None, None);
 
         // Helper to get code string from a diagnostic
         fn get_code(d: &Diagnostic) -> String {
