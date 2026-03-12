@@ -1194,17 +1194,48 @@ impl MainLoopState {
     }
 
     /// Parse document and publish diagnostics (parse errors + validation errors).
+    ///
+    /// When a full ledger is loaded (multi-file mode), validation considers all
+    /// files in the ledger, providing accurate diagnostics for balance assertions
+    /// that depend on transactions in other files.
     fn publish_diagnostics(&mut self, uri: &Uri, text: &str) {
         // Parse the document
         let result = parse(text);
 
+        // Get ledger state and file_id for multi-file validation
+        let ledger_guard = self.ledger_state.read();
+        let (ledger_state, current_file_id) = if ledger_guard.ledger().is_some() {
+            // Find the file_id for this URI by matching against included files.
+            // We canonicalize the URI path to handle path normalization differences
+            // (e.g., /a/b/../c vs /a/c, or symlinks).
+            let file_id = uri_to_path(uri).and_then(|uri_path| {
+                // Canonicalize to resolve symlinks and normalize path components
+                let canonical_uri_path = uri_path.canonicalize().ok()?;
+                ledger_guard.ledger().and_then(|ledger| {
+                    // Search the source map for this file using canonical path comparison
+                    ledger.source_map.files().iter().find_map(|f| {
+                        f.path
+                            .canonicalize()
+                            .ok()
+                            .filter(|canonical_f| *canonical_f == canonical_uri_path)
+                            .map(|_| f.id as u16)
+                    })
+                })
+            });
+            (Some(&*ledger_guard), file_id)
+        } else {
+            (None, None)
+        };
+
         // Convert parse errors and validation errors to LSP diagnostics
-        let diagnostics = all_diagnostics(&result, text);
+        let diagnostics = all_diagnostics(&result, text, ledger_state, current_file_id);
+        drop(ledger_guard); // Release lock before sending
 
         tracing::debug!(
-            "Publishing {} diagnostics for {}",
+            "Publishing {} diagnostics for {} (file_id: {:?})",
             diagnostics.len(),
-            uri.as_str()
+            uri.as_str(),
+            current_file_id
         );
 
         // Cache and send

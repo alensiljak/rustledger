@@ -9,6 +9,7 @@ use rustledger_validate::{
 };
 
 use super::utils::LineIndex;
+use crate::ledger_state::LedgerState;
 
 /// Convert parse errors to LSP diagnostics.
 pub fn parse_errors_to_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
@@ -50,14 +51,34 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// ordering used by `rledger check`. Without booking, transactions with
 /// auto-filled postings (e.g., a posting with no amount) would be incorrectly
 /// flagged as unbalanced.
+///
+/// # Arguments
+/// * `directives` - Directives from the current file (used for line number mapping)
+/// * `source` - Source text of the current file
+/// * `full_directives` - Optional: All directives from all files (for multi-file validation)
+/// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+///
+/// When `full_directives` is provided, validation runs on the complete ledger
+/// but only returns errors for the current file.
 pub fn validation_errors_to_diagnostics(
     directives: &[Spanned<Directive>],
     source: &str,
+    full_directives: Option<&[Spanned<Directive>]>,
+    current_file_id: Option<u16>,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
 
+    // Only use full directives if we can identify this file in the ledger.
+    // If current_file_id is None, we can't filter errors properly and would
+    // produce diagnostics with incorrect line numbers (wrong file's LineIndex).
+    let directives_to_validate = if current_file_id.is_some() {
+        full_directives.unwrap_or(directives)
+    } else {
+        directives
+    };
+
     // Clone and sort directives by date (required for correct lot matching during booking)
-    let mut booked_directives: Vec<Spanned<Directive>> = directives.to_vec();
+    let mut booked_directives: Vec<Spanned<Directive>> = directives_to_validate.to_vec();
     booked_directives.sort_by(|a, b| {
         a.value
             .date()
@@ -82,7 +103,19 @@ pub fn validation_errors_to_diagnostics(
     let validation_errors =
         validate_spanned_with_options(&booked_directives, ValidationOptions::default());
 
-    validation_errors
+    // Filter errors to only those in the current file (if file_id filtering is enabled).
+    // Also include errors with file_id == None, as these are global errors (e.g., duplicate
+    // account opens across files) that should be shown to the user.
+    let filtered_errors: Vec<_> = if let Some(file_id) = current_file_id {
+        validation_errors
+            .into_iter()
+            .filter(|e| e.file_id == Some(file_id) || e.file_id.is_none())
+            .collect()
+    } else {
+        validation_errors
+    };
+
+    filtered_errors
         .iter()
         .map(|e| validation_error_to_diagnostic(e, &line_index))
         .collect()
@@ -149,7 +182,22 @@ const MAX_VALIDATION_FILE_SIZE: usize = 500 * 1024;
 ///
 /// Validation is skipped for files larger than `MAX_VALIDATION_FILE_SIZE` to
 /// avoid blocking the LSP main loop on very large files.
-pub fn all_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
+///
+/// # Arguments
+/// * `result` - Parse result for the current file
+/// * `source` - Source text of the current file
+/// * `ledger_state` - Optional: Full ledger state for multi-file validation
+/// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+///
+/// When `ledger_state` is provided, validation considers all files in the ledger,
+/// providing accurate diagnostics for balance assertions that depend on transactions
+/// in other files.
+pub fn all_diagnostics(
+    result: &ParseResult,
+    source: &str,
+    ledger_state: Option<&LedgerState>,
+    current_file_id: Option<u16>,
+) -> Vec<Diagnostic> {
     let mut diagnostics = parse_errors_to_diagnostics(result, source);
 
     // Only run validation if:
@@ -157,8 +205,15 @@ pub fn all_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
     // 2. File is not too large (to keep LSP responsive)
     if result.errors.is_empty() {
         if source.len() <= MAX_VALIDATION_FILE_SIZE {
-            let validation_diagnostics =
-                validation_errors_to_diagnostics(&result.directives, source);
+            // Get full directives from ledger state if available
+            let full_directives = ledger_state.and_then(|ls| ls.directives());
+
+            let validation_diagnostics = validation_errors_to_diagnostics(
+                &result.directives,
+                source,
+                full_directives,
+                current_file_id,
+            );
             diagnostics.extend(validation_diagnostics);
         } else {
             tracing::debug!(
@@ -208,7 +263,8 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
-        let diagnostics = all_diagnostics(&result, source);
+        // Single-file validation (no ledger state)
+        let diagnostics = all_diagnostics(&result, source, None, None);
 
         // Should have at least these validation errors:
         // - E1001: Account Income:Typo was never opened
@@ -280,7 +336,8 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
-        let diagnostics = all_diagnostics(&result, source);
+        // Single-file validation (no ledger state)
+        let diagnostics = all_diagnostics(&result, source, None, None);
 
         // Helper to get code string from a diagnostic
         fn get_code(d: &Diagnostic) -> String {
@@ -311,6 +368,126 @@ mod tests {
             error_diagnostics.is_empty(),
             "Valid file should have no ERROR diagnostics, but got: {:?}",
             error_codes
+        );
+    }
+
+    #[test]
+    fn test_multi_file_balance_assertion_issue_470() {
+        // Regression test for issue #470:
+        // Balance assertions should pass when transactions exist in other files.
+        //
+        // Scenario from the issue:
+        // - bank.bean has a balance assertion expecting 4950 USD
+        // - The 50 USD deduction comes from credit_card.bean
+        // - When validated in isolation, bank.bean shows "expected 4950, actual 5000"
+        // - When validated with full ledger, the balance should be correct
+
+        // bank.bean content (the file we're "viewing" in the LSP)
+        let bank_source = r#"2024-01-01 open Assets:Bank:Checking USD
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary
+
+2024-01-16 balance Assets:Bank:Checking 5000 USD
+; After paying off credit card:
+2024-01-21 balance Assets:Bank:Checking 4950 USD
+"#;
+
+        // credit_card.bean content (included file with the 50 USD payment)
+        let credit_card_source = r#"2024-01-01 open Liabilities:Credit-Card
+
+2024-01-20 * "Pay off credit card"
+  Assets:Bank:Checking -50 USD
+  Liabilities:Credit-Card
+"#;
+
+        // main.bean content (root file with account opens)
+        let main_source = r#"2024-01-01 open Income:Salary USD
+2024-01-01 open Expenses:Food USD
+"#;
+
+        // Parse all files
+        let bank_result = parse(bank_source);
+        let credit_card_result = parse(credit_card_source);
+        let main_result = parse(main_source);
+
+        assert!(bank_result.errors.is_empty(), "bank.bean should parse");
+        assert!(
+            credit_card_result.errors.is_empty(),
+            "credit_card.bean should parse"
+        );
+        assert!(main_result.errors.is_empty(), "main.bean should parse");
+
+        // Combine all directives (simulating what the loader does)
+        // Assign file_ids: main=0, bank=1, credit_card=2
+        let mut all_directives: Vec<Spanned<Directive>> = Vec::new();
+
+        for mut d in main_result.directives {
+            d.file_id = 0;
+            all_directives.push(d);
+        }
+        for mut d in bank_result.directives.clone() {
+            d.file_id = 1;
+            all_directives.push(d);
+        }
+        for mut d in credit_card_result.directives {
+            d.file_id = 2;
+            all_directives.push(d);
+        }
+
+        // Helper to get code string from a diagnostic
+        fn get_code(d: &Diagnostic) -> String {
+            match d.code.as_ref().unwrap() {
+                lsp_types::NumberOrString::String(s) => s.clone(),
+                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
+            }
+        }
+
+        // Test 1: Validate bank.bean in ISOLATION (old broken behavior)
+        // This should show E2001 for the second balance assertion
+        let isolated_diagnostics =
+            validation_errors_to_diagnostics(&bank_result.directives, bank_source, None, None);
+
+        let isolated_codes: Vec<_> = isolated_diagnostics.iter().map(get_code).collect();
+
+        // In isolation, the second balance (4950 USD) should fail because
+        // it doesn't see the -50 USD transaction from credit_card.bean
+        assert!(
+            isolated_codes.iter().any(|c| c == "E2001"),
+            "Isolated validation should show E2001 (balance assertion failed). Got: {:?}",
+            isolated_codes
+        );
+
+        // Test 2: Validate bank.bean with FULL LEDGER (fixed behavior)
+        // This should NOT show E2001 because it sees the transaction from credit_card.bean
+        let full_ledger_diagnostics = validation_errors_to_diagnostics(
+            &bank_result.directives,
+            bank_source,
+            Some(&all_directives),
+            Some(1), // file_id=1 for bank.bean
+        );
+
+        let full_ledger_codes: Vec<_> = full_ledger_diagnostics.iter().map(get_code).collect();
+
+        // With full ledger, there should be NO E2001 errors for bank.bean
+        // because the -50 USD from credit_card.bean is now visible
+        assert!(
+            !full_ledger_codes.iter().any(|c| c == "E2001"),
+            "Full ledger validation should NOT show E2001 - balance is correct when all files are considered. Got: {:?}",
+            full_ledger_codes
+        );
+
+        // Verify no ERROR-level diagnostics at all for bank.bean with full ledger
+        let error_diagnostics: Vec<_> = full_ledger_diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Some(DiagnosticSeverity::ERROR)))
+            .collect();
+
+        assert!(
+            error_diagnostics.is_empty(),
+            "bank.bean should have no errors when validated with full ledger. Got: {:?}",
+            full_ledger_codes
         );
     }
 }
