@@ -1,12 +1,12 @@
 # Release-plz Workflow
 # ====================
-# Automates releases using conventional commits:
-# - Creates release PRs with changelog updates
+# Manual release workflow using release-plz:
+# - Creates release PRs with changelog updates (manual trigger only)
 # - Syncs npm package versions
 # - Creates git tags and GitHub releases
 #
 # Flow:
-# 1. On push to main: Creates/updates a release PR
+# 1. Manual trigger: Creates a release PR
 # 2. On PR merge: Creates git tag and GitHub release
 # 3. Tag triggers release-build.yml and release-publish.yml
 #
@@ -18,6 +18,11 @@ on:
       - main
   workflow_dispatch:
     inputs:
+      create_pr:
+        description: 'Create release PR (uses release-plz to analyze commits)'
+        required: false
+        default: true
+        type: boolean
       debug_semver:
         description: 'Enable verbose semver check debugging'
         required: false
@@ -38,8 +43,11 @@ jobs:
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
-    # Don't run in forks
-    if: github.repository == 'rustledger/rustledger'
+    # Only run on manual trigger with create_pr enabled (not on every push)
+    if: |
+      github.repository == 'rustledger/rustledger' &&
+      github.event_name == 'workflow_dispatch' &&
+      inputs.create_pr == true
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -240,11 +248,12 @@ jobs:
   release:
     name: Release
     runs-on: ubuntu-latest
-    needs: release-plz
+    # No dependency on release-plz job - runs independently on push
     # Run if this is a merge of a release-plz PR OR a manual release PR
     # - Automatic: "Merge pull request #N from rustledger/release-plz-..."
     # - Manual: Commit message contains "chore: release" (per RELEASING.md)
     if: |
+      github.repository == 'rustledger/rustledger' &&
       github.event_name == 'push' &&
       (contains(github.event.head_commit.message, 'release-plz-') ||
        contains(github.event.head_commit.message, 'chore: release'))
