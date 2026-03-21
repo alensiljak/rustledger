@@ -1,0 +1,23 @@
+; Issue: https://github.com/rustledger/rustledger/issues/521
+; Description: currency_accounts plugin should use cost/price currency for
+;              weight calculation, not units currency
+; Expected: No errors - posting with cost uses cost currency for grouping
+
+option "operating_currency" "EUR"
+
+plugin "beancount.plugins.implicit_prices"
+plugin "beancount.plugins.close_tree"
+plugin "beancount.plugins.coherent_cost"
+plugin "beancount.plugins.currency_accounts" "Equity:Currency"
+
+2026-01-01 open Assets:Shares:RING
+2026-01-01 open Expenses:Financial
+2026-01-01 open Assets:Investments:Cash-USD
+
+; Buy 9 RING at 68.55 USD each
+; The RING posting has cost in USD, so its weight is 616.95 USD (not 9 RING)
+; All postings have USD weight, so no currency_accounts postings should be added
+2026-03-21 * "Buy RING" ""
+  Assets:Shares:RING              9 RING {68.55 USD}
+  Expenses:Financial                 0.35205725 USD
+  Assets:Investments:Cash-USD     -617.30205725 USD
