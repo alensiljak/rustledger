@@ -94,12 +94,19 @@ impl std::fmt::Display for OutputFormat {
 
 /// Main entry point with custom binary name (for bean-query compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Handle shell completion generation
     if let Some(shell) = args.generate_completions {
         crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
         return ExitCode::SUCCESS;
+    }
+
+    // If no file specified, try to get from config (same as rledger)
+    if args.file.is_none()
+        && let Ok(loaded) = crate::config::Config::load()
+    {
+        args.file = loaded.config.effective_file_path(None);
     }
 
     match run(&args) {
