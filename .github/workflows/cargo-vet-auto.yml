@@ -46,14 +46,14 @@ jobs:
           gh api "repos/$REPO/contents/Cargo.lock?ref=$PR_SHA" \
             --jq '.content' | base64 -d > Cargo.lock
 
-          # Get list of changed files in the PR
-          CHANGED_FILES=$(gh api "repos/$REPO/pulls/${{ github.event.pull_request.number }}/files" \
-            --jq '.[].filename')
-
-          # Fetch any changed Cargo.toml files (safe: these only contain dependency specs)
-          for file in $CHANGED_FILES; do
+          # Get list of changed files and fetch any Cargo.toml files
+          # Using --paginate to handle PRs with many files, and while read to handle spaces in paths
+          gh api --paginate "repos/$REPO/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename' | while IFS= read -r file; do
             if [[ "$file" == *"Cargo.toml" ]]; then
               echo "Fetching $file from PR"
+              # Ensure parent directory exists (might be new in the PR)
+              mkdir -p "$(dirname "$file")"
               gh api "repos/$REPO/contents/$file?ref=$PR_SHA" \
                 --jq '.content' | base64 -d > "$file"
             fi
