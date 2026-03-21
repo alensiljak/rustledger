@@ -21,6 +21,15 @@ use clap::Parser;
 use rust_decimal::Decimal;
 use rustledger_core::format::{FormatConfig, format_directive};
 use rustledger_core::{Amount, Directive, Posting, Transaction};
+use rustledger_parser::parse;
+use rustyline::completion::{Completer, Pair};
+use rustyline::error::ReadlineError;
+use rustyline::highlight::{CmdKind, Highlighter};
+use rustyline::hint::Hinter;
+use rustyline::history::DefaultHistory;
+use rustyline::validate::Validator;
+use rustyline::{Editor, Helper};
+use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
@@ -49,7 +58,115 @@ pub struct Args {
     /// Quick mode: payee narration account amount \[account \[amount\]\]...
     #[arg(short, long, num_args = 4.., value_name = "ARGS")]
     pub quick: Option<Vec<String>>,
+
+    /// Disable account tab completion.
+    #[arg(long)]
+    pub no_completion: bool,
 }
+
+/// Account completer for interactive mode.
+///
+/// Provides tab completion for account names extracted from the ledger file.
+struct AccountCompleter {
+    accounts: Vec<String>,
+}
+
+impl AccountCompleter {
+    /// Create a new completer with the given list of accounts.
+    const fn new(accounts: Vec<String>) -> Self {
+        Self { accounts }
+    }
+
+    /// Create an empty completer (no completion).
+    const fn empty() -> Self {
+        Self {
+            accounts: Vec::new(),
+        }
+    }
+}
+
+impl Completer for AccountCompleter {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        _ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        let prefix = &line[..pos];
+
+        // Find matches - both prefix and substring matches
+        let mut matches: Vec<Pair> = self
+            .accounts
+            .iter()
+            .filter(|a| a.starts_with(prefix) || a.to_lowercase().contains(&prefix.to_lowercase()))
+            .map(|a| Pair {
+                display: a.clone(),
+                replacement: a.clone(),
+            })
+            .collect();
+
+        // Sort: prefix matches first, then alphabetically
+        matches.sort_by(|a, b| {
+            let a_prefix = a.replacement.starts_with(prefix);
+            let b_prefix = b.replacement.starts_with(prefix);
+            match (a_prefix, b_prefix) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.replacement.cmp(&b.replacement),
+            }
+        });
+
+        Ok((0, matches))
+    }
+}
+
+/// Helper for rustyline editor with account completion.
+struct AddHelper {
+    completer: AccountCompleter,
+}
+
+impl AddHelper {
+    const fn new(completer: AccountCompleter) -> Self {
+        Self { completer }
+    }
+}
+
+impl Helper for AddHelper {}
+
+impl Completer for AddHelper {
+    type Candidate = Pair;
+
+    fn complete(
+        &self,
+        line: &str,
+        pos: usize,
+        ctx: &rustyline::Context<'_>,
+    ) -> rustyline::Result<(usize, Vec<Pair>)> {
+        self.completer.complete(line, pos, ctx)
+    }
+}
+
+impl Hinter for AddHelper {
+    type Hint = String;
+
+    fn hint(&self, _line: &str, _pos: usize, _ctx: &rustyline::Context<'_>) -> Option<String> {
+        None
+    }
+}
+
+impl Highlighter for AddHelper {
+    fn highlight<'l>(&self, line: &'l str, _pos: usize) -> Cow<'l, str> {
+        Cow::Borrowed(line)
+    }
+
+    fn highlight_char(&self, _line: &str, _pos: usize, _kind: CmdKind) -> bool {
+        false
+    }
+}
+
+impl Validator for AddHelper {}
 
 /// Parse a flexible date string.
 ///
@@ -250,6 +367,235 @@ fn run_quick_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {
     Ok(())
 }
 
+/// Extract all account names from a beancount file.
+///
+/// Parses the file and extracts accounts from Open, Close, Balance,
+/// Pad, and Transaction directives.
+fn extract_accounts(file: &PathBuf) -> Vec<String> {
+    if !file.exists() {
+        return Vec::new();
+    }
+
+    let content = match fs::read_to_string(file) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let parse_result = parse(&content);
+    let mut accounts = Vec::new();
+
+    for spanned in &parse_result.directives {
+        match &spanned.value {
+            Directive::Open(open) => {
+                accounts.push(open.account.to_string());
+            }
+            Directive::Close(close) => {
+                accounts.push(close.account.to_string());
+            }
+            Directive::Balance(bal) => {
+                accounts.push(bal.account.to_string());
+            }
+            Directive::Pad(pad) => {
+                accounts.push(pad.account.to_string());
+                accounts.push(pad.source_account.to_string());
+            }
+            Directive::Transaction(txn) => {
+                for posting in &txn.postings {
+                    accounts.push(posting.account.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    accounts.sort();
+    accounts.dedup();
+    accounts
+}
+
+/// Prompt for input with a default value.
+///
+/// Returns the trimmed input, or the default if input is empty.
+fn prompt_with_default(
+    rl: &mut Editor<AddHelper, DefaultHistory>,
+    prompt: &str,
+    default: &str,
+) -> Result<String> {
+    let full_prompt = if default.is_empty() {
+        format!("{prompt}: ")
+    } else {
+        format!("{prompt} [{default}]: ")
+    };
+
+    match rl.readline(&full_prompt) {
+        Ok(line) => {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                Ok(default.to_string())
+            } else {
+                Ok(trimmed.to_string())
+            }
+        }
+        Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
+            bail!("Cancelled.");
+        }
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Run the add command in interactive mode.
+fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {
+    // Set up completer with accounts from the ledger file
+    let completer = if args.no_completion {
+        AccountCompleter::empty()
+    } else {
+        let accounts = extract_accounts(file);
+        AccountCompleter::new(accounts)
+    };
+
+    let helper = AddHelper::new(completer);
+    let mut rl: Editor<AddHelper, DefaultHistory> = Editor::new()?;
+    rl.set_helper(Some(helper));
+
+    // Prompt for date
+    let date_default = date.format("%Y-%m-%d").to_string();
+    let date_input = prompt_with_default(&mut rl, "Date", &date_default)?;
+    let transaction_date = parse_date(&date_input)?;
+
+    // Prompt for payee
+    let payee = prompt_with_default(&mut rl, "Payee", "")?;
+
+    // Prompt for narration
+    let narration = prompt_with_default(&mut rl, "Narration", "")?;
+
+    // Collect postings
+    let mut postings: Vec<Posting> = Vec::new();
+    let mut amounts: Vec<Amount> = Vec::new();
+    let mut posting_num = 1;
+
+    loop {
+        // Prompt for account
+        let account_prompt = format!("Account {posting_num}");
+        let account = match rl.readline(&format!("{account_prompt}: ")) {
+            Ok(line) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    if posting_num == 1 {
+                        bail!("At least one account is required.");
+                    }
+                    break;
+                }
+                trimmed.to_string()
+            }
+            Err(ReadlineError::Interrupted | ReadlineError::Eof) => {
+                if posting_num == 1 {
+                    bail!("Cancelled.");
+                }
+                break;
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        // Calculate auto-balance suggestion for display
+        let balance_hint = if amounts.is_empty() {
+            String::new()
+        } else {
+            match calculate_balance(&amounts) {
+                Ok(bal) => format!("auto: {} {}", bal.number, bal.currency),
+                Err(_) => String::new(),
+            }
+        };
+
+        // Prompt for amount
+        let amount_prompt = format!("Amount {posting_num}");
+        let amount_default = if posting_num > 1 && !balance_hint.is_empty() {
+            balance_hint.clone()
+        } else {
+            String::new()
+        };
+
+        let amount_input = prompt_with_default(&mut rl, &amount_prompt, &amount_default)?;
+
+        if amount_input.is_empty() || amount_input == "none" {
+            // No amount - will be auto-balanced by beancount
+            postings.push(Posting::auto(&account));
+        } else if amount_input.starts_with("auto:") {
+            // User accepted auto-balance
+            let balance = calculate_balance(&amounts)?;
+            postings.push(Posting::new(&account, balance));
+        } else {
+            // Parse the amount
+            let amount = parse_amount(&amount_input)?;
+            postings.push(Posting::new(&account, amount.clone()));
+            amounts.push(amount);
+        }
+
+        posting_num += 1;
+
+        // Ask if user wants to add another posting
+        if posting_num > 2 {
+            let more = prompt_with_default(&mut rl, "Add another posting?", "n")?;
+            if more.to_lowercase() != "y" && more.to_lowercase() != "yes" {
+                break;
+            }
+        }
+    }
+
+    // If we have amounts and the last posting has no units, auto-balance it
+    if let Some(last) = postings.last_mut()
+        && !last.has_units()
+        && !amounts.is_empty()
+    {
+        let balance = calculate_balance(&amounts)?;
+        *last = Posting::new(last.account.as_str(), balance);
+    }
+
+    // Build the transaction
+    let mut txn = Transaction::new(transaction_date, &narration).with_flag('*');
+
+    if !payee.is_empty() {
+        txn = txn.with_payee(&payee);
+    }
+
+    for posting in postings {
+        txn = txn.with_posting(posting);
+    }
+
+    // Format and display preview
+    let config = FormatConfig::default();
+    let directive = Directive::Transaction(txn);
+    let formatted = format_directive(&directive, &config);
+
+    if args.dry_run {
+        println!("\n{formatted}");
+        return Ok(());
+    }
+
+    // Show preview and confirm
+    println!("\nPreview:");
+    println!("{formatted}");
+
+    if !args.yes {
+        print!("Append to {}? [Y/n] ", file.display());
+        std::io::stdout().flush()?;
+
+        let mut response = String::new();
+        std::io::stdin().read_line(&mut response)?;
+        let response = response.trim().to_lowercase();
+
+        if !response.is_empty() && response != "y" && response != "yes" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
+    // Append to file
+    append_transaction(file, &formatted)?;
+
+    println!("Transaction appended to {}", file.display());
+    Ok(())
+}
+
 /// Append a formatted transaction to a file.
 fn append_transaction(file: &PathBuf, formatted: &str) -> Result<()> {
     // Check if file exists
@@ -320,8 +666,7 @@ pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
     if args.quick.is_some() {
         run_quick_mode(args, file, date)
     } else {
-        // Interactive mode - Phase 2
-        bail!("Interactive mode not yet implemented. Use --quick (-q) for now.");
+        run_interactive_mode(args, file, date)
     }
 }
 
@@ -443,5 +788,83 @@ mod tests {
     fn test_calculate_balance_empty() {
         let amounts: Vec<Amount> = vec![];
         assert!(calculate_balance(&amounts).is_err());
+    }
+
+    #[test]
+    fn test_account_completer_prefix_match() {
+        let completer = AccountCompleter::new(vec![
+            "Assets:Bank:Checking".to_string(),
+            "Assets:Bank:Savings".to_string(),
+            "Assets:Cash".to_string(),
+            "Expenses:Food".to_string(),
+            "Expenses:Transport".to_string(),
+        ]);
+
+        // Test prefix matching
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let (start, matches) = completer.complete("Assets", 6, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 3);
+        assert!(matches.iter().any(|p| p.display == "Assets:Bank:Checking"));
+        assert!(matches.iter().any(|p| p.display == "Assets:Bank:Savings"));
+        assert!(matches.iter().any(|p| p.display == "Assets:Cash"));
+    }
+
+    #[test]
+    fn test_account_completer_substring_match() {
+        let completer = AccountCompleter::new(vec![
+            "Assets:Bank:Checking".to_string(),
+            "Expenses:Food".to_string(),
+            "Liabilities:CreditCard".to_string(),
+        ]);
+
+        // Test substring matching (case insensitive)
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let (start, matches) = completer.complete("bank", 4, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].display, "Assets:Bank:Checking");
+    }
+
+    #[test]
+    fn test_account_completer_empty() {
+        let completer = AccountCompleter::empty();
+
+        let history = rustyline::history::DefaultHistory::new();
+        let ctx = rustyline::Context::new(&history);
+        let (start, matches) = completer.complete("Assets", 6, &ctx).unwrap();
+        assert_eq!(start, 0);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_extract_accounts_from_string() {
+        // Create a temporary file with beancount content
+        let content = r#"
+2024-01-01 open Assets:Checking
+2024-01-01 open Expenses:Food
+2024-01-02 * "Store" "Groceries"
+  Expenses:Food  50.00 USD
+  Assets:Checking
+"#;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_extract_accounts.beancount");
+        std::fs::write(&temp_file, content).unwrap();
+
+        let accounts = extract_accounts(&temp_file);
+        assert!(accounts.contains(&"Assets:Checking".to_string()));
+        assert!(accounts.contains(&"Expenses:Food".to_string()));
+
+        // Clean up
+        std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_extract_accounts_nonexistent_file() {
+        let nonexistent = PathBuf::from("/nonexistent/file.beancount");
+        let accounts = extract_accounts(&nonexistent);
+        assert!(accounts.is_empty());
     }
 }
