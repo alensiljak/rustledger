@@ -159,11 +159,16 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // If no file specified, try to get from config (same as rledger)
+    // If no file or symbols specified, try to get file from config
+    // Only apply when no symbols provided to avoid unexpected behavior where
+    // `bean-price AAPL` would also fetch prices for all commodities in the ledger
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
     if args.price_args.file.is_none()
+        && args.price_args.symbols.is_empty()
         && let Ok(loaded) = crate::config::Config::load()
     {
-        args.price_args.file = loaded.config.effective_file_path(None);
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        args.price_args.file = loaded.config.effective_file_path(profile.as_deref());
     }
 
     match run(&args.price_args) {

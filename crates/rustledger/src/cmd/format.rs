@@ -323,11 +323,14 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 
     // If no files specified, try to get from config (same as rledger)
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
     if args.files.is_empty()
         && let Ok(loaded) = crate::config::Config::load()
-        && let Some(file) = loaded.config.effective_file_path(None)
     {
-        args.files.push(file);
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        if let Some(file) = loaded.config.effective_file_path(profile.as_deref()) {
+            args.files.push(file);
+        }
     }
 
     match run(&args) {
