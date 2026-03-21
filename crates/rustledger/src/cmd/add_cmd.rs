@@ -30,8 +30,8 @@ use rustyline::history::DefaultHistory;
 use rustyline::validate::Validator;
 use rustyline::{Editor, Helper};
 use std::borrow::Cow;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read as IoRead, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -211,35 +211,54 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
         .with_context(|| format!("Invalid date format: {input}. Use YYYY-MM-DD."))
 }
 
-/// Parse an amount string like "123.45 USD" or "123.45USD".
+/// Check if a character is valid in a beancount currency.
+///
+/// Currency can contain: uppercase letters, digits, apostrophes, dots, underscores, hyphens.
+const fn is_currency_char(c: char) -> bool {
+    c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '\'' | '.' | '_' | '-')
+}
+
+/// Parse an amount string like "123.45 USD" or "123.45USD" or "10 BRK.B".
+///
+/// Supports beancount currency format:
+/// - Starts with uppercase letter or `/`
+/// - Can contain: uppercase letters, digits, apostrophes, dots, underscores, hyphens
 pub fn parse_amount(input: &str) -> Result<Amount> {
     let trimmed = input.trim();
 
-    // Find where the number ends and currency begins
-    // Currency is uppercase letters at the end
+    // First try splitting by whitespace (most common case)
+    let parts: Vec<&str> = trimmed.split_whitespace().collect();
+    if parts.len() == 2 {
+        let number = Decimal::from_str(parts[0])
+            .with_context(|| format!("Invalid number in amount: {}", parts[0]))?;
+        return Ok(Amount::new(number, parts[1]));
+    }
+
+    // Handle no-space format like "123.45USD" or "10BRK.B"
+    // Find where the number ends and currency begins by scanning backwards
+    // Currency must start with uppercase letter (or `/`)
     let mut split_pos = trimmed.len();
-    for (i, c) in trimmed.char_indices().rev() {
-        if c.is_ascii_uppercase() || c == '-' {
-            split_pos = i;
+    let chars: Vec<char> = trimmed.chars().collect();
+
+    for i in (0..chars.len()).rev() {
+        let c = chars[i];
+        if is_currency_char(c) || c == '/' {
+            // Check if this could be the start of a currency (uppercase letter or `/`)
+            if c.is_ascii_uppercase() || c == '/' {
+                split_pos = chars[..i].iter().collect::<String>().len();
+            }
         } else {
+            // Not a currency character, stop scanning
             break;
         }
     }
 
-    // Handle case where there's a space between number and currency
-    let (number_part, currency_part) = if split_pos == trimmed.len() {
-        // Try splitting by whitespace
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        if parts.len() == 2 {
-            (parts[0], parts[1])
-        } else {
-            bail!("Invalid amount format: {input}. Expected '123.45 USD' or '123.45USD'.");
-        }
-    } else {
-        let num = trimmed[..split_pos].trim();
-        let cur = trimmed[split_pos..].trim();
-        (num, cur)
-    };
+    if split_pos == 0 || split_pos == trimmed.len() {
+        bail!("Invalid amount format: {input}. Expected '123.45 USD' or '123.45USD'.");
+    }
+
+    let number_part = trimmed[..split_pos].trim();
+    let currency_part = trimmed[split_pos..].trim();
 
     let number = Decimal::from_str(number_part)
         .with_context(|| format!("Invalid number in amount: {number_part}"))?;
@@ -313,11 +332,48 @@ fn run_quick_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {
         }
     }
 
+    // Validate postings
+    if postings.len() < 2 {
+        bail!(
+            "Quick mode requires at least two postings (accounts), but only {} provided.",
+            postings.len()
+        );
+    }
+
+    // Check that at most one posting lacks units, and it must be the last one
+    let missing_units: Vec<usize> = postings
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.has_units())
+        .map(|(idx, _)| idx)
+        .collect();
+
+    if missing_units.len() > 1 {
+        bail!(
+            "Quick mode supports at most one posting without an explicit amount, \
+             but {} postings lack amounts.",
+            missing_units.len()
+        );
+    }
+
+    if let Some(&idx) = missing_units.first()
+        && idx != postings.len() - 1
+    {
+        bail!(
+            "A posting without an amount must be the last posting, \
+             but posting {} (of {}) lacks an amount.",
+            idx + 1,
+            postings.len()
+        );
+    }
+
     // If the last posting has no amount, calculate and set it
     if let Some(last) = postings.last_mut()
         && !last.has_units()
-        && !amounts.is_empty()
     {
+        if amounts.is_empty() {
+            bail!("Cannot auto-balance: no explicit amounts were provided for any posting.");
+        }
         let balance = calculate_balance(&amounts)?;
         *last = Posting::new(last.account.as_str(), balance);
     }
@@ -596,32 +652,55 @@ fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<
     Ok(())
 }
 
+/// Read the last N bytes of a file, or fewer if the file is smaller.
+fn read_file_tail(file: &PathBuf, n: u64) -> Result<Vec<u8>> {
+    let mut f = File::open(file).with_context(|| format!("Failed to open {}", file.display()))?;
+    let len = f.metadata()?.len();
+
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+
+    let read_len = len.min(n);
+    let seek_pos = len.saturating_sub(n);
+
+    f.seek(SeekFrom::Start(seek_pos))?;
+    let mut buf = vec![0u8; read_len as usize];
+    f.read_exact(&mut buf)?;
+
+    Ok(buf)
+}
+
 /// Append a formatted transaction to a file.
 fn append_transaction(file: &PathBuf, formatted: &str) -> Result<()> {
     // Check if file exists
-    let file_exists = file.exists();
-
-    if !file_exists {
+    if !file.exists() {
         // Create the file with just the transaction
         fs::write(file, formatted)
             .with_context(|| format!("Failed to create {}", file.display()))?;
         return Ok(());
     }
 
-    // Read the file to check if it ends with newlines
-    let content =
-        fs::read_to_string(file).with_context(|| format!("Failed to read {}", file.display()))?;
+    // Read only the last 2 bytes to check for trailing newlines
+    let tail = read_file_tail(file, 2)?;
 
     let mut f = OpenOptions::new()
         .append(true)
         .open(file)
         .with_context(|| format!("Failed to open {} for appending", file.display()))?;
 
-    // Add blank line separator if file doesn't end with double newline
-    if !content.ends_with("\n\n") {
-        writeln!(f)?;
-        if !content.ends_with('\n') {
+    // Add blank line separator based on file ending
+    // Skip separator for empty files
+    if !tail.is_empty() {
+        let ends_with_newline = tail.last() == Some(&b'\n');
+        let ends_with_double_newline =
+            tail.len() >= 2 && tail[tail.len() - 2] == b'\n' && tail[tail.len() - 1] == b'\n';
+
+        if !ends_with_double_newline {
             writeln!(f)?;
+            if !ends_with_newline {
+                writeln!(f)?;
+            }
         }
     }
 
@@ -866,5 +945,100 @@ mod tests {
         let nonexistent = PathBuf::from("/nonexistent/file.beancount");
         let accounts = extract_accounts(&nonexistent);
         assert!(accounts.is_empty());
+    }
+
+    #[test]
+    fn test_parse_amount_stock_ticker() {
+        // Test stock tickers with dots like BRK.B
+        let amt = parse_amount("10 BRK.B").unwrap();
+        assert_eq!(amt.number, Decimal::from_str("10").unwrap());
+        assert_eq!(amt.currency.as_str(), "BRK.B");
+    }
+
+    #[test]
+    fn test_parse_amount_futures_contract() {
+        // Test futures contracts with / prefix
+        let amt = parse_amount("5 /ESM24").unwrap();
+        assert_eq!(amt.number, Decimal::from_str("5").unwrap());
+        assert_eq!(amt.currency.as_str(), "/ESM24");
+    }
+
+    #[test]
+    fn test_parse_amount_no_space_complex() {
+        // Test no-space format with complex currency
+        let amt = parse_amount("100.5BRK.B").unwrap();
+        assert_eq!(amt.number, Decimal::from_str("100.5").unwrap());
+        assert_eq!(amt.currency.as_str(), "BRK.B");
+    }
+
+    #[test]
+    fn test_append_transaction_new_file() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_append_new.beancount");
+
+        // Clean up any existing file
+        std::fs::remove_file(&temp_file).ok();
+
+        let txn = "2024-01-01 * \"Test\"\n  Assets:Cash  100 USD\n  Expenses:Test\n";
+        append_transaction(&temp_file, txn).unwrap();
+
+        let content = std::fs::read_to_string(&temp_file).unwrap();
+        assert_eq!(content, txn);
+
+        std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_append_transaction_empty_file() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_append_empty.beancount");
+
+        // Create empty file
+        std::fs::write(&temp_file, "").unwrap();
+
+        let txn = "2024-01-01 * \"Test\"\n  Assets:Cash  100 USD\n";
+        append_transaction(&temp_file, txn).unwrap();
+
+        let content = std::fs::read_to_string(&temp_file).unwrap();
+        // Empty file should not get separator
+        assert_eq!(content, txn);
+
+        std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_append_transaction_with_newline() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_append_newline.beancount");
+
+        // File ending with single newline
+        std::fs::write(&temp_file, "2024-01-01 open Assets:Cash\n").unwrap();
+
+        let txn = "2024-01-02 * \"Test\"\n  Assets:Cash  100 USD\n";
+        append_transaction(&temp_file, txn).unwrap();
+
+        let content = std::fs::read_to_string(&temp_file).unwrap();
+        // Should add one more newline for blank line separator
+        assert!(content.contains("\n\n2024-01-02"));
+
+        std::fs::remove_file(&temp_file).ok();
+    }
+
+    #[test]
+    fn test_append_transaction_with_double_newline() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join("test_append_double_newline.beancount");
+
+        // File already ending with double newline
+        std::fs::write(&temp_file, "2024-01-01 open Assets:Cash\n\n").unwrap();
+
+        let txn = "2024-01-02 * \"Test\"\n";
+        append_transaction(&temp_file, txn).unwrap();
+
+        let content = std::fs::read_to_string(&temp_file).unwrap();
+        // Should not add extra newlines
+        assert!(!content.contains("\n\n\n"));
+
+        std::fs::remove_file(&temp_file).ok();
     }
 }
