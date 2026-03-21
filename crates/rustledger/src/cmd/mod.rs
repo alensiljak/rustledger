@@ -3,6 +3,7 @@
 //! Each module contains the full implementation for a command,
 //! which can be invoked by thin wrapper binaries.
 
+pub mod add_cmd;
 pub mod check;
 pub mod completions;
 pub mod config_cmd;

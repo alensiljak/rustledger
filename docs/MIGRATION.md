@@ -42,6 +42,15 @@ bean-check ledger.beancount  # → calls rledger check
 | `bean-report holdings` | `rledger report holdings` | Same |
 | `bean-report networth` | `rledger report networth` | Same |
 
+### New Commands in rustledger
+
+These commands are unique to rustledger and don't exist in Python beancount:
+
+| Command | Description |
+|---------|-------------|
+| `rledger add` | Add transactions interactively or via quick mode (like `hledger add`) |
+| `rledger config` | Manage configuration profiles |
+
 ## Plugin Migration
 
 ### Native Plugins (Recommended)

@@ -118,6 +118,13 @@ enum Commands {
         args: rustledger::cmd::config_cmd::Args,
     },
 
+    /// Add transactions to beancount files
+    #[command(alias = "a")]
+    Add {
+        #[command(flatten)]
+        args: rustledger::cmd::add_cmd::Args,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
@@ -370,6 +377,19 @@ fn main() -> ExitCode {
                 ExitCode::from(1)
             }
         },
+        Commands::Add { args } => {
+            let file = match require_file(args.file.as_ref(), &config, profile_ref) {
+                Ok(f) => f,
+                Err(code) => return code,
+            };
+            match rustledger::cmd::add_cmd::run(&args, &file) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "rledger", &mut io::stdout());
             ExitCode::SUCCESS
