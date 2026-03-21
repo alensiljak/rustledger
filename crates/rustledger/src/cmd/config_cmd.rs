@@ -12,7 +12,6 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{self, Write};
-use std::process::Command;
 
 /// Configuration management commands.
 #[derive(Parser, Debug)]
@@ -219,49 +218,36 @@ fn run_edit(project: bool, system: bool) -> Result<()> {
         println!("Created new config file: {}", path.display());
     }
 
-    // Get editor from config, then $EDITOR, then fall back to common editors
-    let loaded = Config::load().ok();
-    let editor = loaded
-        .as_ref()
-        .and_then(|l| l.config.default.editor.clone())
-        .or_else(|| std::env::var("EDITOR").ok())
-        .or_else(|| std::env::var("VISUAL").ok())
-        .unwrap_or_else(|| {
-            // Try common editors
-            for editor in &["nano", "vim", "vi", "notepad"] {
-                if which_exists(editor) {
-                    return (*editor).to_string();
-                }
-            }
-            "nano".to_string()
-        });
+    // Check if user has a custom editor configured
+    let custom_editor = Config::load().ok().and_then(|l| l.config.default.editor);
 
-    println!("Opening {} with {editor}...", path.display());
+    println!("Opening {}...", path.display());
 
-    // Split editor into command and args (handles "code --wait" style editors)
-    let mut parts = editor.split_whitespace();
-    let cmd = parts.next().unwrap_or("nano");
-    let mut command = Command::new(cmd);
-    for arg in parts {
-        command.arg(arg);
-    }
-    command.arg(&path);
+    if let Some(editor) = custom_editor {
+        // User has a custom editor configured - use Command directly
+        // Split editor into command and args (handles "code --wait" style editors)
+        let mut parts = editor.split_whitespace();
+        let cmd = parts.next().context("Editor command is empty")?;
+        let status = std::process::Command::new(cmd)
+            .args(parts)
+            .arg(&path)
+            .status()
+            .with_context(|| format!("Failed to run editor: {editor}"))?;
 
-    let status = command
-        .status()
-        .with_context(|| format!("Failed to run editor: {editor}"))?;
-
-    if !status.success() {
-        bail!("Editor exited with error");
+        if !status.success() {
+            bail!("Editor exited with error");
+        }
+    } else {
+        // No custom editor - use the `edit` crate for cross-platform auto-detection
+        // It handles: VISUAL/EDITOR env vars, platform-specific fallbacks (notepad on Windows),
+        // proper PATH/PATHEXT handling, and waiting for the editor to close
+        edit::edit_file(&path).with_context(|| {
+            "Failed to open editor. Set the EDITOR environment variable or configure \
+             'default.editor' in your config file."
+        })?;
     }
 
     Ok(())
-}
-
-/// Check if a command exists in PATH.
-fn which_exists(cmd: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(cmd).exists()))
 }
 
 /// Generate a default config file.
@@ -501,21 +487,6 @@ mod tests {
         // --project and --system should conflict
         let result = Args::try_parse_from(["config", "edit", "--project", "--system"]);
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_which_exists_nonexistent() {
-        // A command that definitely doesn't exist
-        assert!(!which_exists("definitely_not_a_real_command_12345"));
-    }
-
-    #[test]
-    fn test_which_exists_common_commands() {
-        // At least one of these should exist on most systems
-        let common = ["sh", "bash", "cat", "ls", "echo"];
-        let any_exists = common.iter().any(|cmd| which_exists(cmd));
-        // On CI/containers this might fail, so we just check it doesn't panic
-        let _ = any_exists;
     }
 
     #[test]

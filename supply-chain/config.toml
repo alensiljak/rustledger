@@ -277,6 +277,10 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.edit]]
+version = "0.1.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.encode_unicode]]
 version = "1.0.0"
 criteria = "safe-to-run"
@@ -415,10 +419,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.lock_api]]
 version = "0.4.14"
-criteria = "safe-to-deploy"
-
-[[exemptions.log]]
-version = "0.4.29"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos]]
@@ -873,6 +873,10 @@ criteria = "safe-to-run"
 version = "1.0.6"
 criteria = "safe-to-deploy"
 
+[[exemptions.which]]
+version = "4.4.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.winapi]]
 version = "0.3.9"
 criteria = "safe-to-deploy"
@@ -987,10 +991,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
 version = "8.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zlib-rs]]
-version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]
