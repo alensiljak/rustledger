@@ -1,0 +1,19 @@
+; Issue: https://github.com/rustledger/rustledger/issues/520
+; Description: currency_accounts plugin should generate Open directives for
+;              the currency tracking accounts it creates (e.g., Equity:Currency:USD)
+; Expected: No errors - plugin generates Open directives like Python beancount
+
+option "operating_currency" "EUR"
+
+plugin "beancount.plugins.currency_accounts" "Equity:Currency"
+
+2026-01-01 open Assets:Bank:EUR
+2026-01-01 open Assets:Bank:USD
+
+; Multi-currency transaction with price annotation
+; currency_accounts should create:
+;   - 2026-01-01 open Equity:Currency:USD
+;   - Add neutralizing posting to Equity:Currency:USD
+2026-03-17 * "Currency exchange"
+  Assets:Bank:EUR       -100 EUR @ 1.10 USD
+  Assets:Bank:USD        110 USD
