@@ -233,7 +233,7 @@ rledger format --in-place ledger.beancount
 | `close_tree` | Close descendant accounts |
 | `coherent_cost` | Enforce cost OR price (not both) |
 | `commodity_attr` | Validate commodity attributes |
-| `currency_accounts` | Enforce currency constraints on accounts |
+| `currency_accounts` | Auto-generate currency trading postings |
 | `effective_date` | Override posting date via metadata |
 | `forecast` | Generate recurring transactions |
 | `generate_base_ccy_prices` | Create base currency price entries |
