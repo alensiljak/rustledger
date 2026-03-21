@@ -12,7 +12,6 @@ use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use std::fs;
 use std::io::{self, Write};
-use std::process::Command;
 
 /// Configuration management commands.
 #[derive(Parser, Debug)]
@@ -219,49 +218,48 @@ fn run_edit(project: bool, system: bool) -> Result<()> {
         println!("Created new config file: {}", path.display());
     }
 
-    // Get editor from config, then $EDITOR, then fall back to common editors
-    let loaded = Config::load().ok();
-    let editor = loaded
-        .as_ref()
-        .and_then(|l| l.config.default.editor.clone())
-        .or_else(|| std::env::var("EDITOR").ok())
-        .or_else(|| std::env::var("VISUAL").ok())
-        .unwrap_or_else(|| {
-            // Try common editors
-            for editor in &["nano", "vim", "vi", "notepad"] {
-                if which_exists(editor) {
-                    return (*editor).to_string();
-                }
-            }
-            "nano".to_string()
+    // Check if user has a custom editor configured (treat empty/whitespace as unset)
+    let custom_editor = Config::load()
+        .ok()
+        .and_then(|l| l.config.default.editor)
+        .and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
         });
 
-    println!("Opening {} with {editor}...", path.display());
+    println!("Opening {}...", path.display());
 
-    // Split editor into command and args (handles "code --wait" style editors)
-    let mut parts = editor.split_whitespace();
-    let cmd = parts.next().unwrap_or("nano");
-    let mut command = Command::new(cmd);
-    for arg in parts {
-        command.arg(arg);
-    }
-    command.arg(&path);
+    if let Some(editor) = custom_editor {
+        // User has a custom editor configured - use Command directly
+        // Use shell_words to properly parse quoted paths/args (e.g., "C:\Program Files\..." or 'code --wait')
+        let parts = shell_words::split(&editor)
+            .with_context(|| format!("Invalid editor command syntax: {editor}"))?;
 
-    let status = command
-        .status()
-        .with_context(|| format!("Failed to run editor: {editor}"))?;
+        let (cmd, args) = parts.split_first().context("Editor command is empty")?;
 
-    if !status.success() {
-        bail!("Editor exited with error");
+        let status = std::process::Command::new(cmd)
+            .args(args)
+            .arg(&path)
+            .status()
+            .with_context(|| format!("Failed to run editor: {editor}"))?;
+
+        if !status.success() {
+            match status.code() {
+                Some(code) => bail!("Editor exited with error (exit code {code})"),
+                None => bail!("Editor terminated by signal"),
+            }
+        }
+    } else {
+        // No custom editor - use the `edit` crate for cross-platform auto-detection
+        // It handles: VISUAL/EDITOR env vars, platform-specific fallbacks (notepad on Windows),
+        // proper PATH/PATHEXT handling, and waiting for the editor to close
+        edit::edit_file(&path).with_context(|| {
+            "Failed to open editor. Set the EDITOR environment variable or configure \
+             'default.editor' in your config file."
+        })?;
     }
 
     Ok(())
-}
-
-/// Check if a command exists in PATH.
-fn which_exists(cmd: &str) -> bool {
-    std::env::var_os("PATH")
-        .is_some_and(|paths| std::env::split_paths(&paths).any(|dir| dir.join(cmd).exists()))
 }
 
 /// Generate a default config file.
@@ -504,21 +502,6 @@ mod tests {
     }
 
     #[test]
-    fn test_which_exists_nonexistent() {
-        // A command that definitely doesn't exist
-        assert!(!which_exists("definitely_not_a_real_command_12345"));
-    }
-
-    #[test]
-    fn test_which_exists_common_commands() {
-        // At least one of these should exist on most systems
-        let common = ["sh", "bash", "cat", "ls", "echo"];
-        let any_exists = common.iter().any(|cmd| which_exists(cmd));
-        // On CI/containers this might fail, so we just check it doesn't panic
-        let _ = any_exists;
-    }
-
-    #[test]
     fn test_default_config_content_is_valid_toml() {
         let content = Config::default_config_content();
         // Should parse as valid TOML (comments are allowed)
@@ -540,5 +523,55 @@ mod tests {
         if let ConfigCommand::Show { format, .. } = args.command {
             assert_eq!(format, "json");
         }
+    }
+
+    #[test]
+    fn test_editor_command_parsing() {
+        // Simple command
+        let parts = shell_words::split("vim").unwrap();
+        assert_eq!(parts, vec!["vim"]);
+
+        // Command with args
+        let parts = shell_words::split("code --wait").unwrap();
+        assert_eq!(parts, vec!["code", "--wait"]);
+
+        // Quoted path with spaces (Windows-style)
+        let parts =
+            shell_words::split(r#""C:\Program Files\Notepad++\notepad++.exe" -multiInst"#).unwrap();
+        assert_eq!(
+            parts,
+            vec![r"C:\Program Files\Notepad++\notepad++.exe", "-multiInst"]
+        );
+
+        // Single-quoted path
+        let parts = shell_words::split("'/usr/bin/my editor' --wait").unwrap();
+        assert_eq!(parts, vec!["/usr/bin/my editor", "--wait"]);
+    }
+
+    #[test]
+    fn test_editor_empty_handling() {
+        // Empty string should result in None from our filter
+        let editor: Option<String> = Some(String::new());
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert!(filtered.is_none());
+
+        // Whitespace-only should also result in None
+        let editor: Option<String> = Some(String::from("   "));
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert!(filtered.is_none());
+
+        // Non-empty should pass through
+        let editor: Option<String> = Some(String::from("vim"));
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert_eq!(filtered, Some(String::from("vim")));
     }
 }

@@ -277,6 +277,10 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.edit]]
+version = "0.1.5"
+criteria = "safe-to-deploy"
+
 [[exemptions.encode_unicode]]
 version = "1.0.0"
 criteria = "safe-to-run"
@@ -717,6 +721,10 @@ criteria = "safe-to-deploy"
 version = "0.2.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.shell-words]]
+version = "1.1.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.signal-hook-registry]]
 version = "1.4.8"
 criteria = "safe-to-deploy"
@@ -867,6 +875,10 @@ criteria = "safe-to-run"
 
 [[exemptions.webpki-roots]]
 version = "1.0.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.which]]
+version = "4.4.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.winapi]]
