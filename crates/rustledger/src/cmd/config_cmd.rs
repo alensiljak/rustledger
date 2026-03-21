@@ -218,24 +218,36 @@ fn run_edit(project: bool, system: bool) -> Result<()> {
         println!("Created new config file: {}", path.display());
     }
 
-    // Check if user has a custom editor configured
-    let custom_editor = Config::load().ok().and_then(|l| l.config.default.editor);
+    // Check if user has a custom editor configured (treat empty/whitespace as unset)
+    let custom_editor = Config::load()
+        .ok()
+        .and_then(|l| l.config.default.editor)
+        .and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
 
     println!("Opening {}...", path.display());
 
     if let Some(editor) = custom_editor {
         // User has a custom editor configured - use Command directly
-        // Split editor into command and args (handles "code --wait" style editors)
-        let mut parts = editor.split_whitespace();
-        let cmd = parts.next().context("Editor command is empty")?;
+        // Use shell_words to properly parse quoted paths/args (e.g., "C:\Program Files\..." or 'code --wait')
+        let parts = shell_words::split(&editor)
+            .with_context(|| format!("Invalid editor command syntax: {editor}"))?;
+
+        let (cmd, args) = parts.split_first().context("Editor command is empty")?;
+
         let status = std::process::Command::new(cmd)
-            .args(parts)
+            .args(args)
             .arg(&path)
             .status()
             .with_context(|| format!("Failed to run editor: {editor}"))?;
 
         if !status.success() {
-            bail!("Editor exited with error");
+            match status.code() {
+                Some(code) => bail!("Editor exited with error (exit code {code})"),
+                None => bail!("Editor terminated by signal"),
+            }
         }
     } else {
         // No custom editor - use the `edit` crate for cross-platform auto-detection
@@ -511,5 +523,55 @@ mod tests {
         if let ConfigCommand::Show { format, .. } = args.command {
             assert_eq!(format, "json");
         }
+    }
+
+    #[test]
+    fn test_editor_command_parsing() {
+        // Simple command
+        let parts = shell_words::split("vim").unwrap();
+        assert_eq!(parts, vec!["vim"]);
+
+        // Command with args
+        let parts = shell_words::split("code --wait").unwrap();
+        assert_eq!(parts, vec!["code", "--wait"]);
+
+        // Quoted path with spaces (Windows-style)
+        let parts =
+            shell_words::split(r#""C:\Program Files\Notepad++\notepad++.exe" -multiInst"#).unwrap();
+        assert_eq!(
+            parts,
+            vec![r"C:\Program Files\Notepad++\notepad++.exe", "-multiInst"]
+        );
+
+        // Single-quoted path
+        let parts = shell_words::split("'/usr/bin/my editor' --wait").unwrap();
+        assert_eq!(parts, vec!["/usr/bin/my editor", "--wait"]);
+    }
+
+    #[test]
+    fn test_editor_empty_handling() {
+        // Empty string should result in None from our filter
+        let editor: Option<String> = Some(String::new());
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert!(filtered.is_none());
+
+        // Whitespace-only should also result in None
+        let editor: Option<String> = Some(String::from("   "));
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert!(filtered.is_none());
+
+        // Non-empty should pass through
+        let editor: Option<String> = Some(String::from("vim"));
+        let filtered = editor.and_then(|e| {
+            let trimmed = e.trim();
+            if trimmed.is_empty() { None } else { Some(e) }
+        });
+        assert_eq!(filtered, Some(String::from("vim")));
     }
 }
