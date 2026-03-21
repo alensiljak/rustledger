@@ -34,16 +34,30 @@ jobs:
           ref: ${{ github.base_ref }}
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Fetch PR's Cargo.lock
+      - name: Fetch PR's Cargo files
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           # SECURITY: Pass via env vars to prevent potential shell injection
           REPO: ${{ github.repository }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Fetch only Cargo.lock from the PR branch (not arbitrary code)
+          # Fetch Cargo.lock and any changed Cargo.toml files from the PR branch
+          # This is needed because major version bumps update both files
           gh api "repos/$REPO/contents/Cargo.lock?ref=$PR_SHA" \
             --jq '.content' | base64 -d > Cargo.lock
+
+          # Get list of changed files in the PR
+          CHANGED_FILES=$(gh api "repos/$REPO/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename')
+
+          # Fetch any changed Cargo.toml files (safe: these only contain dependency specs)
+          for file in $CHANGED_FILES; do
+            if [[ "$file" == *"Cargo.toml" ]]; then
+              echo "Fetching $file from PR"
+              gh api "repos/$REPO/contents/$file?ref=$PR_SHA" \
+                --jq '.content' | base64 -d > "$file"
+            fi
+          done
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
