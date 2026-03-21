@@ -59,6 +59,19 @@ impl NativePlugin for CurrencyAccountsPlugin {
         let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
         let mut created_accounts: HashSet<String> = HashSet::new();
 
+        // Collect existing opened accounts to avoid duplicates (fixes E1002)
+        let existing_opens: HashSet<String> = input
+            .directives
+            .iter()
+            .filter_map(|w| {
+                if let DirectiveData::Open(open) = &w.data {
+                    Some(open.account.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         // Find the earliest date from all directives for Open directive generation
         let earliest_date = input
             .directives
@@ -179,9 +192,10 @@ impl NativePlugin for CurrencyAccountsPlugin {
             }
         }
 
-        // Generate Open directives for all created currency accounts
+        // Generate Open directives for created currency accounts (skip existing ones)
         let mut open_directives: Vec<DirectiveWrapper> = created_accounts
             .into_iter()
+            .filter(|account| !existing_opens.contains(account))
             .map(|account| DirectiveWrapper {
                 directive_type: "open".to_string(),
                 date: earliest_date.clone(),
@@ -721,5 +735,129 @@ mod currency_accounts_tests {
         } else {
             panic!("Expected Transaction directive");
         }
+    }
+
+    #[test]
+    fn test_currency_accounts_skips_existing_open() {
+        // When user already has Open directive for currency account,
+        // plugin should NOT create a duplicate (would cause E1002)
+        let plugin = CurrencyAccountsPlugin::new();
+
+        let input = PluginInput {
+            directives: vec![
+                // Pre-existing Open for the currency account
+                DirectiveWrapper {
+                    directive_type: "open".to_string(),
+                    date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Open(OpenData {
+                        account: "Equity:CurrencyAccounts:USD".to_string(),
+                        currencies: vec![],
+                        booking: None,
+                        metadata: vec![],
+                    }),
+                },
+                DirectiveWrapper {
+                    directive_type: "open".to_string(),
+                    date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Open(OpenData {
+                        account: "Assets:Bank:EUR".to_string(),
+                        currencies: vec![],
+                        booking: None,
+                        metadata: vec![],
+                    }),
+                },
+                DirectiveWrapper {
+                    directive_type: "open".to_string(),
+                    date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Open(OpenData {
+                        account: "Assets:Bank:USD".to_string(),
+                        currencies: vec![],
+                        booking: None,
+                        metadata: vec![],
+                    }),
+                },
+                // Multi-currency transaction
+                DirectiveWrapper {
+                    directive_type: "transaction".to_string(),
+                    date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Transaction(TransactionData {
+                        flag: "*".to_string(),
+                        payee: None,
+                        narration: "Currency exchange".to_string(),
+                        tags: vec![],
+                        links: vec![],
+                        metadata: vec![],
+                        postings: vec![
+                            PostingData {
+                                account: "Assets:Bank:USD".to_string(),
+                                units: Some(AmountData {
+                                    number: "-100".to_string(),
+                                    currency: "USD".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                            PostingData {
+                                account: "Assets:Bank:EUR".to_string(),
+                                units: Some(AmountData {
+                                    number: "85".to_string(),
+                                    currency: "EUR".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                        ],
+                    }),
+                },
+            ],
+            options: PluginOptions {
+                operating_currencies: vec!["USD".to_string()],
+                title: None,
+            },
+            config: None,
+        };
+
+        let output = plugin.process(input);
+        assert_eq!(output.errors.len(), 0);
+
+        // Should have:
+        // - 1 new Open for Equity:CurrencyAccounts:EUR (USD already exists)
+        // - 3 original Open directives
+        // - 1 modified Transaction
+        assert_eq!(output.directives.len(), 5);
+
+        // Count Open directives for currency accounts
+        let currency_account_opens: Vec<_> = output
+            .directives
+            .iter()
+            .filter_map(|d| {
+                if let DirectiveData::Open(open) = &d.data {
+                    if open.account.starts_with("Equity:CurrencyAccounts:") {
+                        Some(open.account.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Should have exactly 2 currency account Opens (USD from input, EUR generated)
+        assert_eq!(currency_account_opens.len(), 2);
+        assert!(currency_account_opens.contains(&"Equity:CurrencyAccounts:USD".to_string()));
+        assert!(currency_account_opens.contains(&"Equity:CurrencyAccounts:EUR".to_string()));
     }
 }
