@@ -417,10 +417,6 @@ criteria = "safe-to-deploy"
 version = "0.4.14"
 criteria = "safe-to-deploy"
 
-[[exemptions.log]]
-version = "0.4.29"
-criteria = "safe-to-deploy"
-
 [[exemptions.logos]]
 version = "0.15.1"
 criteria = "safe-to-deploy"
@@ -690,7 +686,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.9"
+version = "0.103.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.rusty-fork]]
@@ -987,10 +983,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
 version = "8.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zlib-rs]]
-version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]
