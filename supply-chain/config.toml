@@ -74,7 +74,7 @@ version = "0.7.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.anstream]]
-version = "0.6.21"
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.anstyle]]
@@ -82,7 +82,7 @@ version = "1.0.13"
 criteria = "safe-to-deploy"
 
 [[exemptions.anstyle-parse]]
-version = "0.2.7"
+version = "1.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.anstyle-query]]
@@ -162,19 +162,19 @@ version = "1.0.0-alpha.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap]]
-version = "4.5.60"
+version = "4.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_builder]]
-version = "4.5.60"
+version = "4.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_complete]]
-version = "4.5.66"
+version = "4.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_derive]]
-version = "4.5.55"
+version = "4.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.clap_lex]]
@@ -415,10 +415,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.lock_api]]
 version = "0.4.14"
-criteria = "safe-to-deploy"
-
-[[exemptions.log]]
-version = "0.4.29"
 criteria = "safe-to-deploy"
 
 [[exemptions.logos]]
@@ -690,7 +686,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.rustls-webpki]]
-version = "0.103.9"
+version = "0.103.10"
 criteria = "safe-to-deploy"
 
 [[exemptions.rusty-fork]]
@@ -754,7 +750,7 @@ version = "0.4.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.tempfile]]
-version = "3.26.0"
+version = "3.27.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.time]]
@@ -794,7 +790,7 @@ version = "0.1.36"
 criteria = "safe-to-deploy"
 
 [[exemptions.tracing-subscriber]]
-version = "0.3.22"
+version = "0.3.23"
 criteria = "safe-to-deploy"
 
 [[exemptions.typed-path]]
@@ -987,10 +983,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
 version = "8.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zlib-rs]]
-version = "0.6.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]

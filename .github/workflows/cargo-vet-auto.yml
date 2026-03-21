@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Generate GitHub App token
         id: app-token
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
@@ -34,16 +34,30 @@ jobs:
           ref: ${{ github.base_ref }}
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Fetch PR's Cargo.lock
+      - name: Fetch PR's Cargo files
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           # SECURITY: Pass via env vars to prevent potential shell injection
           REPO: ${{ github.repository }}
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          # Fetch only Cargo.lock from the PR branch (not arbitrary code)
+          # Fetch Cargo.lock and any changed Cargo.toml files from the PR branch
+          # This is needed because major version bumps update both files
           gh api "repos/$REPO/contents/Cargo.lock?ref=$PR_SHA" \
             --jq '.content' | base64 -d > Cargo.lock
+
+          # Get list of changed files and fetch any Cargo.toml files
+          # Using --paginate to handle PRs with many files, and while read to handle spaces in paths
+          gh api --paginate "repos/$REPO/pulls/${{ github.event.pull_request.number }}/files" \
+            --jq '.[].filename' | while IFS= read -r file; do
+            if [[ "$file" == *"Cargo.toml" ]]; then
+              echo "Fetching $file from PR"
+              # Ensure parent directory exists (might be new in the PR)
+              mkdir -p "$(dirname "$file")"
+              gh api "repos/$REPO/contents/$file?ref=$PR_SHA" \
+                --jq '.content' | base64 -d > "$file"
+            fi
+          done
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
