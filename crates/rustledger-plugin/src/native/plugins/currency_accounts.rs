@@ -72,12 +72,65 @@ impl NativePlugin for CurrencyAccountsPlugin {
             if let DirectiveData::Transaction(txn) = &wrapper.data {
                 // Calculate currency totals for this transaction
                 // Map from currency -> total amount in that currency
+                // Like Python beancount, we use the WEIGHT currency (cost currency if present)
                 let mut currency_totals: HashMap<String, Decimal> = HashMap::new();
 
                 for posting in &txn.postings {
                     if let Some(units) = &posting.units {
-                        let amount = Decimal::from_str(&units.number).unwrap_or_default();
-                        *currency_totals.entry(units.currency.clone()).or_default() += amount;
+                        let units_amount = Decimal::from_str(&units.number).unwrap_or_default();
+
+                        // Determine the weight currency and amount
+                        // If posting has a cost, use cost currency and calculate cost amount
+                        // Otherwise use units currency and amount
+                        let (currency, amount) = if let Some(cost) = &posting.cost {
+                            if let Some(cost_currency) = &cost.currency {
+                                // Calculate cost amount
+                                let cost_amount = if let Some(num_per) = &cost.number_per {
+                                    // Per-unit cost: units * cost_per_unit
+                                    let per_unit =
+                                        Decimal::from_str(num_per).unwrap_or(Decimal::ONE);
+                                    units_amount * per_unit
+                                } else if let Some(num_total) = &cost.number_total {
+                                    // Total cost specified directly
+                                    Decimal::from_str(num_total).unwrap_or_default()
+                                } else {
+                                    // No cost number, fall back to units
+                                    units_amount
+                                };
+                                (cost_currency.clone(), cost_amount)
+                            } else {
+                                // Cost exists but no currency - fall back to units
+                                (units.currency.clone(), units_amount)
+                            }
+                        } else if let Some(price) = &posting.price {
+                            // Price annotation (@) - use price currency for weight
+                            if let Some(price_amount) = &price.amount {
+                                let price_currency = price_amount.currency.clone();
+                                let price_num =
+                                    Decimal::from_str(&price_amount.number).unwrap_or(Decimal::ONE);
+                                let weight = if price.is_total {
+                                    // Total price (@@): weight is the price amount directly
+                                    // But sign follows units
+                                    if units_amount < Decimal::ZERO {
+                                        -price_num
+                                    } else {
+                                        price_num
+                                    }
+                                } else {
+                                    // Per-unit price (@): weight = units * price
+                                    units_amount * price_num
+                                };
+                                (price_currency, weight)
+                            } else {
+                                // Incomplete price - fall back to units
+                                (units.currency.clone(), units_amount)
+                            }
+                        } else {
+                            // No cost or price - use units directly
+                            (units.currency.clone(), units_amount)
+                        };
+
+                        *currency_totals.entry(currency).or_default() += amount;
                     }
                 }
 
@@ -502,6 +555,171 @@ mod currency_accounts_tests {
                     "Open directive should use earliest date"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn test_currency_accounts_uses_cost_currency() {
+        // Issue #521/#531: When a posting has a cost, use the cost currency
+        // for grouping, not the units currency
+        let plugin = CurrencyAccountsPlugin::new();
+
+        // Transaction: Buy 9 RING at 68.55 USD each
+        // All postings should be grouped under USD (the cost currency)
+        let input = PluginInput {
+            directives: vec![DirectiveWrapper {
+                directive_type: "transaction".to_string(),
+                date: "2026-03-21".to_string(),
+                filename: None,
+                lineno: None,
+                data: DirectiveData::Transaction(TransactionData {
+                    flag: "*".to_string(),
+                    payee: Some("Buy RING".to_string()),
+                    narration: String::new(),
+                    tags: vec![],
+                    links: vec![],
+                    metadata: vec![],
+                    postings: vec![
+                        PostingData {
+                            account: "Assets:Shares:RING".to_string(),
+                            units: Some(AmountData {
+                                number: "9".to_string(),
+                                currency: "RING".to_string(),
+                            }),
+                            cost: Some(CostData {
+                                number_per: Some("68.55".to_string()),
+                                number_total: None,
+                                currency: Some("USD".to_string()),
+                                date: None,
+                                label: None,
+                                merge: false,
+                            }),
+                            price: None,
+                            flag: None,
+                            metadata: vec![],
+                        },
+                        PostingData {
+                            account: "Expenses:Financial".to_string(),
+                            units: Some(AmountData {
+                                number: "0.35".to_string(),
+                                currency: "USD".to_string(),
+                            }),
+                            cost: None,
+                            price: None,
+                            flag: None,
+                            metadata: vec![],
+                        },
+                        PostingData {
+                            account: "Assets:Cash:USD".to_string(),
+                            units: Some(AmountData {
+                                number: "-617.30".to_string(),
+                                currency: "USD".to_string(),
+                            }),
+                            cost: None,
+                            price: None,
+                            flag: None,
+                            metadata: vec![],
+                        },
+                    ],
+                }),
+            }],
+            options: PluginOptions {
+                operating_currencies: vec!["USD".to_string()],
+                title: None,
+            },
+            config: None,
+        };
+
+        let output = plugin.process(input);
+        assert_eq!(output.errors.len(), 0);
+
+        // All postings have cost/units in USD, so NO currency account postings should be added
+        // The transaction should pass through unchanged (just 1 directive)
+        assert_eq!(output.directives.len(), 1);
+
+        if let DirectiveData::Transaction(txn) = &output.directives[0].data {
+            // Should have the original 3 postings only
+            assert_eq!(txn.postings.len(), 3);
+        } else {
+            panic!("Expected Transaction directive");
+        }
+    }
+
+    #[test]
+    fn test_currency_accounts_uses_price_currency() {
+        // When a posting has a price (@), use the price currency for grouping
+        let plugin = CurrencyAccountsPlugin::new();
+
+        // Transaction: -100 EUR @ 1.10 USD, +110 USD
+        // Both should be grouped under USD (price currency for first, units for second)
+        let input = PluginInput {
+            directives: vec![DirectiveWrapper {
+                directive_type: "transaction".to_string(),
+                date: "2026-03-17".to_string(),
+                filename: None,
+                lineno: None,
+                data: DirectiveData::Transaction(TransactionData {
+                    flag: "*".to_string(),
+                    payee: None,
+                    narration: "Currency exchange".to_string(),
+                    tags: vec![],
+                    links: vec![],
+                    metadata: vec![],
+                    postings: vec![
+                        PostingData {
+                            account: "Assets:Bank:EUR".to_string(),
+                            units: Some(AmountData {
+                                number: "-100".to_string(),
+                                currency: "EUR".to_string(),
+                            }),
+                            cost: None,
+                            price: Some(PriceAnnotationData {
+                                is_total: false,
+                                amount: Some(AmountData {
+                                    number: "1.10".to_string(),
+                                    currency: "USD".to_string(),
+                                }),
+                                number: None,
+                                currency: None,
+                            }),
+                            flag: None,
+                            metadata: vec![],
+                        },
+                        PostingData {
+                            account: "Assets:Bank:USD".to_string(),
+                            units: Some(AmountData {
+                                number: "110".to_string(),
+                                currency: "USD".to_string(),
+                            }),
+                            cost: None,
+                            price: None,
+                            flag: None,
+                            metadata: vec![],
+                        },
+                    ],
+                }),
+            }],
+            options: PluginOptions {
+                operating_currencies: vec!["USD".to_string()],
+                title: None,
+            },
+            config: None,
+        };
+
+        let output = plugin.process(input);
+        assert_eq!(output.errors.len(), 0);
+
+        // Both postings have weight in USD:
+        // -100 EUR @ 1.10 USD = -110 USD weight
+        // +110 USD = +110 USD weight
+        // Total: 0 USD - balanced, NO currency account postings needed
+        assert_eq!(output.directives.len(), 1);
+
+        if let DirectiveData::Transaction(txn) = &output.directives[0].data {
+            // Should have the original 2 postings only
+            assert_eq!(txn.postings.len(), 2);
+        } else {
+            panic!("Expected Transaction directive");
         }
     }
 }
