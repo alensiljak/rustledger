@@ -151,12 +151,24 @@ impl PriceSource for YahooFinance {
 
 /// Main entry point with custom binary name (for bean-price compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Handle shell completion generation
     if let Some(shell) = args.generate_completions {
         crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
         return ExitCode::SUCCESS;
+    }
+
+    // If no file or symbols specified, try to get file from config
+    // Only apply when no symbols provided to avoid unexpected behavior where
+    // `bean-price AAPL` would also fetch prices for all commodities in the ledger
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
+    if args.price_args.file.is_none()
+        && args.price_args.symbols.is_empty()
+        && let Ok(loaded) = crate::config::Config::load()
+    {
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        args.price_args.file = loaded.config.effective_file_path(profile.as_deref());
     }
 
     match run(&args.price_args) {

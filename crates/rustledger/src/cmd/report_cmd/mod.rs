@@ -146,7 +146,7 @@ pub enum Report {
 
 /// Main entry point with custom binary name (for bean-report compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Handle shell completion generation
     if let Some(shell) = args.generate_completions {
@@ -154,9 +154,18 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // If no file specified, try to get from config (same as rledger)
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
+    if args.file.is_none()
+        && let Ok(loaded) = crate::config::Config::load()
+    {
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        args.file = loaded.config.effective_file_path(profile.as_deref());
+    }
+
     // File and report are required when not generating completions
     let Some(file) = args.file else {
-        eprintln!("error: FILE is required");
+        eprintln!("error: FILE is required (or set default.file in config)");
         eprintln!("For more information, try '--help'");
         return ExitCode::from(2);
     };

@@ -314,12 +314,23 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
 
 /// Main entry point with custom binary name (for bean-format compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
+    let mut args = Args::parse();
 
     // Handle shell completion generation
     if let Some(shell) = args.generate_completions {
         crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
         return ExitCode::SUCCESS;
+    }
+
+    // If no files specified, try to get from config (same as rledger)
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
+    if args.files.is_empty()
+        && let Ok(loaded) = crate::config::Config::load()
+    {
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        if let Some(file) = loaded.config.effective_file_path(profile.as_deref()) {
+            args.files.push(file);
+        }
     }
 
     match run(&args) {
