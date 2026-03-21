@@ -2,18 +2,32 @@
 //!
 //! Provides interactive and quick modes for adding transactions:
 //!
-//! - Interactive mode: Prompts for date, payee, accounts, amounts
-//! - Quick mode: One-liner for scripting
+//! - **Interactive mode**: Prompts for date, payee, accounts, amounts with tab completion
+//! - **Quick mode**: One-liner for scripting and automation
 //!
 //! # Usage
 //!
 //! ```bash
-//! # Interactive mode
+//! # Interactive mode (default)
 //! rledger add ledger.beancount
 //!
 //! # Quick mode
 //! rledger add -q "Coffee Shop" "Morning coffee" Expenses:Food 4.50USD Assets:Checking
+//!
+//! # Dry run (preview without appending)
+//! rledger add -n -q "Store" "Groceries" Expenses:Food 25USD Assets:Cash
+//!
+//! # Skip confirmation prompt
+//! rledger add -y -q "Coffee" "" Expenses:Food 5USD Assets:Checking
 //! ```
+//!
+//! # Options
+//!
+//! - `-d, --date <DATE>`: Transaction date (YYYY-MM-DD, "today", "yesterday", "+1", "-1")
+//! - `-n, --dry-run`: Preview transaction without appending to file
+//! - `-y, --yes`: Skip confirmation prompt
+//! - `-q, --quick <ARGS>`: Quick mode with inline arguments
+//! - `--no-completion`: Disable account tab completion in interactive mode
 
 use anyhow::{Context, Result, bail};
 use chrono::{Local, NaiveDate};
@@ -565,7 +579,7 @@ fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<
         // Prompt for amount
         let amount_prompt = format!("Amount {posting_num}");
         let amount_default = if posting_num > 1 && !balance_hint.is_empty() {
-            balance_hint.clone()
+            balance_hint
         } else {
             String::new()
         };
@@ -595,6 +609,14 @@ fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<
                 break;
             }
         }
+    }
+
+    // Validate we have at least 2 postings for a balanced transaction
+    if postings.len() < 2 {
+        bail!(
+            "At least two postings are required for a balanced transaction, but only {} provided.",
+            postings.len()
+        );
     }
 
     // If we have amounts and the last posting has no units, auto-balance it
@@ -928,8 +950,7 @@ mod tests {
   Expenses:Food  50.00 USD
   Assets:Checking
 "#;
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join("test_extract_accounts.beancount");
+        let temp_file = unique_temp_file("extract_accounts");
         std::fs::write(&temp_file, content).unwrap();
 
         let accounts = extract_accounts(&temp_file);
@@ -971,10 +992,23 @@ mod tests {
         assert_eq!(amt.currency.as_str(), "BRK.B");
     }
 
+    /// Generate a unique temp file path to avoid race conditions in parallel tests.
+    fn unique_temp_file(name: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let temp_dir = std::env::temp_dir();
+        temp_dir.join(format!(
+            "rustledger_test_{}_{}_{}.beancount",
+            name,
+            std::process::id(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
+        ))
+    }
+
     #[test]
     fn test_append_transaction_new_file() {
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join("test_append_new.beancount");
+        let temp_file = unique_temp_file("append_new");
 
         // Clean up any existing file
         std::fs::remove_file(&temp_file).ok();
@@ -990,8 +1024,7 @@ mod tests {
 
     #[test]
     fn test_append_transaction_empty_file() {
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join("test_append_empty.beancount");
+        let temp_file = unique_temp_file("append_empty");
 
         // Create empty file
         std::fs::write(&temp_file, "").unwrap();
@@ -1008,8 +1041,7 @@ mod tests {
 
     #[test]
     fn test_append_transaction_with_newline() {
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join("test_append_newline.beancount");
+        let temp_file = unique_temp_file("append_newline");
 
         // File ending with single newline
         std::fs::write(&temp_file, "2024-01-01 open Assets:Cash\n").unwrap();
@@ -1026,8 +1058,7 @@ mod tests {
 
     #[test]
     fn test_append_transaction_with_double_newline() {
-        let temp_dir = std::env::temp_dir();
-        let temp_file = temp_dir.join("test_append_double_newline.beancount");
+        let temp_file = unique_temp_file("append_double_newline");
 
         // File already ending with double newline
         std::fs::write(&temp_file, "2024-01-01 open Assets:Cash\n\n").unwrap();
