@@ -16,7 +16,7 @@ use std::sync::RwLock;
 use rustc_hash::FxHashMap;
 
 use chrono::Datelike;
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use rust_decimal::Decimal;
 use rustledger_core::{Amount, Directive, InternedStr, Inventory, Metadata, Position};
 #[cfg(test)]
@@ -200,7 +200,11 @@ impl<'a> Executor<'a> {
             }
         }
         // Slow path: compile and insert with write lock
-        let compiled = Regex::new(pattern).ok();
+        // Use case-insensitive matching to match Python beancount behavior
+        let compiled = RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .ok();
         let mut cache = match self.regex_cache.write() {
             Ok(guard) => guard,
             Err(poisoned) => poisoned.into_inner(),
