@@ -100,6 +100,7 @@ rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
 | `rledger query` | Run BQL queries (interactive shell or one-shot) |
 | `rledger format` | Auto-format beancount files |
 | `rledger report` | Generate balance, account, and statistics reports |
+| `rledger add` | Add transactions interactively or via quick mode |
 | `rledger doctor` | Debugging tools for ledger issues |
 | `rledger extract` | Import transactions from CSV/OFX bank statements |
 | `rledger price` | Fetch commodity prices from online sources |
