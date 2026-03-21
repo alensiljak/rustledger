@@ -56,30 +56,28 @@ impl NativePlugin for CurrencyAccountsPlugin {
             .as_ref()
             .map_or_else(|| self.base_account.clone(), |c| c.trim().to_string());
 
-        let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
+        // Pre-allocate with expected capacity
+        let mut new_directives: Vec<DirectiveWrapper> = Vec::with_capacity(input.directives.len());
         let mut created_accounts: HashSet<String> = HashSet::new();
 
-        // Collect existing opened accounts to avoid duplicates (fixes E1002)
-        let existing_opens: HashSet<String> = input
-            .directives
-            .iter()
-            .filter_map(|w| {
-                if let DirectiveData::Open(open) = &w.data {
-                    Some(open.account.clone())
-                } else {
-                    None
+        // Single pass: collect existing opens AND find earliest date
+        let mut existing_opens: HashSet<String> = HashSet::new();
+        let mut earliest_date: Option<&str> = None;
+        for wrapper in &input.directives {
+            // Track earliest date
+            match earliest_date {
+                None => earliest_date = Some(&wrapper.date),
+                Some(current) if wrapper.date.as_str() < current => {
+                    earliest_date = Some(&wrapper.date);
                 }
-            })
-            .collect();
-
-        // Find the earliest date from all directives for Open directive generation
-        let earliest_date = input
-            .directives
-            .iter()
-            .map(|d| d.date.as_str())
-            .min()
-            .unwrap_or("1970-01-01")
-            .to_string();
+                _ => {}
+            }
+            // Collect existing Open accounts
+            if let DirectiveData::Open(open) = &wrapper.data {
+                existing_opens.insert(open.account.clone());
+            }
+        }
+        let earliest_date = earliest_date.unwrap_or("1970-01-01").to_string();
 
         for wrapper in &input.directives {
             if let DirectiveData::Transaction(txn) = &wrapper.data {
