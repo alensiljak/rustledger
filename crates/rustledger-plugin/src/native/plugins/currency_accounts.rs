@@ -45,9 +45,9 @@ impl NativePlugin for CurrencyAccountsPlugin {
     }
 
     fn process(&self, input: PluginInput) -> PluginOutput {
-        use crate::types::{AmountData, PostingData};
+        use crate::types::{AmountData, OpenData, PostingData};
         use rust_decimal::Decimal;
-        use std::collections::HashMap;
+        use std::collections::{HashMap, HashSet};
         use std::str::FromStr;
 
         // Get base account from config if provided
@@ -57,6 +57,16 @@ impl NativePlugin for CurrencyAccountsPlugin {
             .map_or_else(|| self.base_account.clone(), |c| c.trim().to_string());
 
         let mut new_directives: Vec<DirectiveWrapper> = Vec::new();
+        let mut created_accounts: HashSet<String> = HashSet::new();
+
+        // Find the earliest date from all directives for Open directive generation
+        let earliest_date = input
+            .directives
+            .iter()
+            .map(|d| d.date.as_str())
+            .min()
+            .unwrap_or("1970-01-01")
+            .to_string();
 
         for wrapper in &input.directives {
             if let DirectiveData::Transaction(txn) = &wrapper.data {
@@ -82,9 +92,13 @@ impl NativePlugin for CurrencyAccountsPlugin {
                     let mut modified_txn = txn.clone();
 
                     for &(currency, total) in &non_zero_currencies {
+                        let account_name = format!("{base_account}:{currency}");
+                        // Track the account for Open directive generation
+                        created_accounts.insert(account_name.clone());
+
                         // Add posting to currency account to neutralize
                         modified_txn.postings.push(PostingData {
-                            account: format!("{base_account}:{currency}"),
+                            account: account_name,
                             units: Some(AmountData {
                                 number: (-*total).to_string(),
                                 currency: (*currency).clone(),
@@ -112,8 +126,37 @@ impl NativePlugin for CurrencyAccountsPlugin {
             }
         }
 
+        // Generate Open directives for all created currency accounts
+        let mut open_directives: Vec<DirectiveWrapper> = created_accounts
+            .into_iter()
+            .map(|account| DirectiveWrapper {
+                directive_type: "open".to_string(),
+                date: earliest_date.clone(),
+                filename: Some("<currency_accounts>".to_string()),
+                lineno: None,
+                data: DirectiveData::Open(OpenData {
+                    account,
+                    currencies: vec![],
+                    booking: None,
+                    metadata: vec![],
+                }),
+            })
+            .collect();
+
+        // Sort for deterministic output
+        open_directives.sort_by(|a, b| {
+            if let (DirectiveData::Open(oa), DirectiveData::Open(ob)) = (&a.data, &b.data) {
+                oa.account.cmp(&ob.account)
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        });
+
+        // Prepend Open directives to the output
+        open_directives.extend(new_directives);
+
         PluginOutput {
-            directives: new_directives,
+            directives: open_directives,
             errors: Vec::new(),
         }
     }
@@ -176,9 +219,26 @@ mod currency_accounts_tests {
 
         let output = plugin.process(input);
         assert_eq!(output.errors.len(), 0);
-        assert_eq!(output.directives.len(), 1);
+        // Should have 2 Open directives + 1 Transaction
+        assert_eq!(output.directives.len(), 3);
 
-        if let DirectiveData::Transaction(txn) = &output.directives[0].data {
+        // First two should be Open directives (sorted alphabetically)
+        if let DirectiveData::Open(open) = &output.directives[0].data {
+            assert_eq!(open.account, "Equity:CurrencyAccounts:EUR");
+            assert_eq!(output.directives[0].date, "2024-01-15");
+        } else {
+            panic!("Expected Open directive at index 0");
+        }
+
+        if let DirectiveData::Open(open) = &output.directives[1].data {
+            assert_eq!(open.account, "Equity:CurrencyAccounts:USD");
+            assert_eq!(output.directives[1].date, "2024-01-15");
+        } else {
+            panic!("Expected Open directive at index 1");
+        }
+
+        // Last should be the transaction
+        if let DirectiveData::Transaction(txn) = &output.directives[2].data {
             // Should have original 2 postings + 2 currency account postings
             assert_eq!(txn.postings.len(), 4);
 
@@ -201,7 +261,7 @@ mod currency_accounts_tests {
             // Should neutralize the 85 EUR
             assert_eq!(eur_posting.units.as_ref().unwrap().number, "-85");
         } else {
-            panic!("Expected Transaction directive");
+            panic!("Expected Transaction directive at index 2");
         }
     }
 
@@ -315,13 +375,133 @@ mod currency_accounts_tests {
         };
 
         let output = plugin.process(input);
-        if let DirectiveData::Transaction(txn) = &output.directives[0].data {
-            // Check for custom base account
+        // Should have 2 Open directives + 1 Transaction
+        assert_eq!(output.directives.len(), 3);
+
+        // Check Open directives use custom base account
+        assert!(output.directives.iter().any(|d| {
+            if let DirectiveData::Open(open) = &d.data {
+                open.account.starts_with("Income:Trading:")
+            } else {
+                false
+            }
+        }));
+
+        // Transaction is at index 2
+        if let DirectiveData::Transaction(txn) = &output.directives[2].data {
+            // Check for custom base account in postings
             assert!(
                 txn.postings
                     .iter()
                     .any(|p| p.account.starts_with("Income:Trading:"))
             );
+        } else {
+            panic!("Expected Transaction directive at index 2");
+        }
+    }
+
+    #[test]
+    fn test_currency_accounts_open_directives_use_earliest_date() {
+        let plugin = CurrencyAccountsPlugin::new();
+
+        let input = PluginInput {
+            directives: vec![
+                DirectiveWrapper {
+                    directive_type: "transaction".to_string(),
+                    date: "2024-03-15".to_string(),
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Transaction(TransactionData {
+                        flag: "*".to_string(),
+                        payee: None,
+                        narration: "Later exchange".to_string(),
+                        tags: vec![],
+                        links: vec![],
+                        metadata: vec![],
+                        postings: vec![
+                            PostingData {
+                                account: "Assets:USD".to_string(),
+                                units: Some(AmountData {
+                                    number: "-100".to_string(),
+                                    currency: "USD".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                            PostingData {
+                                account: "Assets:EUR".to_string(),
+                                units: Some(AmountData {
+                                    number: "85".to_string(),
+                                    currency: "EUR".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                        ],
+                    }),
+                },
+                DirectiveWrapper {
+                    directive_type: "transaction".to_string(),
+                    date: "2024-01-01".to_string(), // Earlier date
+                    filename: None,
+                    lineno: None,
+                    data: DirectiveData::Transaction(TransactionData {
+                        flag: "*".to_string(),
+                        payee: None,
+                        narration: "Earlier exchange".to_string(),
+                        tags: vec![],
+                        links: vec![],
+                        metadata: vec![],
+                        postings: vec![
+                            PostingData {
+                                account: "Assets:GBP".to_string(),
+                                units: Some(AmountData {
+                                    number: "-50".to_string(),
+                                    currency: "GBP".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                            PostingData {
+                                account: "Assets:JPY".to_string(),
+                                units: Some(AmountData {
+                                    number: "7500".to_string(),
+                                    currency: "JPY".to_string(),
+                                }),
+                                cost: None,
+                                price: None,
+                                flag: None,
+                                metadata: vec![],
+                            },
+                        ],
+                    }),
+                },
+            ],
+            options: PluginOptions {
+                operating_currencies: vec!["USD".to_string()],
+                title: None,
+            },
+            config: None,
+        };
+
+        let output = plugin.process(input);
+        // Should have 4 Open directives (EUR, GBP, JPY, USD) + 2 Transactions
+        assert_eq!(output.directives.len(), 6);
+
+        // All Open directives should use the earliest date (2024-01-01)
+        for wrapper in &output.directives[..4] {
+            if let DirectiveData::Open(_) = &wrapper.data {
+                assert_eq!(
+                    wrapper.date, "2024-01-01",
+                    "Open directive should use earliest date"
+                );
+            }
         }
     }
 }
