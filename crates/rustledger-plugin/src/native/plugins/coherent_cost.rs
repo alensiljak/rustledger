@@ -1,10 +1,10 @@
-//! Enforce cost OR price (not both) consistency.
+//! Enforce consistent cost tracking per currency.
 
 use crate::types::{DirectiveData, PluginError, PluginInput, PluginOutput};
 
 use super::super::NativePlugin;
 
-/// Plugin that ensures currencies use cost OR price consistently, never both.
+/// Plugin that ensures currencies are tracked consistently with cost or price-only.
 ///
 /// If a currency is used with cost notation `{...}` in some postings, it should
 /// not be used with price-only notation `@` (without cost) in other postings,
@@ -20,7 +20,7 @@ impl NativePlugin for CoherentCostPlugin {
     }
 
     fn description(&self) -> &'static str {
-        "Enforce cost OR price (not both) consistency"
+        "Enforce consistent cost tracking per currency"
     }
 
     fn process(&self, input: PluginInput) -> PluginOutput {
@@ -50,12 +50,20 @@ impl NativePlugin for CoherentCostPlugin {
         }
 
         // Find currencies used with cost in some places and price-only in others
-        let mut errors = Vec::new();
-        for currency in currencies_with_cost.intersection(&currencies_with_price_only) {
-            errors.push(PluginError::error(format!(
-                "Currency '{currency}' is used with both cost and price-only notation - this may cause inconsistencies"
-            )));
-        }
+        // Collect and sort for deterministic error ordering
+        let mut inconsistent: Vec<_> = currencies_with_cost
+            .intersection(&currencies_with_price_only)
+            .collect();
+        inconsistent.sort();
+
+        let errors: Vec<_> = inconsistent
+            .into_iter()
+            .map(|currency| {
+                PluginError::error(format!(
+                    "Currency '{currency}' is used with both cost and price-only notation - this may cause inconsistencies"
+                ))
+            })
+            .collect();
 
         PluginOutput {
             directives: input.directives,
