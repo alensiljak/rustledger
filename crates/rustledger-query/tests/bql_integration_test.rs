@@ -3234,3 +3234,44 @@ fn test_parallel_execution_matches_sequential() {
         other => panic!("expected Number or Amount result, got {other:?}"),
     }
 }
+
+// Regression test for issue #532: BQL regex should be case-insensitive
+// https://github.com/rustledger/rustledger/issues/532
+#[test]
+fn test_regex_case_insensitive() {
+    let directives = make_test_directives();
+
+    // Test lowercase pattern matches uppercase account component
+    let result = execute_query(
+        r#"SELECT DISTINCT account WHERE account ~ "food""#,
+        &directives,
+    );
+    assert_eq!(
+        result.len(),
+        1,
+        "lowercase 'food' should match 'Expenses:Food'"
+    );
+
+    // Test uppercase pattern matches mixed-case account
+    let result = execute_query(
+        r#"SELECT DISTINCT account WHERE account ~ "EXPENSES""#,
+        &directives,
+    );
+    // Should match Expenses:Food and Expenses:Transport
+    assert_eq!(
+        result.len(),
+        2,
+        "uppercase 'EXPENSES' should match 'Expenses:*' accounts"
+    );
+
+    // Test mixed-case pattern
+    let result = execute_query(
+        r#"SELECT DISTINCT account WHERE account ~ "eXpEnSeS""#,
+        &directives,
+    );
+    assert_eq!(
+        result.len(),
+        2,
+        "mixed-case pattern should match case-insensitively"
+    );
+}

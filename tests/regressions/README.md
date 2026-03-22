@@ -62,11 +62,16 @@ When adding a test from a new issue:
 | [#223](https://github.com/rustledger/rustledger/issues/223) | Lot matching with reverse-chronological order | Fixed |
 | [#230](https://github.com/rustledger/rustledger/issues/230) | Cost without currency lot matching | Fixed |
 | [#251](https://github.com/rustledger/rustledger/issues/251) | Tolerance handling | Fixed |
+| [#273](https://github.com/rustledger/rustledger/issues/273) | Inventory lots with same price but different dates | Fixed |
+| [#274](https://github.com/rustledger/rustledger/issues/274) | Transaction interpolation rounding issue | Fixed |
 | [#276](https://github.com/rustledger/rustledger/issues/276) | Multi-posting lot boundary crossing | Fixed |
 | [#277](https://github.com/rustledger/rustledger/issues/277) | CostSpec serialization in Python compat layer | Fixed |
 | [#278](https://github.com/rustledger/rustledger/issues/278) | Zerosum plugin duplicate Open directives | Fixed |
 | [#279](https://github.com/rustledger/rustledger/issues/279) | Crypto FIFO with multi-lot sales | Fixed |
+| [#283](https://github.com/rustledger/rustledger/issues/283) | BQL convert() should use latest price | Fixed |
 | [#333](https://github.com/rustledger/rustledger/issues/333) | Cost spec scale in interpolation | Fixed |
+| [#365](https://github.com/rustledger/rustledger/issues/365) | Glob patterns in include directives | Fixed |
 | [#516](https://github.com/rustledger/rustledger/issues/516) | coherent_cost plugin false positive on cost+price | Fixed |
 | [#520](https://github.com/rustledger/rustledger/issues/520) | currency_accounts missing Open directives | Fixed |
 | [#521](https://github.com/rustledger/rustledger/issues/521) | currency_accounts should use cost/price currency | Fixed |
+| [#532](https://github.com/rustledger/rustledger/issues/532) | BQL regex case-insensitive matching | Fixed |
