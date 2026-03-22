@@ -27,22 +27,23 @@ impl NativePlugin for CoherentCostPlugin {
         use std::collections::HashSet;
 
         // Track currencies used with cost (with or without price)
-        let mut currencies_with_cost: HashSet<String> = HashSet::new();
+        // Use references to avoid cloning currency strings
+        let mut currencies_with_cost: HashSet<&str> = HashSet::new();
         // Track currencies used with price-only (no cost)
-        let mut currencies_with_price_only: HashSet<String> = HashSet::new();
+        let mut currencies_with_price_only: HashSet<&str> = HashSet::new();
 
         for wrapper in &input.directives {
             if let DirectiveData::Transaction(txn) = &wrapper.data {
                 for posting in &txn.postings {
                     if let Some(units) = &posting.units {
-                        let currency = &units.currency;
+                        let currency = units.currency.as_str();
 
                         // Check if this posting has cost
                         if posting.cost.is_some() {
-                            currencies_with_cost.insert(currency.clone());
+                            currencies_with_cost.insert(currency);
                         } else if posting.price.is_some() {
                             // Price-only (no cost) - this is the problematic case
-                            currencies_with_price_only.insert(currency.clone());
+                            currencies_with_price_only.insert(currency);
                         }
                     }
                 }
@@ -53,8 +54,9 @@ impl NativePlugin for CoherentCostPlugin {
         // Collect and sort for deterministic error ordering
         let mut inconsistent: Vec<_> = currencies_with_cost
             .intersection(&currencies_with_price_only)
+            .copied()
             .collect();
-        inconsistent.sort();
+        inconsistent.sort_unstable();
 
         let errors: Vec<_> = inconsistent
             .into_iter()
