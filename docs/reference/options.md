@@ -85,12 +85,12 @@ Account for current period earnings.
 option "account_current_earnings" "Equity:Current-Earnings"
 ```
 
-### account_opening_balances
+### account_previous_balances
 
-Account for opening balances.
+Account for opening/previous balances.
 
 ```beancount
-option "account_opening_balances" "Equity:Opening-Balances"
+option "account_previous_balances" "Equity:Opening-Balances"
 ```
 
 ### account_unrealized_gains
@@ -184,7 +184,7 @@ option "documents" "/home/user/finances/documents"
 | `name_expenses` | string | Expenses | Expenses root name |
 | `account_previous_earnings` | string | - | Retained earnings account |
 | `account_current_earnings` | string | - | Current earnings account |
-| `account_opening_balances` | string | - | Opening balances account |
+| `account_previous_balances` | string | Equity:Opening-Balances | Opening balances account |
 | `account_unrealized_gains` | string | - | Unrealized gains account |
 | `fiscal_year_begin` | string | 01-01 | Fiscal year start |
 | `inferred_tolerance_default` | string | - | Balance tolerance |
@@ -203,7 +203,7 @@ option "operating_currency" "USD"
 option "booking_method" "FIFO"
 option "render_commas" "TRUE"
 
-option "account_opening_balances" "Equity:Opening-Balances"
+option "account_previous_balances" "Equity:Opening-Balances"
 option "account_unrealized_gains" "Income:Capital-Gains:Unrealized"
 
 option "documents" "/home/user/finances/receipts"

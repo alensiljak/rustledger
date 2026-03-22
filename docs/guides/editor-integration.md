@@ -64,7 +64,7 @@ local configs = require('lspconfig.configs')
 if not configs.rustledger then
   configs.rustledger = {
     default_config = {
-      cmd = { 'rledger', 'lsp' },
+      cmd = { 'rledger-lsp' },
       filetypes = { 'beancount' },
       root_dir = lspconfig.util.root_pattern('.git', 'main.beancount', 'ledger.beancount'),
       settings = {},
@@ -83,8 +83,8 @@ Add to `~/.vim/coc-settings.json`:
 {
   "languageserver": {
     "rustledger": {
-      "command": "rledger",
-      "args": ["lsp"],
+      "command": "rledger-lsp",
+      "args": [],
       "filetypes": ["beancount"],
       "rootPatterns": [".git", "main.beancount", "ledger.beancount"]
     }
@@ -133,7 +133,7 @@ local configs = require('lspconfig.configs')
 if not configs.rustledger then
   configs.rustledger = {
     default_config = {
-      cmd = { 'rledger', 'lsp' },
+      cmd = { 'rledger-lsp' },
       filetypes = { 'beancount' },
       root_dir = lspconfig.util.root_pattern('.git', '*.beancount'),
     },
@@ -174,7 +174,7 @@ vim.api.nvim_create_autocmd('BufWritePre', {
 (require 'eglot)
 
 (add-to-list 'eglot-server-programs
-             '(beancount-mode . ("rledger" "lsp")))
+             '(beancount-mode . ("rledger-lsp")))
 
 (add-hook 'beancount-mode-hook 'eglot-ensure)
 ```
@@ -190,7 +190,7 @@ vim.api.nvim_create_autocmd('BufWritePre', {
 
 (lsp-register-client
  (make-lsp-client
-  :new-connection (lsp-stdio-connection '("rledger" "lsp"))
+  :new-connection (lsp-stdio-connection '("rledger-lsp"))
   :major-modes '(beancount-mode)
   :server-id 'rustledger))
 
@@ -230,8 +230,8 @@ roots = [".git"]
 language-servers = ["rustledger"]
 
 [language-server.rustledger]
-command = "rledger"
-args = ["lsp"]
+command = "rledger-lsp"
+args = []
 ```
 
 ## Sublime Text
@@ -247,7 +247,7 @@ args = ["lsp"]
   "clients": {
     "rustledger": {
       "enabled": true,
-      "command": ["rledger", "lsp"],
+      "command": ["rledger-lsp"],
       "selector": "source.beancount"
     }
   }
@@ -272,7 +272,7 @@ rledger --version
 Test LSP manually:
 
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | rledger lsp
+echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' | rledger-lsp
 ```
 
 ### No Completions

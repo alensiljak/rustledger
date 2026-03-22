@@ -5,7 +5,7 @@ description: Available plugins and configuration
 
 # Plugins Reference
 
-rustledger supports native Rust plugins and WASM plugins for validation and transformation.
+rustledger supports native Rust plugins for validation and transformation.
 
 ## Using Plugins
 
@@ -16,11 +16,6 @@ plugin "beancount.plugins.auto_accounts"
 plugin "beancount.plugins.implicit_prices"
 ```
 
-Or with configuration:
-
-```beancount
-plugin "beancount.plugins.leafonly" "Expenses Income"
-```
 
 ## Built-in Plugins
 
@@ -45,7 +40,6 @@ plugin "beancount.plugins.leafonly" "Expenses Income"
 | `implicit_prices` | Generate prices from transactions |
 | `sellgains` | Auto-generate capital gains postings |
 | `split_expenses` | Split shared expenses |
-| `tag_pending` | Mark pending transactions |
 
 ## Plugin Details
 
@@ -108,17 +102,16 @@ Options: None
 
 ### leafonly
 
-Restricts postings to leaf accounts only.
+Restricts postings to leaf accounts only. Reports an error if you post to an account that has sub-accounts.
 
 ```beancount
-; Only allow postings to 'Expenses' and 'Income' leaf accounts
-plugin "beancount.plugins.leafonly" "Expenses Income"
+plugin "beancount.plugins.leafonly"
 ```
 
 ```beancount
 ; ERROR: Cannot post to parent account
 2024-01-15 * "Coffee"
-  Expenses   5.00 USD
+  Expenses   5.00 USD    ; Error if Expenses:Food exists
   Assets:Cash
 
 ; OK: Posting to leaf account
@@ -127,7 +120,7 @@ plugin "beancount.plugins.leafonly" "Expenses Income"
   Assets:Cash
 ```
 
-Options: Space-separated list of account prefixes to enforce
+Options: None
 
 ### noduplicates
 
@@ -224,12 +217,11 @@ plugin "beancount.plugins.check_commodity"
 
 ### Native Rust Plugin
 
-Add to `crates/rustledger-plugin/src/native/`:
+Add to `crates/rustledger-plugin/src/native/plugins/`:
 
 ```rust
 // my_plugin.rs
-use crate::{NativePlugin, PluginResult};
-use rustledger_core::Directive;
+use crate::{NativePlugin, PluginInput, PluginOutput};
 
 pub struct MyPlugin;
 
@@ -238,37 +230,26 @@ impl NativePlugin for MyPlugin {
         "my_plugin"
     }
 
-    fn process(&self, directives: Vec<Directive>, config: &str)
-        -> PluginResult<Vec<Directive>>
-    {
-        // Your logic here
-        Ok(directives)
+    fn description(&self) -> &'static str {
+        "Description of what the plugin does"
+    }
+
+    fn process(&self, input: PluginInput) -> PluginOutput {
+        // input.directives - the directives to process
+        // input.config - optional config string from plugin directive
+        // Return PluginOutput with modified directives and/or errors
+        PluginOutput {
+            directives: input.directives,
+            errors: vec![],
+        }
     }
 }
 ```
 
-Register in `lib.rs`:
+Register in `mod.rs`:
 
 ```rust
-registry.register("my_plugin", Box::new(MyPlugin));
-```
-
-### WASM Plugin
-
-WASM plugins allow extending without recompiling:
-
-```rust
-// Plugin compiled to WASM
-#[no_mangle]
-pub extern "C" fn process(ptr: *const u8, len: usize) -> *mut u8 {
-    // Parse input JSON, process, return JSON
-}
-```
-
-Load with:
-
-```beancount
-plugin "path/to/plugin.wasm"
+registry.register(Box::new(MyPlugin));
 ```
 
 ## Compatibility with Python Beancount
@@ -284,7 +265,7 @@ Most Python beancount plugins have native equivalents:
 | `noduplicates` | ✅ `noduplicates` |
 | `onecommodity` | ✅ `onecommodity` |
 | `sellgains` | ✅ `sellgains` |
-| Custom Python | Rewrite or WASM |
+| Custom Python | Rewrite in Rust |
 
 ## See Also
 

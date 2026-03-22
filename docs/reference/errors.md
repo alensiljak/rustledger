@@ -5,52 +5,80 @@ description: Validation errors and how to fix them
 
 # Error Codes Reference
 
-This page documents all validation errors that `rledger check` can report.
+This page documents validation errors that `rledger check` can report.
 
 ## Error Format
 
 Errors are displayed as:
 
 ```
-file.beancount:42: error[E001]: Transaction does not balance
+file.beancount:42: error[E1001]: Account not opened
 ```
 
 Format: `file:line: error[code]: message`
 
-## Syntax Errors
+## Error Code Categories
 
-### E001: Syntax Error
+| Range | Category |
+|-------|----------|
+| E1xxx | Account errors |
+| E2xxx | Balance errors |
+| E3xxx | Transaction errors |
+| E4xxx | Booking/lot errors |
+| E5xxx | Currency errors |
+| E6xxx | Metadata errors |
+| E7xxx | Option errors |
+| E8xxx | Document errors |
 
-**Cause**: Invalid beancount syntax.
+## Account Errors (E1xxx)
+
+### E1001: Account Not Opened
+
+**Cause**: Transaction uses an account without an `open` directive.
 
 **Example**:
 ```beancount
-2024-01-15 * Coffee     ; Missing quotes around payee
-  Expenses:Food   5.00
-```
-
-**Fix**: Correct the syntax:
-```beancount
+; No 'open' for Expenses:Food
 2024-01-15 * "Coffee"
   Expenses:Food   5.00 USD
   Assets:Cash    -5.00 USD
 ```
 
-### E002: Invalid Date
+**Fix**: Add an open directive:
+```beancount
+2020-01-01 open Expenses:Food
+2020-01-01 open Assets:Cash  USD
+```
 
-**Cause**: Date format is incorrect.
+Or use `rledger doctor missing-open` to generate them.
+
+### E1002: Account Already Open
+
+**Cause**: Duplicate `open` directive for same account.
+
+**Fix**: Remove the duplicate open directive.
+
+### E1003: Account Used After Close
+
+**Cause**: Transaction on an account after its `close` date.
 
 **Example**:
 ```beancount
-15-01-2024 * "Coffee"   ; Wrong format
+2024-01-01 close Assets:OldBank
+
+2024-02-15 * "Late transaction"
+  Assets:OldBank   100.00 USD   ; Account is closed
 ```
 
-**Fix**: Use YYYY-MM-DD format:
-```beancount
-2024-01-15 * "Coffee"
-```
+**Fix**: Use correct account or adjust close date.
 
-### E003: Invalid Account Name
+### E1004: Account Close With Non-Zero Balance
+
+**Cause**: Closing an account that still has a balance.
+
+**Fix**: Zero out the account balance before closing.
+
+### E1005: Invalid Account Name
 
 **Cause**: Account name doesn't match required format.
 
@@ -60,20 +88,46 @@ Format: `file:line: error[code]: message`
   expenses:food   5.00 USD    ; Lowercase not allowed
 ```
 
-**Fix**: Use Title:Case:Accounts:
+**Fix**: Use Title:Case:Accounts starting with Assets, Liabilities, Equity, Income, or Expenses.
+
+## Balance Errors (E2xxx)
+
+### E2001: Balance Assertion Failed
+
+**Cause**: Account balance doesn't match assertion.
+
+**Example**:
 ```beancount
-2024-01-15 * "Coffee"
-  Expenses:Food   5.00 USD
+2024-01-15 balance Assets:Checking  1000.00 USD
+; But actual balance is 950.00 USD
 ```
 
-Account names must:
-- Start with Assets, Liabilities, Equity, Income, or Expenses
-- Use colons as separators
-- Have Title Case components
+**Fix**:
+1. Check for missing transactions
+2. Verify the expected amount
+3. Use `rledger doctor context` to see surrounding transactions
 
-## Balance Errors
+### E2002: Balance Exceeds Tolerance
 
-### E010: Transaction Does Not Balance
+**Cause**: Balance is off by more than the allowed tolerance.
+
+**Fix**: Adjust the balance assertion or find the discrepancy.
+
+### E2003: Pad Without Balance Assertion
+
+**Cause**: A `pad` directive has no subsequent `balance` assertion.
+
+**Fix**: Add a balance assertion after the pad.
+
+### E2004: Multiple Pads for Same Balance
+
+**Cause**: Multiple pad directives for the same balance assertion.
+
+**Fix**: Remove duplicate pad directives.
+
+## Transaction Errors (E3xxx)
+
+### E3001: Transaction Does Not Balance
 
 **Cause**: Postings don't sum to zero.
 
@@ -91,86 +145,56 @@ Account names must:
   Assets:Cash     -5.00 USD
 ```
 
-### E011: Balance Assertion Failed
+### E3002: Multiple Missing Amounts
 
-**Cause**: Account balance doesn't match assertion.
+**Cause**: More than one posting is missing an amount for the same currency.
 
-**Example**:
-```beancount
-2024-01-15 balance Assets:Checking  1000.00 USD
-; But actual balance is 950.00 USD
-```
+**Fix**: Only one posting per currency can have an inferred amount.
 
-**Fix**:
-1. Check for missing transactions
-2. Verify the expected amount
-3. Use `rledger doctor context` to see surrounding transactions
+### E3003: Transaction Has No Postings
 
-### E012: Mixed Currencies Cannot Balance
+**Cause**: Transaction has no posting lines.
 
-**Cause**: Transaction has multiple currencies without cost/price.
+**Fix**: Add at least two postings to the transaction.
 
-**Example**:
-```beancount
-2024-01-15 * "Exchange"
-  Assets:USD    100.00 USD
-  Assets:EUR    -85.00 EUR    ; Can't auto-balance different currencies
-```
+## Booking Errors (E4xxx)
 
-**Fix**: Add cost or price:
-```beancount
-2024-01-15 * "Exchange"
-  Assets:USD    100.00 USD
-  Assets:EUR    -85.00 EUR @ 1.18 USD
-```
+### E4001: No Matching Lot
 
-## Account Errors
-
-### E020: Account Not Opened
-
-**Cause**: Transaction uses an account without an `open` directive.
+**Cause**: Can't find a lot to reduce when selling/removing inventory.
 
 **Example**:
 ```beancount
-; No 'open' for Expenses:Food
-2024-01-15 * "Coffee"
-  Expenses:Food   5.00 USD
-  Assets:Cash    -5.00 USD
+2024-01-15 * "Sell AAPL"
+  Assets:Brokerage  -10 AAPL {150.00 USD}  ; No lot at this cost
 ```
 
-**Fix**: Add an open directive:
+**Fix**: Check cost basis matches existing lot, or use `{}` for automatic matching.
+
+### E4002: Insufficient Units
+
+**Cause**: Trying to reduce more units than available in the lot.
+
+**Fix**: Check the quantity being sold matches available holdings.
+
+### E4003: Ambiguous Lot Match
+
+**Cause**: In STRICT booking mode, multiple lots could match.
+
+**Fix**: Specify the exact lot using cost basis `{cost}` or date `{date}`.
+
+## Currency Errors (E5xxx)
+
+### E5001: Currency Not Declared
+
+**Cause**: Using a currency without a `commodity` directive (when strict mode enabled).
+
+**Fix**: Declare the currency:
 ```beancount
-2020-01-01 open Expenses:Food
-2020-01-01 open Assets:Cash  USD
-
-2024-01-15 * "Coffee"
-  Expenses:Food   5.00 USD
-  Assets:Cash    -5.00 USD
+2020-01-01 commodity USD
 ```
 
-Or use `rledger doctor missing-open` to generate them.
-
-### E021: Account Already Opened
-
-**Cause**: Duplicate `open` directive for same account.
-
-**Fix**: Remove the duplicate.
-
-### E022: Account Closed
-
-**Cause**: Transaction on an account after its `close` date.
-
-**Example**:
-```beancount
-2024-01-01 close Assets:OldBank
-
-2024-02-15 * "Late transaction"
-  Assets:OldBank   100.00 USD   ; Account is closed
-```
-
-**Fix**: Use correct account or adjust close date.
-
-### E023: Invalid Account Currency
+### E5002: Currency Not Allowed in Account
 
 **Cause**: Posting uses currency not allowed for account.
 
@@ -184,87 +208,43 @@ Or use `rledger doctor missing-open` to generate them.
 
 **Fix**: Use allowed currency or update account declaration.
 
-## Cost and Price Errors
+## Metadata Errors (E6xxx)
 
-### E030: Invalid Cost Specification
+### E6001: Duplicate Metadata Key
 
-**Cause**: Cost syntax is incorrect.
+**Cause**: Same metadata key used twice on one directive.
 
-**Example**:
-```beancount
-2024-01-15 * "Buy"
-  Assets:Brokerage   10 AAPL {USD}  ; Missing price
-```
+**Fix**: Remove the duplicate key.
 
-**Fix**:
-```beancount
-2024-01-15 * "Buy"
-  Assets:Brokerage   10 AAPL {150.00 USD}
-```
+### E6002: Invalid Metadata Value
 
-### E031: Booking Error
+**Cause**: Metadata value has wrong type.
 
-**Cause**: Can't find lot to reduce (FIFO/LIFO mismatch).
+**Fix**: Use correct value type (string, number, date, etc.).
 
-**Example**:
-```beancount
-2024-01-15 * "Sell AAPL"
-  Assets:Brokerage  -10 AAPL {150.00 USD}  ; No matching lot
-```
+## Option Errors (E7xxx)
 
-**Fix**: Check cost basis matches existing lot, or use `{}` for automatic matching.
+### E7001: Unknown Option
 
-## Plugin Errors
+**Cause**: Unrecognized option name.
 
-### E040: Plugin Error
+**Fix**: Check option spelling. Use `rledger doctor list-options` to see valid options.
 
-**Cause**: A plugin reported an error.
+### E7002: Invalid Option Value
 
-Check the error message for plugin-specific details.
+**Cause**: Option value is invalid.
 
-### E041: Unknown Plugin
+**Fix**: Check the expected format for the option.
 
-**Cause**: Plugin specified in file is not available.
+### E7003: Duplicate Option
 
-**Fix**: Check plugin name spelling or ensure it's installed.
+**Cause**: Non-repeatable option specified multiple times.
 
-## Duplicate Errors
+**Fix**: Remove duplicate option directives.
 
-### E050: Duplicate Transaction
+## Document Errors (E8xxx)
 
-**Cause**: `noduplicates` plugin found matching transaction.
-
-**Fix**: Remove duplicate or add distinguishing metadata.
-
-### E051: Duplicate Price
-
-**Cause**: `unique_prices` plugin found multiple prices for same commodity on same day.
-
-**Fix**: Keep only one price per commodity per day.
-
-## Metadata Errors
-
-### E060: Invalid Metadata
-
-**Cause**: Metadata syntax error.
-
-**Example**:
-```beancount
-2024-01-15 * "Coffee"
-  note "missing colon"        ; Wrong
-  Expenses:Food   5.00 USD
-```
-
-**Fix**:
-```beancount
-2024-01-15 * "Coffee"
-  note: "with colon"          ; Correct
-  Expenses:Food   5.00 USD
-```
-
-## Document Errors
-
-### E070: Document Not Found
+### E8001: Document Not Found
 
 **Cause**: Document directive references missing file.
 
