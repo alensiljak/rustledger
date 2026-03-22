@@ -45,7 +45,7 @@
 - **File**: `crates/rustledger-loader/src/lib.rs`
 - **Line**: 308
 - **Problem**: `fs::read_to_string()` then `source.clone()` = 2x memory
-- **Fix**: Use `Arc<str>` instead of cloning
+- **Fix**: Use `Arc\<str\>` instead of cloning
 ```rust
 // Before
 let source = fs::read_to_string(path)?;

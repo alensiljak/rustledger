@@ -390,6 +390,5 @@ nix develop .#bench
 
 ## See Also
 
-- [TESTING.md](TESTING.md) - Test organization and fixtures
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Development workflow
+- [Testing](testing.md) - Test organization and fixtures
 - [Criterion Documentation](https://bheisler.github.io/criterion.rs/book/)

@@ -410,7 +410,4 @@ cargo insta review
 
 ## See Also
 
-- [BENCHMARKING.md](BENCHMARKING.md) - Performance benchmarks
-- [CONTRIBUTING.md](../CONTRIBUTING.md) - Development workflow
-- [spec/README.md](../spec/README.md) - Specification documents
-- [tests/compatibility/README.md](../tests/compatibility/README.md) - Compatibility test details
+- [Benchmarking](benchmarking.md) - Performance benchmarks
