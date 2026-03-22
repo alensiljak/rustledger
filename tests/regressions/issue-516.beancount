@@ -1,0 +1,30 @@
+; Issue: https://github.com/rustledger/rustledger/issues/516
+; Description: coherent_cost plugin should not error when cost AND price are on same posting
+; Expected: No errors (matches Python beancount behavior)
+
+option "operating_currency" "EUR"
+
+plugin "beancount.plugins.coherent_cost"
+
+2010-01-01 open Assets:Investments:Shares:XYZ
+2010-01-01 open Expenses:Financial
+2010-01-01 open Assets:Investments:Cash-EUR
+2010-01-01 open Income:Investment:Capital-Gains
+
+2014-11-14 txn "Buy XYZ"
+  Assets:Investments:Shares:XYZ         18 XYZ {{745.92 EUR}}
+  Expenses:Financial                  4.00 EUR
+  Assets:Investments:Cash-EUR      -749.92 EUR
+
+2016-04-20 txn "Buy XYZ"
+  Assets:Investments:Shares:XYZ         16 XYZ {{737.76 EUR}}
+  Expenses:Financial                  4.00 EUR
+  Assets:Investments:Cash-EUR      -741.76 EUR
+
+; This transaction has BOTH cost AND price - this is valid for recording capital gains
+2018-03-21 * "Sell XYZ"
+  Assets:Investments:Shares:XYZ        -18 XYZ {41.44 EUR, 2014-11-14} @ 54.95 EUR
+  Assets:Investments:Shares:XYZ        -16 XYZ {46.11 EUR, 2016-04-20} @ 54.95 EUR
+  Income:Investment:Capital-Gains  -384.62 EUR
+  Expenses:Financial                  4.00 EUR
+  Assets:Investments:Cash-EUR      1864.30 EUR
