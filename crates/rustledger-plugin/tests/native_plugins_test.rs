@@ -142,6 +142,68 @@ fn make_price(date: &str, currency: &str, amount: &str, quote_currency: &str) ->
     }
 }
 
+/// Create a transaction with BOTH cost and price (for capital gains on sales).
+fn make_transaction_with_cost_and_price(
+    date: &str,
+    narration: &str,
+    account: &str,
+    units: (&str, &str),
+    cost: (&str, &str),
+    price: (&str, &str),
+    other_account: &str,
+) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![
+                PostingData {
+                    account: account.to_string(),
+                    units: Some(AmountData {
+                        number: units.0.to_string(),
+                        currency: units.1.to_string(),
+                    }),
+                    cost: Some(CostData {
+                        number_per: Some(cost.0.to_string()),
+                        number_total: None,
+                        currency: Some(cost.1.to_string()),
+                        date: None,
+                        label: None,
+                        merge: false,
+                    }),
+                    price: Some(PriceAnnotationData {
+                        is_total: false,
+                        amount: Some(AmountData {
+                            number: price.0.to_string(),
+                            currency: price.1.to_string(),
+                        }),
+                        number: None,
+                        currency: None,
+                    }),
+                    flag: None,
+                    metadata: vec![],
+                },
+                PostingData {
+                    account: other_account.to_string(),
+                    units: None,
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+            ],
+        }),
+    }
+}
+
 fn make_commodity(date: &str, currency: &str) -> DirectiveWrapper {
     DirectiveWrapper {
         directive_type: "commodity".to_string(),
@@ -1221,5 +1283,43 @@ fn test_coherent_cost_only_price_ok() {
     assert!(
         output.errors.is_empty(),
         "expected no errors when using only price"
+    );
+}
+
+/// Test `coherent_cost` passes when posting has BOTH cost AND price (capital gains).
+/// Regression test for issue #516.
+#[test]
+fn test_coherent_cost_cost_and_price_ok() {
+    let plugin = CoherentCostPlugin;
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Income:CapitalGains"),
+        // Buy with cost
+        make_transaction_with_cost(
+            "2024-01-15",
+            "Buy stock",
+            "Assets:Stock",
+            ("10", "HOOL"),
+            ("100", "USD"),
+            "Assets:Cash",
+        ),
+        // Sell with BOTH cost AND price (standard capital gains recording)
+        make_transaction_with_cost_and_price(
+            "2024-06-15",
+            "Sell stock",
+            "Assets:Stock",
+            ("-10", "HOOL"),
+            ("100", "USD"), // cost basis
+            ("150", "USD"), // sale price
+            "Assets:Cash",
+        ),
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "expected no errors when using cost+price on same posting (capital gains)"
     );
 }

@@ -6,8 +6,12 @@ use super::super::NativePlugin;
 
 /// Plugin that ensures currencies use cost OR price consistently, never both.
 ///
-/// If a currency is used with cost notation `{...}`, it should not also be used
-/// with price notation `@` in the same ledger, as this can lead to inconsistencies.
+/// If a currency is used with cost notation `{...}` in some postings, it should
+/// not be used with price-only notation `@` (without cost) in other postings,
+/// as this indicates inconsistent tracking.
+///
+/// Note: Having BOTH cost AND price on the same posting is valid and common
+/// when selling positions (cost = acquisition price, price = sale price).
 pub struct CoherentCostPlugin;
 
 impl NativePlugin for CoherentCostPlugin {
@@ -20,12 +24,12 @@ impl NativePlugin for CoherentCostPlugin {
     }
 
     fn process(&self, input: PluginInput) -> PluginOutput {
-        use std::collections::{HashMap, HashSet};
+        use std::collections::HashSet;
 
-        // Track which currencies are used with cost vs price
+        // Track currencies used with cost (with or without price)
         let mut currencies_with_cost: HashSet<String> = HashSet::new();
-        let mut currencies_with_price: HashSet<String> = HashSet::new();
-        let mut first_use: HashMap<String, (String, String)> = HashMap::new(); // currency -> (type, date)
+        // Track currencies used with price-only (no cost)
+        let mut currencies_with_price_only: HashSet<String> = HashSet::new();
 
         for wrapper in &input.directives {
             if let DirectiveData::Transaction(txn) = &wrapper.data {
@@ -33,29 +37,23 @@ impl NativePlugin for CoherentCostPlugin {
                     if let Some(units) = &posting.units {
                         let currency = &units.currency;
 
-                        if posting.cost.is_some() && !currencies_with_cost.contains(currency) {
+                        // Check if this posting has cost
+                        if posting.cost.is_some() {
                             currencies_with_cost.insert(currency.clone());
-                            first_use
-                                .entry(currency.clone())
-                                .or_insert(("cost".to_string(), wrapper.date.clone()));
-                        }
-
-                        if posting.price.is_some() && !currencies_with_price.contains(currency) {
-                            currencies_with_price.insert(currency.clone());
-                            first_use
-                                .entry(currency.clone())
-                                .or_insert(("price".to_string(), wrapper.date.clone()));
+                        } else if posting.price.is_some() {
+                            // Price-only (no cost) - this is the problematic case
+                            currencies_with_price_only.insert(currency.clone());
                         }
                     }
                 }
             }
         }
 
-        // Find currencies used with both
+        // Find currencies used with cost in some places and price-only in others
         let mut errors = Vec::new();
-        for currency in currencies_with_cost.intersection(&currencies_with_price) {
+        for currency in currencies_with_cost.intersection(&currencies_with_price_only) {
             errors.push(PluginError::error(format!(
-                "Currency '{currency}' is used with both cost and price notation - this may cause inconsistencies"
+                "Currency '{currency}' is used with both cost and price-only notation - this may cause inconsistencies"
             )));
         }
 

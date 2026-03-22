@@ -67,5 +67,6 @@ When adding a test from a new issue:
 | [#278](https://github.com/rustledger/rustledger/issues/278) | Zerosum plugin duplicate Open directives | Fixed |
 | [#279](https://github.com/rustledger/rustledger/issues/279) | Crypto FIFO with multi-lot sales | Fixed |
 | [#333](https://github.com/rustledger/rustledger/issues/333) | Cost spec scale in interpolation | Fixed |
+| [#516](https://github.com/rustledger/rustledger/issues/516) | coherent_cost plugin false positive on cost+price | Fixed |
 | [#520](https://github.com/rustledger/rustledger/issues/520) | currency_accounts missing Open directives | Fixed |
 | [#521](https://github.com/rustledger/rustledger/issues/521) | currency_accounts should use cost/price currency | Fixed |
