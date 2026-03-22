@@ -17,7 +17,7 @@
 
 | Change | Before | After | Improvement |
 |--------|--------|-------|-------------|
-| Phase 0.1: Arc<str> | 160ms | 134ms | **16% faster** |
+| Phase 0.1: `Arc<str>` | 160ms | 134ms | **16% faster** |
 | Phase 1.1: Rc for closures | 113ms | 141ms | ❌ 25% slower (reverted) |
 | Phase 1.1: Zero-copy primitives | 108ms | 101ms | **~7% faster** |
 | Phase 2: SmallVec | 113ms | 143ms | ❌ 27% slower (reverted) |
@@ -125,7 +125,7 @@ pub postings: SmallVec<[Posting; 4]>,    // was Vec<Posting>
 ## Phase 3: String Interning (Week 3-4) ✅ DONE
 
 **Goal**: Deduplicate strings across entire ledger
-**Result**: ~6% faster, memory deduplication via Arc<str>
+**Result**: ~6% faster, memory deduplication via `Arc<str>`
 
 ### 3.1 Extend InternedStr Usage ✅
 ```rust
@@ -146,7 +146,7 @@ pub struct Document {
 ### 3.2 Cache Re-interning ✅
 - `reintern_directives()` deduplicates strings after cache load
 - Typical deduplication: 150+ strings per ledger
-- Memory savings from Arc<str> sharing
+- Memory savings from `Arc<str>` sharing
 
 ---
 
