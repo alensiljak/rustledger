@@ -11,6 +11,7 @@ Technical reference documentation for rustledger.
 
 | Guide | Description |
 |-------|-------------|
+| [Syntax Reference](syntax.md) | Complete beancount file format |
 | [BQL Reference](bql.md) | Beancount Query Language syntax |
 | [Plugins](plugins.md) | Available plugins and configuration |
 | [Error Codes](errors.md) | Validation errors and fixes |
