@@ -1,0 +1,68 @@
+---
+title: Commands Reference
+description: Complete CLI reference for rustledger
+---
+
+# Commands Reference
+
+rustledger provides several commands for working with beancount ledgers.
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| [check](check.md) | Validate ledger files |
+| [query](query.md) | Run BQL queries |
+| [report](report.md) | Generate financial reports |
+| [format](format.md) | Auto-format beancount files |
+| [extract](extract.md) | Import from bank statements |
+| [price](price.md) | Fetch commodity prices |
+| [doctor](doctor.md) | Debugging and diagnostic tools |
+
+## Global Options
+
+These options work with all commands:
+
+```
+-h, --help       Print help information
+-V, --version    Print version information
+```
+
+## Specifying the Ledger File
+
+Most commands require a beancount file:
+
+```bash
+# Explicit file path
+rledger check ledger.beancount
+
+# Use LEDGER_FILE environment variable
+export LEDGER_FILE="~/finances/main.beancount"
+rledger check
+
+# Use profile from config
+rledger check -P personal
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (validation errors, file not found, etc.) |
+| 2 | Invalid usage (bad arguments) |
+
+## Bean-* Aliases
+
+For compatibility with Python beancount, rustledger provides aliased commands:
+
+| Alias | Equivalent |
+|-------|------------|
+| `bean-check` | `rledger check` |
+| `bean-query` | `rledger query` |
+| `bean-format` | `rledger format` |
+| `bean-doctor` | `rledger doctor` |
+| `bean-extract` | `rledger extract` |
+| `bean-price` | `rledger price` |
+
+These aliases are included in the standard installation.
