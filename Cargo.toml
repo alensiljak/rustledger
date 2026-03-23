@@ -57,7 +57,7 @@ regex = "1"
 # Parsing
 format_num_pattern = { version = "0.9.4", features = ["rust_decimal"] }
 chumsky = "1.0.0-alpha.7"
-winnow = { version = "0.7", features = ["simd"] }
+winnow = { version = "1.0", features = ["simd"] }
 ariadne = "0.6"
 logos = "0.16"
 logosky = "0.2"
