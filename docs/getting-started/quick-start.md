@@ -136,7 +136,7 @@ Alternatively, create a config file:
 
 ```bash
 rledger config init
-rledger config edit  # Set file = "~/finances/ledger.beancount"
+rledger config edit  # In the [default] section, set file = "~/finances/ledger.beancount"
 ```
 
 ## Next Steps

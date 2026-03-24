@@ -12,7 +12,6 @@ rustledger can be configured via environment variables, config files, and comman
 | Variable | Description | Example |
 |----------|-------------|---------|
 | `RLEDGER_FILE` | Default beancount file | `~/ledger.beancount` |
-| `RLEDGER_FORMAT` | Output format (text, csv, json) | `text` |
 | `RLEDGER_PROFILE` | Active profile name | `business` |
 | `NO_COLOR` | Disable colored output | `1` |
 
@@ -51,15 +50,12 @@ file = "~/finances/main.beancount"
 # Editor for interactive commands (defaults to $EDITOR)
 # editor = "nvim"
 
-[output]
-# Output format: text, csv, json
+# Command-specific output settings
+[commands.query.output]
 format = "text"
 
-# Enable colored output
-color = true
-
-# Pager for long output
-# pager = "less -R"
+[commands.report.output]
+format = "text"
 
 # Profiles for different ledgers
 [profiles.personal]
@@ -71,8 +67,8 @@ file = "~/finances/business.beancount"
 # Command aliases
 [aliases]
 bal = "report balances"
-is = "report income-statement"
-bs = "report balance-sheet"
+is = "report income"
+bs = "report balsheet"
 ```
 
 ### Using Profiles
