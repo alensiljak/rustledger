@@ -17,7 +17,7 @@ rledger query [OPTIONS] [FILE] [QUERY]
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | The beancount file (uses `$LEDGER_FILE` if not specified) |
+| `FILE` | The beancount file (uses `$RLEDGER_FILE` or config if not specified) |
 | `QUERY` | BQL query string (interactive mode if not specified) |
 
 ## Options

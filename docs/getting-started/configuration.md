@@ -11,45 +11,64 @@ rustledger can be configured via environment variables, config files, and comman
 
 | Variable | Description | Example |
 |----------|-------------|---------|
-| `LEDGER_FILE` | Default beancount file | `~/ledger.beancount` |
-| `RLEDGER_CONFIG` | Config file location | `~/.config/rledger/config.toml` |
+| `RLEDGER_FILE` | Default beancount file | `~/ledger.beancount` |
+| `RLEDGER_PROFILE` | Active profile name | `business` |
+| `NO_COLOR` | Disable colored output | `1` |
 
 Set in your shell profile (`~/.bashrc`, `~/.zshrc`):
 
 ```bash
-export LEDGER_FILE="$HOME/finances/main.beancount"
+export RLEDGER_FILE="$HOME/finances/main.beancount"
 ```
 
 ## Config File
 
-rustledger looks for configuration in:
+rustledger looks for configuration in these locations (highest to lowest priority):
 
-1. `$RLEDGER_CONFIG` (if set)
-2. `~/.config/rledger/config.toml`
-3. `.rledger.toml` in the current directory
+1. `.rledger.toml` in the current directory (searching upward)
+2. `~/.config/rledger/config.toml` (user config)
+3. `/etc/rledger/config.toml` (system config, Unix only)
+
+Higher priority configs override lower ones. You can also generate a default config with:
+
+```bash
+rledger config init           # Create user config
+rledger config init --project # Create project config (.rledger.toml)
+rledger config edit           # Open config in editor
+rledger config show           # Show merged configuration
+```
 
 ### Example Config
 
 ```toml
 # ~/.config/rledger/config.toml
 
-# Default ledger file
-ledger_file = "~/finances/main.beancount"
+[default]
+# Default beancount file
+file = "~/finances/main.beancount"
 
-# Default output format
+# Editor for interactive commands (defaults to $EDITOR)
+# editor = "nvim"
+
+# Command-specific output settings
+[commands.query.output]
 format = "text"
 
-# Enable plugins by default
-plugins = ["auto_accounts", "implicit_prices"]
+[commands.report.output]
+format = "text"
 
 # Profiles for different ledgers
 [profiles.personal]
-ledger_file = "~/finances/personal.beancount"
-plugins = ["auto_accounts"]
+file = "~/finances/personal.beancount"
 
 [profiles.business]
-ledger_file = "~/finances/business.beancount"
-plugins = ["auto_accounts", "check_commodity"]
+file = "~/finances/business.beancount"
+
+# Command aliases
+[aliases]
+bal = "report balances"
+is = "report income"
+bs = "report balsheet"
 ```
 
 ### Using Profiles
@@ -107,7 +126,7 @@ For quick commands, add aliases to your shell:
 ```bash
 # ~/.bashrc or ~/.zshrc
 
-export LEDGER_FILE="$HOME/finances/main.beancount"
+export RLEDGER_FILE="$HOME/finances/main.beancount"
 
 # Quick commands
 alias rc='rledger check'

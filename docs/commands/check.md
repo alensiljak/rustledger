@@ -17,7 +17,7 @@ rledger check [OPTIONS] [FILE]
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | The beancount file to check (uses `$LEDGER_FILE` if not specified) |
+| `FILE` | The beancount file to check (uses `$RLEDGER_FILE` or config if not specified) |
 
 ## Options
 
@@ -88,8 +88,8 @@ rledger check -f json ledger.beancount
 ### Using Environment Variable
 
 ```bash
-export LEDGER_FILE="$HOME/finances/main.beancount"
-rledger check  # uses $LEDGER_FILE
+export RLEDGER_FILE="$HOME/finances/main.beancount"
+rledger check  # uses $RLEDGER_FILE
 ```
 
 ## Error Codes
