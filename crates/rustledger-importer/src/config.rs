@@ -56,6 +56,12 @@ pub struct CsvConfig {
     pub skip_rows: usize,
     /// Whether to invert the sign of amounts.
     pub invert_sign: bool,
+    /// Default expense account for unmatched positive-amount transactions.
+    /// Defaults to "Expenses:Unknown".
+    pub default_expense: Option<String>,
+    /// Default income account for unmatched negative-amount transactions.
+    /// Defaults to "Income:Unknown".
+    pub default_income: Option<String>,
     /// Account mappings: pattern → account name.
     /// Patterns are matched case-insensitively against payee and narration fields.
     /// First match wins.
@@ -78,6 +84,8 @@ impl Default for CsvConfig {
             delimiter: ',',
             skip_rows: 0,
             invert_sign: false,
+            default_expense: None,
+            default_income: None,
             mappings: Vec::new(),
         }
     }
@@ -316,12 +324,28 @@ impl CsvConfigBuilder {
         self
     }
 
+    /// Set the default expense account for unmatched positive-amount transactions.
+    pub fn default_expense(mut self, account: impl Into<String>) -> Self {
+        self.config.default_expense = Some(account.into());
+        self
+    }
+
+    /// Set the default income account for unmatched negative-amount transactions.
+    pub fn default_income(mut self, account: impl Into<String>) -> Self {
+        self.config.default_income = Some(account.into());
+        self
+    }
+
     /// Add account mappings for automatic categorization.
     ///
     /// Each mapping is a `(pattern, account)` pair. Patterns are matched
     /// case-insensitively against payee and narration fields. First match wins.
+    /// Patterns are lowercased at build time for efficient matching.
     pub fn mappings(mut self, mappings: Vec<(String, String)>) -> Self {
-        self.config.mappings = mappings;
+        self.config.mappings = mappings
+            .into_iter()
+            .map(|(pattern, account)| (pattern.to_lowercase(), account))
+            .collect();
         self
     }
 

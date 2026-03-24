@@ -150,9 +150,15 @@ impl CsvImporter {
 
         // Create balancing posting (auto-interpolated)
         let default_contra = if final_amount < Decimal::ZERO {
-            "Income:Unknown"
+            csv_config
+                .default_income
+                .as_deref()
+                .unwrap_or("Income:Unknown")
         } else {
-            "Expenses:Unknown"
+            csv_config
+                .default_expense
+                .as_deref()
+                .unwrap_or("Expenses:Unknown")
         };
         let contra_account = self
             .match_mapping(csv_config, payee.as_deref(), &narration)
@@ -174,6 +180,8 @@ impl CsvImporter {
 
     /// Match payee/narration against configured mappings.
     /// Returns the mapped account name if a pattern matches, or None.
+    /// Patterns are pre-lowercased at build time, so only the input fields
+    /// need to be lowercased here.
     fn match_mapping<'a>(
         &self,
         csv_config: &'a CsvConfig,
@@ -188,14 +196,13 @@ impl CsvImporter {
         let narration_lower = narration.to_lowercase();
 
         for (pattern, account) in &csv_config.mappings {
-            let pattern_lower = pattern.to_lowercase();
             // Match against payee first, then narration
             if let Some(ref p) = payee_lower
-                && p.contains(&pattern_lower)
+                && p.contains(pattern.as_str())
             {
                 return Some(account);
             }
-            if narration_lower.contains(&pattern_lower) {
+            if narration_lower.contains(pattern.as_str()) {
                 return Some(account);
             }
         }
@@ -842,6 +849,8 @@ not-a-date,Coffee,-5.00
             delimiter: ',',
             skip_rows: 0,
             invert_sign: false,
+            default_expense: None,
+            default_income: None,
             mappings: Vec::new(),
         };
 
