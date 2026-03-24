@@ -6,7 +6,7 @@
 use ariadne::{ColorGenerator, Config, Label, Report, ReportKind, Source};
 use rustledger_loader::SourceMap;
 use rustledger_parser::ParseError;
-use rustledger_validate::{ErrorCode, ValidationError};
+use rustledger_validate::{ErrorCode, Severity, ValidationError};
 use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
@@ -130,21 +130,30 @@ pub fn report_validation_errors<W: Write>(
             String::new()
         };
 
+        // Use correct severity label based on error code classification
+        let severity_label = match error.code.severity() {
+            Severity::Error => "error",
+            Severity::Warning => "warning",
+            Severity::Info => "info",
+        };
+
         if location.is_empty() {
             // No location info - use original format
             writeln!(
                 writer,
-                "error[{}]: {} ({})",
+                "{}[{}]: {} ({})",
+                severity_label,
                 format_error_code(error.code),
                 error.message,
                 error.date
             )?;
         } else {
-            // Python beancount compatible format: file:line: message
+            // Format: file:line: severity[CODE]: message (date)
             writeln!(
                 writer,
-                "{}: error[{}]: {} ({})",
+                "{}: {}[{}]: {} ({})",
                 location,
+                severity_label,
                 format_error_code(error.code),
                 error.message,
                 error.date
@@ -200,4 +209,58 @@ pub fn print_summary<W: Write>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn test_report_validation_errors_warning_label() {
+        // E1004 (AccountCloseNotEmpty) is classified as a warning
+        let warning = ValidationError::new(
+            ErrorCode::AccountCloseNotEmpty,
+            "Cannot close account with non-zero balance".to_string(),
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        );
+
+        let mut output = Vec::new();
+        let source_map = SourceMap::default();
+        let cache = SourceCache::new();
+
+        report_validation_errors(&[warning], &source_map, &cache, &mut output, false).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            output_str.contains("warning[E1004]"),
+            "Expected 'warning[E1004]' but got: {output_str}"
+        );
+        assert!(
+            !output_str.contains("error[E1004]"),
+            "Should not contain 'error[E1004]': {output_str}"
+        );
+    }
+
+    #[test]
+    fn test_report_validation_errors_error_label() {
+        // E1001 (AccountNotOpen) is classified as an error
+        let error = ValidationError::new(
+            ErrorCode::AccountNotOpen,
+            "Account was never opened".to_string(),
+            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+        );
+
+        let mut output = Vec::new();
+        let source_map = SourceMap::default();
+        let cache = SourceCache::new();
+
+        report_validation_errors(&[error], &source_map, &cache, &mut output, false).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            output_str.contains("error[E1001]"),
+            "Expected 'error[E1001]' but got: {output_str}"
+        );
+    }
 }

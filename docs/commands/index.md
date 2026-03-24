@@ -36,8 +36,8 @@ Most commands require a beancount file:
 # Explicit file path
 rledger check ledger.beancount
 
-# Use LEDGER_FILE environment variable
-export LEDGER_FILE="~/finances/main.beancount"
+# Use RLEDGER_FILE environment variable
+export RLEDGER_FILE="~/finances/main.beancount"
 rledger check
 
 # Use profile from config

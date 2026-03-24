@@ -123,7 +123,7 @@ Avoid typing the filename every time:
 
 ```bash
 # Set environment variable
-export LEDGER_FILE="$HOME/finances/ledger.beancount"
+export RLEDGER_FILE="$HOME/finances/ledger.beancount"
 
 # Now commands use it automatically
 rledger check
@@ -131,6 +131,13 @@ rledger report balances
 ```
 
 Add this to your `~/.bashrc` or `~/.zshrc` to make it permanent.
+
+Alternatively, create a config file:
+
+```bash
+rledger config init
+rledger config edit  # In the [default] section, set file = "~/finances/ledger.beancount"
+```
 
 ## Next Steps
 
