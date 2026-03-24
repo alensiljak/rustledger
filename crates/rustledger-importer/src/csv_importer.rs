@@ -149,11 +149,14 @@ impl CsvImporter {
         let posting = Posting::new(&self.config.account, amount);
 
         // Create balancing posting (auto-interpolated)
-        let contra_account = if final_amount < Decimal::ZERO {
+        let default_contra = if final_amount < Decimal::ZERO {
             "Income:Unknown"
         } else {
             "Expenses:Unknown"
         };
+        let contra_account = self
+            .match_mapping(csv_config, payee.as_deref(), &narration)
+            .unwrap_or(default_contra);
         let contra_posting = Posting::auto(contra_account);
 
         // Build the transaction
@@ -167,6 +170,37 @@ impl CsvImporter {
         }
 
         Ok(Some(txn))
+    }
+
+    /// Match payee/narration against configured mappings.
+    /// Returns the mapped account name if a pattern matches, or None.
+    fn match_mapping<'a>(
+        &self,
+        csv_config: &'a CsvConfig,
+        payee: Option<&str>,
+        narration: &str,
+    ) -> Option<&'a str> {
+        if csv_config.mappings.is_empty() {
+            return None;
+        }
+
+        let payee_lower = payee.map(str::to_lowercase);
+        let narration_lower = narration.to_lowercase();
+
+        for (pattern, account) in &csv_config.mappings {
+            let pattern_lower = pattern.to_lowercase();
+            // Match against payee first, then narration
+            if let Some(ref p) = payee_lower
+                && p.contains(&pattern_lower)
+            {
+                return Some(account);
+            }
+            if narration_lower.contains(&pattern_lower) {
+                return Some(account);
+            }
+        }
+
+        None
     }
 
     fn get_column<'a>(
@@ -808,6 +842,7 @@ not-a-date,Coffee,-5.00
             delimiter: ',',
             skip_rows: 0,
             invert_sign: false,
+            mappings: Vec::new(),
         };
 
         let importer = CsvImporter::new(ImporterConfig {
@@ -920,6 +955,134 @@ not-a-date,Coffee,-5.00
         if let Directive::Transaction(txn) = &result.directives[0] {
             let amount = txn.postings[0].amount().unwrap();
             assert_eq!(amount.number, Decimal::from(100));
+        }
+    }
+
+    #[test]
+    fn test_csv_import_with_mappings() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .mappings(vec![
+                ("WHOLE FOODS".to_string(), "Expenses:Groceries".to_string()),
+                ("NETFLIX".to_string(), "Expenses:Entertainment".to_string()),
+            ])
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Description,Amount\n\
+            2024-01-15,WHOLE FOODS MARKET #123,-50.00\n\
+            2024-01-16,NETFLIX SUBSCRIPTION,-15.99\n\
+            2024-01-17,RANDOM STORE,-25.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 3);
+
+        // First transaction should map to Expenses:Groceries
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Groceries");
+        } else {
+            panic!("Expected transaction");
+        }
+
+        // Second should map to Expenses:Entertainment
+        if let Directive::Transaction(txn) = &result.directives[1] {
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Entertainment");
+        } else {
+            panic!("Expected transaction");
+        }
+
+        // Third should fall back to Income:Unknown (negative = income side)
+        if let Directive::Transaction(txn) = &result.directives[2] {
+            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
+        } else {
+            panic!("Expected transaction");
+        }
+    }
+
+    #[test]
+    fn test_csv_import_mappings_case_insensitive() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .mappings(vec![(
+                "amazon".to_string(),
+                "Expenses:Shopping".to_string(),
+            )])
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Description,Amount\n\
+            2024-01-15,AMAZON MARKETPLACE,-30.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 1);
+
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Shopping");
+        } else {
+            panic!("Expected transaction");
+        }
+    }
+
+    #[test]
+    fn test_csv_import_mappings_payee_priority() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .payee_column("Payee")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .mappings(vec![(
+                "WALMART".to_string(),
+                "Expenses:Shopping".to_string(),
+            )])
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Payee,Description,Amount\n\
+            2024-01-15,Walmart,STORE #1234 PURCHASE,-75.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 1);
+
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Shopping");
+        } else {
+            panic!("Expected transaction");
+        }
+    }
+
+    #[test]
+    fn test_csv_import_empty_mappings() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .mappings(vec![])
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Description,Amount\n\
+            2024-01-15,Test,-10.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 1);
+
+        // Should fall back to default
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
+        } else {
+            panic!("Expected transaction");
         }
     }
 }

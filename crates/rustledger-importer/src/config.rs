@@ -56,6 +56,10 @@ pub struct CsvConfig {
     pub skip_rows: usize,
     /// Whether to invert the sign of amounts.
     pub invert_sign: bool,
+    /// Account mappings: pattern → account name.
+    /// Patterns are matched case-insensitively against payee and narration fields.
+    /// First match wins.
+    pub mappings: Vec<(String, String)>,
 }
 
 impl Default for CsvConfig {
@@ -74,6 +78,7 @@ impl Default for CsvConfig {
             delimiter: ',',
             skip_rows: 0,
             invert_sign: false,
+            mappings: Vec::new(),
         }
     }
 }
@@ -308,6 +313,15 @@ impl CsvConfigBuilder {
     /// Set whether to invert the sign of amounts.
     pub const fn invert_sign(mut self, invert: bool) -> Self {
         self.config.invert_sign = invert;
+        self
+    }
+
+    /// Add account mappings for automatic categorization.
+    ///
+    /// Each mapping is a `(pattern, account)` pair. Patterns are matched
+    /// case-insensitively against payee and narration fields. First match wins.
+    pub fn mappings(mut self, mappings: Vec<(String, String)>) -> Self {
+        self.config.mappings = mappings;
         self
     }
 
