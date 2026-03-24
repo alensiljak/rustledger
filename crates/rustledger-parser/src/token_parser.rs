@@ -430,6 +430,8 @@ fn tok_flag<'src>() -> impl Parser<'src, &'src [SpannedToken<'src>], char, TokEx
             Token::Pending => '!',
             Token::Hash => '#', // Forecast plugin uses # as a flag
             Token::Flag(s) => s.chars().next().unwrap_or('?'),
+            // Single-char currencies can be used as transaction flags (e.g., T, P, C)
+            Token::Currency(s) if s.len() == 1 => s.chars().next().unwrap_or('?'),
             _ => '?',
         })
 }

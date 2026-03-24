@@ -225,6 +225,14 @@ fn parse_flag(stream: &mut TokenStream<'_>) -> ParseRes<char> {
                 stream.advance();
                 return Ok(c);
             }
+            // Single-char currencies can be used as transaction flags (e.g., T, P, C)
+            // This matches Python beancount's behavior where single uppercase letters
+            // are disambiguated based on context
+            Token::Currency(s) if s.len() == 1 => {
+                let c = s.chars().next().unwrap();
+                stream.advance();
+                return Ok(c);
+            }
             _ => {}
         }
     }
@@ -837,6 +845,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     let date = parse_date(stream)?;
 
     // Flag (txn keyword or flag character)
+    // Single-char currencies (e.g., T, V) can also be used as transaction flags
     let flag = if let Some(t) = stream.peek() {
         match &t.token {
             Token::Txn => {
@@ -844,6 +853,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
                 '*'
             }
             Token::Star | Token::Pending | Token::Hash | Token::Flag(_) => parse_flag(stream)?,
+            Token::Currency(s) if s.len() == 1 => parse_flag(stream)?,
             Token::String(_) => '*', // Implied txn
             _ => return Err(()),
         }
@@ -1351,6 +1361,8 @@ fn parse_dated_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
         | Token::Hash
         | Token::Flag(_)
         | Token::String(_) => parse_transaction_directive(stream),
+        // Single-char currencies can be transaction flags (e.g., "2024-01-01 T 'desc'")
+        Token::Currency(s) if s.len() == 1 => parse_transaction_directive(stream),
         Token::Balance => parse_balance_directive(stream),
         Token::Open => parse_open_directive(stream),
         Token::Close => parse_close_directive(stream),
