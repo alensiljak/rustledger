@@ -9,9 +9,21 @@ use std::collections::BTreeMap;
 use std::io::Write;
 
 /// Generate a net worth over time report.
+///
+/// # Arguments
+/// * `directives` - The ledger directives
+/// * `period` - Grouping period (daily, weekly, monthly, yearly)
+/// * `currency_filter` - Optional currency to filter to (e.g., "USD")
+/// * `account_filter` - Optional account prefix to filter to (e.g., "Assets:Investments")
+/// * `no_zero` - If true, hide zero balances from output
+/// * `format` - Output format (text, csv, json)
+/// * `writer` - Output writer
 pub(super) fn report_networth<W: Write>(
     directives: &[Directive],
     period: &str,
+    currency_filter: Option<&str>,
+    account_filter: Option<&str>,
+    no_zero: bool,
     format: &OutputFormat,
     writer: &mut W,
 ) -> Result<()> {
@@ -50,6 +62,14 @@ pub(super) fn report_networth<W: Write>(
         }
     };
 
+    // Helper to check if an account matches the filter
+    let account_matches = |account: &str| -> bool {
+        match account_filter {
+            Some(filter) => account.starts_with(filter),
+            None => true,
+        }
+    };
+
     let mut current_period = String::new();
 
     for txn in transactions {
@@ -67,9 +87,18 @@ pub(super) fn report_networth<W: Write>(
         for posting in &txn.postings {
             if let Some(amount) = posting.amount() {
                 let account_str: &str = &posting.account;
-                if account_str.starts_with("Assets:") {
+
+                // Apply currency filter if specified
+                if let Some(curr_filter) = currency_filter {
+                    let currency_str: &str = &amount.currency;
+                    if !currency_str.eq_ignore_ascii_case(curr_filter) {
+                        continue;
+                    }
+                }
+
+                if account_str.starts_with("Assets:") && account_matches(account_str) {
                     *asset_balance.entry(amount.currency.clone()).or_default() += amount.number;
-                } else if account_str.starts_with("Liabilities:") {
+                } else if account_str.starts_with("Liabilities:") && account_matches(account_str) {
                     *liability_balance
                         .entry(amount.currency.clone())
                         .or_default() += amount.number;
@@ -84,6 +113,15 @@ pub(super) fn report_networth<W: Write>(
             *net_worth.entry(currency.clone()).or_default() += amount;
         }
         period_results.push((current_period, net_worth));
+    }
+
+    // Apply no_zero filter if requested
+    if no_zero {
+        for (_, net_worth) in &mut period_results {
+            net_worth.retain(|_, amount| !amount.is_zero());
+        }
+        // Also remove periods with no remaining currencies
+        period_results.retain(|(_, net_worth)| !net_worth.is_empty());
     }
 
     match format {
