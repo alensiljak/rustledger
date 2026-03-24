@@ -37,7 +37,8 @@ jobs:
         uses: obi1kenobi/cargo-semver-checks-action@5b298c9520f7096a4683c0bd981a7ac5a7e249ae # v2
         with:
           feature-group: all-features
-          exclude: rustledger-lsp,rustledger-wasm
+          # Exclude CLI crate (internal API changes are fine) and non-library crates
+          exclude: rustledger,rustledger-lsp,rustledger-wasm
           rust-toolchain: stable
       - name: Skip semver check
         if: steps.changes.outputs.rust != 'true'
