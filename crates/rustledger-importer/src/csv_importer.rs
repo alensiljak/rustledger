@@ -1070,6 +1070,58 @@ not-a-date,Coffee,-5.00
     }
 
     #[test]
+    fn test_csv_import_custom_default_expense() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .default_expense("Expenses:Uncategorized")
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Description,Amount\n\
+            2024-01-15,Coffee Shop,5.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 1);
+
+        // Positive amount → expense side → should use custom default_expense
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Uncategorized");
+        } else {
+            panic!("Expected transaction");
+        }
+    }
+
+    #[test]
+    fn test_csv_import_custom_default_income() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .default_income("Income:Other")
+            .build()
+            .unwrap();
+
+        let csv_content = "Date,Description,Amount\n\
+            2024-01-15,Deposit,-100.00\n";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 1);
+
+        // Negative amount → income side → should use custom default_income
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.postings[1].account.as_str(), "Income:Other");
+        } else {
+            panic!("Expected transaction");
+        }
+    }
+
+    #[test]
     fn test_csv_import_empty_mappings() {
         let config = ImporterConfig::csv()
             .account("Assets:Bank")
