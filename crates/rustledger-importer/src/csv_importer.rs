@@ -149,16 +149,18 @@ impl CsvImporter {
         let posting = Posting::new(&self.config.account, amount);
 
         // Create balancing posting (auto-interpolated)
+        // Negative amounts = money leaving account = expenses
+        // Positive amounts = money entering account = income
         let default_contra = if final_amount < Decimal::ZERO {
-            csv_config
-                .default_income
-                .as_deref()
-                .unwrap_or("Income:Unknown")
-        } else {
             csv_config
                 .default_expense
                 .as_deref()
                 .unwrap_or("Expenses:Unknown")
+        } else {
+            csv_config
+                .default_income
+                .as_deref()
+                .unwrap_or("Income:Unknown")
         };
         let contra_account = self
             .match_mapping(csv_config, payee.as_deref(), &narration)
@@ -728,7 +730,7 @@ not-a-date,Coffee,-5.00
 
     #[test]
     fn test_csv_import_income_contra_account() {
-        // Negative final amount should use Income:Unknown as contra
+        // Negative amount = money out = expense, positive = money in = income
         let config = ImporterConfig::csv()
             .account("Assets:Bank")
             .currency("USD")
@@ -746,14 +748,14 @@ not-a-date,Coffee,-5.00
         let result = config.extract_from_string(csv_content).unwrap();
         assert_eq!(result.directives.len(), 2);
 
-        // Positive amount -> Expenses:Unknown contra
+        // Positive amount (money in) -> Income:Unknown contra
         if let Directive::Transaction(txn) = &result.directives[0] {
-            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Unknown");
+            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
         }
 
-        // Negative amount -> Income:Unknown contra
+        // Negative amount (money out) -> Expenses:Unknown contra
         if let Directive::Transaction(txn) = &result.directives[1] {
-            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Unknown");
         }
     }
 
@@ -1004,9 +1006,9 @@ not-a-date,Coffee,-5.00
             panic!("Expected transaction");
         }
 
-        // Third should fall back to Income:Unknown (negative = income side)
+        // Third should fall back to Expenses:Unknown (negative = money out = expense)
         if let Directive::Transaction(txn) = &result.directives[2] {
-            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Unknown");
         } else {
             panic!("Expected transaction");
         }
@@ -1082,12 +1084,12 @@ not-a-date,Coffee,-5.00
             .unwrap();
 
         let csv_content = "Date,Description,Amount\n\
-            2024-01-15,Coffee Shop,5.00\n";
+            2024-01-15,Coffee Shop,-5.00\n";
 
         let result = config.extract_from_string(csv_content).unwrap();
         assert_eq!(result.directives.len(), 1);
 
-        // Positive amount → expense side → should use custom default_expense
+        // Negative amount (money out) → expense side → should use custom default_expense
         if let Directive::Transaction(txn) = &result.directives[0] {
             assert_eq!(txn.postings[1].account.as_str(), "Expenses:Uncategorized");
         } else {
@@ -1108,12 +1110,12 @@ not-a-date,Coffee,-5.00
             .unwrap();
 
         let csv_content = "Date,Description,Amount\n\
-            2024-01-15,Deposit,-100.00\n";
+            2024-01-15,Deposit,100.00\n";
 
         let result = config.extract_from_string(csv_content).unwrap();
         assert_eq!(result.directives.len(), 1);
 
-        // Negative amount → income side → should use custom default_income
+        // Positive amount (money in) → income side → should use custom default_income
         if let Directive::Transaction(txn) = &result.directives[0] {
             assert_eq!(txn.postings[1].account.as_str(), "Income:Other");
         } else {
@@ -1139,9 +1141,9 @@ not-a-date,Coffee,-5.00
         let result = config.extract_from_string(csv_content).unwrap();
         assert_eq!(result.directives.len(), 1);
 
-        // Should fall back to default
+        // Should fall back to default (negative = expense)
         if let Directive::Transaction(txn) = &result.directives[0] {
-            assert_eq!(txn.postings[1].account.as_str(), "Income:Unknown");
+            assert_eq!(txn.postings[1].account.as_str(), "Expenses:Unknown");
         } else {
             panic!("Expected transaction");
         }

@@ -872,13 +872,13 @@ default_expense = "Expenses:Uncategorized"
         )
         .unwrap();
 
-        // Write CSV (positive amounts → expense side)
+        // Write CSV (negative amounts = money out = expenses)
         let csv_path = dir.path().join("statement.csv");
         std::fs::write(
             &csv_path,
             "Date,Description,Amount\n\
-             2024-01-15,GROCERY STORE,50.00\n\
-             2024-01-16,RANDOM PURCHASE,25.00\n",
+             2024-01-15,GROCERY STORE,-50.00\n\
+             2024-01-16,RANDOM PURCHASE,-25.00\n",
         )
         .unwrap();
 
