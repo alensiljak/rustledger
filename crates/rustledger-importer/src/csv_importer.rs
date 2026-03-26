@@ -11,9 +11,6 @@ use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
 
-#[allow(unused_imports)]
-use rustledger_core::InternedStr;
-
 /// CSV file importer.
 pub struct CsvImporter {
     config: ImporterConfig,

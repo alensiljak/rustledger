@@ -56,10 +56,10 @@ pub struct CsvConfig {
     pub skip_rows: usize,
     /// Whether to invert the sign of amounts.
     pub invert_sign: bool,
-    /// Default expense account for unmatched positive-amount transactions.
+    /// Default expense account for unmatched negative-amount (money out) transactions.
     /// Defaults to "Expenses:Unknown".
     pub default_expense: Option<String>,
-    /// Default income account for unmatched negative-amount transactions.
+    /// Default income account for unmatched positive-amount (money in) transactions.
     /// Defaults to "Income:Unknown".
     pub default_income: Option<String>,
     /// Account mappings: pattern → account name.
@@ -324,13 +324,13 @@ impl CsvConfigBuilder {
         self
     }
 
-    /// Set the default expense account for unmatched positive-amount transactions.
+    /// Set the default expense account for unmatched negative-amount (money out) transactions.
     pub fn default_expense(mut self, account: impl Into<String>) -> Self {
         self.config.default_expense = Some(account.into());
         self
     }
 
-    /// Set the default income account for unmatched negative-amount transactions.
+    /// Set the default income account for unmatched positive-amount (money in) transactions.
     pub fn default_income(mut self, account: impl Into<String>) -> Self {
         self.config.default_income = Some(account.into());
         self

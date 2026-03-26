@@ -179,9 +179,9 @@ struct ImporterEntry {
     /// Whether to invert amount signs.
     #[serde(default)]
     invert_amounts: Option<bool>,
-    /// Default expense account for unmatched transactions.
+    /// Default expense account for unmatched negative-amount (money out) transactions.
     default_expense: Option<String>,
-    /// Default income account for unmatched negative-amount transactions.
+    /// Default income account for unmatched positive-amount (money in) transactions.
     default_income: Option<String>,
     /// Account mappings: pattern → account.
     #[serde(default)]
@@ -212,9 +212,11 @@ fn find_importers_config(explicit_path: Option<&Path>) -> Result<Option<PathBuf>
     }
 
     // 2. Current directory
-    let local = PathBuf::from("importers.toml");
-    if local.exists() {
-        return Ok(Some(local));
+    if let Ok(cwd) = std::env::current_dir() {
+        let local = cwd.join("importers.toml");
+        if local.exists() {
+            return Ok(Some(local));
+        }
     }
 
     // 3. User config directory
@@ -357,9 +359,8 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
 
 /// Check if a file is an OFX/QFX file based on extension.
 fn is_ofx_file(path: &Path) -> bool {
-    path.extension().is_some_and(|ext| {
-        ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx")
-    })
+    path.extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx"))
 }
 
 /// Load existing transactions from a beancount file for duplicate detection.
@@ -439,22 +440,20 @@ fn fuzzy_text_match(a: &str, b: &str) -> bool {
     } else {
         (&b_words, &a_words)
     };
-    let matches = shorter
-        .iter()
-        .filter(|w| longer.contains(w))
-        .count();
+    let matches = shorter.iter().filter(|w| longer.contains(w)).count();
     matches * 2 > shorter.len()
 }
 
 /// Run the extract command with the given arguments.
-pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
+pub fn run(args: &Args, file: &Path) -> Result<()> {
     // Detect OFX files and use appropriate importer
     let result = if is_ofx_file(file) && args.importer.is_none() {
         let ofx = OfxImporter::new(&args.account, &args.currency);
         ofx.extract(file)?
     } else {
-        // If --importer is specified, load config from importers.toml
+        // Determine import config: --importer flag, explicit --config, or CLI args
         let config = if let Some(ref importer_name) = args.importer {
+            // Explicit --importer: require config file, find named entry
             let config_path = find_importers_config(args.config.as_deref())?
                 .ok_or_else(|| anyhow!(
                     "No importers.toml found. Create one in the current directory or at ~/.config/rledger/importers.toml"
@@ -486,8 +485,41 @@ pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
                 config_path.display()
             );
             build_config_from_entry(entry)?
+        } else if args.config.is_some() {
+            // Explicit --config without --importer: auto-select if exactly one
+            // importer, otherwise list available and error
+            let config_path = find_importers_config(args.config.as_deref())?
+                .ok_or_else(|| anyhow!(
+                    "No importers.toml found. Create one in the current directory or at ~/.config/rledger/importers.toml"
+                ))?;
+
+            let importers_file = load_importers_config(&config_path)?;
+
+            let entry = match importers_file.importers.len() {
+                0 => return Err(anyhow!("No importers defined in {}", config_path.display())),
+                1 => &importers_file.importers[0],
+                _ => {
+                    let available: Vec<&str> = importers_file
+                        .importers
+                        .iter()
+                        .map(|e| e.name.as_str())
+                        .collect();
+                    return Err(anyhow!(
+                        "Multiple importers in {}. Use --importer to select one: {}",
+                        config_path.display(),
+                        available.join(", ")
+                    ));
+                }
+            };
+
+            eprintln!(
+                "Using importer '{}' from {}",
+                entry.name,
+                config_path.display()
+            );
+            build_config_from_entry(entry)?
         } else {
-            // Build from CLI arguments (existing behavior)
+            // No config file: build from CLI arguments
             let mut builder = ImporterConfig::csv()
                 .account(&args.account)
                 .currency(&args.currency)
@@ -950,25 +982,18 @@ default_expense = "Expenses:Uncategorized"
     #[test]
     fn test_is_duplicate_matching() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let new_txn = Transaction::new(date, "GROCERY STORE")
-            .with_posting(rustledger_core::Posting::new(
+        let new_txn =
+            Transaction::new(date, "GROCERY STORE").with_posting(rustledger_core::Posting::new(
                 "Assets:Bank",
-                rustledger_core::Amount::new(
-                    rust_decimal::Decimal::new(-5000, 2),
-                    "USD",
-                ),
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
             ));
 
-        let existing = vec![
-            Transaction::new(date, "GROCERY STORE #123")
-                .with_posting(rustledger_core::Posting::new(
-                    "Assets:Bank",
-                    rustledger_core::Amount::new(
-                        rust_decimal::Decimal::new(-5000, 2),
-                        "USD",
-                    ),
-                )),
-        ];
+        let existing = vec![Transaction::new(date, "GROCERY STORE #123").with_posting(
+            rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+            ),
+        )];
 
         assert!(is_duplicate(&new_txn, &existing));
     }
@@ -984,14 +1009,16 @@ default_expense = "Expenses:Uncategorized"
             rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
         ));
 
-        let existing = vec![Transaction::new(
-            chrono::NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
-            "GROCERY STORE",
-        )
-        .with_posting(rustledger_core::Posting::new(
-            "Assets:Bank",
-            rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
-        ))];
+        let existing = vec![
+            Transaction::new(
+                chrono::NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
+                "GROCERY STORE",
+            )
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+            )),
+        ];
 
         assert!(!is_duplicate(&new_txn, &existing));
     }
@@ -999,17 +1026,18 @@ default_expense = "Expenses:Uncategorized"
     #[test]
     fn test_is_duplicate_different_amount() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let new_txn = Transaction::new(date, "GROCERY STORE")
-            .with_posting(rustledger_core::Posting::new(
+        let new_txn =
+            Transaction::new(date, "GROCERY STORE").with_posting(rustledger_core::Posting::new(
                 "Assets:Bank",
                 rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
             ));
 
-        let existing = vec![Transaction::new(date, "GROCERY STORE")
-            .with_posting(rustledger_core::Posting::new(
+        let existing = vec![Transaction::new(date, "GROCERY STORE").with_posting(
+            rustledger_core::Posting::new(
                 "Assets:Bank",
                 rustledger_core::Amount::new(rust_decimal::Decimal::new(-7500, 2), "USD"),
-            ))];
+            ),
+        )];
 
         assert!(!is_duplicate(&new_txn, &existing));
     }
@@ -1289,8 +1317,7 @@ amount_column = "Amount"
     #[test]
     fn test_txn_match_text_with_payee() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let txn = Transaction::new(date, "Weekly groceries")
-            .with_payee("Whole Foods");
+        let txn = Transaction::new(date, "Weekly groceries").with_payee("Whole Foods");
         let text = txn_match_text(&txn);
         assert!(text.contains("whole foods"));
         assert!(text.contains("weekly groceries"));
@@ -1307,11 +1334,10 @@ amount_column = "Amount"
     #[test]
     fn test_is_duplicate_no_existing() {
         let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
-        let txn = Transaction::new(date, "Coffee")
-            .with_posting(rustledger_core::Posting::new(
-                "Assets:Bank",
-                rustledger_core::Amount::new(rust_decimal::Decimal::new(-500, 2), "USD"),
-            ));
+        let txn = Transaction::new(date, "Coffee").with_posting(rustledger_core::Posting::new(
+            "Assets:Bank",
+            rustledger_core::Amount::new(rust_decimal::Decimal::new(-500, 2), "USD"),
+        ));
         assert!(!is_duplicate(&txn, &[]));
     }
 
@@ -1325,12 +1351,14 @@ amount_column = "Amount"
                 rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
             ));
 
-        let existing = vec![Transaction::new(date, "Weekly groceries")
-            .with_payee("Whole Foods Market")
-            .with_posting(rustledger_core::Posting::new(
-                "Assets:Bank",
-                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
-            ))];
+        let existing = vec![
+            Transaction::new(date, "Weekly groceries")
+                .with_payee("Whole Foods Market")
+                .with_posting(rustledger_core::Posting::new(
+                    "Assets:Bank",
+                    rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+                )),
+        ];
 
         assert!(is_duplicate(&new_txn, &existing));
     }
@@ -1422,11 +1450,7 @@ amount_column = "Amount"
         .unwrap();
 
         let csv_path = dir.path().join("statement.csv");
-        std::fs::write(
-            &csv_path,
-            "Date,Description,Amount\n2024-01-15,Test,5.00\n",
-        )
-        .unwrap();
+        std::fs::write(&csv_path, "Date,Description,Amount\n2024-01-15,Test,5.00\n").unwrap();
 
         let output_path = dir.path().join("output.beancount");
 
@@ -1646,5 +1670,107 @@ NEWFILEUID:NONE
         run(&args, &csv_path).unwrap();
         let output = std::fs::read_to_string(&output_path).unwrap();
         assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_run_auto_select_sole_importer() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Config with exactly one importer — should auto-select
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[[importers]]
+name = "mybank"
+account = "Assets:Bank:Auto"
+date_column = "Date"
+narration_column = "Description"
+amount_column = "Amount"
+"#,
+        )
+        .unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,-5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        // No --importer flag, but --config points to a single-importer file
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--config",
+            config_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("Assets:Bank:Auto"));
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_run_auto_select_errors_on_multiple_importers() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[[importers]]
+name = "checking"
+account = "Assets:Bank:Checking"
+
+[[importers]]
+name = "credit"
+account = "Liabilities:CreditCard"
+"#,
+        )
+        .unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(&csv_path, "Date,Description,Amount\n").unwrap();
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--config",
+            config_path.to_str().unwrap(),
+        ]);
+
+        let err = run(&args, &csv_path).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("Multiple importers"));
+        assert!(msg.contains("checking"));
+        assert!(msg.contains("credit"));
+    }
+
+    #[test]
+    fn test_run_auto_select_errors_on_empty_config() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(&config_path, "importers = []\n").unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(&csv_path, "Date,Description,Amount\n").unwrap();
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--config",
+            config_path.to_str().unwrap(),
+        ]);
+
+        let err = run(&args, &csv_path).unwrap_err();
+        assert!(err.to_string().contains("No importers defined"));
     }
 }
