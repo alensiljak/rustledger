@@ -37,10 +37,12 @@ use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
 use format_num_pattern::Locale;
-use rustledger_core::{FormatConfig, format_directive};
-use rustledger_importer::ImporterConfig;
+use rust_decimal::Decimal;
+use rustledger_core::{Directive, FormatConfig, Transaction, format_directive};
+use rustledger_importer::{Importer, ImporterConfig, OfxImporter};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -64,8 +66,8 @@ pub struct Args {
     importer: Option<String>,
 
     /// Path to importers.toml configuration file
-    #[arg(long)]
-    importers_config: Option<PathBuf>,
+    #[arg(long, alias = "importers-config")]
+    config: Option<PathBuf>,
 
     /// Target account for imported transactions
     #[arg(short, long, default_value = "Assets:Bank:Checking")]
@@ -126,6 +128,14 @@ pub struct Args {
     /// CSV has no header row
     #[arg(long)]
     no_header: bool,
+
+    /// Write output to a file instead of stdout
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+
+    /// Existing ledger file for duplicate detection
+    #[arg(long, value_name = "FILE")]
+    existing: Option<PathBuf>,
 }
 
 // --- Importers TOML configuration ---
@@ -345,102 +355,231 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
     }
 }
 
+/// Check if a file is an OFX/QFX file based on extension.
+fn is_ofx_file(path: &Path) -> bool {
+    path.extension().is_some_and(|ext| {
+        ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx")
+    })
+}
+
+/// Load existing transactions from a beancount file for duplicate detection.
+fn load_existing_transactions(path: &Path) -> Result<Vec<Transaction>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read existing ledger: {}", path.display()))?;
+    let parse_result = rustledger_parser::parse(&content);
+    let mut transactions = Vec::new();
+    for directive in parse_result.directives {
+        if let Directive::Transaction(txn) = directive.value {
+            transactions.push(txn);
+        }
+    }
+    Ok(transactions)
+}
+
+/// Check if a new transaction is a duplicate of an existing one.
+///
+/// Matches on: same date, same first-posting amount, and fuzzy payee/narration match.
+fn is_duplicate(new_txn: &Transaction, existing: &[Transaction]) -> bool {
+    let new_amount = first_posting_amount(new_txn);
+    let new_text = txn_match_text(new_txn);
+
+    existing.iter().any(|existing_txn| {
+        // Date must match exactly
+        if new_txn.date != existing_txn.date {
+            return false;
+        }
+        // Amount must match (first posting)
+        let existing_amount = first_posting_amount(existing_txn);
+        if new_amount != existing_amount {
+            return false;
+        }
+        // Fuzzy text match: check if payee or narration overlap
+        let existing_text = txn_match_text(existing_txn);
+        fuzzy_text_match(&new_text, &existing_text)
+    })
+}
+
+/// Get the amount from the first posting of a transaction (for comparison).
+fn first_posting_amount(txn: &Transaction) -> Option<Decimal> {
+    txn.postings.first().and_then(|p| {
+        p.units
+            .as_ref()
+            .and_then(rustledger_core::IncompleteAmount::number)
+    })
+}
+
+/// Build a lowercase string combining payee and narration for fuzzy matching.
+fn txn_match_text(txn: &Transaction) -> String {
+    let mut text = String::new();
+    if let Some(ref payee) = txn.payee {
+        text.push_str(payee.as_str());
+        text.push(' ');
+    }
+    text.push_str(txn.narration.as_str());
+    text.to_lowercase()
+}
+
+/// Fuzzy text match: returns true if either string contains the other,
+/// or if they share significant word overlap.
+fn fuzzy_text_match(a: &str, b: &str) -> bool {
+    if a.is_empty() || b.is_empty() {
+        return false;
+    }
+    if a == b {
+        return true;
+    }
+    if a.contains(b) || b.contains(a) {
+        return true;
+    }
+    // Word overlap: if >50% of words in the shorter text appear in the longer
+    let a_words: Vec<&str> = a.split_whitespace().collect();
+    let b_words: Vec<&str> = b.split_whitespace().collect();
+    let (shorter, longer) = if a_words.len() <= b_words.len() {
+        (&a_words, &b_words)
+    } else {
+        (&b_words, &a_words)
+    };
+    let matches = shorter
+        .iter()
+        .filter(|w| longer.contains(w))
+        .count();
+    matches * 2 > shorter.len()
+}
+
 /// Run the extract command with the given arguments.
 pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
-    let mut stdout = io::stdout().lock();
-
-    // If --importer is specified, load config from importers.toml
-    let config = if let Some(ref importer_name) = args.importer {
-        let config_path = find_importers_config(args.importers_config.as_deref())?
-            .ok_or_else(|| anyhow!(
-                "No importers.toml found. Create one in the current directory or at ~/.config/rledger/importers.toml"
-            ))?;
-
-        let importers_file = load_importers_config(&config_path)?;
-
-        let entry = importers_file
-            .importers
-            .iter()
-            .find(|e| e.name == *importer_name)
-            .ok_or_else(|| {
-                let available: Vec<&str> = importers_file
-                    .importers
-                    .iter()
-                    .map(|e| e.name.as_str())
-                    .collect();
-                anyhow!(
-                    "Importer '{}' not found in {}. Available: {}",
-                    importer_name,
-                    config_path.display(),
-                    available.join(", ")
-                )
-            })?;
-
-        eprintln!(
-            "Using importer '{}' from {}",
-            importer_name,
-            config_path.display()
-        );
-        build_config_from_entry(entry)?
+    // Detect OFX files and use appropriate importer
+    let result = if is_ofx_file(file) && args.importer.is_none() {
+        let ofx = OfxImporter::new(&args.account, &args.currency);
+        ofx.extract(file)?
     } else {
-        // Build from CLI arguments (existing behavior)
-        let mut builder = ImporterConfig::csv()
-            .account(&args.account)
-            .currency(&args.currency)
-            .date_column(&args.date_column)
-            .date_format(&args.date_format)
-            .narration_column(&args.narration_column)
-            .amount_column(&args.amount_column)
-            .delimiter(args.delimiter)
-            .skip_rows(args.skip_rows)
-            .invert_sign(args.invert_sign)
-            .has_header(!args.no_header);
+        // If --importer is specified, load config from importers.toml
+        let config = if let Some(ref importer_name) = args.importer {
+            let config_path = find_importers_config(args.config.as_deref())?
+                .ok_or_else(|| anyhow!(
+                    "No importers.toml found. Create one in the current directory or at ~/.config/rledger/importers.toml"
+                ))?;
 
-        if let Some(payee) = &args.payee_column {
-            builder = builder.payee_column(payee);
-        }
+            let importers_file = load_importers_config(&config_path)?;
 
-        if let Some(debit) = &args.debit_column {
-            builder = builder.debit_column(debit);
-        }
+            let entry = importers_file
+                .importers
+                .iter()
+                .find(|e| e.name == *importer_name)
+                .ok_or_else(|| {
+                    let available: Vec<&str> = importers_file
+                        .importers
+                        .iter()
+                        .map(|e| e.name.as_str())
+                        .collect();
+                    anyhow!(
+                        "Importer '{}' not found in {}. Available: {}",
+                        importer_name,
+                        config_path.display(),
+                        available.join(", ")
+                    )
+                })?;
 
-        if let Some(credit) = &args.credit_column {
-            builder = builder.credit_column(credit);
-        }
+            eprintln!(
+                "Using importer '{}' from {}",
+                importer_name,
+                config_path.display()
+            );
+            build_config_from_entry(entry)?
+        } else {
+            // Build from CLI arguments (existing behavior)
+            let mut builder = ImporterConfig::csv()
+                .account(&args.account)
+                .currency(&args.currency)
+                .date_column(&args.date_column)
+                .date_format(&args.date_format)
+                .narration_column(&args.narration_column)
+                .amount_column(&args.amount_column)
+                .delimiter(args.delimiter)
+                .skip_rows(args.skip_rows)
+                .invert_sign(args.invert_sign)
+                .has_header(!args.no_header);
 
-        if let Some(locale) = &args.amount_locale {
-            let Ok(locale) = Locale::from_str(locale) else {
-                return Err(anyhow!("{locale} is not a valid locale"));
-            };
+            if let Some(payee) = &args.payee_column {
+                builder = builder.payee_column(payee);
+            }
 
-            builder = builder.amount_locale(locale);
-        }
+            if let Some(debit) = &args.debit_column {
+                builder = builder.debit_column(debit);
+            }
 
-        if let Some(format) = &args.amount_format {
-            builder = builder.amount_format(format);
-        }
+            if let Some(credit) = &args.credit_column {
+                builder = builder.credit_column(credit);
+            }
 
-        builder.build()?
+            if let Some(locale) = &args.amount_locale {
+                let Ok(locale) = Locale::from_str(locale) else {
+                    return Err(anyhow!("{locale} is not a valid locale"));
+                };
+
+                builder = builder.amount_locale(locale);
+            }
+
+            if let Some(format) = &args.amount_format {
+                builder = builder.amount_format(format);
+            }
+
+            builder.build()?
+        };
+
+        config.extract(file)?
     };
-
-    // Extract transactions
-    let result = config.extract(file)?;
 
     // Print warnings
     for warning in &result.warnings {
         eprintln!("warning: {warning}");
     }
 
-    // Print extracted directives in beancount format
+    // Filter duplicates if --existing is specified
+    let directives = if let Some(ref existing_path) = args.existing {
+        let existing_txns = load_existing_transactions(existing_path)?;
+        let before_count = result.directives.len();
+        let filtered: Vec<_> = result
+            .directives
+            .into_iter()
+            .filter(|d| {
+                if let Directive::Transaction(txn) = d {
+                    !is_duplicate(txn, &existing_txns)
+                } else {
+                    true
+                }
+            })
+            .collect();
+        let dupes = before_count - filtered.len();
+        if dupes > 0 {
+            eprintln!("Filtered {dupes} duplicate transaction(s)");
+        }
+        filtered
+    } else {
+        result.directives
+    };
+
+    // Write output to file or stdout
     let fmt_config = FormatConfig::default();
-    for directive in &result.directives {
-        writeln!(stdout, "{}", format_directive(directive, &fmt_config))?;
-        writeln!(stdout)?;
+    if let Some(ref output_path) = args.output {
+        let mut out_file = fs::File::create(output_path)
+            .with_context(|| format!("Failed to create output file: {}", output_path.display()))?;
+        for directive in &directives {
+            writeln!(out_file, "{}", format_directive(directive, &fmt_config))?;
+            writeln!(out_file)?;
+        }
+        eprintln!("Wrote output to {}", output_path.display());
+    } else {
+        let mut stdout = io::stdout().lock();
+        for directive in &directives {
+            writeln!(stdout, "{}", format_directive(directive, &fmt_config))?;
+            writeln!(stdout)?;
+        }
     }
 
     eprintln!(
         "Extracted {} transactions from {}",
-        result.directives.len(),
+        directives.len(),
         file.display()
     );
 
@@ -769,5 +908,743 @@ default_expense = "Expenses:Uncategorized"
         } else {
             panic!("Expected transaction");
         }
+    }
+
+    #[test]
+    fn test_is_ofx_file() {
+        assert!(is_ofx_file(Path::new("statement.ofx")));
+        assert!(is_ofx_file(Path::new("statement.OFX")));
+        assert!(is_ofx_file(Path::new("statement.qfx")));
+        assert!(is_ofx_file(Path::new("statement.QFX")));
+        assert!(!is_ofx_file(Path::new("statement.csv")));
+        assert!(!is_ofx_file(Path::new("statement.txt")));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_exact() {
+        assert!(fuzzy_text_match("grocery store", "grocery store"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_contains() {
+        assert!(fuzzy_text_match("grocery store #123", "grocery store"));
+        assert!(fuzzy_text_match("grocery store", "grocery store #123"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_word_overlap() {
+        assert!(fuzzy_text_match("whole foods market", "whole foods"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_no_match() {
+        assert!(!fuzzy_text_match("amazon", "netflix"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_empty() {
+        assert!(!fuzzy_text_match("", "something"));
+        assert!(!fuzzy_text_match("something", ""));
+    }
+
+    #[test]
+    fn test_is_duplicate_matching() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let new_txn = Transaction::new(date, "GROCERY STORE")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(
+                    rust_decimal::Decimal::new(-5000, 2),
+                    "USD",
+                ),
+            ));
+
+        let existing = vec![
+            Transaction::new(date, "GROCERY STORE #123")
+                .with_posting(rustledger_core::Posting::new(
+                    "Assets:Bank",
+                    rustledger_core::Amount::new(
+                        rust_decimal::Decimal::new(-5000, 2),
+                        "USD",
+                    ),
+                )),
+        ];
+
+        assert!(is_duplicate(&new_txn, &existing));
+    }
+
+    #[test]
+    fn test_is_duplicate_different_date() {
+        let new_txn = Transaction::new(
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            "GROCERY STORE",
+        )
+        .with_posting(rustledger_core::Posting::new(
+            "Assets:Bank",
+            rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+        ));
+
+        let existing = vec![Transaction::new(
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 16).unwrap(),
+            "GROCERY STORE",
+        )
+        .with_posting(rustledger_core::Posting::new(
+            "Assets:Bank",
+            rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+        ))];
+
+        assert!(!is_duplicate(&new_txn, &existing));
+    }
+
+    #[test]
+    fn test_is_duplicate_different_amount() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let new_txn = Transaction::new(date, "GROCERY STORE")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+            ));
+
+        let existing = vec![Transaction::new(date, "GROCERY STORE")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-7500, 2), "USD"),
+            ))];
+
+        assert!(!is_duplicate(&new_txn, &existing));
+    }
+
+    #[test]
+    fn test_load_existing_transactions() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger_path = dir.path().join("ledger.beancount");
+        std::fs::write(
+            &ledger_path,
+            r#"2024-01-15 * "GROCERY STORE" "Weekly groceries"
+  Assets:Bank:Checking  -50.00 USD
+  Expenses:Food          50.00 USD
+
+2024-01-16 * "NETFLIX" "Monthly subscription"
+  Assets:Bank:Checking  -15.99 USD
+  Expenses:Entertainment 15.99 USD
+"#,
+        )
+        .unwrap();
+
+        let txns = load_existing_transactions(&ledger_path).unwrap();
+        assert_eq!(txns.len(), 2);
+        assert_eq!(
+            txns[0].date,
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()
+        );
+        assert_eq!(
+            txns[1].date,
+            chrono::NaiveDate::from_ymd_opt(2024, 1, 16).unwrap()
+        );
+    }
+
+    #[test]
+    fn test_end_to_end_output_file() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("2024-01-15"));
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_end_to_end_existing_dedup() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write existing ledger
+        let ledger_path = dir.path().join("ledger.beancount");
+        std::fs::write(
+            &ledger_path,
+            r#"2024-01-15 * "Coffee"
+  Assets:Bank:Checking  5.00 USD
+  Expenses:Unknown      -5.00 USD
+"#,
+        )
+        .unwrap();
+
+        // Write CSV with same + new transaction
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n\
+             2024-01-15,Coffee,5.00\n\
+             2024-01-16,Lunch,12.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--existing",
+            ledger_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        // The Coffee transaction should be filtered as duplicate
+        assert!(!output.contains("Coffee"));
+        // The Lunch transaction should remain
+        assert!(output.contains("Lunch"));
+    }
+
+    #[test]
+    fn test_parse_column_value_unsupported_type() {
+        // Boolean TOML values should return None
+        assert_eq!(parse_column_value(&toml::Value::Boolean(true)), None);
+        // Float TOML values should return None
+        assert_eq!(parse_column_value(&toml::Value::Float(1.5)), None);
+    }
+
+    #[test]
+    fn test_run_with_importer_config() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write importers.toml
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[[importers]]
+name = "mybank"
+account = "Assets:Bank:MyBank"
+currency = "USD"
+date_column = "Date"
+narration_column = "Description"
+amount_column = "Amount"
+"#,
+        )
+        .unwrap();
+
+        // Write CSV
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--importer",
+            "mybank",
+            "--config",
+            config_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("Assets:Bank:MyBank"));
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_run_with_importer_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(
+            &config_path,
+            "[[importers]]\nname = \"other\"\naccount = \"Assets:Bank\"\n",
+        )
+        .unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(&csv_path, "Date,Description,Amount\n").unwrap();
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--importer",
+            "nonexistent",
+            "--config",
+            config_path.to_str().unwrap(),
+        ]);
+
+        let err = run(&args, &csv_path).unwrap_err();
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("other"));
+    }
+
+    #[test]
+    fn test_run_with_importer_no_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(&csv_path, "Date,Description,Amount\n").unwrap();
+
+        // Point --config to a non-existent file
+        let config_path = dir.path().join("nonexistent.toml");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--importer",
+            "mybank",
+            "--config",
+            config_path.to_str().unwrap(),
+        ]);
+
+        let err = run(&args, &csv_path).unwrap_err();
+        assert!(err.to_string().contains("Importers config not found"));
+    }
+
+    #[test]
+    fn test_run_stdout_output() {
+        // Test the stdout path (no -o flag) — just ensure it doesn't error
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let args = Args::parse_from(["extract", csv_path.to_str().unwrap()]);
+        // Should succeed writing to stdout
+        run(&args, &csv_path).unwrap();
+    }
+
+    #[test]
+    fn test_run_with_optional_cli_args() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Payee,Description,Debit,Credit\n\
+             2024-01-15,Store,Coffee,5.00,\n\
+             2024-01-16,Employer,Salary,,1000.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--payee-column",
+            "Payee",
+            "--debit-column",
+            "Debit",
+            "--credit-column",
+            "Credit",
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("2024-01-15"));
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_first_posting_amount_no_postings() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Test");
+        assert_eq!(first_posting_amount(&txn), None);
+    }
+
+    #[test]
+    fn test_first_posting_amount_auto_posting() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Test")
+            .with_posting(rustledger_core::Posting::auto("Expenses:Unknown"));
+        assert_eq!(first_posting_amount(&txn), None);
+    }
+
+    #[test]
+    fn test_txn_match_text_with_payee() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Weekly groceries")
+            .with_payee("Whole Foods");
+        let text = txn_match_text(&txn);
+        assert!(text.contains("whole foods"));
+        assert!(text.contains("weekly groceries"));
+    }
+
+    #[test]
+    fn test_txn_match_text_no_payee() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Coffee Shop");
+        let text = txn_match_text(&txn);
+        assert_eq!(text, "coffee shop");
+    }
+
+    #[test]
+    fn test_is_duplicate_no_existing() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Coffee")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-500, 2), "USD"),
+            ));
+        assert!(!is_duplicate(&txn, &[]));
+    }
+
+    #[test]
+    fn test_is_duplicate_with_payee() {
+        let date = chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let new_txn = Transaction::new(date, "Weekly groceries")
+            .with_payee("WHOLE FOODS")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+            ));
+
+        let existing = vec![Transaction::new(date, "Weekly groceries")
+            .with_payee("Whole Foods Market")
+            .with_posting(rustledger_core::Posting::new(
+                "Assets:Bank",
+                rustledger_core::Amount::new(rust_decimal::Decimal::new(-5000, 2), "USD"),
+            ))];
+
+        assert!(is_duplicate(&new_txn, &existing));
+    }
+
+    #[test]
+    fn test_load_existing_transactions_nonexistent_file() {
+        let result = load_existing_transactions(Path::new("/nonexistent/ledger.beancount"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_load_existing_transactions_with_non_txn_directives() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger_path = dir.path().join("ledger.beancount");
+        std::fs::write(
+            &ledger_path,
+            r#"2024-01-01 open Assets:Bank:Checking USD
+
+2024-01-15 * "Coffee"
+  Assets:Bank:Checking  -5.00 USD
+  Expenses:Food          5.00 USD
+
+2024-01-31 balance Assets:Bank:Checking 1000.00 USD
+"#,
+        )
+        .unwrap();
+
+        let txns = load_existing_transactions(&ledger_path).unwrap();
+        // Only the transaction should be loaded, not open/balance
+        assert_eq!(txns.len(), 1);
+    }
+
+    #[test]
+    fn test_end_to_end_dedup_no_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let ledger_path = dir.path().join("ledger.beancount");
+        std::fs::write(
+            &ledger_path,
+            r#"2024-01-10 * "Old transaction"
+  Assets:Bank:Checking  10.00 USD
+  Expenses:Unknown     -10.00 USD
+"#,
+        )
+        .unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--existing",
+            ledger_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        // No duplicates, so Coffee should remain
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_run_with_importers_config_alias() {
+        // Test that --importers-config alias still works
+        let dir = tempfile::tempdir().unwrap();
+
+        let config_path = dir.path().join("importers.toml");
+        std::fs::write(
+            &config_path,
+            r#"
+[[importers]]
+name = "test"
+account = "Assets:Bank"
+date_column = "Date"
+narration_column = "Description"
+amount_column = "Amount"
+"#,
+        )
+        .unwrap();
+
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Test,5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--importer",
+            "test",
+            "--importers-config",
+            config_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("Assets:Bank"));
+    }
+
+    #[test]
+    fn test_run_with_ofx_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let ofx_path = dir.path().join("statement.ofx");
+        std::fs::write(
+            &ofx_path,
+            r"OFXHEADER:100
+DATA:OFXSGML
+VERSION:102
+SECURITY:NONE
+ENCODING:USASCII
+CHARSET:1252
+COMPRESSION:NONE
+OLDFILEUID:NONE
+NEWFILEUID:NONE
+
+<OFX>
+<SIGNONMSGSRSV1>
+<SONRS>
+<STATUS>
+<CODE>0
+<SEVERITY>INFO
+</STATUS>
+<DTSERVER>20240115120000
+<LANGUAGE>ENG
+</SONRS>
+</SIGNONMSGSRSV1>
+<BANKMSGSRSV1>
+<STMTTRNRS>
+<TRNUID>1001
+<STATUS>
+<CODE>0
+<SEVERITY>INFO
+</STATUS>
+<STMTRS>
+<CURDEF>USD
+<BANKACCTFROM>
+<BANKID>123456789
+<ACCTID>987654321
+<ACCTTYPE>CHECKING
+</BANKACCTFROM>
+<BANKTRANLIST>
+<DTSTART>20240101
+<DTEND>20240131
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20240115
+<TRNAMT>-50.00
+<FITID>2024011501
+<NAME>GROCERY STORE
+<MEMO>Weekly groceries
+</STMTTRN>
+</BANKTRANLIST>
+<LEDGERBAL>
+<BALAMT>5000.00
+<DTASOF>20240131
+</LEDGERBAL>
+</STMTRS>
+</STMTTRNRS>
+</BANKMSGSRSV1>
+</OFX>",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            ofx_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &ofx_path).unwrap();
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("2024-01-15"));
+        assert!(output.contains("GROCERY STORE"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_word_overlap_threshold() {
+        // 1 out of 3 words match — below 50% threshold
+        assert!(!fuzzy_text_match("the big store", "the small shop"));
+        // 2 out of 2 words match — above 50% threshold
+        assert!(fuzzy_text_match("grocery store", "grocery store extra"));
+    }
+
+    #[test]
+    fn test_fuzzy_text_match_longer_a_than_b() {
+        // a has more words than b, and neither contains the other as a substring
+        // This forces the word-overlap path with the swap branch
+        assert!(fuzzy_text_match(
+            "whole foods market store location",
+            "whole foods burgers"
+        ));
+    }
+
+    #[test]
+    fn test_run_with_amount_format_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.tsv");
+        // Use tab delimiter to avoid conflict with comma decimal separator
+        std::fs::write(
+            &csv_path,
+            "Date\tDescription\tAmount\n2024-01-15\tCoffee\t1.234,56\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--amount-format",
+            "#.##0,00",
+            "--delimiter",
+            "\t",
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("Coffee"));
+    }
+
+    #[test]
+    fn test_run_with_amount_locale_arg() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--amount-locale",
+            "en_US",
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        run(&args, &csv_path).unwrap();
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("5.00"));
+    }
+
+    #[test]
+    fn test_run_with_invalid_locale() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n2024-01-15,Coffee,5.00\n",
+        )
+        .unwrap();
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "--amount-locale",
+            "invalid_LOCALE_xyz",
+        ]);
+
+        let err = run(&args, &csv_path).unwrap_err();
+        assert!(err.to_string().contains("not a valid locale"));
+    }
+
+    #[test]
+    fn test_run_with_csv_that_generates_warnings() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv_path = dir.path().join("statement.csv");
+        // Include a row with an invalid date to trigger a warning
+        std::fs::write(
+            &csv_path,
+            "Date,Description,Amount\n\
+             2024-01-15,Coffee,5.00\n\
+             not-a-date,Bad Row,10.00\n",
+        )
+        .unwrap();
+
+        let output_path = dir.path().join("output.beancount");
+
+        let args = Args::parse_from([
+            "extract",
+            csv_path.to_str().unwrap(),
+            "-o",
+            output_path.to_str().unwrap(),
+        ]);
+
+        // Should succeed — bad row generates warning but doesn't fail
+        run(&args, &csv_path).unwrap();
+        let output = std::fs::read_to_string(&output_path).unwrap();
+        assert!(output.contains("Coffee"));
     }
 }
