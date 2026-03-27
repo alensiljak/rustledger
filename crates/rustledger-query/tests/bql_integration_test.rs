@@ -3372,6 +3372,8 @@ fn test_value_individual_positions_use_latest_price() {
             dec!(1800),
             "First position should use latest price (180), not price at transaction date (150)"
         );
+    } else {
+        panic!("Expected Number value for first position market value");
     }
 
     // Second posting: 5 AAPL on 2024-03-20
@@ -3382,6 +3384,8 @@ fn test_value_individual_positions_use_latest_price() {
             dec!(900),
             "Second position should use latest price (180)"
         );
+    } else {
+        panic!("Expected Number value for second position market value");
     }
 }
 

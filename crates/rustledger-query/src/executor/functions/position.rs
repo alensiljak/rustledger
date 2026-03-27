@@ -254,9 +254,9 @@ impl Executor<'_> {
 
     /// Evaluate VALUE function (market value conversion).
     ///
-    /// Converts positions/amounts to their market value using the latest available price.
-    /// This matches Python beancount's behavior where `value(position)` uses the most
-    /// recent price, not the transaction date.
+    /// Converts positions/amounts/inventories to their market value using the latest
+    /// available price. This matches Python beancount's behavior where `value(position)`
+    /// uses the most recent price, not the transaction date.
     ///
     /// If no target currency is specified, it is inferred from the position's cost
     /// currency (for positions with cost basis) or falls back to the executor's
@@ -273,17 +273,13 @@ impl Executor<'_> {
             ));
         }
 
-        // Evaluate the first argument (position/amount/inventory) first
-        // so we can infer the target currency from cost if needed
+        // Evaluate the first argument (position/amount/inventory)
         let val = self.evaluate_expr(&func.args[0], ctx)?;
 
-        // Determine target currency:
-        // 1. Explicit second argument takes precedence
-        // 2. Infer from position's cost currency (beancount compatibility)
-        // 3. Fall back to executor's target_currency setting
-        let target_currency = if func.args.len() == 2 {
+        // Get explicit target currency if provided
+        let explicit_currency = if func.args.len() == 2 {
             match self.evaluate_expr(&func.args[1], ctx)? {
-                Value::String(s) => s,
+                Value::String(s) => Some(s),
                 _ => {
                     return Err(QueryError::Type(
                         "VALUE second argument must be a currency string".to_string(),
@@ -291,68 +287,11 @@ impl Executor<'_> {
                 }
             }
         } else {
-            // Try to infer from cost currency (beancount compatibility)
-            let inferred = match &val {
-                Value::Position(p) => p.cost.as_ref().map(|c| c.currency.to_string()),
-                Value::Inventory(inv) => inv
-                    .positions()
-                    .iter()
-                    .find_map(|p| p.cost.as_ref().map(|c| c.currency.to_string())),
-                _ => None,
-            };
-
-            inferred
-                .or_else(|| self.target_currency.clone())
-                .ok_or_else(|| {
-                    QueryError::InvalidArguments(
-                    "VALUE".to_string(),
-                    "no target currency set; either pass the currency as VALUE(position, 'USD'), \
-                     use a position with cost basis, or call set_target_currency() on the executor"
-                        .to_string(),
-                )
-                })?
+            None
         };
 
-        // Use latest available price for conversion (beancount compatibility).
-        // Python beancount's value() passes None as the date, which means "use latest price".
-        match val {
-            Value::Position(p) => {
-                if p.units.currency == target_currency {
-                    Ok(Value::Amount(p.units))
-                } else if let Some(converted) =
-                    self.price_db.convert_latest(&p.units, &target_currency)
-                {
-                    Ok(Value::Amount(converted))
-                } else {
-                    Ok(Value::Amount(p.units))
-                }
-            }
-            Value::Amount(a) => {
-                if a.currency == target_currency {
-                    Ok(Value::Amount(a))
-                } else if let Some(converted) = self.price_db.convert_latest(&a, &target_currency) {
-                    Ok(Value::Amount(converted))
-                } else {
-                    Ok(Value::Amount(a))
-                }
-            }
-            Value::Inventory(inv) => {
-                let mut total = Decimal::ZERO;
-                for pos in inv.positions() {
-                    if pos.units.currency == target_currency {
-                        total += pos.units.number;
-                    } else if let Some(converted) =
-                        self.price_db.convert_latest(&pos.units, &target_currency)
-                    {
-                        total += converted.number;
-                    }
-                }
-                Ok(Value::Amount(Amount::new(total, &target_currency)))
-            }
-            _ => Err(QueryError::Type(
-                "VALUE expects a position or inventory".to_string(),
-            )),
-        }
+        // Use shared implementation for consistent behavior
+        self.convert_to_market_value(&val, explicit_currency.as_deref())
     }
 
     /// Evaluate GETPRICE function.
