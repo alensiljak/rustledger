@@ -3275,3 +3275,108 @@ fn test_regex_case_insensitive() {
         "mixed-case pattern should match case-insensitively"
     );
 }
+
+// ============================================================================
+// VALUE() function beancount compatibility tests
+// ============================================================================
+
+#[test]
+fn test_value_infers_currency_from_cost() {
+    // Test that VALUE(position) without explicit currency infers from cost basis
+    // This matches Python beancount's behavior
+    let directives = make_holdings_directives();
+
+    // Test on individual positions (not aggregated) to verify currency inference
+    let result = execute_query(
+        r#"SELECT number(value(position)) as market_value
+           WHERE account ~ "Brokerage"
+           LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Position has cost in USD, so currency should be inferred
+    // Latest price is 180 USD per AAPL
+    // Either 10 * 180 = 1800 or 5 * 180 = 900 depending on which comes first
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Either the 10 AAPL position (1800) or 5 AAPL position (900) is valid
+        assert!(
+            *n == dec!(1800) || *n == dec!(900),
+            "Expected 1800 or 900, got {n}"
+        );
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_value_uses_latest_price_not_transaction_date() {
+    // Test that VALUE() uses latest price, not transaction date price
+    // This matches Python beancount's behavior where value() passes None as date
+    let directives = make_holdings_directives();
+
+    // Prices in make_holdings_directives:
+    // 2024-01-01: AAPL = 150 USD
+    // 2024-06-01: AAPL = 180 USD (latest)
+    //
+    // Transactions:
+    // 2024-01-15: Buy 10 AAPL (at this date, price was 150)
+    // 2024-03-20: Buy 5 AAPL (at this date, price was still 150)
+    //
+    // If using transaction date: 10*150 + 5*150 = 2250 USD
+    // If using latest price: 15*180 = 2700 USD (correct beancount behavior)
+
+    let result = execute_query(
+        r#"SELECT number(value(sum(position), "USD")) as market_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Should be 2700 (latest price), not 2250 (transaction date prices)
+        assert_eq!(
+            *n,
+            dec!(2700),
+            "VALUE() should use latest price, not transaction date"
+        );
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_value_individual_positions_use_latest_price() {
+    // Test VALUE() on individual postings (not aggregated) also uses latest price
+    let directives = make_holdings_directives();
+
+    let result = execute_query(
+        r#"SELECT date, number(value(position, "USD")) as val
+           WHERE account ~ "Brokerage"
+           ORDER BY date"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+
+    // First posting: 10 AAPL on 2024-01-15
+    // Latest price (2024-06-01) is 180 USD, so value = 10 * 180 = 1800
+    if let Value::Number(n) = &result.rows[0][1] {
+        assert_eq!(
+            *n,
+            dec!(1800),
+            "First position should use latest price (180), not price at transaction date (150)"
+        );
+    }
+
+    // Second posting: 5 AAPL on 2024-03-20
+    // Latest price is 180 USD, so value = 5 * 180 = 900
+    if let Value::Number(n) = &result.rows[1][1] {
+        assert_eq!(
+            *n,
+            dec!(900),
+            "Second position should use latest price (180)"
+        );
+    }
+}
