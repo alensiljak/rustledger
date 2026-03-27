@@ -631,72 +631,22 @@ impl<'a> Executor<'a> {
                 }
             }
             "VALUE" => {
-                // VALUE requires price database context - for now, just return the amount/position as-is
-                // Full implementation would convert using target_currency
+                // Use shared VALUE implementation for consistent behavior
                 if args.is_empty() || args.len() > 2 {
                     return Err(QueryError::InvalidArguments(
                         "VALUE".to_string(),
                         "expected 1-2 arguments".to_string(),
                     ));
                 }
-                let target_currency = if args.len() == 2 {
+                let explicit_currency = if args.len() == 2 {
                     match &args[1] {
-                        Value::String(s) => Some(s.clone()),
+                        Value::String(s) => Some(s.as_str()),
                         _ => None,
                     }
                 } else {
-                    self.target_currency.clone()
+                    None
                 };
-                match &args[0] {
-                    Value::Position(p) => {
-                        if let Some(ref target) = target_currency {
-                            if p.units.currency.as_str() == target {
-                                return Ok(Value::Amount(p.units.clone()));
-                            }
-                            // Try price conversion
-                            if let Some(converted) =
-                                self.price_db.convert(&p.units, target, self.query_date)
-                            {
-                                return Ok(Value::Amount(converted));
-                            }
-                        }
-                        Ok(Value::Amount(p.units.clone()))
-                    }
-                    Value::Amount(a) => {
-                        if let Some(ref target) = target_currency {
-                            if a.currency.as_str() == target {
-                                return Ok(Value::Amount(a.clone()));
-                            }
-                            if let Some(converted) =
-                                self.price_db.convert(a, target, self.query_date)
-                            {
-                                return Ok(Value::Amount(converted));
-                            }
-                        }
-                        Ok(Value::Amount(a.clone()))
-                    }
-                    Value::Inventory(inv) => {
-                        if let Some(ref target) = target_currency {
-                            let mut total = Decimal::ZERO;
-                            for pos in inv.positions() {
-                                if pos.units.currency.as_str() == target {
-                                    total += pos.units.number;
-                                } else if let Some(converted) =
-                                    self.price_db.convert(&pos.units, target, self.query_date)
-                                {
-                                    total += converted.number;
-                                }
-                            }
-                            return Ok(Value::Amount(Amount::new(total, target)));
-                        }
-                        // No target currency - can't convert inventory to single amount
-                        Ok(Value::Inventory(inv.clone()))
-                    }
-                    Value::Null => Ok(Value::Null),
-                    _ => Err(QueryError::Type(
-                        "VALUE expects a position or inventory".to_string(),
-                    )),
-                }
+                self.convert_to_market_value(&args[0], explicit_currency)
             }
             // Math functions
             "SAFEDIV" => {
@@ -1001,6 +951,97 @@ impl<'a> Executor<'a> {
         }
         Ok(())
     }
+
+    /// Convert a value to its market value using the latest available price.
+    ///
+    /// This is the core `VALUE()` implementation shared by both expression evaluation
+    /// and aggregate/subquery contexts. It matches Python beancount's behavior:
+    /// - Uses the latest available price (not a specific date)
+    /// - Infers target currency from position's cost basis if not provided
+    ///
+    /// # Arguments
+    /// * `val` - The value to convert (Position, Amount, or Inventory)
+    /// * `explicit_currency` - Optional explicit target currency
+    ///
+    /// # Returns
+    /// The converted Amount, or an error if conversion is not possible.
+    pub(crate) fn convert_to_market_value(
+        &self,
+        val: &Value,
+        explicit_currency: Option<&str>,
+    ) -> Result<Value, QueryError> {
+        // Determine target currency:
+        // 1. Explicit argument takes precedence
+        // 2. Infer from position's cost currency (beancount compatibility)
+        // 3. Fall back to executor's target_currency setting
+        let target_currency = if let Some(currency) = explicit_currency {
+            currency.to_string()
+        } else {
+            // Try to infer from cost currency
+            let inferred = match val {
+                Value::Position(p) => p.cost.as_ref().map(|c| c.currency.to_string()),
+                Value::Inventory(inv) => inv
+                    .positions()
+                    .iter()
+                    .find_map(|p| p.cost.as_ref().map(|c| c.currency.to_string())),
+                _ => None,
+            };
+
+            inferred
+                .or_else(|| self.target_currency.clone())
+                .ok_or_else(|| {
+                    QueryError::InvalidArguments(
+                        "VALUE".to_string(),
+                        "no target currency set; either pass the currency as VALUE(position, 'USD'), \
+                         use a position with cost basis, or call set_target_currency() on the executor"
+                            .to_string(),
+                    )
+                })?
+        };
+
+        // Use latest available price for conversion (beancount compatibility).
+        // Python beancount's value() passes None as the date, which means "use latest price".
+        match val {
+            Value::Position(p) => {
+                if p.units.currency == target_currency {
+                    Ok(Value::Amount(p.units.clone()))
+                } else if let Some(converted) =
+                    self.price_db.convert_latest(&p.units, &target_currency)
+                {
+                    Ok(Value::Amount(converted))
+                } else {
+                    Ok(Value::Amount(p.units.clone()))
+                }
+            }
+            Value::Amount(a) => {
+                if a.currency == target_currency {
+                    Ok(Value::Amount(a.clone()))
+                } else if let Some(converted) = self.price_db.convert_latest(a, &target_currency) {
+                    Ok(Value::Amount(converted))
+                } else {
+                    Ok(Value::Amount(a.clone()))
+                }
+            }
+            Value::Inventory(inv) => {
+                let mut total = Decimal::ZERO;
+                for pos in inv.positions() {
+                    if pos.units.currency == target_currency {
+                        total += pos.units.number;
+                    } else if let Some(converted) =
+                        self.price_db.convert_latest(&pos.units, &target_currency)
+                    {
+                        total += converted.number;
+                    }
+                }
+                Ok(Value::Amount(Amount::new(total, &target_currency)))
+            }
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type(
+                "VALUE expects a position, amount, or inventory".to_string(),
+            )),
+        }
+    }
+
     /// Check if an expression is a window function.
     pub(super) const fn is_window_expr(expr: &Expr) -> bool {
         matches!(expr, Expr::Window(_))

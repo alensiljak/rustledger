@@ -3275,3 +3275,179 @@ fn test_regex_case_insensitive() {
         "mixed-case pattern should match case-insensitively"
     );
 }
+
+// ============================================================================
+// VALUE() function beancount compatibility tests (issue #568)
+// ============================================================================
+
+#[test]
+fn test_value_infers_currency_from_cost() {
+    // Regression test for issue #568 (Problem 1):
+    // VALUE(position) without explicit currency should infer from cost basis.
+    // Python beancount uses position.cost.currency as the target currency.
+    let directives = make_holdings_directives();
+
+    // Test on individual positions (not aggregated) to verify currency inference
+    let result = execute_query(
+        r#"SELECT number(value(position)) as market_value
+           WHERE account ~ "Brokerage"
+           LIMIT 1"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Position has cost in USD, so currency should be inferred
+    // Latest price is 180 USD per AAPL
+    // Either 10 * 180 = 1800 or 5 * 180 = 900 depending on which comes first
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Either the 10 AAPL position (1800) or 5 AAPL position (900) is valid
+        assert!(
+            *n == dec!(1800) || *n == dec!(900),
+            "Expected 1800 or 900, got {n}"
+        );
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_value_uses_latest_price_not_transaction_date() {
+    // Regression test for issue #568 (Problem 2):
+    // VALUE() should use the latest available price, not the transaction date price.
+    // Python beancount's value() passes None as the date parameter to convert.get_value(),
+    // which means "use the most recent price".
+    let directives = make_holdings_directives();
+
+    // Prices in make_holdings_directives:
+    // 2024-01-01: AAPL = 150 USD
+    // 2024-06-01: AAPL = 180 USD (latest)
+    //
+    // Transactions:
+    // 2024-01-15: Buy 10 AAPL (at this date, price was 150)
+    // 2024-03-20: Buy 5 AAPL (at this date, price was still 150)
+    //
+    // If using transaction date: 10*150 + 5*150 = 2250 USD
+    // If using latest price: 15*180 = 2700 USD (correct beancount behavior)
+
+    let result = execute_query(
+        r#"SELECT number(value(sum(position), "USD")) as market_value
+           WHERE account ~ "Brokerage"
+           GROUP BY account"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        // Should be 2700 (latest price), not 2250 (transaction date prices)
+        assert_eq!(
+            *n,
+            dec!(2700),
+            "VALUE() should use latest price, not transaction date"
+        );
+    } else {
+        panic!("Expected Number value for market value");
+    }
+}
+
+#[test]
+fn test_value_individual_positions_use_latest_price() {
+    // Regression test for issue #568 (Problem 2):
+    // Verify that VALUE() on individual postings (not aggregated) also uses latest price.
+    let directives = make_holdings_directives();
+
+    let result = execute_query(
+        r#"SELECT date, number(value(position, "USD")) as val
+           WHERE account ~ "Brokerage"
+           ORDER BY date"#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+
+    // First posting: 10 AAPL on 2024-01-15
+    // Latest price (2024-06-01) is 180 USD, so value = 10 * 180 = 1800
+    if let Value::Number(n) = &result.rows[0][1] {
+        assert_eq!(
+            *n,
+            dec!(1800),
+            "First position should use latest price (180), not price at transaction date (150)"
+        );
+    } else {
+        panic!("Expected Number value for first position market value");
+    }
+
+    // Second posting: 5 AAPL on 2024-03-20
+    // Latest price is 180 USD, so value = 5 * 180 = 900
+    if let Value::Number(n) = &result.rows[1][1] {
+        assert_eq!(
+            *n,
+            dec!(900),
+            "Second position should use latest price (180)"
+        );
+    } else {
+        panic!("Expected Number value for second position market value");
+    }
+}
+
+#[test]
+fn test_value_chained_price_conversion() {
+    // Related to issue #568: VALUE() should support chained price conversion.
+    // If STOCK is priced in EUR and EUR is priced in USD, VALUE(position, "USD")
+    // should convert via the chain: STOCK → EUR → USD.
+    let directives = make_chained_price_directives();
+    let result = execute_query(
+        r#"SELECT number(value(position, "USD")) as val
+           WHERE account ~ "Stocks""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+
+    // Chained conversion: 5 GOOG × 120 EUR × 1.10 USD/EUR = 660 USD
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(
+            *n,
+            dec!(660),
+            "VALUE() should support chained price conversion (GOOG→EUR→USD)"
+        );
+    } else {
+        panic!("Expected Number value for chained conversion");
+    }
+}
+
+fn make_chained_price_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stocks")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // GOOG priced in EUR
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "GOOG",
+            Amount::new(dec!(100), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "GOOG",
+            Amount::new(dec!(120), "EUR"),
+        )),
+        // EUR priced in USD (exchange rate for chained lookup)
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "EUR",
+            Amount::new(dec!(1.10), "USD"),
+        )),
+        // Buy 5 GOOG at 80 EUR cost
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 15), "Buy GOOG")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(5), "GOOG")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(80))
+                            .with_currency("EUR")
+                            .with_date(date(2024, 2, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-400), "EUR"))),
+        ),
+    ]
+}

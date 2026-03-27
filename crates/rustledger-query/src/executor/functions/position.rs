@@ -253,6 +253,14 @@ impl Executor<'_> {
     }
 
     /// Evaluate VALUE function (market value conversion).
+    ///
+    /// Converts positions/amounts/inventories to their market value using the latest
+    /// available price. This matches Python beancount's behavior where `value(position)`
+    /// uses the most recent price, not the transaction date.
+    ///
+    /// If no target currency is specified, it is inferred from the position's cost
+    /// currency (for positions with cost basis) or falls back to the executor's
+    /// target currency setting.
     pub(crate) fn eval_value(
         &self,
         func: &FunctionCall,
@@ -265,9 +273,13 @@ impl Executor<'_> {
             ));
         }
 
-        let target_currency = if func.args.len() == 2 {
+        // Evaluate the first argument (position/amount/inventory)
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+
+        // Get explicit target currency if provided
+        let explicit_currency = if func.args.len() == 2 {
             match self.evaluate_expr(&func.args[1], ctx)? {
-                Value::String(s) => s,
+                Value::String(s) => Some(s),
                 _ => {
                     return Err(QueryError::Type(
                         "VALUE second argument must be a currency string".to_string(),
@@ -275,57 +287,11 @@ impl Executor<'_> {
                 }
             }
         } else {
-            self.target_currency.clone().ok_or_else(|| {
-                QueryError::InvalidArguments(
-                    "VALUE".to_string(),
-                    "no target currency set; either call set_target_currency() on the executor \
-                     or pass the currency as VALUE(amount, 'USD')"
-                        .to_string(),
-                )
-            })?
+            None
         };
 
-        let val = self.evaluate_expr(&func.args[0], ctx)?;
-        let date = ctx.transaction.date;
-
-        match val {
-            Value::Position(p) => {
-                if p.units.currency == target_currency {
-                    Ok(Value::Amount(p.units))
-                } else if let Some(converted) =
-                    self.price_db.convert(&p.units, &target_currency, date)
-                {
-                    Ok(Value::Amount(converted))
-                } else {
-                    Ok(Value::Amount(p.units))
-                }
-            }
-            Value::Amount(a) => {
-                if a.currency == target_currency {
-                    Ok(Value::Amount(a))
-                } else if let Some(converted) = self.price_db.convert(&a, &target_currency, date) {
-                    Ok(Value::Amount(converted))
-                } else {
-                    Ok(Value::Amount(a))
-                }
-            }
-            Value::Inventory(inv) => {
-                let mut total = Decimal::ZERO;
-                for pos in inv.positions() {
-                    if pos.units.currency == target_currency {
-                        total += pos.units.number;
-                    } else if let Some(converted) =
-                        self.price_db.convert(&pos.units, &target_currency, date)
-                    {
-                        total += converted.number;
-                    }
-                }
-                Ok(Value::Amount(Amount::new(total, &target_currency)))
-            }
-            _ => Err(QueryError::Type(
-                "VALUE expects a position or inventory".to_string(),
-            )),
-        }
+        // Use shared implementation for consistent behavior
+        self.convert_to_market_value(&val, explicit_currency.as_deref())
     }
 
     /// Evaluate GETPRICE function.
