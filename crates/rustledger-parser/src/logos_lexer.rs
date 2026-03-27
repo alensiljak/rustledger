@@ -62,13 +62,14 @@ pub enum Token<'src> {
     #[regex(r"([A-Z]|[^\x00-\x7F])([A-Za-z0-9-]|[^\x00-\x7F])*(:([A-Z0-9]|[^\x00-\x7F])([A-Za-z0-9-]|[^\x00-\x7F])*)+")]
     Account(&'src str),
 
-    /// A currency/commodity code like USD, EUR, AAPL, BTC.
+    /// A currency/commodity code like USD, EUR, AAPL, BTC, or single-char tickers like T, V, F.
     /// Uppercase letters, can contain digits, apostrophes, dots, underscores, hyphens.
-    /// Note: This pattern is lower priority than Account, Keywords, and Flags.
-    /// Currency must have at least 2 characters to avoid conflict with single-letter flags.
+    /// Single-character currencies (e.g., T for AT&T, V for Visa) are valid NYSE/NASDAQ tickers.
+    /// Note: Single-char currencies are disambiguated from transaction flags in the parser.
     /// Also supports `/` prefix for options/futures contracts (e.g., `/ESM24`, `/LOX21_211204_P100.25`).
     /// The `/` prefix requires an uppercase letter first to avoid matching `/1.14` as currency.
-    #[regex(r"/[A-Z][A-Z0-9'._-]*|[A-Z][A-Z0-9'._-]+")]
+    /// Priority 3 ensures Currency wins over Flag for single uppercase letters.
+    #[regex(r"/[A-Z][A-Z0-9'._-]*|[A-Z][A-Z0-9'._-]*", priority = 3)]
     Currency(&'src str),
 
     /// A tag like #tag-name.
@@ -269,11 +270,14 @@ pub enum Token<'src> {
 
 impl Token<'_> {
     /// Returns true if this is a transaction flag (* or !).
+    /// Single-character currencies (e.g., T, P, C) can also be used as flags.
     pub const fn is_txn_flag(&self) -> bool {
-        matches!(
-            self,
-            Self::Star | Self::Pending | Self::Flag(_) | Self::Hash
-        )
+        match self {
+            Self::Star | Self::Pending | Self::Flag(_) | Self::Hash => true,
+            // Single-char currencies can be used as transaction flags
+            Self::Currency(s) => s.len() == 1,
+            _ => false,
+        }
     }
 
     /// Returns true if this is a keyword that starts a directive.
@@ -552,6 +556,33 @@ mod tests {
         let tokens = tokenize("USD");
         assert_eq!(tokens.len(), 1);
         assert!(matches!(tokens[0].0, Token::Currency("USD")));
+    }
+
+    #[test]
+    fn test_tokenize_single_char_currency() {
+        // Single-char NYSE/NASDAQ tickers: T (AT&T), V (Visa), F (Ford), X (US Steel)
+        let tokens = tokenize("T");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Currency("T")));
+
+        let tokens = tokenize("V");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Currency("V")));
+
+        let tokens = tokenize("F");
+        assert_eq!(tokens.len(), 1);
+        assert!(matches!(tokens[0].0, Token::Currency("F")));
+    }
+
+    #[test]
+    fn test_single_char_currency_is_txn_flag() {
+        // Single-char currencies should be recognized as potential transaction flags
+        let token = Token::Currency("T");
+        assert!(token.is_txn_flag());
+
+        // Multi-char currencies should NOT be transaction flags
+        let token = Token::Currency("USD");
+        assert!(!token.is_txn_flag());
     }
 
     #[test]

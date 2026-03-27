@@ -129,6 +129,15 @@ pub enum Report {
         /// Group by period (daily, weekly, monthly, yearly)
         #[arg(short, long, default_value = "monthly")]
         period: String,
+        /// Filter to specific currency (e.g., USD, EUR)
+        #[arg(short, long)]
+        currency: Option<String>,
+        /// Filter to accounts matching this prefix
+        #[arg(short, long)]
+        account: Option<String>,
+        /// Hide zero balances
+        #[arg(long)]
+        no_zero: bool,
     },
     /// List all accounts
     Accounts,
@@ -233,8 +242,21 @@ pub fn run(file: &PathBuf, report: &Report, verbose: bool, format: &OutputFormat
         Report::Holdings { account } => {
             holdings::report_holdings(&directives, account.as_deref(), format, &mut stdout)?;
         }
-        Report::Networth { period } => {
-            networth::report_networth(&directives, period, format, &mut stdout)?;
+        Report::Networth {
+            period,
+            currency,
+            account,
+            no_zero,
+        } => {
+            networth::report_networth(
+                &directives,
+                period,
+                currency.as_deref(),
+                account.as_deref(),
+                *no_zero,
+                format,
+                &mut stdout,
+            )?;
         }
         Report::Accounts => {
             accounts::report_accounts(&directives, format, &mut stdout)?;
