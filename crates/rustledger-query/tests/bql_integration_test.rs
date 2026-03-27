@@ -3380,3 +3380,65 @@ fn test_value_individual_positions_use_latest_price() {
         );
     }
 }
+
+#[test]
+fn test_value_chained_price_conversion() {
+    // Test VALUE() with chained price conversion: STOCK → EUR → USD
+    // This requires looking up STOCK→EUR and EUR→USD to get STOCK→USD
+    let directives = make_chained_price_directives();
+    let result = execute_query(
+        r#"SELECT number(value(position, "USD")) as val
+           WHERE account ~ "Stocks""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+
+    // Chained conversion: 5 GOOG × 120 EUR × 1.10 USD/EUR = 660 USD
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(
+            *n,
+            dec!(660),
+            "VALUE() should support chained price conversion (GOOG→EUR→USD)"
+        );
+    } else {
+        panic!("Expected Number value for chained conversion");
+    }
+}
+
+fn make_chained_price_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stocks")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // GOOG priced in EUR
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "GOOG",
+            Amount::new(dec!(100), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "GOOG",
+            Amount::new(dec!(120), "EUR"),
+        )),
+        // EUR priced in USD (exchange rate for chained lookup)
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "EUR",
+            Amount::new(dec!(1.10), "USD"),
+        )),
+        // Buy 5 GOOG at 80 EUR cost
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 15), "Buy GOOG")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(5), "GOOG")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(80))
+                            .with_currency("EUR")
+                            .with_date(date(2024, 2, 15)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-400), "EUR"))),
+        ),
+    ]
+}

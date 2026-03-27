@@ -166,7 +166,32 @@ impl PriceDatabase {
     }
 
     /// Get the latest price of a currency (most recent date).
+    ///
+    /// Supports direct lookup, inverse lookup, and chained lookup (A→B→C).
     pub fn get_latest_price(&self, base: &str, quote: &str) -> Option<Decimal> {
+        // Same currency = price of 1
+        if base == quote {
+            return Some(Decimal::ONE);
+        }
+
+        // Try direct price lookup
+        if let Some(price) = self.get_direct_latest_price(base, quote) {
+            return Some(price);
+        }
+
+        // Try inverse price lookup
+        if let Some(price) = self.get_direct_latest_price(quote, base)
+            && price != Decimal::ZERO
+        {
+            return Some(Decimal::ONE / price);
+        }
+
+        // Try chained lookup (A→B→C where B is an intermediate currency)
+        self.get_chained_latest_price(base, quote)
+    }
+
+    /// Get direct latest price (base currency priced in quote currency).
+    fn get_direct_latest_price(&self, base: &str, quote: &str) -> Option<Decimal> {
         if let Some(entries) = self.prices.get(base) {
             // Find the most recent price in the target currency
             for entry in entries.iter().rev() {
@@ -175,12 +200,56 @@ impl PriceDatabase {
                 }
             }
         }
+        None
+    }
 
-        // Check inverse
-        if let Some(entries) = self.prices.get(quote) {
+    /// Try to find the latest price through an intermediate currency.
+    /// For A→C, try to find A→B and B→C for some intermediate B.
+    fn get_chained_latest_price(&self, base: &str, quote: &str) -> Option<Decimal> {
+        // Collect all currencies that have prices from 'base'
+        let intermediates: Vec<InternedStr> = if let Some(entries) = self.prices.get(base) {
+            entries.iter().map(|e| e.currency.clone()).collect()
+        } else {
+            Vec::new()
+        };
+
+        // Try each intermediate currency
+        for intermediate in intermediates {
+            if intermediate == quote {
+                continue; // Already tried direct
+            }
+
+            // Get price base→intermediate
+            if let Some(price1) = self.get_direct_latest_price(base, &intermediate) {
+                // Get price intermediate→quote (try direct, inverse, but not chained to avoid loops)
+                if let Some(price2) = self.get_direct_latest_price(&intermediate, quote) {
+                    return Some(price1 * price2);
+                }
+                // Try inverse for second leg
+                if let Some(price2) = self.get_direct_latest_price(quote, &intermediate)
+                    && price2 != Decimal::ZERO
+                {
+                    return Some(price1 / price2);
+                }
+            }
+        }
+
+        // Also try currencies that price TO base (inverse first leg)
+        for (currency, entries) in &self.prices {
             for entry in entries.iter().rev() {
                 if entry.currency == base && entry.price != Decimal::ZERO {
-                    return Some(Decimal::ONE / entry.price);
+                    // We have currency→base, so base→currency = 1/price
+                    let price1 = Decimal::ONE / entry.price;
+
+                    // Now try currency→quote
+                    if let Some(price2) = self.get_direct_latest_price(currency, quote) {
+                        return Some(price1 * price2);
+                    }
+                    if let Some(price2) = self.get_direct_latest_price(quote, currency)
+                        && price2 != Decimal::ZERO
+                    {
+                        return Some(price1 / price2);
+                    }
                 }
             }
         }
