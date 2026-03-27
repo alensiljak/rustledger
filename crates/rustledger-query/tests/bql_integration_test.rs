@@ -3277,13 +3277,14 @@ fn test_regex_case_insensitive() {
 }
 
 // ============================================================================
-// VALUE() function beancount compatibility tests
+// VALUE() function beancount compatibility tests (issue #568)
 // ============================================================================
 
 #[test]
 fn test_value_infers_currency_from_cost() {
-    // Test that VALUE(position) without explicit currency infers from cost basis
-    // This matches Python beancount's behavior
+    // Regression test for issue #568 (Problem 1):
+    // VALUE(position) without explicit currency should infer from cost basis.
+    // Python beancount uses position.cost.currency as the target currency.
     let directives = make_holdings_directives();
 
     // Test on individual positions (not aggregated) to verify currency inference
@@ -3311,8 +3312,10 @@ fn test_value_infers_currency_from_cost() {
 
 #[test]
 fn test_value_uses_latest_price_not_transaction_date() {
-    // Test that VALUE() uses latest price, not transaction date price
-    // This matches Python beancount's behavior where value() passes None as date
+    // Regression test for issue #568 (Problem 2):
+    // VALUE() should use the latest available price, not the transaction date price.
+    // Python beancount's value() passes None as the date parameter to convert.get_value(),
+    // which means "use the most recent price".
     let directives = make_holdings_directives();
 
     // Prices in make_holdings_directives:
@@ -3348,7 +3351,8 @@ fn test_value_uses_latest_price_not_transaction_date() {
 
 #[test]
 fn test_value_individual_positions_use_latest_price() {
-    // Test VALUE() on individual postings (not aggregated) also uses latest price
+    // Regression test for issue #568 (Problem 2):
+    // Verify that VALUE() on individual postings (not aggregated) also uses latest price.
     let directives = make_holdings_directives();
 
     let result = execute_query(
@@ -3383,8 +3387,9 @@ fn test_value_individual_positions_use_latest_price() {
 
 #[test]
 fn test_value_chained_price_conversion() {
-    // Test VALUE() with chained price conversion: STOCK → EUR → USD
-    // This requires looking up STOCK→EUR and EUR→USD to get STOCK→USD
+    // Related to issue #568: VALUE() should support chained price conversion.
+    // If STOCK is priced in EUR and EUR is priced in USD, VALUE(position, "USD")
+    // should convert via the chain: STOCK → EUR → USD.
     let directives = make_chained_price_directives();
     let result = execute_query(
         r#"SELECT number(value(position, "USD")) as val
