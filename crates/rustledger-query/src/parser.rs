@@ -1506,4 +1506,17 @@ mod tests {
             _ => panic!("Expected SELECT query"),
         }
     }
+
+    #[test]
+    fn test_regular_table_identifier() {
+        // Test parsing a regular (non-system) table
+        let query = parse("SELECT * FROM MyTable WHERE x = 1").unwrap();
+        match query {
+            Query::Select(sel) => {
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("MyTable".to_string()));
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
 }
