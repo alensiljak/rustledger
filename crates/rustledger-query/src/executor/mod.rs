@@ -1100,8 +1100,10 @@ impl<'a> Executor<'a> {
 
         // Collect all price entries from the price database
         let mut entries: Vec<_> = self.price_db.iter_entries().collect();
-        // Sort by date for consistent output (matches Python beancount behavior)
-        entries.sort_by_key(|(_, date, _, _)| *date);
+        // Sort by (date, base_currency) for consistent, deterministic output
+        entries.sort_by(|(currency_a, date_a, _, _), (currency_b, date_b, _, _)| {
+            date_a.cmp(date_b).then_with(|| currency_a.cmp(currency_b))
+        });
 
         for (base_currency, date, price_number, quote_currency) in entries {
             let row = vec![

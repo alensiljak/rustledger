@@ -313,8 +313,13 @@ impl Executor<'_> {
         } else if let Some(user_table) = self.tables.get(&table_name_upper) {
             user_table
         } else {
+            let hint = if table_name.starts_with('#') {
+                ". Available system tables: #prices"
+            } else {
+                ""
+            };
             return Err(QueryError::Evaluation(format!(
-                "table '{table_name}' does not exist"
+                "table '{table_name}' does not exist{hint}"
             )));
         };
 

@@ -3640,3 +3640,82 @@ fn test_prices_table_all_columns() {
         other => panic!("Expected Amount, got {other:?}"),
     }
 }
+
+#[test]
+fn test_prices_table_case_insensitive() {
+    // Test: #prices, #PRICES, and #Prices should all work
+    let directives = vec![Directive::Price(Price::new(
+        date(2024, 6, 15),
+        "EUR",
+        Amount::new(dec!(1.10), "USD"),
+    ))];
+
+    // Lowercase
+    let result_lower = execute_query("SELECT * FROM #prices", &directives);
+    assert_eq!(result_lower.len(), 1);
+
+    // Uppercase
+    let result_upper = execute_query("SELECT * FROM #PRICES", &directives);
+    assert_eq!(result_upper.len(), 1);
+
+    // Mixed case
+    let result_mixed = execute_query("SELECT * FROM #Prices", &directives);
+    assert_eq!(result_mixed.len(), 1);
+
+    // All results should be identical
+    assert_eq!(result_lower.rows, result_upper.rows);
+    assert_eq!(result_lower.rows, result_mixed.rows);
+}
+
+#[test]
+fn test_prices_table_unknown_system_table_error() {
+    // Test: Unknown system table should show helpful error message
+    let directives: Vec<Directive> = vec![];
+    let query = parse("SELECT * FROM #unknown").expect("query should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&query);
+
+    match result {
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("#unknown"),
+                "Error should mention the table name"
+            );
+            assert!(
+                msg.contains("#prices"),
+                "Error should hint about available system tables"
+            );
+        }
+        Ok(_) => panic!("Expected error for unknown system table"),
+    }
+}
+
+#[test]
+fn test_prices_table_deterministic_ordering() {
+    // Test: Multiple prices on the same date should have deterministic order by currency
+    let directives = vec![
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "EUR",
+            Amount::new(dec!(1.10), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "CHF",
+            Amount::new(dec!(1.15), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "ABC",
+            Amount::new(dec!(50.00), "USD"),
+        )),
+    ];
+    let result = execute_query("SELECT currency FROM #prices", &directives);
+
+    // Should be sorted by (date, currency), so ABC, CHF, EUR
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.rows[0][0], Value::String("ABC".to_string()));
+    assert_eq!(result.rows[1][0], Value::String("CHF".to_string()));
+    assert_eq!(result.rows[2][0], Value::String("EUR".to_string()));
+}
