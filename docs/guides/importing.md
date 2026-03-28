@@ -61,8 +61,14 @@ default_expense = "Expenses:Unknown"
 Use with:
 
 ```bash
-rledger extract -c importers.toml chase-statement.csv
+rledger extract --importer chase chase-statement.csv
 ```
+
+The `importers.toml` file is searched for automatically in these locations (first found wins):
+
+1. Path specified via `--importers-config path/to/importers.toml`
+2. `importers.toml` in the current directory
+3. `~/.config/rledger/importers.toml`
 
 ### Account Mapping
 
@@ -83,7 +89,9 @@ account = "Assets:Bank:Checking"
 "INTEREST" = "Income:Interest"
 ```
 
-Patterns are matched case-insensitively against the narration/payee.
+Patterns are matched case-insensitively against the payee field first, then the
+narration. Longer patterns are matched first, so more specific patterns take
+priority over shorter ones. The first match wins.
 
 ## OFX Import
 
@@ -126,7 +134,13 @@ narration_column = 1
 Select which importer to use:
 
 ```bash
-rledger extract -c importers.toml --importer credit_card chase-card.csv
+rledger extract --importer credit_card chase-card.csv
+```
+
+Or specify a custom config path:
+
+```bash
+rledger extract --importers-config path/to/importers.toml --importer credit_card chase-card.csv
 ```
 
 ## Duplicate Detection
@@ -163,7 +177,7 @@ rledger check ledger.beancount
 ```bash
 # Download statements, then:
 rledger extract march-statement.csv \
-  -c importers.toml \
+  --importer checking \
   --existing ledger.beancount \
   >> ledger.beancount
 
