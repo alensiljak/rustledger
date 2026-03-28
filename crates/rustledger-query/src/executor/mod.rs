@@ -1075,11 +1075,13 @@ impl<'a> Executor<'a> {
     ///
     /// Built-in tables are virtual tables that provide access to ledger data:
     /// - `#prices`: Price directives from the ledger
+    /// - `#balances`: Balance assertion directives from the ledger
     ///
     /// Returns `None` if the table name is not a recognized built-in table.
     pub(super) fn get_builtin_table(&self, table_name: &str) -> Option<Table> {
         match table_name.to_uppercase().as_str() {
             "#PRICES" => Some(self.build_prices_table()),
+            "#BALANCES" => Some(self.build_balances_table()),
             _ => None,
         }
     }
@@ -1110,6 +1112,62 @@ impl<'a> Executor<'a> {
                 Value::Date(date),
                 Value::String(base_currency.to_string()),
                 Value::Amount(Amount::new(price_number, quote_currency)),
+            ];
+            table.add_row(row);
+        }
+
+        table
+    }
+
+    /// Build the #balances table from balance assertion directives.
+    ///
+    /// The table has columns: date, account, amount
+    /// - date: The date of the balance assertion
+    /// - account: The account being balanced
+    /// - amount: The expected balance amount
+    fn build_balances_table(&self) -> Table {
+        let columns = vec![
+            "date".to_string(),
+            "account".to_string(),
+            "amount".to_string(),
+        ];
+        let mut table = Table::new(columns);
+
+        // Collect balance directives from either spanned or unspanned directives
+        let mut balances: Vec<_> = if let Some(spanned) = self.spanned_directives {
+            spanned
+                .iter()
+                .filter_map(|s| {
+                    if let Directive::Balance(b) = &s.value {
+                        Some((b.date, b.account.as_ref(), b.amount.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        } else {
+            self.directives
+                .iter()
+                .filter_map(|d| {
+                    if let Directive::Balance(b) = d {
+                        Some((b.date, b.account.as_ref(), b.amount.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        // Sort by (date, account) for consistent, deterministic output
+        balances.sort_by(|(date_a, account_a, _), (date_b, account_b, _)| {
+            date_a.cmp(date_b).then_with(|| account_a.cmp(account_b))
+        });
+
+        for (date, account, amount) in balances {
+            let row = vec![
+                Value::Date(date),
+                Value::String(account.to_string()),
+                Value::Amount(amount),
             ];
             table.add_row(row);
         }

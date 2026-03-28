@@ -314,7 +314,7 @@ impl Executor<'_> {
             user_table
         } else {
             let hint = if table_name.starts_with('#') {
-                ". Available system tables: #prices"
+                ". Available system tables: #balances, #prices"
             } else {
                 ""
             };

@@ -2279,7 +2279,7 @@ fn test_filter_with_not_equal() {
 // Nested Aggregate Function Tests (Holdings-style queries)
 // ============================================================================
 
-use rustledger_core::{CostSpec, Price};
+use rustledger_core::{Balance, CostSpec, Price};
 
 fn make_holdings_directives() -> Vec<Directive> {
     vec![
@@ -3683,7 +3683,7 @@ fn test_prices_table_unknown_system_table_error() {
                 "Error should mention the table name"
             );
             assert!(
-                msg.contains("#prices"),
+                msg.contains("#balances") && msg.contains("#prices"),
                 "Error should hint about available system tables"
             );
         }
@@ -3718,4 +3718,227 @@ fn test_prices_table_deterministic_ordering() {
     assert_eq!(result.rows[0][0], Value::String("ABC".to_string()));
     assert_eq!(result.rows[1][0], Value::String("CHF".to_string()));
     assert_eq!(result.rows[2][0], Value::String("EUR".to_string()));
+}
+
+// ============================================================================
+// #balances System Table Tests (Issue #563)
+// ============================================================================
+
+fn make_balances_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:Checking")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:Savings")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Balance(Balance::new(
+            date(2024, 11, 7),
+            "Assets:Bank:Checking",
+            Amount::new(dec!(595.47), "EUR"),
+        )),
+        Directive::Balance(Balance::new(
+            date(2024, 11, 8),
+            "Assets:Bank:Savings",
+            Amount::new(dec!(5775.09), "EUR"),
+        )),
+        Directive::Balance(Balance::new(
+            date(2024, 11, 9),
+            "Assets:Cash",
+            Amount::new(dec!(0.00), "EUR"),
+        )),
+    ]
+}
+
+#[test]
+fn test_balances_table_basic_select() {
+    // Test: SELECT date, account, amount FROM #balances
+    let directives = make_balances_test_directives();
+    let result = execute_query("SELECT date, account, amount FROM #balances", &directives);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.columns, vec!["date", "account", "amount"]);
+}
+
+#[test]
+fn test_balances_table_select_all() {
+    // Test: SELECT * FROM #balances
+    let directives = make_balances_test_directives();
+    let result = execute_query("SELECT * FROM #balances", &directives);
+
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.columns, vec!["date", "account", "amount"]);
+}
+
+#[test]
+fn test_balances_table_with_where_clause() {
+    // Test: SELECT * FROM #balances WHERE account ~ 'Checking'
+    let directives = make_balances_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #balances WHERE account ~ 'Checking'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result.rows[0][1],
+        Value::String("Assets:Bank:Checking".to_string())
+    );
+}
+
+#[test]
+fn test_balances_table_with_date_filter() {
+    // Test: SELECT * FROM #balances WHERE date >= 2024-11-08
+    let directives = make_balances_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #balances WHERE date >= 2024-11-08",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_balances_table_with_order_by() {
+    // Test: SELECT * FROM #balances ORDER BY account
+    let directives = make_balances_test_directives();
+    let result = execute_query(
+        "SELECT account FROM #balances ORDER BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 3);
+    // Alphabetical order: Assets:Bank:Checking, Assets:Bank:Savings, Assets:Cash
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("Assets:Bank:Checking".to_string())
+    );
+    assert_eq!(
+        result.rows[1][0],
+        Value::String("Assets:Bank:Savings".to_string())
+    );
+    assert_eq!(result.rows[2][0], Value::String("Assets:Cash".to_string()));
+}
+
+#[test]
+fn test_balances_table_with_limit() {
+    // Test: SELECT * FROM #balances LIMIT 2
+    let directives = make_balances_test_directives();
+    let result = execute_query("SELECT * FROM #balances LIMIT 2", &directives);
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_balances_table_empty() {
+    // Test: SELECT * FROM #balances with no balance directives
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #balances", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_balances_table_amount_column_value() {
+    // Test: Verify amount column contains proper Amount values
+    let directives = vec![Directive::Balance(Balance::new(
+        date(2024, 6, 15),
+        "Assets:Checking",
+        Amount::new(dec!(1234.56), "USD"),
+    ))];
+    let result = execute_query("SELECT amount FROM #balances", &directives);
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.number, dec!(1234.56));
+            assert_eq!(amt.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_balances_table_all_columns() {
+    // Test: Verify all columns are accessible and have correct types
+    let directives = vec![Directive::Balance(Balance::new(
+        date(2024, 11, 7),
+        "Assets:Bank:Checking",
+        Amount::new(dec!(595.47), "EUR"),
+    ))];
+    let result = execute_query("SELECT date, account, amount FROM #balances", &directives);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.columns, vec!["date", "account", "amount"]);
+
+    // Verify date column
+    assert_eq!(result.rows[0][0], Value::Date(date(2024, 11, 7)));
+    // Verify account column
+    assert_eq!(
+        result.rows[0][1],
+        Value::String("Assets:Bank:Checking".to_string())
+    );
+    // Verify amount column
+    match &result.rows[0][2] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.number, dec!(595.47));
+            assert_eq!(amt.currency.as_ref(), "EUR");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_balances_table_case_insensitive() {
+    // Test: #balances, #BALANCES, and #Balances should all work
+    let directives = vec![Directive::Balance(Balance::new(
+        date(2024, 6, 15),
+        "Assets:Checking",
+        Amount::new(dec!(100.00), "USD"),
+    ))];
+
+    // Lowercase
+    let result_lower = execute_query("SELECT * FROM #balances", &directives);
+    assert_eq!(result_lower.len(), 1);
+
+    // Uppercase
+    let result_upper = execute_query("SELECT * FROM #BALANCES", &directives);
+    assert_eq!(result_upper.len(), 1);
+
+    // Mixed case
+    let result_mixed = execute_query("SELECT * FROM #Balances", &directives);
+    assert_eq!(result_mixed.len(), 1);
+
+    // All results should be identical
+    assert_eq!(result_lower.rows, result_upper.rows);
+    assert_eq!(result_lower.rows, result_mixed.rows);
+}
+
+#[test]
+fn test_balances_table_deterministic_ordering() {
+    // Test: Multiple balances on the same date should have deterministic order by account
+    let directives = vec![
+        Directive::Balance(Balance::new(
+            date(2024, 1, 1),
+            "Assets:Zebra",
+            Amount::new(dec!(100.00), "USD"),
+        )),
+        Directive::Balance(Balance::new(
+            date(2024, 1, 1),
+            "Assets:Apple",
+            Amount::new(dec!(200.00), "USD"),
+        )),
+        Directive::Balance(Balance::new(
+            date(2024, 1, 1),
+            "Assets:Banana",
+            Amount::new(dec!(300.00), "USD"),
+        )),
+    ];
+    let result = execute_query("SELECT account FROM #balances", &directives);
+
+    // Should be sorted by (date, account), so Apple, Banana, Zebra
+    assert_eq!(result.len(), 3);
+    assert_eq!(result.rows[0][0], Value::String("Assets:Apple".to_string()));
+    assert_eq!(
+        result.rows[1][0],
+        Value::String("Assets:Banana".to_string())
+    );
+    assert_eq!(result.rows[2][0], Value::String("Assets:Zebra".to_string()));
 }
