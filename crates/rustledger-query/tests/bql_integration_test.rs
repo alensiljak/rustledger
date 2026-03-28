@@ -3451,3 +3451,192 @@ fn make_chained_price_directives() -> Vec<Directive> {
         ),
     ]
 }
+
+// ============================================================================
+// #prices System Table Tests (Issue #562)
+// ============================================================================
+
+/// Helper to create directives with price data for #prices table tests.
+fn make_prices_test_directives() -> Vec<Directive> {
+    vec![
+        // Multiple price directives
+        Directive::Price(Price::new(
+            date(2025, 1, 1),
+            "EUR",
+            Amount::new(dec!(1.95583), "BAM"),
+        )),
+        Directive::Price(Price::new(
+            date(2025, 1, 1),
+            "EUR",
+            Amount::new(dec!(1.0268), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2025, 1, 1),
+            "EUR",
+            Amount::new(dec!(1.1325), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2025, 1, 10),
+            "CHF",
+            Amount::new(dec!(1.0647), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2025, 3, 30),
+            "ABC",
+            Amount::new(dec!(1.20), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2025, 4, 15),
+            "ABC",
+            Amount::new(dec!(1.35), "EUR"),
+        )),
+    ]
+}
+
+#[test]
+fn test_prices_table_basic_select() {
+    // Test: SELECT date, currency, amount FROM #prices
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT date, currency, amount FROM #prices", &directives);
+
+    assert_eq!(result.columns, vec!["date", "currency", "amount"]);
+    assert_eq!(result.len(), 6); // 6 price directives
+
+    // Verify first row (should be sorted by date)
+    assert_eq!(result.rows[0][0], Value::Date(date(2025, 1, 1)));
+}
+
+#[test]
+fn test_prices_table_select_all() {
+    // Test: SELECT * FROM #prices
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT * FROM #prices", &directives);
+
+    // Wildcard expands to all columns
+    assert_eq!(result.len(), 6);
+}
+
+#[test]
+fn test_prices_table_with_where_clause() {
+    // Test: SELECT * FROM #prices WHERE currency = 'EUR'
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT * FROM #prices WHERE currency = 'EUR'", &directives);
+
+    // EUR has 3 price entries (2025-01-01 x3 = different quote currencies)
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_prices_table_with_date_filter() {
+    // Test: SELECT * FROM #prices WHERE date > 2025-01-01
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT * FROM #prices WHERE date > 2025-01-01", &directives);
+
+    // After 2025-01-01: CHF on 01-10, ABC on 03-30 and 04-15
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_prices_table_with_order_by() {
+    // Test: SELECT * FROM #prices ORDER BY date DESC
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT * FROM #prices ORDER BY date DESC", &directives);
+
+    // Most recent date should be first (2025-04-15)
+    assert_eq!(result.rows[0][0], Value::Date(date(2025, 4, 15)));
+    // Oldest date should be last (2025-01-01)
+    assert_eq!(
+        result.rows[result.len() - 1][0],
+        Value::Date(date(2025, 1, 1))
+    );
+}
+
+#[test]
+fn test_prices_table_with_limit() {
+    // Test: SELECT * FROM #prices LIMIT 2
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT * FROM #prices LIMIT 2", &directives);
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_prices_table_currency_column_value() {
+    // Test that currency column contains base currency strings
+    let directives = vec![Directive::Price(Price::new(
+        date(2024, 1, 1),
+        "AAPL",
+        Amount::new(dec!(150), "USD"),
+    ))];
+    let result = execute_query("SELECT currency FROM #prices", &directives);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("AAPL".to_string()));
+}
+
+#[test]
+fn test_prices_table_amount_column_value() {
+    // Test that amount column contains Amount values with price + quote currency
+    let directives = vec![Directive::Price(Price::new(
+        date(2024, 1, 1),
+        "AAPL",
+        Amount::new(dec!(150.50), "USD"),
+    ))];
+    let result = execute_query("SELECT amount FROM #prices", &directives);
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.number, dec!(150.50));
+            assert_eq!(amt.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_prices_table_empty() {
+    // Test: SELECT * FROM #prices with no price directives
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #prices", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_prices_table_with_distinct() {
+    // Test: SELECT DISTINCT currency FROM #prices
+    let directives = make_prices_test_directives();
+    let result = execute_query("SELECT DISTINCT currency FROM #prices", &directives);
+
+    // Should have 4 distinct currencies: EUR, CHF, ABC
+    // Actually EUR appears 3 times, CHF 1 time, ABC 2 times
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_prices_table_all_columns() {
+    // Test: Verify all columns are accessible and have correct types
+    let directives = vec![Directive::Price(Price::new(
+        date(2024, 6, 15),
+        "MSFT",
+        Amount::new(dec!(400.50), "USD"),
+    ))];
+    let result = execute_query("SELECT date, currency, amount FROM #prices", &directives);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.columns, vec!["date", "currency", "amount"]);
+
+    // Verify date column
+    assert_eq!(result.rows[0][0], Value::Date(date(2024, 6, 15)));
+    // Verify currency column
+    assert_eq!(result.rows[0][1], Value::String("MSFT".to_string()));
+    // Verify amount column
+    match &result.rows[0][2] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.number, dec!(400.50));
+            assert_eq!(amt.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}

@@ -1070,6 +1070,50 @@ impl<'a> Executor<'a> {
             _ => format!("col{index}"),
         }
     }
+
+    /// Get a built-in system table by name.
+    ///
+    /// Built-in tables are virtual tables that provide access to ledger data:
+    /// - `#prices`: Price directives from the ledger
+    ///
+    /// Returns `None` if the table name is not a recognized built-in table.
+    pub(super) fn get_builtin_table(&self, table_name: &str) -> Option<Table> {
+        match table_name.to_uppercase().as_str() {
+            "#PRICES" => Some(self.build_prices_table()),
+            _ => None,
+        }
+    }
+
+    /// Build the #prices table from price directives.
+    ///
+    /// The table has columns: date, currency, amount
+    /// - date: The date of the price directive
+    /// - currency: The base currency being priced
+    /// - amount: The price as an Amount (number + quote currency)
+    fn build_prices_table(&self) -> Table {
+        let columns = vec![
+            "date".to_string(),
+            "currency".to_string(),
+            "amount".to_string(),
+        ];
+        let mut table = Table::new(columns);
+
+        // Collect all price entries from the price database
+        let mut entries: Vec<_> = self.price_db.iter_entries().collect();
+        // Sort by date for consistent output (matches Python beancount behavior)
+        entries.sort_by_key(|(_, date, _, _)| *date);
+
+        for (base_currency, date, price_number, quote_currency) in entries {
+            let row = vec![
+                Value::Date(date),
+                Value::String(base_currency.to_string()),
+                Value::Amount(Amount::new(price_number, quote_currency)),
+            ];
+            table.add_row(row);
+        }
+
+        table
+    }
 }
 #[cfg(test)]
 mod tests {

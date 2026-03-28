@@ -106,13 +106,15 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
 
         // Table name FROM clause: FROM tablename (where tablename is not a keyword)
         // A table name is an identifier followed by WHERE/GROUP/ORDER/HAVING/LIMIT/PIVOT or end
+        // Supports system tables like #prices, #entries
         let table_from = ws1()
             .ignore_then(kw("FROM"))
             .ignore_then(ws1())
-            .ignore_then(identifier().try_map(|name, span| {
+            .ignore_then(table_identifier().try_map(|name, span| {
                 // Check if this looks like a table name (uppercase convention or doesn't look like account)
                 // Table names should not contain ':' which accounts have
-                if name.contains(':') {
+                // System tables starting with '#' are always valid
+                if !name.starts_with('#') && name.contains(':') {
                     Err(Rich::custom(
                         span,
                         "table names cannot contain ':' - this looks like an account filter expression",
@@ -798,6 +800,19 @@ fn identifier<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>>
     text::ident().map(|s: &str| s.to_string())
 }
 
+/// Parse a table identifier, which can be a regular identifier or a system table
+/// starting with `#` (e.g., `#prices`, `#entries`).
+fn table_identifier<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
+    choice((
+        // System table: #identifier (e.g., #prices)
+        just('#')
+            .ignore_then(text::ident())
+            .map(|s: &str| format!("#{s}")),
+        // Regular table identifier
+        text::ident().map(|s: &str| s.to_string()),
+    ))
+}
+
 /// Parse a string literal.
 fn string_literal<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
     // Double-quoted string
@@ -1457,6 +1472,37 @@ mod tests {
                 }
                 _ => panic!("Expected function"),
             },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_system_table_prices() {
+        // Test parsing SELECT FROM #prices (system table)
+        let query = parse("SELECT date, currency, amount FROM #prices").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert_eq!(sel.targets.len(), 3);
+                assert!(matches!(&sel.targets[0].expr, Expr::Column(c) if c == "date"));
+                assert!(matches!(&sel.targets[1].expr, Expr::Column(c) if c == "currency"));
+                assert!(matches!(&sel.targets[2].expr, Expr::Column(c) if c == "amount"));
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("#prices".to_string()));
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_system_table_with_where() {
+        // Test parsing system table with WHERE clause
+        let query = parse("SELECT * FROM #prices WHERE currency = 'EUR'").unwrap();
+        match query {
+            Query::Select(sel) => {
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("#prices".to_string()));
+                assert!(sel.where_clause.is_some());
+            }
             _ => panic!("Expected SELECT query"),
         }
     }
