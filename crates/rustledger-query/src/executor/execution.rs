@@ -293,7 +293,10 @@ impl Executor<'_> {
         Ok(result)
     }
 
-    /// Execute a SELECT query that sources from a user-created table.
+    /// Execute a SELECT query that sources from a user-created or built-in table.
+    ///
+    /// Built-in tables (system tables) start with `#`:
+    /// - `#prices`: Price directives from the ledger
     pub(super) fn execute_select_from_table(
         &self,
         query: &SelectQuery,
@@ -301,10 +304,24 @@ impl Executor<'_> {
     ) -> Result<QueryResult, QueryError> {
         let table_name_upper = table_name.to_uppercase();
 
-        // Look up the table
-        let table = self.tables.get(&table_name_upper).ok_or_else(|| {
-            QueryError::Evaluation(format!("table '{table_name}' does not exist"))
-        })?;
+        // Check for built-in system tables first (e.g., #prices)
+        // Then fall back to user-created tables
+        let builtin_table;
+        let table = if let Some(builtin) = self.get_builtin_table(&table_name_upper) {
+            builtin_table = builtin;
+            &builtin_table
+        } else if let Some(user_table) = self.tables.get(&table_name_upper) {
+            user_table
+        } else {
+            let hint = if table_name.starts_with('#') {
+                ". Available system tables: #accounts, #balances, #commodities, #documents, #entries, #events, #notes, #postings, #prices, #transactions"
+            } else {
+                ""
+            };
+            return Err(QueryError::Evaluation(format!(
+                "table '{table_name}' does not exist{hint}"
+            )));
+        };
 
         // Build a column name -> index mapping for the table
         let column_map: FxHashMap<String, usize> = table
