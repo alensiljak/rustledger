@@ -985,15 +985,26 @@ impl<'a> Executor<'a> {
                         }
                     }
                     Value::Inventory(inv) => {
-                        let mut total = Decimal::ZERO;
+                        // Convert each position, keeping originals when no conversion available
+                        // (matches Python beancount behavior)
+                        let mut result = Inventory::default();
                         for pos in inv.positions() {
                             if pos.units.currency == target_currency {
-                                total += pos.units.number;
+                                result.add(Position::simple(pos.units.clone()));
                             } else if let Some(converted) = convert_amount(&pos.units) {
-                                total += converted.number;
+                                result.add(Position::simple(converted));
+                            } else {
+                                // No conversion available - keep original (Python beancount behavior)
+                                result.add(Position::simple(pos.units.clone()));
                             }
                         }
-                        Ok(Value::Amount(Amount::new(total, &target_currency)))
+                        // If result has single currency matching target, return as Amount
+                        let positions = result.positions();
+                        if positions.len() == 1 && positions[0].units.currency == target_currency {
+                            Ok(Value::Amount(positions[0].units.clone()))
+                        } else {
+                            Ok(Value::Inventory(Box::new(result)))
+                        }
                     }
                     Value::Number(n) => Ok(Value::Amount(Amount::new(*n, &target_currency))),
                     Value::Null => Ok(Value::Null),

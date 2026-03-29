@@ -5146,3 +5146,66 @@ fn test_convert_number_to_currency() {
         other => panic!("Expected Amount, got {other:?}"),
     }
 }
+
+#[test]
+fn test_convert_unconvertible_currency_kept_original() {
+    // Test: when no price is available for conversion, keep original currency
+    // (matches Python beancount behavior - returns original amount, not silent skip)
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:EUR")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:JPY")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:USD")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Equity:Opening")),
+        // EUR account - will be kept as-is (target currency)
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Opening EUR")
+                .with_posting(Posting::new(
+                    "Assets:Bank:EUR",
+                    Amount::new(dec!(1000), "EUR"),
+                ))
+                .with_posting(Posting::new(
+                    "Equity:Opening",
+                    Amount::new(dec!(-1000), "EUR"),
+                )),
+        ),
+        // JPY account - NO price defined, should be kept as JPY
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Opening JPY")
+                .with_posting(Posting::new(
+                    "Assets:Bank:JPY",
+                    Amount::new(dec!(50000), "JPY"),
+                ))
+                .with_posting(Posting::new(
+                    "Equity:Opening",
+                    Amount::new(dec!(-50000), "JPY"),
+                )),
+        ),
+    ];
+
+    // Query positions converting to EUR - JPY has no conversion rate
+    let result = execute_query(
+        "SELECT convert(sum(position), 'EUR') WHERE account ~ '^Assets:Bank' GROUP BY 1",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should return an Inventory with both EUR and JPY (JPY kept as original)
+    match &result.rows[0][0] {
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(
+                positions.len(),
+                2,
+                "Expected 2 positions (EUR + unconverted JPY)"
+            );
+            // Check both currencies are present
+            let currencies: Vec<_> = positions
+                .iter()
+                .map(|p| p.units.currency.as_ref())
+                .collect();
+            assert!(currencies.contains(&"EUR"), "Should have EUR");
+            assert!(currencies.contains(&"JPY"), "Should have JPY (unconverted)");
+        }
+        other => panic!("Expected Inventory with mixed currencies, got {other:?}"),
+    }
+}
