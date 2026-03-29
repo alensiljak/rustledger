@@ -298,6 +298,17 @@ impl PriceDatabase {
     pub fn is_empty(&self) -> bool {
         self.prices.is_empty()
     }
+
+    /// Iterate over all price entries with their base currency.
+    ///
+    /// Returns tuples of (`base_currency`, `date`, `price`, `quote_currency`).
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&str, NaiveDate, Decimal, &str)> {
+        self.prices.iter().flat_map(|(base, entries)| {
+            entries
+                .iter()
+                .map(move |e| (base.as_str(), e.date, e.price, e.currency.as_str()))
+        })
+    }
 }
 
 #[cfg(test)]
