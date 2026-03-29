@@ -3,6 +3,7 @@
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustledger_booking::BookingEngine;
 use rustledger_core::{BookingMethod, Directive};
+use rustledger_loader::Options as LoaderOptions;
 use rustledger_parser::{ParseError, ParseResult, Span, Spanned};
 use rustledger_validate::{
     Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
@@ -11,41 +12,73 @@ use rustledger_validate::{
 use super::utils::LineIndex;
 use crate::ledger_state::LedgerState;
 
-/// Build `ValidationOptions` from file options.
+/// Build `ValidationOptions` with custom account type names from loader options.
+///
+/// Uses the already-merged account type names from the loader's `Options`,
+/// which handles multi-file ledgers where `name_*` options may be in included files.
+///
+/// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
+fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> ValidationOptions {
+    ValidationOptions {
+        account_types: loader_options
+            .account_types()
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+        ..Default::default()
+    }
+}
+
+/// Build `ValidationOptions` with custom account type names from parsed file options.
 ///
 /// Extracts `name_assets`, `name_liabilities`, `name_equity`, `name_income`, and
 /// `name_expenses` options to support custom (including Unicode) account type names.
+/// Other `ValidationOptions` fields are left at their default values.
+///
+/// Used when no ledger is loaded (single-file validation).
 ///
 /// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
-fn build_validation_options(file_options: &[(String, String, Span)]) -> ValidationOptions {
+fn build_validation_options_from_file(
+    file_options: &[(String, String, Span)],
+) -> ValidationOptions {
     let mut opts = ValidationOptions::default();
 
-    // Start with defaults, override with file options
-    let mut name_assets = "Assets".to_string();
-    let mut name_liabilities = "Liabilities".to_string();
-    let mut name_equity = "Equity".to_string();
-    let mut name_income = "Income".to_string();
-    let mut name_expenses = "Expenses".to_string();
+    // Start with validator defaults, override with file options.
+    // This avoids duplicating the canonical default account type names.
+    let mut account_types = opts.account_types.clone();
 
     for (key, value, _span) in file_options {
         match key.as_str() {
-            "name_assets" => name_assets = value.clone(),
-            "name_liabilities" => name_liabilities = value.clone(),
-            "name_equity" => name_equity = value.clone(),
-            "name_income" => name_income = value.clone(),
-            "name_expenses" => name_expenses = value.clone(),
+            "name_assets" => {
+                if !account_types.is_empty() {
+                    account_types[0] = value.clone();
+                }
+            }
+            "name_liabilities" => {
+                if account_types.len() > 1 {
+                    account_types[1] = value.clone();
+                }
+            }
+            "name_equity" => {
+                if account_types.len() > 2 {
+                    account_types[2] = value.clone();
+                }
+            }
+            "name_income" => {
+                if account_types.len() > 3 {
+                    account_types[3] = value.clone();
+                }
+            }
+            "name_expenses" => {
+                if account_types.len() > 4 {
+                    account_types[4] = value.clone();
+                }
+            }
             _ => {}
         }
     }
 
-    opts.account_types = vec![
-        name_assets,
-        name_liabilities,
-        name_equity,
-        name_income,
-        name_expenses,
-    ];
-
+    opts.account_types = account_types;
     opts
 }
 
@@ -93,7 +126,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// # Arguments
 /// * `directives` - Directives from the current file (used for line number mapping)
 /// * `source` - Source text of the current file
-/// * `file_options` - Options from the file (for custom account type names)
+/// * `validation_options` - Validation options (including custom account type names)
 /// * `full_directives` - Optional: All directives from all files (for multi-file validation)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
 ///
@@ -102,7 +135,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 pub fn validation_errors_to_diagnostics(
     directives: &[Spanned<Directive>],
     source: &str,
-    file_options: &[(String, String, Span)],
+    validation_options: ValidationOptions,
     full_directives: Option<&[Spanned<Directive>]>,
     current_file_id: Option<u16>,
 ) -> Vec<Diagnostic> {
@@ -140,8 +173,6 @@ pub fn validation_errors_to_diagnostics(
         // If booking fails, we leave the transaction as-is and let validation catch it
     }
 
-    // Build validation options from file options (supports custom account type names)
-    let validation_options = build_validation_options(file_options);
     let validation_errors = validate_spanned_with_options(&booked_directives, validation_options);
 
     // Filter errors to only those in the current file (if file_id filtering is enabled).
@@ -249,10 +280,22 @@ pub fn all_diagnostics(
             // Get full directives from ledger state if available
             let full_directives = ledger_state.and_then(|ls| ls.directives());
 
+            // Build validation options with custom account type names.
+            // Use ledger-wide options when a ledger is loaded (handles multi-file
+            // ledgers where name_* options may be in included files); fall back
+            // to per-file options for single-file validation.
+            let validation_options = if let Some(ls) = ledger_state
+                && let Some(ledger) = ls.ledger()
+            {
+                build_validation_options_from_loader(&ledger.options)
+            } else {
+                build_validation_options_from_file(&result.options)
+            };
+
             let validation_diagnostics = validation_errors_to_diagnostics(
                 &result.directives,
                 source,
-                &result.options,
+                validation_options,
                 full_directives,
                 current_file_id,
             );
@@ -488,8 +531,13 @@ mod tests {
 
         // Test 1: Validate bank.bean in ISOLATION (old broken behavior)
         // This should show E2001 for the second balance assertion
-        let isolated_diagnostics =
-            validation_errors_to_diagnostics(&bank_result.directives, bank_source, &[], None, None);
+        let isolated_diagnostics = validation_errors_to_diagnostics(
+            &bank_result.directives,
+            bank_source,
+            ValidationOptions::default(),
+            None,
+            None,
+        );
 
         let isolated_codes: Vec<_> = isolated_diagnostics.iter().map(get_code).collect();
 
@@ -506,7 +554,7 @@ mod tests {
         let full_ledger_diagnostics = validation_errors_to_diagnostics(
             &bank_result.directives,
             bank_source,
-            &[],
+            ValidationOptions::default(),
             Some(&all_directives),
             Some(1), // file_id=1 for bank.bean
         );
