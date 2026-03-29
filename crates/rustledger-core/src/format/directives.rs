@@ -132,10 +132,14 @@ pub fn format_price(price: &Price, config: &FormatConfig) -> String {
 /// Format a custom directive.
 pub fn format_custom(custom: &Custom, config: &FormatConfig) -> String {
     let mut out = format!(
-        "{} custom \"{}\"\n",
+        "{} custom \"{}\"",
         custom.date,
         escape_string(&custom.custom_type)
     );
+    for value in &custom.values {
+        write!(out, " {}", format_meta_value(value)).unwrap();
+    }
+    out.push('\n');
     format_metadata(&custom.meta, &config.indent, &mut out);
     out
 }
