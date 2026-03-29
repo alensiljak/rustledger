@@ -4,7 +4,7 @@
 
 use rust_decimal_macros::dec;
 use rustledger_core::{
-    Amount, Close, Commodity, Directive, Document, Event, NaiveDate, Note, Open, Posting,
+    Amount, Close, Commodity, CostSpec, Directive, Document, Event, NaiveDate, Note, Open, Posting,
     PriceAnnotation, Transaction,
 };
 use rustledger_query::{Executor, QueryResult, Value, parse};
@@ -2282,7 +2282,7 @@ fn test_filter_with_not_equal() {
 // Nested Aggregate Function Tests (Holdings-style queries)
 // ============================================================================
 
-use rustledger_core::{Balance, CostSpec, Price};
+use rustledger_core::{Balance, Price};
 
 fn make_holdings_directives() -> Vec<Directive> {
     vec![
@@ -5207,5 +5207,144 @@ fn test_convert_unconvertible_currency_kept_original() {
             assert!(currencies.contains(&"JPY"), "Should have JPY (unconverted)");
         }
         other => panic!("Expected Inventory with mixed currencies, got {other:?}"),
+    }
+}
+
+// ============================================================================
+// Issue #567 Regression Tests
+// ============================================================================
+
+/// Regression test for issue #567: `VALUE()` returns cost instead of market value.
+/// <https://github.com/rustledger/rustledger/issues/567>
+///
+/// When a transaction has a @ price annotation, `VALUE()` should use that price
+/// for market value calculation, not the cost price from the cost specification.
+#[test]
+fn test_issue_567_value_uses_implicit_price_from_annotation() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stocks")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Equity:Opening")),
+        // Buy 5 ABC at cost 1.25 EUR each
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 10), "Buy stock")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(5), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR")
+                            .with_date(date(2024, 1, 10)),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-6.25), "EUR"))),
+        ),
+        // Sell with @ 1.40 EUR price annotation (creates implicit price)
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Sell stock")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(1.25))
+                                .with_currency("EUR")
+                                .with_date(date(2024, 1, 10)),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(7.00), "EUR"))),
+        ),
+    ];
+
+    // Query the buy transaction's position (the one with positive amount)
+    let result = execute_query(
+        "SELECT cost(position), value(position, 'EUR') WHERE account = 'Assets:Stocks' AND number > 0",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1, "Should have 1 row for buy transaction");
+
+    // Cost should be 5 * 1.25 = 6.25 EUR
+    match &result.rows[0][0] {
+        Value::Amount(cost) => {
+            assert_eq!(
+                cost.number,
+                dec!(6.25),
+                "Cost should be 5 * 1.25 = 6.25 EUR"
+            );
+            assert_eq!(cost.currency.as_ref(), "EUR");
+        }
+        other => panic!("Expected Amount for cost, got {other:?}"),
+    }
+
+    // VALUE should use market price 1.40 EUR (from @ annotation), NOT cost 1.25 EUR
+    // 5 ABC * 1.40 EUR = 7.00 EUR
+    match &result.rows[0][1] {
+        Value::Amount(market_value) => {
+            assert_eq!(
+                market_value.number,
+                dec!(7.00),
+                "VALUE should use implicit price 1.40 from @ annotation, not cost 1.25. Got: {} EUR",
+                market_value.number
+            );
+            assert_eq!(market_value.currency.as_ref(), "EUR");
+        }
+        other => panic!("Expected Amount for value, got {other:?}"),
+    }
+}
+
+/// Test that `value(sum(position))` works with implicit prices from annotations.
+#[test]
+fn test_issue_567_value_sum_position_with_implicit_price() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stocks")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        // Buy 10 XYZ at cost 50 USD each
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 10), "Buy XYZ")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(10), "XYZ")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(50))
+                            .with_currency("USD"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-500), "USD"))),
+        ),
+        // Price goes up - sell some with @ 60 USD annotation
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 15), "Sell XYZ")
+                .with_posting(
+                    Posting::new("Assets:Stocks", Amount::new(dec!(-5), "XYZ"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(50))
+                                .with_currency("USD"),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(60), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(300), "USD"))),
+        ),
+    ];
+
+    // Sum all positions and get value
+    let result = execute_query(
+        "SELECT value(sum(position), 'USD') WHERE account = 'Assets:Stocks' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+
+    // Net position: 10 - 5 = 5 XYZ
+    // Market value at latest price (60 USD from @ annotation): 5 * 60 = 300 USD
+    match &result.rows[0][0] {
+        Value::Amount(market_value) => {
+            assert_eq!(
+                market_value.number,
+                dec!(300),
+                "value(sum(position)) should use implicit price 60, giving 5 * 60 = 300 USD"
+            );
+            assert_eq!(market_value.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
     }
 }
