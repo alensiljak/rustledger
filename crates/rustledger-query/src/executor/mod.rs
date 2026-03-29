@@ -114,12 +114,20 @@ impl<'a> Executor<'a> {
         source_map: &SourceMap,
     ) -> Self {
         // Build price database from spanned directives
+        // Include both explicit prices and implicit prices from transactions
         let mut price_db = crate::price::PriceDatabase::new();
         for spanned in spanned_directives {
-            if let Directive::Price(p) = &spanned.value {
-                price_db.add_price(p);
+            match &spanned.value {
+                Directive::Price(p) => {
+                    price_db.add_price(p);
+                }
+                Directive::Transaction(txn) => {
+                    price_db.add_implicit_prices_from_transaction(txn);
+                }
+                _ => {}
             }
         }
+        price_db.sort_prices();
 
         // Build source locations
         let source_locations: Vec<SourceLocation> = spanned_directives
