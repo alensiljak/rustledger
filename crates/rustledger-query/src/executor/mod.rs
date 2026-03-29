@@ -924,6 +924,84 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
+            // CONVERT function - convert amounts/positions/inventories to target currency
+            "CONVERT" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(QueryError::InvalidArguments(
+                        "CONVERT".to_string(),
+                        "expected 2 or 3 arguments: (value, currency[, date])".to_string(),
+                    ));
+                }
+
+                let target_currency = match &args[1] {
+                    Value::String(s) => s.clone(),
+                    _ => {
+                        return Err(QueryError::Type(
+                            "CONVERT: second argument must be a currency string".to_string(),
+                        ));
+                    }
+                };
+
+                // Optional date argument
+                let date: Option<chrono::NaiveDate> = if args.len() == 3 {
+                    match &args[2] {
+                        Value::Date(d) => Some(*d),
+                        _ => {
+                            return Err(QueryError::Type(
+                                "CONVERT: third argument must be a date".to_string(),
+                            ));
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                // Helper closure to convert an amount
+                let convert_amount = |amt: &Amount| -> Option<Amount> {
+                    if let Some(d) = date {
+                        self.price_db.convert(amt, &target_currency, d)
+                    } else {
+                        self.price_db.convert_latest(amt, &target_currency)
+                    }
+                };
+
+                match &args[0] {
+                    Value::Position(p) => {
+                        if p.units.currency == target_currency {
+                            Ok(Value::Amount(p.units.clone()))
+                        } else if let Some(converted) = convert_amount(&p.units) {
+                            Ok(Value::Amount(converted))
+                        } else {
+                            Ok(Value::Amount(p.units.clone()))
+                        }
+                    }
+                    Value::Amount(a) => {
+                        if a.currency == target_currency {
+                            Ok(Value::Amount(a.clone()))
+                        } else if let Some(converted) = convert_amount(a) {
+                            Ok(Value::Amount(converted))
+                        } else {
+                            Ok(Value::Amount(a.clone()))
+                        }
+                    }
+                    Value::Inventory(inv) => {
+                        let mut total = Decimal::ZERO;
+                        for pos in inv.positions() {
+                            if pos.units.currency == target_currency {
+                                total += pos.units.number;
+                            } else if let Some(converted) = convert_amount(&pos.units) {
+                                total += converted.number;
+                            }
+                        }
+                        Ok(Value::Amount(Amount::new(total, &target_currency)))
+                    }
+                    Value::Number(n) => Ok(Value::Amount(Amount::new(*n, &target_currency))),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "CONVERT expects a position, amount, inventory, or number".to_string(),
+                    )),
+                }
+            }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
             _ => Err(QueryError::UnknownFunction(name.to_string())),
