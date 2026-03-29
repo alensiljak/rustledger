@@ -56,6 +56,16 @@ pub struct CsvConfig {
     pub skip_rows: usize,
     /// Whether to invert the sign of amounts.
     pub invert_sign: bool,
+    /// Default expense account for unmatched negative-amount (money out) transactions.
+    /// Defaults to "Expenses:Unknown".
+    pub default_expense: Option<String>,
+    /// Default income account for unmatched positive-amount (money in) transactions.
+    /// Defaults to "Income:Unknown".
+    pub default_income: Option<String>,
+    /// Account mappings: pattern → account name.
+    /// Patterns are matched case-insensitively against payee and narration fields.
+    /// First match wins.
+    pub mappings: Vec<(String, String)>,
 }
 
 impl Default for CsvConfig {
@@ -74,6 +84,9 @@ impl Default for CsvConfig {
             delimiter: ',',
             skip_rows: 0,
             invert_sign: false,
+            default_expense: None,
+            default_income: None,
+            mappings: Vec::new(),
         }
     }
 }
@@ -308,6 +321,31 @@ impl CsvConfigBuilder {
     /// Set whether to invert the sign of amounts.
     pub const fn invert_sign(mut self, invert: bool) -> Self {
         self.config.invert_sign = invert;
+        self
+    }
+
+    /// Set the default expense account for unmatched negative-amount (money out) transactions.
+    pub fn default_expense(mut self, account: impl Into<String>) -> Self {
+        self.config.default_expense = Some(account.into());
+        self
+    }
+
+    /// Set the default income account for unmatched positive-amount (money in) transactions.
+    pub fn default_income(mut self, account: impl Into<String>) -> Self {
+        self.config.default_income = Some(account.into());
+        self
+    }
+
+    /// Add account mappings for automatic categorization.
+    ///
+    /// Each mapping is a `(pattern, account)` pair. Patterns are matched
+    /// case-insensitively against payee and narration fields. First match wins.
+    /// Patterns are lowercased at build time for efficient matching.
+    pub fn mappings(mut self, mappings: Vec<(String, String)>) -> Self {
+        self.config.mappings = mappings
+            .into_iter()
+            .map(|(pattern, account)| (pattern.to_lowercase(), account))
+            .collect();
         self
     }
 
