@@ -5348,3 +5348,145 @@ fn test_issue_567_value_sum_position_with_implicit_price() {
         other => panic!("Expected Amount, got {other:?}"),
     }
 }
+
+// ============================================================================
+// Issue #575: Implicit GROUP BY for aggregate queries
+// ============================================================================
+
+/// Regression test for issue #575: Query returns just one row
+/// <https://github.com/rustledger/rustledger/issues/575>
+///
+/// When aggregate functions are mixed with non-aggregated columns and no explicit
+/// GROUP BY is provided, Python beancount implicitly groups by the non-aggregated
+/// columns. This test verifies that rustledger matches this behavior.
+#[test]
+fn test_issue_575_implicit_group_by() {
+    let directives = make_issue_575_directives();
+    let result = execute_query(
+        r"SELECT sum(number), currency, account ORDER BY account",
+        &directives,
+    );
+
+    // Should return 3 rows (one per unique account+currency combination)
+    // Python beancount output:
+    //   sum(num  cur       account
+    //   -------  ---  -----------------
+    //   -550.00  EUR  Assets:Bank
+    //      5     ABC  Assets:Investment
+    //    50.00  EUR  Expenses:Food
+    assert_eq!(
+        result.len(),
+        3,
+        "Should return 3 rows when implicitly grouping by currency and account"
+    );
+
+    // Check that we have the expected accounts (sorted by account name)
+    let accounts: Vec<&str> = result
+        .rows
+        .iter()
+        .map(|row| match &row[2] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for account name in column 2, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        accounts,
+        vec!["Assets:Bank", "Assets:Investment", "Expenses:Food"]
+    );
+
+    // Check the sum for Assets:Bank (-50 - 500 = -550 EUR)
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(-550), "Assets:Bank should have sum -550");
+    } else {
+        panic!("Expected Number for Assets:Bank sum");
+    }
+
+    // Check the sum for Assets:Investment (5 ABC)
+    if let Value::Number(n) = &result.rows[1][0] {
+        assert_eq!(*n, dec!(5), "Assets:Investment should have sum 5");
+    } else {
+        panic!("Expected Number for Assets:Investment sum");
+    }
+
+    // Check the sum for Expenses:Food (50 EUR)
+    if let Value::Number(n) = &result.rows[2][0] {
+        assert_eq!(*n, dec!(50), "Expenses:Food should have sum 50");
+    } else {
+        panic!("Expected Number for Expenses:Food sum");
+    }
+}
+
+/// Test that pure aggregate queries without non-aggregate columns still work
+#[test]
+fn test_pure_aggregate_no_implicit_group_by() {
+    let directives = make_issue_575_directives();
+    let result = execute_query(r"SELECT count(*)", &directives);
+
+    // Should return 1 row with the total count
+    assert_eq!(result.len(), 1, "Pure aggregate should return 1 row");
+
+    if let Value::Integer(n) = &result.rows[0][0] {
+        // 4 postings total (2 from grocery, 2 from stock purchase)
+        assert_eq!(*n, 4, "Should count all 4 postings");
+    } else {
+        panic!("Expected Integer for count(*)");
+    }
+}
+
+/// Test explicit GROUP BY still works and takes precedence
+#[test]
+fn test_explicit_group_by_overrides_implicit() {
+    let directives = make_issue_575_directives();
+    let result = execute_query(
+        r"SELECT sum(number), currency GROUP BY currency ORDER BY currency",
+        &directives,
+    );
+
+    // Should return 2 rows (one per currency: ABC and EUR)
+    assert_eq!(
+        result.len(),
+        2,
+        "Explicit GROUP BY currency should return 2 rows"
+    );
+
+    // Check currencies
+    let currencies: Vec<&str> = result
+        .rows
+        .iter()
+        .map(|row| match &row[1] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency in column 1, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(currencies, vec!["ABC", "EUR"]);
+}
+
+fn make_issue_575_directives() -> Vec<Directive> {
+    // Recreate the exact ledger from issue #575
+    vec![
+        Directive::Open(Open::new(date(2026, 3, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2026, 3, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2026, 3, 1), "Assets:Investment")),
+        Directive::Open(Open::new(date(2026, 3, 1), "Expenses:Food")),
+        Directive::Open(Open::new(date(2026, 3, 1), "Income:Salary")),
+        // Transaction 1: Groceries (50 EUR from bank to food)
+        Directive::Transaction(
+            Transaction::new(date(2026, 3, 26), "Grocery shopping")
+                .with_payee("Grocery Store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "EUR"))),
+        ),
+        // Transaction 2: Buy stock (5 ABC @ 100 EUR each = 500 EUR)
+        Directive::Transaction(
+            Transaction::new(date(2026, 3, 27), "Buy Stock")
+                .with_posting(
+                    Posting::new("Assets:Investment", Amount::new(dec!(5), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-500), "EUR"))),
+        ),
+    ]
+}
