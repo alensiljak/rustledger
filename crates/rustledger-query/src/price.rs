@@ -94,36 +94,40 @@ impl PriceDatabase {
     ///
     /// Extracts prices from:
     /// 1. Price annotations (`@ price` or `@@ total_price`) - takes priority
-    /// 2. Cost specifications (`{cost}`) when no explicit price annotation
+    /// 2. Cost specifications (`{cost}`) when no valid price annotation
     ///
     /// This matches Python beancount's `implicit_prices` plugin behavior.
     pub fn add_implicit_prices_from_transaction(&mut self, txn: &Transaction) {
         for posting in &txn.postings {
             // Get the posting's units (the commodity being priced)
             if let Some(units) = posting.amount() {
-                // Priority 1: Price annotation (@ or @@)
-                if let Some(price_annotation) = &posting.price {
-                    if let Some(price_amount) = price_annotation.amount() {
-                        // For @@ (total), calculate per-unit price
-                        let per_unit_price = if price_annotation.is_unit() {
-                            price_amount.number
-                        } else if !units.number.is_zero() {
-                            // Total price divided by units
-                            price_amount.number / units.number.abs()
-                        } else {
-                            continue;
-                        };
+                // Priority 1: Price annotation (@ or @@) - if it yields a valid amount.
+                // If the annotation exists but amount() is None, we fall through to cost.
+                if let Some(price_annotation) = &posting.price
+                    && let Some(price_amount) = price_annotation.amount()
+                {
+                    // For @@ (total), calculate per-unit price
+                    let per_unit_price = if price_annotation.is_unit() {
+                        price_amount.number
+                    } else if !units.number.is_zero() {
+                        // Total price divided by units
+                        price_amount.number / units.number.abs()
+                    } else {
+                        continue;
+                    };
 
-                        self.add_implicit_price(
-                            txn.date,
-                            &units.currency,
-                            per_unit_price,
-                            &price_amount.currency,
-                        );
-                    }
+                    self.add_implicit_price(
+                        txn.date,
+                        &units.currency,
+                        per_unit_price,
+                        &price_amount.currency,
+                    );
+                    // Successfully extracted from price annotation, skip cost fallback
+                    continue;
                 }
-                // Priority 2: Cost specification (only if no price annotation)
-                else if let Some(cost_spec) = &posting.cost {
+
+                // Priority 2: Cost specification (fallback if no valid price from annotation)
+                if let Some(cost_spec) = &posting.cost {
                     if let (Some(number_per), Some(currency)) =
                         (&cost_spec.number_per, &cost_spec.currency)
                     {
