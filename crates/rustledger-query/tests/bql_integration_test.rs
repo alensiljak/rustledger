@@ -5,7 +5,7 @@
 use rust_decimal_macros::dec;
 use rustledger_core::{
     Amount, Close, Commodity, Directive, Document, Event, NaiveDate, Note, Open, Posting,
-    Transaction,
+    PriceAnnotation, Transaction,
 };
 use rustledger_query::{Executor, QueryResult, Value, parse};
 
@@ -4771,6 +4771,110 @@ fn test_postings_table_with_limit() {
     let result = execute_query("SELECT * FROM #postings LIMIT 2", &directives);
 
     assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_postings_table_cost_columns() {
+    // Test that cost basis columns are populated correctly
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy stock")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD")
+                            .with_date(date(2024, 1, 15))
+                            .with_label("lot1"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1500), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT account, number, currency, cost_number, cost_currency, cost_date, cost_label FROM #postings WHERE account = 'Assets:Brokerage'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+
+    // Verify posting units
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("Assets:Brokerage".to_string())
+    );
+    assert_eq!(result.rows[0][1], Value::Number(dec!(10)));
+    assert_eq!(result.rows[0][2], Value::String("AAPL".to_string()));
+
+    // Verify cost basis columns
+    assert_eq!(result.rows[0][3], Value::Number(dec!(150)));
+    assert_eq!(result.rows[0][4], Value::String("USD".to_string()));
+    assert_eq!(result.rows[0][5], Value::Date(date(2024, 1, 15)));
+    assert_eq!(result.rows[0][6], Value::String("lot1".to_string()));
+}
+
+#[test]
+fn test_postings_table_cost_columns_null_when_no_cost() {
+    // Test that cost columns are NULL when posting has no cost basis
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Groceries")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT account, cost_number, cost_currency, cost_date, cost_label FROM #postings WHERE account = 'Expenses:Food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("Expenses:Food".to_string())
+    );
+    // All cost columns should be NULL
+    assert_eq!(result.rows[0][1], Value::Null);
+    assert_eq!(result.rows[0][2], Value::Null);
+    assert_eq!(result.rows[0][3], Value::Null);
+    assert_eq!(result.rows[0][4], Value::Null);
+}
+
+#[test]
+fn test_postings_table_price_column() {
+    // Test that price column is populated for postings with price annotation
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy at price")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL"))
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(150), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1500), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT account, price FROM #postings WHERE account = 'Assets:Brokerage'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][1] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.number, dec!(150));
+            assert_eq!(amt.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Amount for price, got {other:?}"),
+    }
 }
 
 // ============================================================================
