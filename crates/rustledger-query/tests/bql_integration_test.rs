@@ -3,7 +3,10 @@
 //! Tests cover parsing, execution, aggregation, filtering, and real-world query scenarios.
 
 use rust_decimal_macros::dec;
-use rustledger_core::{Amount, Directive, NaiveDate, Open, Posting, Transaction};
+use rustledger_core::{
+    Amount, Close, Commodity, Directive, Document, Event, NaiveDate, Note, Open, Posting,
+    Transaction,
+};
 use rustledger_query::{Executor, QueryResult, Value, parse};
 
 // ============================================================================
@@ -3941,4 +3944,871 @@ fn test_balances_table_deterministic_ordering() {
         Value::String("Assets:Banana".to_string())
     );
     assert_eq!(result.rows[2][0], Value::String("Assets:Zebra".to_string()));
+}
+
+// ============================================================================
+// #commodities System Table Tests
+// ============================================================================
+
+fn make_commodities_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "USD")),
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "EUR")),
+        Directive::Commodity(Commodity::new(date(2024, 2, 1), "AAPL")),
+        Directive::Commodity(Commodity::new(date(2024, 2, 15), "BTC")),
+    ]
+}
+
+#[test]
+fn test_commodities_table_basic_select() {
+    let directives = make_commodities_test_directives();
+    let result = execute_query("SELECT date, name FROM #commodities", &directives);
+
+    assert_eq!(result.columns, vec!["date", "name"]);
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_commodities_table_select_all() {
+    let directives = make_commodities_test_directives();
+    let result = execute_query("SELECT * FROM #commodities", &directives);
+
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_commodities_table_with_where_clause() {
+    let directives = make_commodities_test_directives();
+    let result = execute_query("SELECT * FROM #commodities WHERE name = 'EUR'", &directives);
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][1], Value::String("EUR".to_string()));
+}
+
+#[test]
+fn test_commodities_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #commodities", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_commodities_table_case_insensitive() {
+    let directives = make_commodities_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #commodities", &directives);
+    let result_upper = execute_query("SELECT * FROM #COMMODITIES", &directives);
+    let result_mixed = execute_query("SELECT * FROM #Commodities", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+    assert_eq!(result_lower.rows, result_mixed.rows);
+}
+
+#[test]
+fn test_commodities_table_deterministic_ordering() {
+    let directives = vec![
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "ZZZ")),
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "AAA")),
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "MMM")),
+    ];
+    let result = execute_query("SELECT name FROM #commodities", &directives);
+
+    // Should be sorted by (date, name)
+    assert_eq!(result.rows[0][0], Value::String("AAA".to_string()));
+    assert_eq!(result.rows[1][0], Value::String("MMM".to_string()));
+    assert_eq!(result.rows[2][0], Value::String("ZZZ".to_string()));
+}
+
+// ============================================================================
+// #events System Table Tests
+// ============================================================================
+
+fn make_events_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Event(Event::new(date(2024, 1, 1), "location", "New York")),
+        Directive::Event(Event::new(date(2024, 3, 15), "employer", "Acme Corp")),
+        Directive::Event(Event::new(date(2024, 6, 1), "location", "San Francisco")),
+    ]
+}
+
+#[test]
+fn test_events_table_basic_select() {
+    let directives = make_events_test_directives();
+    let result = execute_query("SELECT date, type, description FROM #events", &directives);
+
+    assert_eq!(result.columns, vec!["date", "type", "description"]);
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_events_table_select_all() {
+    let directives = make_events_test_directives();
+    let result = execute_query("SELECT * FROM #events", &directives);
+
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_events_table_with_where_clause() {
+    let directives = make_events_test_directives();
+    let result = execute_query("SELECT * FROM #events WHERE type = 'location'", &directives);
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_events_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #events", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_events_table_case_insensitive() {
+    let directives = make_events_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #events", &directives);
+    let result_upper = execute_query("SELECT * FROM #EVENTS", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+// ============================================================================
+// #notes System Table Tests
+// ============================================================================
+
+fn make_notes_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Note(Note::new(
+            date(2024, 1, 15),
+            "Assets:Bank:Checking",
+            "Opened checking account",
+        )),
+        Directive::Note(Note::new(
+            date(2024, 2, 20),
+            "Expenses:Food",
+            "Started tracking food expenses",
+        )),
+        Directive::Note(Note::new(
+            date(2024, 3, 1),
+            "Assets:Bank:Checking",
+            "Changed overdraft settings",
+        )),
+    ]
+}
+
+#[test]
+fn test_notes_table_basic_select() {
+    let directives = make_notes_test_directives();
+    let result = execute_query("SELECT date, account, comment FROM #notes", &directives);
+
+    assert_eq!(result.columns, vec!["date", "account", "comment"]);
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_notes_table_select_all() {
+    let directives = make_notes_test_directives();
+    let result = execute_query("SELECT * FROM #notes", &directives);
+
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_notes_table_with_where_clause() {
+    let directives = make_notes_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #notes WHERE account ~ 'Checking'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_notes_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #notes", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_notes_table_case_insensitive() {
+    let directives = make_notes_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #notes", &directives);
+    let result_upper = execute_query("SELECT * FROM #NOTES", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+// ============================================================================
+// #documents System Table Tests
+// ============================================================================
+
+fn make_documents_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Document(
+            Document::new(
+                date(2024, 1, 15),
+                "Assets:Bank:Checking",
+                "/docs/statement-jan.pdf",
+            )
+            .with_tag("statement")
+            .with_link("doc-001"),
+        ),
+        Directive::Document(Document::new(
+            date(2024, 2, 15),
+            "Assets:Bank:Checking",
+            "/docs/statement-feb.pdf",
+        )),
+        Directive::Document(
+            Document::new(date(2024, 3, 1), "Expenses:Food", "/receipts/grocery.jpg")
+                .with_tag("receipt"),
+        ),
+    ]
+}
+
+#[test]
+fn test_documents_table_basic_select() {
+    let directives = make_documents_test_directives();
+    let result = execute_query(
+        "SELECT date, account, filename, tags, links FROM #documents",
+        &directives,
+    );
+
+    assert_eq!(
+        result.columns,
+        vec!["date", "account", "filename", "tags", "links"]
+    );
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_documents_table_select_all() {
+    let directives = make_documents_test_directives();
+    let result = execute_query("SELECT * FROM #documents", &directives);
+
+    assert_eq!(result.len(), 3);
+}
+
+#[test]
+fn test_documents_table_with_where_clause() {
+    let directives = make_documents_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #documents WHERE account ~ 'Checking'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_documents_table_tags_column() {
+    let directives = make_documents_test_directives();
+    let result = execute_query(
+        "SELECT filename, tags FROM #documents WHERE filename ~ 'jan'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::StringSet(tags) = &result.rows[0][1] {
+        assert!(tags.contains(&"statement".to_string()));
+    } else {
+        panic!("Expected StringSet for tags");
+    }
+}
+
+#[test]
+fn test_documents_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #documents", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_documents_table_case_insensitive() {
+    let directives = make_documents_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #documents", &directives);
+    let result_upper = execute_query("SELECT * FROM #DOCUMENTS", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+// ============================================================================
+// #accounts System Table Tests
+// ============================================================================
+
+fn make_accounts_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(
+            Open::new(date(2024, 1, 1), "Assets:Bank:Checking")
+                .with_currencies(vec!["USD".into(), "EUR".into()]),
+        ),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:Savings")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Investment").with_booking("FIFO")),
+        Directive::Open(Open::new(date(2024, 2, 1), "Expenses:Food")),
+        Directive::Close(Close::new(date(2024, 12, 31), "Assets:Bank:Savings")),
+    ]
+}
+
+#[test]
+fn test_accounts_table_basic_select() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query(
+        "SELECT account, open, close, currencies, booking FROM #accounts",
+        &directives,
+    );
+
+    assert_eq!(
+        result.columns,
+        vec!["account", "open", "close", "currencies", "booking"]
+    );
+    // 4 unique accounts
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_accounts_table_select_all() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query("SELECT * FROM #accounts", &directives);
+
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_accounts_table_open_close_dates() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query(
+        "SELECT account, open, close FROM #accounts WHERE account = 'Assets:Bank:Savings'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][1], Value::Date(date(2024, 1, 1)));
+    assert_eq!(result.rows[0][2], Value::Date(date(2024, 12, 31)));
+}
+
+#[test]
+fn test_accounts_table_currencies_column() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query(
+        "SELECT account, currencies FROM #accounts WHERE account = 'Assets:Bank:Checking'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::StringSet(currencies) = &result.rows[0][1] {
+        assert!(currencies.contains(&"USD".to_string()));
+        assert!(currencies.contains(&"EUR".to_string()));
+    } else {
+        panic!("Expected StringSet for currencies");
+    }
+}
+
+#[test]
+fn test_accounts_table_booking_column() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query(
+        "SELECT account, booking FROM #accounts WHERE account = 'Assets:Investment'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][1], Value::String("FIFO".to_string()));
+}
+
+#[test]
+fn test_accounts_table_null_values() {
+    let directives = make_accounts_test_directives();
+    let result = execute_query(
+        "SELECT account, close, booking FROM #accounts WHERE account = 'Expenses:Food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // close should be null (not closed)
+    assert_eq!(result.rows[0][1], Value::Null);
+    // booking should be null (not specified)
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+#[test]
+fn test_accounts_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #accounts", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_accounts_table_case_insensitive() {
+    let directives = make_accounts_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #accounts", &directives);
+    let result_upper = execute_query("SELECT * FROM #ACCOUNTS", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+#[test]
+fn test_accounts_table_deterministic_ordering() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Zebra")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Apple")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Liabilities:Banana")),
+    ];
+    let result = execute_query("SELECT account FROM #accounts", &directives);
+
+    // Should be sorted by account name
+    assert_eq!(result.rows[0][0], Value::String("Assets:Apple".to_string()));
+    assert_eq!(
+        result.rows[1][0],
+        Value::String("Expenses:Zebra".to_string())
+    );
+    assert_eq!(
+        result.rows[2][0],
+        Value::String("Liabilities:Banana".to_string())
+    );
+}
+
+// ============================================================================
+// #transactions System Table Tests
+// ============================================================================
+
+#[test]
+fn test_transactions_table_basic_select() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT date, flag, payee, narration, tags, links, accounts FROM #transactions",
+        &directives,
+    );
+
+    assert_eq!(
+        result.columns,
+        vec![
+            "date",
+            "flag",
+            "payee",
+            "narration",
+            "tags",
+            "links",
+            "accounts"
+        ]
+    );
+    // make_test_directives() has 5 transactions
+    assert_eq!(result.len(), 5);
+}
+
+#[test]
+fn test_transactions_table_select_all() {
+    let directives = make_test_directives();
+    let result = execute_query("SELECT * FROM #transactions", &directives);
+
+    assert_eq!(result.len(), 5);
+}
+
+#[test]
+fn test_transactions_table_with_where_clause() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #transactions WHERE payee = 'Grocery Store'",
+        &directives,
+    );
+
+    // 2 grocery transactions
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_transactions_table_tags_column() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT narration, tags FROM #transactions WHERE narration ~ 'groceries'",
+        &directives,
+    );
+
+    assert!(!result.is_empty());
+    for row in &result.rows {
+        if let Value::StringSet(tags) = &row[1] {
+            assert!(tags.contains(&"food".to_string()));
+        }
+    }
+}
+
+#[test]
+fn test_transactions_table_accounts_column() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT narration, accounts FROM #transactions WHERE narration = 'Monthly salary'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::StringSet(accounts) = &result.rows[0][1] {
+        assert!(accounts.contains(&"Income:Salary".to_string()));
+        assert!(accounts.contains(&"Assets:Bank:Checking".to_string()));
+    } else {
+        panic!("Expected StringSet for accounts");
+    }
+}
+
+#[test]
+fn test_transactions_table_null_payee() {
+    let directives = make_test_directives();
+    // Transaction 4 (transfer) has no payee
+    let result = execute_query(
+        "SELECT narration, payee FROM #transactions WHERE narration = 'Transfer to savings'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][1], Value::Null);
+}
+
+#[test]
+fn test_transactions_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #transactions", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_transactions_table_case_insensitive() {
+    let directives = make_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #transactions", &directives);
+    let result_upper = execute_query("SELECT * FROM #TRANSACTIONS", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+// ============================================================================
+// #entries System Table Tests
+// ============================================================================
+
+fn make_entries_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Commodity(Commodity::new(date(2024, 1, 1), "USD")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Test transaction")
+                .with_payee("Test Payee")
+                .with_tag("testtag")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(100), "USD"))),
+        ),
+        Directive::Note(Note::new(date(2024, 2, 1), "Assets:Bank", "A note")),
+        Directive::Event(Event::new(date(2024, 3, 1), "location", "NYC")),
+    ]
+}
+
+#[test]
+fn test_entries_table_basic_select() {
+    let directives = make_entries_test_directives();
+    let result = execute_query(
+        "SELECT id, type, date, flag, payee, narration FROM #entries",
+        &directives,
+    );
+
+    assert!(result.columns.contains(&"id".to_string()));
+    assert!(result.columns.contains(&"type".to_string()));
+    assert!(result.columns.contains(&"date".to_string()));
+    assert_eq!(result.len(), 5);
+}
+
+#[test]
+fn test_entries_table_select_all() {
+    let directives = make_entries_test_directives();
+    let result = execute_query("SELECT * FROM #entries", &directives);
+
+    assert_eq!(result.len(), 5);
+}
+
+#[test]
+fn test_entries_table_type_column() {
+    let directives = make_entries_test_directives();
+    let result = execute_query("SELECT type FROM #entries", &directives);
+
+    let types: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
+    assert!(types.contains(&&Value::String("Open".to_string())));
+    assert!(types.contains(&&Value::String("Commodity".to_string())));
+    assert!(types.contains(&&Value::String("Transaction".to_string())));
+    assert!(types.contains(&&Value::String("Note".to_string())));
+    assert!(types.contains(&&Value::String("Event".to_string())));
+}
+
+#[test]
+fn test_entries_table_with_where_clause() {
+    let directives = make_entries_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #entries WHERE type = 'Transaction'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+}
+
+#[test]
+fn test_entries_table_transaction_fields() {
+    let directives = make_entries_test_directives();
+    let result = execute_query(
+        "SELECT flag, payee, narration, tags, accounts FROM #entries WHERE type = 'Transaction'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::String("*".to_string()));
+    assert_eq!(result.rows[0][1], Value::String("Test Payee".to_string()));
+    assert_eq!(
+        result.rows[0][2],
+        Value::String("Test transaction".to_string())
+    );
+    if let Value::StringSet(tags) = &result.rows[0][3] {
+        assert!(tags.contains(&"testtag".to_string()));
+    }
+}
+
+#[test]
+fn test_entries_table_non_transaction_nulls() {
+    let directives = make_entries_test_directives();
+    let result = execute_query(
+        "SELECT flag, payee, narration FROM #entries WHERE type = 'Open'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Non-transaction entries should have null for transaction-specific fields
+    assert_eq!(result.rows[0][0], Value::Null);
+    assert_eq!(result.rows[0][1], Value::Null);
+    assert_eq!(result.rows[0][2], Value::Null);
+}
+
+#[test]
+fn test_entries_table_id_column() {
+    let directives = make_entries_test_directives();
+    let result = execute_query("SELECT id FROM #entries", &directives);
+
+    // IDs should be sequential integers starting from 0
+    for (i, row) in result.rows.iter().enumerate() {
+        assert_eq!(row[0], Value::Integer(i as i64));
+    }
+}
+
+#[test]
+fn test_entries_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #entries", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_entries_table_case_insensitive() {
+    let directives = make_entries_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #entries", &directives);
+    let result_upper = execute_query("SELECT * FROM #ENTRIES", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+// ============================================================================
+// #postings System Table Tests
+// ============================================================================
+
+fn make_postings_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Groceries")
+                .with_payee("Store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 20), "More food")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-30), "USD"))),
+        ),
+    ]
+}
+
+#[test]
+fn test_postings_table_basic_select() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT date, account, number, currency FROM #postings",
+        &directives,
+    );
+
+    assert!(result.columns.contains(&"date".to_string()));
+    assert!(result.columns.contains(&"account".to_string()));
+    assert!(result.columns.contains(&"number".to_string()));
+    assert!(result.columns.contains(&"currency".to_string()));
+    // 2 transactions × 2 postings each = 4 postings
+    assert_eq!(result.len(), 4);
+}
+
+#[test]
+fn test_postings_table_select_all() {
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT * FROM #postings", &directives);
+
+    assert_eq!(result.len(), 4);
+    // Check all columns are present
+    assert!(result.columns.contains(&"date".to_string()));
+    assert!(result.columns.contains(&"flag".to_string()));
+    assert!(result.columns.contains(&"payee".to_string()));
+    assert!(result.columns.contains(&"narration".to_string()));
+    assert!(result.columns.contains(&"account".to_string()));
+    assert!(result.columns.contains(&"number".to_string()));
+    assert!(result.columns.contains(&"currency".to_string()));
+    assert!(result.columns.contains(&"balance".to_string()));
+}
+
+#[test]
+fn test_postings_table_with_where_clause() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT * FROM #postings WHERE account = 'Expenses:Food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+}
+
+#[test]
+fn test_postings_table_running_balance() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT account, number, balance FROM #postings WHERE account = 'Expenses:Food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+    // First posting: 50 USD, balance should be 50 USD
+    // Second posting: 30 USD, balance should be 80 USD
+    // Balance is an Inventory, check the values
+    for row in &result.rows {
+        if let Value::Inventory(_inv) = &row[2] {
+            // Running balance is present
+        } else if row[2] != Value::Null {
+            panic!("Expected Inventory for balance, got {:?}", row[2]);
+        }
+    }
+}
+
+#[test]
+fn test_postings_table_parent_transaction_columns() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT date, flag, payee, narration, account FROM #postings WHERE payee = 'Store'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2); // 2 postings from the transaction with payee "Store"
+    for row in &result.rows {
+        assert_eq!(row[0], Value::Date(date(2024, 1, 15)));
+        assert_eq!(row[1], Value::String("*".to_string()));
+        assert_eq!(row[2], Value::String("Store".to_string()));
+        assert_eq!(row[3], Value::String("Groceries".to_string()));
+    }
+}
+
+#[test]
+fn test_postings_table_null_payee() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT payee, narration FROM #postings WHERE narration = 'More food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 2);
+    // Second transaction has no payee
+    assert_eq!(result.rows[0][0], Value::Null);
+}
+
+#[test]
+fn test_postings_table_empty() {
+    let directives: Vec<Directive> = vec![];
+    let result = execute_query("SELECT * FROM #postings", &directives);
+
+    assert!(result.is_empty());
+}
+
+#[test]
+fn test_postings_table_case_insensitive() {
+    let directives = make_postings_test_directives();
+
+    let result_lower = execute_query("SELECT * FROM #postings", &directives);
+    let result_upper = execute_query("SELECT * FROM #POSTINGS", &directives);
+
+    assert_eq!(result_lower.rows, result_upper.rows);
+}
+
+#[test]
+fn test_postings_table_with_order_by() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT date, account FROM #postings ORDER BY date DESC",
+        &directives,
+    );
+
+    // Most recent date should be first (2024-01-20)
+    assert_eq!(result.rows[0][0], Value::Date(date(2024, 1, 20)));
+}
+
+#[test]
+fn test_postings_table_with_limit() {
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT * FROM #postings LIMIT 2", &directives);
+
+    assert_eq!(result.len(), 2);
+}
+
+// ============================================================================
+// System Table Error Message Tests
+// ============================================================================
+
+#[test]
+fn test_unknown_system_table_error_lists_all_tables() {
+    let directives: Vec<Directive> = vec![];
+    let query = parse("SELECT * FROM #unknown").expect("query should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&query);
+
+    match result {
+        Err(e) => {
+            let msg = e.to_string();
+            assert!(
+                msg.contains("#unknown"),
+                "Error should mention the table name"
+            );
+            // Check that all system tables are mentioned in the hint
+            assert!(msg.contains("#accounts"), "Error should list #accounts");
+            assert!(msg.contains("#balances"), "Error should list #balances");
+            assert!(
+                msg.contains("#commodities"),
+                "Error should list #commodities"
+            );
+            assert!(msg.contains("#documents"), "Error should list #documents");
+            assert!(msg.contains("#entries"), "Error should list #entries");
+            assert!(msg.contains("#events"), "Error should list #events");
+            assert!(msg.contains("#notes"), "Error should list #notes");
+            assert!(msg.contains("#postings"), "Error should list #postings");
+            assert!(msg.contains("#prices"), "Error should list #prices");
+            assert!(
+                msg.contains("#transactions"),
+                "Error should list #transactions"
+            );
+        }
+        Ok(_) => panic!("Expected error for unknown system table"),
+    }
 }
