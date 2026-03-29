@@ -4916,3 +4916,296 @@ fn test_unknown_system_table_error_lists_all_tables() {
         Ok(_) => panic!("Expected error for unknown system table"),
     }
 }
+
+// ============================================================================
+// CONVERT Function Tests
+// ============================================================================
+
+// Regression test for issue #565: convert(sum(position), 'EUR') fails with "unknown function"
+// https://github.com/rustledger/rustledger/issues/565
+
+/// Helper to create directives for CONVERT function tests.
+fn make_convert_test_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:CHF")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Other")),
+        // Price: 1 CHF = 1.0647 EUR
+        Directive::Price(Price::new(
+            date(2025, 1, 10),
+            "CHF",
+            Amount::new(dec!(1.0647), "EUR"),
+        )),
+        // Incoming transfer of 3000 CHF
+        Directive::Transaction(
+            Transaction::new(date(2025, 7, 15), "Incoming transfer")
+                .with_posting(Posting::new(
+                    "Assets:Bank:CHF",
+                    Amount::new(dec!(3000), "CHF"),
+                ))
+                .with_posting(Posting::new(
+                    "Income:Other",
+                    Amount::new(dec!(-3000), "CHF"),
+                )),
+        ),
+    ]
+}
+
+#[test]
+fn test_issue_565_convert_sum_position() {
+    // Regression test for issue #565: convert(sum(position), 'EUR') fails with "unknown function"
+    let directives = make_convert_test_directives();
+    let result = execute_query(
+        "SELECT account, convert(sum(position), 'EUR') WHERE account = 'Assets:Bank:CHF' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("Assets:Bank:CHF".to_string())
+    );
+
+    // 3000 CHF × 1.0647 EUR/CHF = 3194.10 EUR
+    match &result.rows[0][1] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "EUR");
+            assert_eq!(amt.number, dec!(3194.1)); // 3000 × 1.0647
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_sum_position_already_target_currency() {
+    // Test: convert when position is already in target currency
+    let directives = make_convert_test_directives();
+    let result = execute_query(
+        "SELECT account, convert(sum(position), 'CHF') WHERE account = 'Assets:Bank:CHF' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][1] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "CHF");
+            assert_eq!(amt.number, dec!(3000)); // No conversion needed
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_with_explicit_date() {
+    // Test: convert(sum(position), 'EUR', date) with explicit date
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Other")),
+        // Price at different dates
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "USD",
+            Amount::new(dec!(0.90), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 6, 1),
+            "USD",
+            Amount::new(dec!(0.95), "EUR"),
+        )),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 15), "Deposit")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(1000), "USD")))
+                .with_posting(Posting::new(
+                    "Income:Other",
+                    Amount::new(dec!(-1000), "USD"),
+                )),
+        ),
+    ];
+
+    // Use earlier date price (0.90)
+    let result = execute_query(
+        "SELECT convert(sum(position), 'EUR', 2024-01-15) WHERE account = 'Assets:Bank' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "EUR");
+            assert_eq!(amt.number, dec!(900)); // 1000 × 0.90
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_multiple_currencies_in_inventory() {
+    // Test: convert an inventory with multiple currencies
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Other")),
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "USD",
+            Amount::new(dec!(0.92), "EUR"),
+        )),
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "GBP",
+            Amount::new(dec!(1.17), "EUR"),
+        )),
+        // USD deposit
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "USD Deposit")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(1000), "USD")))
+                .with_posting(Posting::new(
+                    "Income:Other",
+                    Amount::new(dec!(-1000), "USD"),
+                )),
+        ),
+        // GBP deposit
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 20), "GBP Deposit")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(500), "GBP")))
+                .with_posting(Posting::new("Income:Other", Amount::new(dec!(-500), "GBP"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT convert(sum(position), 'EUR') WHERE account = 'Assets:Bank' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "EUR");
+            // 1000 USD × 0.92 + 500 GBP × 1.17 = 920 + 585 = 1505 EUR
+            assert_eq!(amt.number, dec!(1505));
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_basic_amount() {
+    // Test: convert a simple amount (non-aggregate context)
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "USD",
+            Amount::new(dec!(0.92), "EUR"),
+        )),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Groceries")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT convert(position, 'EUR') WHERE account = 'Expenses:Food'",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "EUR");
+            assert_eq!(amt.number, dec!(92)); // 100 × 0.92
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_number_to_currency() {
+    // Test: convert a plain number wraps it as amount with target currency
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Groceries")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT convert(sum(number(position)), 'EUR') WHERE account = 'Expenses:Food' GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    match &result.rows[0][0] {
+        Value::Amount(amt) => {
+            assert_eq!(amt.currency.as_ref(), "EUR");
+            assert_eq!(amt.number, dec!(100)); // Just wrapped as EUR
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_convert_unconvertible_currency_kept_original() {
+    // Test: when no price is available for conversion, keep original currency
+    // (matches Python beancount behavior - returns original amount, not silent skip)
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:EUR")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:JPY")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:USD")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Equity:Opening")),
+        // EUR account - will be kept as-is (target currency)
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Opening EUR")
+                .with_posting(Posting::new(
+                    "Assets:Bank:EUR",
+                    Amount::new(dec!(1000), "EUR"),
+                ))
+                .with_posting(Posting::new(
+                    "Equity:Opening",
+                    Amount::new(dec!(-1000), "EUR"),
+                )),
+        ),
+        // JPY account - NO price defined, should be kept as JPY
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Opening JPY")
+                .with_posting(Posting::new(
+                    "Assets:Bank:JPY",
+                    Amount::new(dec!(50000), "JPY"),
+                ))
+                .with_posting(Posting::new(
+                    "Equity:Opening",
+                    Amount::new(dec!(-50000), "JPY"),
+                )),
+        ),
+    ];
+
+    // Query positions converting to EUR - JPY has no conversion rate
+    let result = execute_query(
+        "SELECT convert(sum(position), 'EUR') WHERE account ~ '^Assets:Bank' GROUP BY 1",
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // Should return an Inventory with both EUR and JPY (JPY kept as original)
+    match &result.rows[0][0] {
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(
+                positions.len(),
+                2,
+                "Expected 2 positions (EUR + unconverted JPY)"
+            );
+            // Check both currencies are present
+            let currencies: Vec<_> = positions
+                .iter()
+                .map(|p| p.units.currency.as_ref())
+                .collect();
+            assert!(currencies.contains(&"EUR"), "Should have EUR");
+            assert!(currencies.contains(&"JPY"), "Should have JPY (unconverted)");
+        }
+        other => panic!("Expected Inventory with mixed currencies, got {other:?}"),
+    }
+}
