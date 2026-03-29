@@ -3,13 +3,51 @@
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustledger_booking::BookingEngine;
 use rustledger_core::{BookingMethod, Directive};
-use rustledger_parser::{ParseError, ParseResult, Spanned};
+use rustledger_parser::{ParseError, ParseResult, Span, Spanned};
 use rustledger_validate::{
     Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
 };
 
 use super::utils::LineIndex;
 use crate::ledger_state::LedgerState;
+
+/// Build `ValidationOptions` from file options.
+///
+/// Extracts `name_assets`, `name_liabilities`, `name_equity`, `name_income`, and
+/// `name_expenses` options to support custom (including Unicode) account type names.
+///
+/// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
+fn build_validation_options(file_options: &[(String, String, Span)]) -> ValidationOptions {
+    let mut opts = ValidationOptions::default();
+
+    // Start with defaults, override with file options
+    let mut name_assets = "Assets".to_string();
+    let mut name_liabilities = "Liabilities".to_string();
+    let mut name_equity = "Equity".to_string();
+    let mut name_income = "Income".to_string();
+    let mut name_expenses = "Expenses".to_string();
+
+    for (key, value, _span) in file_options {
+        match key.as_str() {
+            "name_assets" => name_assets = value.clone(),
+            "name_liabilities" => name_liabilities = value.clone(),
+            "name_equity" => name_equity = value.clone(),
+            "name_income" => name_income = value.clone(),
+            "name_expenses" => name_expenses = value.clone(),
+            _ => {}
+        }
+    }
+
+    opts.account_types = vec![
+        name_assets,
+        name_liabilities,
+        name_equity,
+        name_income,
+        name_expenses,
+    ];
+
+    opts
+}
 
 /// Convert parse errors to LSP diagnostics.
 pub fn parse_errors_to_diagnostics(result: &ParseResult, source: &str) -> Vec<Diagnostic> {
@@ -55,6 +93,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// # Arguments
 /// * `directives` - Directives from the current file (used for line number mapping)
 /// * `source` - Source text of the current file
+/// * `file_options` - Options from the file (for custom account type names)
 /// * `full_directives` - Optional: All directives from all files (for multi-file validation)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
 ///
@@ -63,6 +102,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 pub fn validation_errors_to_diagnostics(
     directives: &[Spanned<Directive>],
     source: &str,
+    file_options: &[(String, String, Span)],
     full_directives: Option<&[Spanned<Directive>]>,
     current_file_id: Option<u16>,
 ) -> Vec<Diagnostic> {
@@ -100,8 +140,9 @@ pub fn validation_errors_to_diagnostics(
         // If booking fails, we leave the transaction as-is and let validation catch it
     }
 
-    let validation_errors =
-        validate_spanned_with_options(&booked_directives, ValidationOptions::default());
+    // Build validation options from file options (supports custom account type names)
+    let validation_options = build_validation_options(file_options);
+    let validation_errors = validate_spanned_with_options(&booked_directives, validation_options);
 
     // Filter errors to only those in the current file (if file_id filtering is enabled).
     // Also include errors with file_id == None, as these are global errors (e.g., duplicate
@@ -211,6 +252,7 @@ pub fn all_diagnostics(
             let validation_diagnostics = validation_errors_to_diagnostics(
                 &result.directives,
                 source,
+                &result.options,
                 full_directives,
                 current_file_id,
             );
@@ -447,7 +489,7 @@ mod tests {
         // Test 1: Validate bank.bean in ISOLATION (old broken behavior)
         // This should show E2001 for the second balance assertion
         let isolated_diagnostics =
-            validation_errors_to_diagnostics(&bank_result.directives, bank_source, None, None);
+            validation_errors_to_diagnostics(&bank_result.directives, bank_source, &[], None, None);
 
         let isolated_codes: Vec<_> = isolated_diagnostics.iter().map(get_code).collect();
 
@@ -464,6 +506,7 @@ mod tests {
         let full_ledger_diagnostics = validation_errors_to_diagnostics(
             &bank_result.directives,
             bank_source,
+            &[],
             Some(&all_directives),
             Some(1), // file_id=1 for bank.bean
         );
@@ -488,6 +531,64 @@ mod tests {
             error_diagnostics.is_empty(),
             "bank.bean should have no errors when validated with full ledger. Got: {:?}",
             full_ledger_codes
+        );
+    }
+
+    /// Regression test for issue #572: Unicode account names with `name_*` options.
+    /// <https://github.com/rustledger/rustledger/issues/572>
+    ///
+    /// When a file uses `option "name_equity" "Капитал"` (or other `name_*` options),
+    /// the LSP should accept accounts starting with those custom names.
+    #[test]
+    fn test_unicode_account_names_issue_572() {
+        // File with Russian account type names
+        let source = r#"option "name_assets" "Активы"
+option "name_liabilities" "Обязательства"
+option "name_income" "Доходы"
+option "name_expenses" "Расходы"
+option "name_equity" "Капитал"
+
+1900-01-01 open Капитал:Retained-Earnings
+1900-01-01 open Капитал:Opening-Balances
+2024-01-01 open Активы:Банк:Checking USD
+2024-01-01 open Доходы:Зарплата
+"#;
+
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        // Validate with file options
+        let diagnostics = all_diagnostics(&result, source, None, None);
+
+        // Helper to get code string from a diagnostic
+        fn get_code(d: &Diagnostic) -> String {
+            match d.code.as_ref().unwrap() {
+                lsp_types::NumberOrString::String(s) => s.clone(),
+                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
+            }
+        }
+
+        // Filter to only ERROR severity diagnostics
+        let error_diagnostics: Vec<&Diagnostic> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Some(DiagnosticSeverity::ERROR)))
+            .collect();
+
+        let error_codes: Vec<_> = error_diagnostics.iter().map(|d| get_code(d)).collect();
+
+        // There should be NO E0001 (invalid account name) errors
+        // because the custom name_* options should be respected
+        assert!(
+            !error_codes.iter().any(|c| c == "E0001"),
+            "Should NOT have E0001 (invalid account name) - custom name_* options should be respected. Got: {:?}",
+            error_codes
+        );
+
+        // The file should have no ERROR-severity diagnostics
+        assert!(
+            error_diagnostics.is_empty(),
+            "Valid file with custom account names should have no errors, but got: {:?}",
+            error_codes
         );
     }
 }
