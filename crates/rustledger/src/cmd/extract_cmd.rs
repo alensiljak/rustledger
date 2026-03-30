@@ -69,6 +69,10 @@ pub struct Args {
     #[arg(long, alias = "importers-config")]
     config: Option<PathBuf>,
 
+    /// List available importers from config file and exit
+    #[arg(long = "list-importers")]
+    list_importers: bool,
+
     /// Target account for imported transactions
     #[arg(short, long, default_value = "Assets:Bank:Checking")]
     account: String,
@@ -151,6 +155,8 @@ struct ImportersFile {
 struct ImporterEntry {
     /// Name used to select this importer via --importer flag.
     name: String,
+    /// Optional glob pattern to auto-identify this importer by filename.
+    filename_pattern: Option<String>,
     /// Target account for imported transactions.
     account: Option<String>,
     /// Currency (default: USD).
@@ -341,7 +347,18 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // File is required when not generating completions
+    // Handle --list-importers
+    if args.list_importers {
+        return match list_importers(&args) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e:#}");
+                ExitCode::from(1)
+            }
+        };
+    }
+
+    // File is required when not generating completions or listing importers
     let Some(ref file) = args.file else {
         eprintln!("error: FILE is required");
         eprintln!("For more information, try '--help'");
@@ -355,6 +372,61 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// List available importers from a config file.
+fn list_importers(args: &Args) -> Result<()> {
+    let config_path = find_importers_config(args.config.as_deref())?
+        .context("--list-importers requires --config or an importers.toml in the current directory or ~/.config/rledger/")?;
+
+    let config = load_importers_config(&config_path)?;
+
+    if config.importers.is_empty() {
+        println!("No importers defined in {}", config_path.display());
+    } else {
+        println!("Available importers in {}:", config_path.display());
+        for imp in &config.importers {
+            if let Some(pattern) = &imp.filename_pattern {
+                println!(
+                    "  {} (pattern: {}) -> {}",
+                    imp.name,
+                    pattern,
+                    imp.account.as_deref().unwrap_or("(default)")
+                );
+            } else {
+                println!(
+                    "  {} -> {}",
+                    imp.name,
+                    imp.account.as_deref().unwrap_or("(default)")
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if an importer matches the given filename using its glob pattern.
+fn importer_matches_filename(entry: &ImporterEntry, filename: &str) -> bool {
+    if let Some(pattern) = &entry.filename_pattern {
+        glob::Pattern::new(pattern)
+            .map(|p| p.matches(filename))
+            .unwrap_or(false)
+    } else {
+        false
+    }
+}
+
+/// Find importers that match the given filename.
+fn find_matching_importers<'a>(
+    config: &'a ImportersFile,
+    filename: &str,
+) -> Vec<&'a ImporterEntry> {
+    config
+        .importers
+        .iter()
+        .filter(|imp| importer_matches_filename(imp, filename))
+        .collect()
 }
 
 /// Check if a file is an OFX/QFX file based on extension.
@@ -486,8 +558,7 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
             );
             build_config_from_entry(entry)?
         } else if args.config.is_some() {
-            // Explicit --config without --importer: auto-select if exactly one
-            // importer, otherwise list available and error
+            // Explicit --config without --importer: try auto-identification by filename
             let config_path = find_importers_config(args.config.as_deref())?
                 .ok_or_else(|| anyhow!(
                     "No importers.toml found. Create one in the current directory or at ~/.config/rledger/importers.toml"
@@ -495,19 +566,47 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
 
             let importers_file = load_importers_config(&config_path)?;
 
-            let entry = match importers_file.importers.len() {
-                0 => return Err(anyhow!("No importers defined in {}", config_path.display())),
-                1 => &importers_file.importers[0],
-                _ => {
+            if importers_file.importers.is_empty() {
+                return Err(anyhow!("No importers defined in {}", config_path.display()));
+            }
+
+            // Try auto-identification by filename pattern
+            let filename = file
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .unwrap_or_default();
+            let matches = find_matching_importers(&importers_file, &filename);
+
+            let entry = match matches.len() {
+                1 => {
+                    eprintln!(
+                        "Auto-identified importer '{}' from filename pattern",
+                        matches[0].name
+                    );
+                    matches[0]
+                }
+                0 if importers_file.importers.len() == 1 => {
+                    // No pattern match but only one importer - use it
+                    &importers_file.importers[0]
+                }
+                0 => {
                     let available: Vec<&str> = importers_file
                         .importers
                         .iter()
                         .map(|e| e.name.as_str())
                         .collect();
                     return Err(anyhow!(
-                        "Multiple importers in {}. Use --importer to select one: {}",
-                        config_path.display(),
+                        "No importer matches file '{}'. Use --importer to select one: {}",
+                        filename,
                         available.join(", ")
+                    ));
+                }
+                _ => {
+                    let names: Vec<&str> = matches.iter().map(|e| e.name.as_str()).collect();
+                    return Err(anyhow!(
+                        "Multiple importers match file '{}': {}. Use --importer to select one.",
+                        filename,
+                        names.join(", ")
                     ));
                 }
             };
@@ -751,6 +850,7 @@ narration_column = 1
             default_expense: None,
             default_income: None,
             mappings: HashMap::new(),
+            filename_pattern: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -782,6 +882,7 @@ narration_column = 1
             default_expense: None,
             default_income: None,
             mappings,
+            filename_pattern: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -812,6 +913,7 @@ narration_column = 1
             default_expense: Some("Expenses:Uncategorized".to_string()),
             default_income: Some("Income:Other".to_string()),
             mappings: HashMap::new(),
+            filename_pattern: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -843,6 +945,7 @@ narration_column = 1
             default_expense: None,
             default_income: None,
             mappings: HashMap::new(),
+            filename_pattern: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -1721,6 +1824,7 @@ amount_column = "Amount"
     fn test_run_auto_select_errors_on_multiple_importers() {
         let dir = tempfile::tempdir().unwrap();
 
+        // Both importers have filename patterns that match "statement.csv"
         let config_path = dir.path().join("importers.toml");
         std::fs::write(
             &config_path,
@@ -1728,10 +1832,12 @@ amount_column = "Amount"
 [[importers]]
 name = "checking"
 account = "Assets:Bank:Checking"
+filename_pattern = "*.csv"
 
 [[importers]]
 name = "credit"
 account = "Liabilities:CreditCard"
+filename_pattern = "statement*"
 "#,
         )
         .unwrap();
