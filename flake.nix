@@ -104,6 +104,10 @@
           };
 
           # Common arguments for crane builds
+          # Note: On Darwin, the SDK and frameworks (Security, SystemConfiguration, etc.)
+          # are now included automatically via stdenv in nixpkgs 25.05+.
+          # libiconv is also propagated by the SDK. We keep minimal Darwin deps for
+          # backward compatibility with older nixpkgs versions.
           commonArgs = {
             inherit src;
             strictDeps = true;
@@ -111,7 +115,10 @@
             buildInputs = [
               # Add platform-specific deps here
             ]
-            ++ lib.optionals pkgs.stdenv.isDarwin [
+            # Only add legacy Darwin deps on older nixpkgs without apple-sdk.
+            # Modern nixpkgs (25.05+): SDK frameworks are in stdenv automatically,
+            # and libiconv is propagated by the SDK.
+            ++ lib.optionals (pkgs.stdenv.isDarwin && !(pkgs ? apple-sdk)) [
               pkgs.libiconv
               pkgs.darwin.apple_sdk.frameworks.Security
               pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
