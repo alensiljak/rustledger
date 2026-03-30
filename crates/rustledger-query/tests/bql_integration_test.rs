@@ -6056,6 +6056,30 @@ fn test_issue_593_cost_preserves_sign_for_sells() {
         dec!(5.20),
         "SUM(cost(position)) should be 5.20 EUR (net cost of remaining 4 ABC at 1.30)"
     );
+
+    // Also test cost(SUM(position)) - the actual pattern from issue #593
+    // This applies cost() to an aggregated inventory, which uses a different code path
+    let cost_sum_result = execute_query(
+        "SELECT cost(SUM(position)) WHERE account = 'Equity:Stocks'",
+        &directives,
+    );
+
+    assert_eq!(cost_sum_result.rows.len(), 1);
+    let cost_sum_value = match &cost_sum_result.rows[0][0] {
+        Value::Amount(a) => a.number,
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single position in inventory");
+            assert_eq!(positions[0].units.currency.as_ref(), "EUR");
+            positions[0].units.number
+        }
+        other => panic!("Expected Amount or Inventory, got {other:?}"),
+    };
+    assert_eq!(
+        cost_sum_value,
+        dec!(5.20),
+        "cost(SUM(position)) should be 5.20 EUR - this is the issue #593 pattern"
+    );
 }
 
 /// Test that `value()` uses the latest implicit price from @ annotations.

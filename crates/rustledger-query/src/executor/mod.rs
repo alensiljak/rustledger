@@ -608,7 +608,9 @@ impl<'a> Executor<'a> {
                 match &args[0] {
                     Value::Position(p) => {
                         if let Some(cost) = &p.cost {
-                            let total = p.units.number.abs() * cost.number;
+                            // Preserve sign: buys (positive units) give positive cost,
+                            // sells (negative units) give negative cost
+                            let total = p.units.number * cost.number;
                             Ok(Value::Amount(Amount::new(total, cost.currency.clone())))
                         } else {
                             Ok(Value::Null)
@@ -620,7 +622,8 @@ impl<'a> Executor<'a> {
                         let mut currency: Option<InternedStr> = None;
                         for pos in inv.positions() {
                             if let Some(cost) = &pos.cost {
-                                total += pos.units.number.abs() * cost.number;
+                                // Preserve sign for each position
+                                total += pos.units.number * cost.number;
                                 if currency.is_none() {
                                     currency = Some(cost.currency.clone());
                                 }
