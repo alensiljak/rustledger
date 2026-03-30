@@ -768,6 +768,25 @@ mod tests {
     }
 
     #[test]
+    fn test_expr_display_set() {
+        // Empty set is not valid in parsing, but test single element
+        let single = Expr::Set(vec![Expr::string("EUR")]);
+        assert_eq!(single.to_string(), r#"("EUR")"#);
+
+        // Multiple elements
+        let multi = Expr::Set(vec![
+            Expr::string("EUR"),
+            Expr::string("USD"),
+            Expr::string("GBP"),
+        ]);
+        assert_eq!(multi.to_string(), r#"("EUR", "USD", "GBP")"#);
+
+        // Mixed types (integers)
+        let numeric = Expr::Set(vec![Expr::integer(2023), Expr::integer(2024)]);
+        assert_eq!(numeric.to_string(), "(2023, 2024)");
+    }
+
+    #[test]
     fn test_binary_operator_display() {
         assert_eq!(BinaryOperator::Eq.to_string(), "=");
         assert_eq!(BinaryOperator::Ne.to_string(), "!=");
