@@ -41,7 +41,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
 
@@ -63,7 +63,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
 
@@ -108,7 +108,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
 
@@ -147,7 +147,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
 
@@ -199,6 +199,8 @@ jobs:
   get-open-issues:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'review-all-open'
     runs-on: ubuntu-latest
+    permissions:
+      issues: read
     outputs:
       issues: ${{ steps.get-issues.outputs.issues }}
     steps:
@@ -227,7 +229,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
 
