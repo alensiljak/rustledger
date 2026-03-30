@@ -27,7 +27,9 @@ jobs:
   # Triggered by /oc or /opencode in comments
   opencode-comment:
     if: |
-      github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment' && (
+      (github.event_name == 'issue_comment' || github.event_name == 'pull_request_review_comment') &&
+      github.event.comment.user.type != 'Bot' &&
+      (
         contains(github.event.comment.body, ' /oc') ||
         startsWith(github.event.comment.body, '/oc') ||
         contains(github.event.comment.body, ' /opencode') ||
