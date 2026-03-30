@@ -30,7 +30,7 @@ use crate::types::{Error, FormatResult, LedgerOptions, PadResult, QueryResult};
 ///     const formatted = ledger.format();
 /// }
 /// ```
-#[wasm_bindgen]
+#[wasm_bindgen(skip_typescript)]
 pub struct ParsedLedger {
     /// The original source text.
     source: String,
