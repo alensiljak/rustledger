@@ -2375,8 +2375,8 @@ fn test_in_operator_single_element_set() {
         ),
     ];
 
-    // Single element set should work
-    let result = execute_query(r"SELECT currency WHERE currency IN ('EUR')", &directives);
+    // Single element set requires trailing comma to distinguish from parenthesized expression
+    let result = execute_query(r"SELECT currency WHERE currency IN ('EUR',)", &directives);
 
     assert_eq!(result.rows.len(), 2, "Expected 2 EUR postings");
     for row in &result.rows {
@@ -2385,6 +2385,41 @@ fn test_in_operator_single_element_set() {
             other => panic!("Expected String for currency, got {other:?}"),
         };
         assert_eq!(currency, "EUR");
+    }
+}
+
+/// Test IN with parenthesized column (not a set literal).
+/// Verifies that `IN (tags)` is parsed as checking membership in the `tags` column,
+/// not as a single-element set literal containing the column name.
+#[test]
+fn test_in_operator_parenthesized_column() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Tagged expense")
+                .with_tag("food")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "Untagged expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "EUR"))),
+        ),
+    ];
+
+    // IN (tags) should work - parentheses around column, not a set literal
+    let result = execute_query(r#"SELECT narration WHERE "food" IN (tags)"#, &directives);
+
+    // Should find 2 postings from the tagged transaction
+    assert_eq!(result.rows.len(), 2, "Expected 2 postings with 'food' tag");
+    for row in &result.rows {
+        let narration = match &row[0] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for narration, got {other:?}"),
+        };
+        assert_eq!(narration, "Tagged expense");
     }
 }
 

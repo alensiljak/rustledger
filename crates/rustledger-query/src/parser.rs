@@ -666,16 +666,36 @@ fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, Parse
 
 /// Parse a set literal for IN operator, e.g., `('EUR', 'USD')`.
 ///
-/// Returns `Expr::Set` containing the list of expressions.
+/// To distinguish from parenthesized expressions like `IN (tags)`, set literals
+/// require either:
+/// - Two or more comma-separated elements: `('EUR', 'USD')`
+/// - A single element with trailing comma: `('EUR',)`
+///
+/// This ensures `IN (tags)` is parsed as `IN <parenthesized-column>` rather than
+/// `IN <single-element-set>`.
 fn set_literal<'a>(
     expr: impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone + 'a,
 ) -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone {
     just('(')
         .ignore_then(ws())
         .ignore_then(
-            expr.separated_by(ws().then(just(',')).then(ws()))
-                .at_least(1)
-                .collect::<Vec<_>>(),
+            // Parse first element
+            expr.clone()
+                .then(
+                    // Then require either:
+                    // - comma + more elements (with optional trailing comma)
+                    // - trailing comma (for single-element sets)
+                    ws().ignore_then(just(',')).ignore_then(ws()).ignore_then(
+                        expr.separated_by(ws().then(just(',')).then(ws()))
+                            .allow_trailing()
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+                .map(|(first, rest)| {
+                    let mut elements = vec![first];
+                    elements.extend(rest);
+                    elements
+                }),
         )
         .then_ignore(ws())
         .then_ignore(just(')'))
@@ -1366,6 +1386,65 @@ mod tests {
             Query::Select(sel) => match sel.where_clause.unwrap() {
                 Expr::BinaryOp(op) => {
                     assert_eq!(op.op, BinaryOperator::NotIn);
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_in_set_literal() {
+        // Multi-element set literal
+        let query = parse("SELECT * WHERE currency IN ('EUR', 'USD')").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    match op.right {
+                        Expr::Set(elements) => {
+                            assert_eq!(elements.len(), 2);
+                        }
+                        _ => panic!("Expected Set"),
+                    }
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Single-element set with trailing comma
+        let query = parse("SELECT * WHERE currency IN ('EUR',)").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    match op.right {
+                        Expr::Set(elements) => {
+                            assert_eq!(elements.len(), 1);
+                        }
+                        _ => panic!("Expected Set"),
+                    }
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Parenthesized column (not a set literal)
+        let query = parse("SELECT * WHERE 'x' IN (tags)").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    // Should be Paren(Column), not Set([Column])
+                    match op.right {
+                        Expr::Paren(inner) => match *inner {
+                            Expr::Column(name) => assert_eq!(name, "tags"),
+                            _ => panic!("Expected Column inside Paren"),
+                        },
+                        other => panic!("Expected Paren, got {other:?}"),
+                    }
                 }
                 _ => panic!("Expected binary op"),
             },
