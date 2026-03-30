@@ -33,6 +33,34 @@ impl<'a> Executor<'a> {
             _ => false,
         }
     }
+
+    /// Extract non-aggregate expressions from SELECT targets for implicit GROUP BY.
+    ///
+    /// When aggregate functions are mixed with non-aggregated columns and no explicit
+    /// GROUP BY is provided, Python beancount implicitly groups by the non-aggregated
+    /// columns. This function extracts those columns.
+    ///
+    /// For example, in `SELECT sum(number), currency, account`:
+    /// - `sum(number)` is an aggregate
+    /// - `currency` and `account` are non-aggregates that should be grouped by
+    ///
+    /// Duplicate expressions are filtered out to avoid redundant evaluation during
+    /// grouping and unnecessarily larger group keys.
+    pub(super) fn extract_implicit_group_by_exprs(targets: &[Target]) -> Vec<Expr> {
+        let mut non_aggregate_exprs = Vec::new();
+        for target in targets {
+            // Skip wildcard - it expands to all columns, not useful for grouping
+            if matches!(target.expr, Expr::Wildcard) {
+                continue;
+            }
+            // Only include non-aggregate expressions, and deduplicate
+            if !Self::is_aggregate_expr(&target.expr) && !non_aggregate_exprs.contains(&target.expr)
+            {
+                non_aggregate_exprs.push(target.expr.clone());
+            }
+        }
+        non_aggregate_exprs
+    }
     pub(super) fn make_group_key(values: &[Value]) -> String {
         use std::fmt::Write;
         let mut key = String::new();

@@ -101,7 +101,7 @@ enum Commands {
     #[command(alias = "x")]
     Extract {
         #[command(flatten)]
-        args: rustledger::cmd::extract_cmd::Args,
+        args: Box<rustledger::cmd::extract_cmd::Args>,
     },
 
     /// Fetch commodity prices

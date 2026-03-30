@@ -4,7 +4,9 @@
 //! and allows looking up prices for currency conversions.
 
 use rust_decimal::Decimal;
-use rustledger_core::{Amount, Directive, InternedStr, NaiveDate, Price as PriceDirective};
+use rustledger_core::{
+    Amount, Directive, InternedStr, NaiveDate, Price as PriceDirective, Transaction,
+};
 use std::collections::HashMap;
 
 /// A price entry.
@@ -38,21 +40,40 @@ impl PriceDatabase {
     }
 
     /// Build a price database from directives.
+    ///
+    /// Extracts prices from:
+    /// - Explicit `price` directives
+    /// - Implicit prices from transaction postings (@ price annotations and cost specs)
+    ///
+    /// This matches Python beancount's behavior when using the `implicit_prices` plugin.
     pub fn from_directives(directives: &[Directive]) -> Self {
         let mut db = Self::new();
 
         for directive in directives {
-            if let Directive::Price(price) = directive {
-                db.add_price(price);
+            match directive {
+                Directive::Price(price) => {
+                    db.add_price(price);
+                }
+                Directive::Transaction(txn) => {
+                    db.add_implicit_prices_from_transaction(txn);
+                }
+                _ => {}
             }
         }
 
         // Sort all price lists by date
-        for entries in db.prices.values_mut() {
-            entries.sort_by_key(|e| e.date);
-        }
+        db.sort_prices();
 
         db
+    }
+
+    /// Sort all price entries by date.
+    ///
+    /// Call this after adding prices to ensure lookups work correctly.
+    pub fn sort_prices(&mut self) {
+        for entries in self.prices.values_mut() {
+            entries.sort_by_key(|e| e.date);
+        }
     }
 
     /// Add a price directive to the database.
@@ -65,6 +86,82 @@ impl PriceDatabase {
 
         self.prices
             .entry(price.currency.clone())
+            .or_default()
+            .push(entry);
+    }
+
+    /// Add implicit prices from transaction postings.
+    ///
+    /// Extracts prices from:
+    /// 1. Price annotations (`@ price` or `@@ total_price`) - takes priority
+    /// 2. Cost specifications (`{cost}`) when no valid price annotation
+    ///
+    /// This matches Python beancount's `implicit_prices` plugin behavior.
+    pub fn add_implicit_prices_from_transaction(&mut self, txn: &Transaction) {
+        for posting in &txn.postings {
+            // Get the posting's units (the commodity being priced)
+            if let Some(units) = posting.amount() {
+                // Priority 1: Price annotation (@ or @@) - if it yields a valid amount.
+                // If the annotation exists but amount() is None, we fall through to cost.
+                if let Some(price_annotation) = &posting.price
+                    && let Some(price_amount) = price_annotation.amount()
+                {
+                    // For @@ (total), calculate per-unit price
+                    let per_unit_price = if price_annotation.is_unit() {
+                        price_amount.number
+                    } else if !units.number.is_zero() {
+                        // Total price divided by units
+                        price_amount.number / units.number.abs()
+                    } else {
+                        continue;
+                    };
+
+                    self.add_implicit_price(
+                        txn.date,
+                        &units.currency,
+                        per_unit_price,
+                        &price_amount.currency,
+                    );
+                    // Successfully extracted from price annotation, skip cost fallback
+                    continue;
+                }
+
+                // Priority 2: Cost specification (fallback if no valid price from annotation)
+                if let Some(cost_spec) = &posting.cost {
+                    if let (Some(number_per), Some(currency)) =
+                        (&cost_spec.number_per, &cost_spec.currency)
+                    {
+                        self.add_implicit_price(txn.date, &units.currency, *number_per, currency);
+                    } else if let (Some(number_total), Some(currency)) =
+                        (&cost_spec.number_total, &cost_spec.currency)
+                    {
+                        // Calculate per-unit from total
+                        if !units.number.is_zero() {
+                            let per_unit = *number_total / units.number.abs();
+                            self.add_implicit_price(txn.date, &units.currency, per_unit, currency);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Add an implicit price entry.
+    fn add_implicit_price(
+        &mut self,
+        date: NaiveDate,
+        base_currency: &InternedStr,
+        price: Decimal,
+        quote_currency: &InternedStr,
+    ) {
+        let entry = PriceEntry {
+            date,
+            price,
+            currency: quote_currency.clone(),
+        };
+
+        self.prices
+            .entry(base_currency.clone())
             .or_default()
             .push(entry);
     }
@@ -297,6 +394,17 @@ impl PriceDatabase {
     /// Check if the database is empty.
     pub fn is_empty(&self) -> bool {
         self.prices.is_empty()
+    }
+
+    /// Iterate over all price entries with their base currency.
+    ///
+    /// Returns tuples of (`base_currency`, `date`, `price`, `quote_currency`).
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&str, NaiveDate, Decimal, &str)> {
+        self.prices.iter().flat_map(|(base, entries)| {
+            entries
+                .iter()
+                .map(move |e| (base.as_str(), e.date, e.price, e.currency.as_str()))
+        })
     }
 }
 
@@ -544,5 +652,143 @@ mod tests {
 
         // No path from AAPL to GBP
         assert_eq!(db.get_price("AAPL", "GBP", date(2024, 1, 1)), None);
+    }
+
+    // ============================================================================
+    // Implicit Price Extraction Tests
+    // ============================================================================
+
+    #[test]
+    fn test_implicit_price_from_annotation() {
+        use rustledger_core::{CostSpec, Posting, PriceAnnotation, Transaction};
+
+        // Transaction with @ price annotation
+        let txn = Transaction::new(date(2024, 1, 15), "Sell stock")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
+                    .with_cost(
+                        CostSpec::default()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR"),
+                    )
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(7.00), "EUR")));
+
+        let directives = vec![Directive::Transaction(txn)];
+        let db = PriceDatabase::from_directives(&directives);
+
+        // Should have implicit price ABC = 1.40 EUR (from @ annotation, not cost)
+        let price = db.get_price("ABC", "EUR", date(2024, 1, 15));
+        assert_eq!(price, Some(dec!(1.40)));
+    }
+
+    #[test]
+    fn test_implicit_price_from_cost_only() {
+        use rustledger_core::{CostSpec, Posting, Transaction};
+
+        // Transaction with cost but no price annotation
+        let txn = Transaction::new(date(2024, 1, 10), "Buy stock")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(10), "XYZ")).with_cost(
+                    CostSpec::default()
+                        .with_number_per(dec!(50.00))
+                        .with_currency("USD"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-500), "USD")));
+
+        let directives = vec![Directive::Transaction(txn)];
+        let db = PriceDatabase::from_directives(&directives);
+
+        // Should have implicit price XYZ = 50.00 USD (from cost)
+        let price = db.get_price("XYZ", "USD", date(2024, 1, 10));
+        assert_eq!(price, Some(dec!(50.00)));
+    }
+
+    #[test]
+    fn test_implicit_price_from_total_annotation() {
+        use rustledger_core::{Posting, PriceAnnotation, Transaction};
+
+        // Transaction with @@ total price annotation
+        let txn = Transaction::new(date(2024, 1, 15), "Sell")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(-10), "ABC"))
+                    .with_price(PriceAnnotation::Total(Amount::new(dec!(1500), "USD"))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(1500), "USD")));
+
+        let directives = vec![Directive::Transaction(txn)];
+        let db = PriceDatabase::from_directives(&directives);
+
+        // Per-unit price should be 1500 / 10 = 150 USD
+        let price = db.get_price("ABC", "USD", date(2024, 1, 15));
+        assert_eq!(price, Some(dec!(150)));
+    }
+
+    #[test]
+    fn test_implicit_price_annotation_takes_priority_over_cost() {
+        use rustledger_core::{CostSpec, Posting, PriceAnnotation, Transaction};
+
+        // Transaction with both cost and @ price annotation
+        // The @ price (1.40) should be used, not the cost (1.25)
+        let txn = Transaction::new(date(2024, 1, 15), "Sell")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
+                    .with_cost(
+                        CostSpec::default()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR"),
+                    )
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(7.00), "EUR")));
+
+        let directives = vec![Directive::Transaction(txn)];
+        let db = PriceDatabase::from_directives(&directives);
+
+        // Should use @ price, not cost
+        let price = db.get_price("ABC", "EUR", date(2024, 1, 15));
+        assert_eq!(price, Some(dec!(1.40)));
+    }
+
+    #[test]
+    fn test_implicit_price_combined_with_explicit() {
+        use rustledger_core::{CostSpec, Posting, PriceAnnotation, Transaction};
+
+        // Both explicit price directive and implicit price from transaction
+        let explicit_price = PriceDirective {
+            date: date(2024, 1, 10),
+            currency: "ABC".into(),
+            amount: Amount::new(dec!(1.30), "EUR"),
+            meta: Default::default(),
+        };
+
+        let txn = Transaction::new(date(2024, 1, 15), "Sell")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
+                    .with_cost(
+                        CostSpec::default()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR"),
+                    )
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+            )
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(7.00), "EUR")));
+
+        let directives = vec![
+            Directive::Price(explicit_price),
+            Directive::Transaction(txn),
+        ];
+        let db = PriceDatabase::from_directives(&directives);
+
+        // At 2024-01-10, should use explicit price 1.30
+        assert_eq!(
+            db.get_price("ABC", "EUR", date(2024, 1, 10)),
+            Some(dec!(1.30))
+        );
+
+        // At 2024-01-15 or later, should use implicit price 1.40 (latest)
+        assert_eq!(db.get_latest_price("ABC", "EUR"), Some(dec!(1.40)));
     }
 }

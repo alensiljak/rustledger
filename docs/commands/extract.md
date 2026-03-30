@@ -23,9 +23,10 @@ rledger extract [OPTIONS] <FILE>
 
 | Option | Description |
 |--------|-------------|
-| `-c, --config <FILE>` | Importer config file |
+| `-i, --importer <NAME>` | Use a named importer from `importers.toml` |
+| `--importers-config <FILE>` | Path to `importers.toml` (auto-discovered by default) |
 | `-a, --account <ACCOUNT>` | Target account |
-| `-o, --output <FILE>` | Output file (stdout if not specified) |
+| `-c, --currency <CURRENCY>` | Currency for amounts (default: USD) |
 | `--existing <FILE>` | Existing ledger (for duplicate detection) |
 
 ## Examples
@@ -57,7 +58,7 @@ skip_header = true
 ```
 
 ```bash
-rledger extract -c importers.toml chase-statement.csv
+rledger extract --importer chase chase-statement.csv
 ```
 
 ### OFX Import
@@ -135,7 +136,13 @@ invert_amounts = true
 Use with:
 
 ```bash
-rledger extract -c importers.toml --importer checking statement.csv
+rledger extract --importer checking statement.csv
+```
+
+The `importers.toml` file is auto-discovered from the current directory or `~/.config/rledger/`. To specify a custom path:
+
+```bash
+rledger extract --importers-config path/to/importers.toml --importer checking statement.csv
 ```
 
 ## See Also

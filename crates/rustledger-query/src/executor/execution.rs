@@ -53,9 +53,30 @@ impl Executor<'_> {
             .iter()
             .any(|t| Self::is_aggregate_expr(&t.expr));
 
+        // Track whether grouping is applied (explicit or implicit) for fallback sort
+        let mut has_grouping = false;
+
         if is_aggregate {
+            // Determine GROUP BY expressions:
+            // - If explicit GROUP BY is provided, use it
+            // - Otherwise, implicitly group by non-aggregate columns in SELECT
+            //   (matches Python beancount behavior)
+            let group_by_exprs: Option<Vec<Expr>> = if query.group_by.is_some() {
+                query.group_by.clone()
+            } else {
+                let implicit = Self::extract_implicit_group_by_exprs(&query.targets);
+                if implicit.is_empty() {
+                    None // Pure aggregate like SELECT count(*)
+                } else {
+                    Some(implicit)
+                }
+            };
+
+            // Track if grouping is applied for deterministic fallback sort
+            has_grouping = group_by_exprs.is_some();
+
             // Group and aggregate
-            let grouped = self.group_postings(&postings, query.group_by.as_ref())?;
+            let grouped = self.group_postings(&postings, group_by_exprs.as_ref())?;
             for (_, group) in grouped {
                 // Use extended_targets to include hidden columns for ORDER BY
                 let row = self.evaluate_aggregate_row(&extended_targets, &group)?;
@@ -150,10 +171,9 @@ impl Executor<'_> {
         // Apply ORDER BY
         if let Some(order_by) = &query.order_by {
             self.sort_results(&mut result, order_by)?;
-        } else if query.group_by.is_some() && !result.rows.is_empty() && !result.columns.is_empty()
-        {
-            // When there's GROUP BY but no ORDER BY, sort by the first column
-            // for deterministic output (matches Python beancount behavior)
+        } else if has_grouping && !result.rows.is_empty() && !result.columns.is_empty() {
+            // When there's GROUP BY (explicit or implicit) but no ORDER BY, sort by
+            // the first column for deterministic output (matches Python beancount behavior)
             let first_col = result.columns[0].clone();
             let default_order = vec![OrderSpec {
                 expr: Expr::Column(first_col),
@@ -293,7 +313,10 @@ impl Executor<'_> {
         Ok(result)
     }
 
-    /// Execute a SELECT query that sources from a user-created table.
+    /// Execute a SELECT query that sources from a user-created or built-in table.
+    ///
+    /// Built-in tables (system tables) start with `#`:
+    /// - `#prices`: Price directives from the ledger
     pub(super) fn execute_select_from_table(
         &self,
         query: &SelectQuery,
@@ -301,10 +324,24 @@ impl Executor<'_> {
     ) -> Result<QueryResult, QueryError> {
         let table_name_upper = table_name.to_uppercase();
 
-        // Look up the table
-        let table = self.tables.get(&table_name_upper).ok_or_else(|| {
-            QueryError::Evaluation(format!("table '{table_name}' does not exist"))
-        })?;
+        // Check for built-in system tables first (e.g., #prices)
+        // Then fall back to user-created tables
+        let builtin_table;
+        let table = if let Some(builtin) = self.get_builtin_table(&table_name_upper) {
+            builtin_table = builtin;
+            &builtin_table
+        } else if let Some(user_table) = self.tables.get(&table_name_upper) {
+            user_table
+        } else {
+            let hint = if table_name.starts_with('#') {
+                ". Available system tables: #accounts, #balances, #commodities, #documents, #entries, #events, #notes, #postings, #prices, #transactions"
+            } else {
+                ""
+            };
+            return Err(QueryError::Evaluation(format!(
+                "table '{table_name}' does not exist{hint}"
+            )));
+        };
 
         // Build a column name -> index mapping for the table
         let column_map: FxHashMap<String, usize> = table
