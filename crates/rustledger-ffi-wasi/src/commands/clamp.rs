@@ -274,7 +274,13 @@ fn create_earnings_transaction(
 
     // Create unique hash for the earnings transaction
     let hash_input = format!("earnings:{date_str}");
-    let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+    let hash = Sha256::digest(hash_input.as_bytes())
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
 
     serde_json::json!({
         "type": "transaction",
@@ -418,7 +424,13 @@ fn create_summary_transaction(
 
     // Create unique hash for the summary transaction
     let hash_input = format!("summary:{date_str}:{account}");
-    let hash = format!("{:x}", Sha256::digest(hash_input.as_bytes()));
+    let hash = Sha256::digest(hash_input.as_bytes())
+        .iter()
+        .fold(String::new(), |mut s, b| {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+            s
+        });
 
     serde_json::json!({
         "type": "transaction",
