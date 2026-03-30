@@ -5899,3 +5899,324 @@ fn test_convert_no_price_fallback() {
         other => panic!("Expected Inventory or Amount with original USD, got {other:?}"),
     }
 }
+
+// ============================================================================
+// Issue #593 Regression Tests
+// ============================================================================
+
+/// Regression test for issue #593: BQL `cost()` returns incorrect values.
+/// <https://github.com/rustledger/rustledger/issues/593>
+///
+/// Bug: `cost()` was using `.abs()` on unit numbers, causing sell transactions
+/// to contribute positive costs instead of negative costs. This led to incorrect
+/// sums when mixing buys and sells.
+///
+/// Expected behavior: `cost()` should preserve signs so that:
+/// - Buy 5 ABC @ 1.25 EUR = +6.25 EUR
+/// - Sell 5 ABC @ 1.25 EUR = -6.25 EUR (negative because units are negative)
+#[test]
+fn test_issue_593_cost_preserves_sign_for_sells() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2025, 1, 1), "Equity:Stocks")),
+        Directive::Open(Open::new(date(2025, 1, 1), "Assets:Bank:Checking")),
+        // Buy 5 ABC at cost 1.25 EUR
+        Directive::Transaction(
+            Transaction::new(date(2025, 4, 1), "Buy Stocks")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(5), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(-6.25), "EUR"),
+                )),
+        ),
+        // Buy 7 more ABC at cost 1.30 EUR
+        Directive::Transaction(
+            Transaction::new(date(2025, 4, 2), "Buy more stocks")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(7), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(1.30))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(-9.10), "EUR"),
+                )),
+        ),
+        // Sell 5 ABC (the first lot)
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 9), "Sell complete lot")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(-5), "ABC"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(1.25))
+                                .with_currency("EUR")
+                                .with_date(date(2025, 4, 1)),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.35), "EUR"))),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(6.75), "EUR"),
+                )),
+        ),
+        // Sell 3 ABC (partial from second lot)
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 10), "Sell some stock")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(-3), "ABC"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(1.30))
+                                .with_currency("EUR")
+                                .with_date(date(2025, 4, 2)),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(4.20), "EUR"),
+                )),
+        ),
+    ];
+
+    // Test individual cost() values preserve sign
+    let result = execute_query(
+        "SELECT date, cost(position) WHERE account = 'Equity:Stocks' ORDER BY date",
+        &directives,
+    );
+
+    assert_eq!(result.rows.len(), 4, "Should have 4 posting rows");
+
+    // Buy: +5 ABC * 1.25 = +6.25 EUR
+    match &result.rows[0][1] {
+        Value::Amount(a) => {
+            assert_eq!(a.number, dec!(6.25), "Buy cost should be positive");
+            assert_eq!(a.currency.as_ref(), "EUR");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Buy: +7 ABC * 1.30 = +9.10 EUR
+    match &result.rows[1][1] {
+        Value::Amount(a) => {
+            assert_eq!(a.number, dec!(9.10), "Buy cost should be positive");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Sell: -5 ABC * 1.25 = -6.25 EUR (BUG FIX: was +6.25 due to .abs())
+    match &result.rows[2][1] {
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(-6.25),
+                "Sell cost should be NEGATIVE (this was the bug - it was positive due to .abs())"
+            );
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Sell: -3 ABC * 1.30 = -3.90 EUR
+    match &result.rows[3][1] {
+        Value::Amount(a) => {
+            assert_eq!(a.number, dec!(-3.90), "Sell cost should be NEGATIVE");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Test SUM(cost(position)) reflects net cost basis
+    // Net: 6.25 + 9.10 - 6.25 - 3.90 = 5.20 EUR (4 ABC remaining at 1.30 each)
+    let sum_result = execute_query(
+        "SELECT SUM(cost(position)) WHERE account = 'Equity:Stocks'",
+        &directives,
+    );
+
+    assert_eq!(sum_result.rows.len(), 1);
+    // SUM can return either Amount or Inventory with single position
+    let sum_value = match &sum_result.rows[0][0] {
+        Value::Amount(a) => a.number,
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single position in inventory");
+            assert_eq!(positions[0].units.currency.as_ref(), "EUR");
+            positions[0].units.number
+        }
+        other => panic!("Expected Amount or Inventory, got {other:?}"),
+    };
+    assert_eq!(
+        sum_value,
+        dec!(5.20),
+        "SUM(cost(position)) should be 5.20 EUR (net cost of remaining 4 ABC at 1.30)"
+    );
+
+    // Also test cost(SUM(position)) - the actual pattern from issue #593
+    // This applies cost() to an aggregated inventory, which uses a different code path
+    let cost_sum_result = execute_query(
+        "SELECT cost(SUM(position)) WHERE account = 'Equity:Stocks'",
+        &directives,
+    );
+
+    assert_eq!(cost_sum_result.rows.len(), 1);
+    let cost_sum_value = match &cost_sum_result.rows[0][0] {
+        Value::Amount(a) => a.number,
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single position in inventory");
+            assert_eq!(positions[0].units.currency.as_ref(), "EUR");
+            positions[0].units.number
+        }
+        other => panic!("Expected Amount or Inventory, got {other:?}"),
+    };
+    assert_eq!(
+        cost_sum_value,
+        dec!(5.20),
+        "cost(SUM(position)) should be 5.20 EUR - this is the issue #593 pattern"
+    );
+}
+
+/// Test that `value()` uses the latest implicit price from @ annotations.
+/// This is related to issue #593 where `value()` wasn't finding the latest price.
+#[test]
+fn test_issue_593_value_uses_latest_implicit_price() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2025, 1, 1), "Equity:Stocks")),
+        Directive::Open(Open::new(date(2025, 1, 1), "Assets:Bank:Checking")),
+        // Buy 5 ABC at cost 1.25 EUR
+        Directive::Transaction(
+            Transaction::new(date(2025, 4, 1), "Buy Stocks")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(5), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(1.25))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(-6.25), "EUR"),
+                )),
+        ),
+        // Buy 7 more ABC at cost 1.30 EUR
+        Directive::Transaction(
+            Transaction::new(date(2025, 4, 2), "Buy more stocks")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(7), "ABC")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(1.30))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(-9.10), "EUR"),
+                )),
+        ),
+        // Sell with @ 1.35 EUR (creates implicit price for ABC)
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 9), "Sell at 1.35")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(-5), "ABC"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(1.25))
+                                .with_currency("EUR")
+                                .with_date(date(2025, 4, 1)),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.35), "EUR"))),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(6.75), "EUR"),
+                )),
+        ),
+        // Sell with @ 1.40 EUR (creates NEWER implicit price for ABC)
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 10), "Sell at 1.40")
+                .with_posting(
+                    Posting::new("Equity:Stocks", Amount::new(dec!(-3), "ABC"))
+                        .with_cost(
+                            CostSpec::empty()
+                                .with_number_per(dec!(1.30))
+                                .with_currency("EUR")
+                                .with_date(date(2025, 4, 2)),
+                        )
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.40), "EUR"))),
+                )
+                .with_posting(Posting::new(
+                    "Assets:Bank:Checking",
+                    Amount::new(dec!(4.20), "EUR"),
+                )),
+        ),
+    ];
+
+    // Value of the sell positions should use the latest price (1.40)
+    // For the sell postings (negative units), value should be:
+    // -5 ABC * 1.40 = -7.00 EUR
+    // -3 ABC * 1.40 = -4.20 EUR
+    let result = execute_query(
+        "SELECT date, value(position, 'EUR') WHERE account = 'Equity:Stocks' AND number < 0 ORDER BY date",
+        &directives,
+    );
+
+    assert_eq!(result.rows.len(), 2, "Should have 2 sell transactions");
+
+    // First sell: -5 ABC * 1.40 (latest price) = -7.00 EUR
+    match &result.rows[0][1] {
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(-7.00),
+                "value(-5 ABC) should use latest price 1.40, giving -7.00 EUR"
+            );
+            assert_eq!(a.currency.as_ref(), "EUR");
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Second sell: -3 ABC * 1.40 = -4.20 EUR
+    match &result.rows[1][1] {
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(-4.20),
+                "value(-3 ABC) should use latest price 1.40, giving -4.20 EUR"
+            );
+        }
+        other => panic!("Expected Amount, got {other:?}"),
+    }
+
+    // Net value using SUM: all positions valued at latest price (1.40)
+    // Buy transactions before prices exist - they should still be valued at latest
+    // 5 ABC + 7 ABC - 5 ABC - 3 ABC = 4 ABC remaining
+    // 4 ABC * 1.40 = 5.60 EUR
+    let sum_result = execute_query(
+        "SELECT SUM(value(position, 'EUR')) WHERE account = 'Equity:Stocks'",
+        &directives,
+    );
+
+    assert_eq!(sum_result.rows.len(), 1);
+    // SUM can return either Amount or Inventory with single position
+    let sum_value = match &sum_result.rows[0][0] {
+        Value::Amount(a) => a.number,
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single position in inventory");
+            assert_eq!(positions[0].units.currency.as_ref(), "EUR");
+            positions[0].units.number
+        }
+        other => panic!("Expected Amount or Inventory, got {other:?}"),
+    };
+    assert_eq!(
+        sum_value,
+        dec!(5.60),
+        "SUM(value(position)) should be 5.60 EUR (4 ABC * 1.40 latest price)"
+    );
+}
