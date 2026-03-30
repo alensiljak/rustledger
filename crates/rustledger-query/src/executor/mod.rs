@@ -1160,6 +1160,16 @@ impl<'a> Executor<'a> {
         for (i, target) in targets.iter().enumerate() {
             if let Some(alias) = &target.alias {
                 names.push(alias.clone());
+            } else if matches!(target.expr, Expr::Wildcard) {
+                // Expand wildcard to default column names (must match evaluate_row expansion)
+                names.extend([
+                    "date".to_string(),
+                    "flag".to_string(),
+                    "payee".to_string(),
+                    "narration".to_string(),
+                    "account".to_string(),
+                    "position".to_string(),
+                ]);
             } else {
                 names.push(self.expr_to_name(&target.expr, i));
             }
@@ -2358,15 +2368,18 @@ mod tests {
         let directives = sample_directives();
         let mut executor = Executor::new(&directives);
 
-        // SELECT * returns all postings with wildcard column name
+        // SELECT * returns all postings with expanded column names
         let query = parse("SELECT *").unwrap();
         let result = executor.execute(&query).unwrap();
 
-        // Wildcard produces column name "*"
-        assert_eq!(result.columns, vec!["*"]);
-        // But each row has expanded values (date, flag, payee, narration, account, position)
+        // Wildcard expands to default column names (fixes issue #577)
+        assert_eq!(
+            result.columns,
+            vec!["date", "flag", "payee", "narration", "account", "position"]
+        );
+        // Each row has expanded values matching the column names
         assert_eq!(result.len(), 4);
-        assert_eq!(result.rows[0].len(), 6); // 6 expanded values
+        assert_eq!(result.rows[0].len(), 6);
     }
 
     #[test]
