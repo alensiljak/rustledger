@@ -367,6 +367,10 @@ pub fn value_to_json(value: &rustledger_query::Value) -> serde_json::Value {
                 rustledger_query::IntervalUnit::Year => "year",
             },
         }),
+        Value::Set(set) => {
+            let items: Vec<_> = set.iter().map(value_to_json).collect();
+            serde_json::json!(items)
+        }
     }
 }
 
@@ -387,5 +391,6 @@ pub const fn value_datatype(value: &rustledger_query::Value) -> &'static str {
         Value::Object(_) => "object",
         Value::Metadata(_) => "Metadata",
         Value::Interval(_) => "Interval",
+        Value::Set(_) => "Set",
     }
 }
