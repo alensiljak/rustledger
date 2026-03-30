@@ -115,19 +115,14 @@
             buildInputs = [
               # Add platform-specific deps here
             ]
-            ++ lib.optionals pkgs.stdenv.isDarwin (
-              # Modern nixpkgs (25.05+): SDK frameworks are in stdenv automatically
-              # Older nixpkgs: need explicit framework references
-              if pkgs ? apple-sdk then [
-                # New pattern: apple-sdk provides all frameworks
-                # libiconv is propagated automatically
-              ] else [
-                # Legacy pattern for older nixpkgs
-                pkgs.libiconv
-                pkgs.darwin.apple_sdk.frameworks.Security
-                pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
-              ]
-            );
+            # Only add legacy Darwin deps on older nixpkgs without apple-sdk.
+            # Modern nixpkgs (25.05+): SDK frameworks are in stdenv automatically,
+            # and libiconv is propagated by the SDK.
+            ++ lib.optionals (pkgs.stdenv.isDarwin && !(pkgs ? apple-sdk)) [
+              pkgs.libiconv
+              pkgs.darwin.apple_sdk.frameworks.Security
+              pkgs.darwin.apple_sdk.frameworks.SystemConfiguration
+            ];
 
             nativeBuildInputs = [
               pkgs.pkg-config
