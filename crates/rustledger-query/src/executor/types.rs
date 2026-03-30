@@ -133,6 +133,8 @@ pub enum Value {
     Inventory(Box<Inventory>),
     /// Set of strings (tags, links).
     StringSet(Vec<String>),
+    /// Generic set of values for IN operator (supports mixed types).
+    Set(Vec<Self>),
     /// Metadata dictionary. Boxed to reduce enum size.
     Metadata(Box<Metadata>),
     /// Interval for date arithmetic.
@@ -191,6 +193,12 @@ impl Value {
                 sorted.sort();
                 for s in &sorted {
                     s.hash(state);
+                }
+            }
+            Self::Set(values) => {
+                // Hash each value in order (sets from literals maintain order)
+                for v in values {
+                    v.hash_value(state);
                 }
             }
             Self::Metadata(meta) => {

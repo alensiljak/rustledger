@@ -150,6 +150,9 @@ pub fn value_to_cell(value: &rustledger_query::Value) -> CellValue {
             }
         }
         Value::StringSet(set) => CellValue::StringSet(set.clone()),
+        Value::Set(values) => {
+            CellValue::Set(values.iter().map(|v| Box::new(value_to_cell(v))).collect())
+        }
         Value::Metadata(meta) => {
             // Convert metadata to a string representation
             let repr = meta

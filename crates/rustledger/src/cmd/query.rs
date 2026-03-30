@@ -507,6 +507,13 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
             positions.join("   ")
         }
         Value::StringSet(set) => set.join(", "),
+        Value::Set(values) => {
+            let strs: Vec<String> = values
+                .iter()
+                .map(|v| format_value(v, numberify, ctx))
+                .collect();
+            format!("({})", strs.join(", "))
+        }
         Value::Metadata(meta) => {
             // Format metadata as key=value pairs
             meta.iter()
@@ -565,6 +572,10 @@ fn value_to_json(value: &Value) -> serde_json::Value {
             })).collect::<Vec<_>>(),
         }),
         Value::StringSet(set) => serde_json::json!(set),
+        Value::Set(values) => {
+            let arr: Vec<serde_json::Value> = values.iter().map(value_to_json).collect();
+            serde_json::Value::Array(arr)
+        }
         Value::Metadata(meta) => {
             let obj: serde_json::Map<String, serde_json::Value> = meta
                 .iter()

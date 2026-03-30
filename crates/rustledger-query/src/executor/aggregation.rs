@@ -80,6 +80,11 @@ impl<'a> Executor<'a> {
                         key.push(',');
                     }
                 }
+                Value::Set(values) => {
+                    // Generic set - use debug representation
+                    key.push('E');
+                    let _ = write!(key, "{values:?}");
+                }
                 Value::Metadata(meta) => {
                     // Metadata as GROUP BY key - use debug representation
                     key.push('M');
@@ -498,21 +503,15 @@ impl<'a> Executor<'a> {
                 }
             }
             Expr::Set(elements) => {
-                // Evaluate all elements and collect as StringSet
-                let mut strings = Vec::with_capacity(elements.len());
+                // Evaluate all elements and collect as Set (supports any value types)
+                let mut values = Vec::with_capacity(elements.len());
                 for elem in elements {
                     let val = self.evaluate_having_expr(elem, row, col_map, alias_map, group)?;
-                    match val {
-                        Value::String(s) => strings.push(s),
-                        Value::Null => {} // Skip null values
-                        other => {
-                            return Err(QueryError::Type(format!(
-                                "Set literal elements must be strings, got {other:?}"
-                            )));
-                        }
+                    if !matches!(val, Value::Null) {
+                        values.push(val);
                     }
                 }
-                Ok(Value::StringSet(strings))
+                Ok(Value::Set(values))
             }
         }
     }

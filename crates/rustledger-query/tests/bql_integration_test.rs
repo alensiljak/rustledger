@@ -2388,6 +2388,97 @@ fn test_in_operator_single_element_set() {
     }
 }
 
+/// Test IN operator with numeric set (integers)
+/// Regression test: Numeric sets should work, not just string sets.
+#[test]
+fn test_in_operator_numeric_set() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2023, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2023, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2023, 6, 15), "2023 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 20), "2024 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 10), "2025 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-30), "EUR"))),
+        ),
+    ];
+
+    // Filter by year using IN with numeric set
+    let result = execute_query(
+        r"SELECT year, account, number WHERE year IN (2023, 2024)",
+        &directives,
+    );
+
+    // Should find 4 postings: 2 from 2023 + 2 from 2024
+    // 2025 postings should be excluded
+    assert_eq!(
+        result.rows.len(),
+        4,
+        "Expected 4 postings (2 from 2023 + 2 from 2024)"
+    );
+
+    for row in &result.rows {
+        let year = match &row[0] {
+            Value::Integer(y) => *y,
+            other => panic!("Expected Integer for year, got {other:?}"),
+        };
+        assert!(
+            year == 2023 || year == 2024,
+            "Expected year 2023 or 2024, got {year}"
+        );
+    }
+}
+
+/// Test NOT IN operator with numeric set
+#[test]
+fn test_not_in_operator_numeric_set() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2023, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2023, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2023, 6, 15), "2023 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 20), "2024 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2025, 9, 10), "2025 expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-30), "EUR"))),
+        ),
+    ];
+
+    // Filter by year using NOT IN with numeric set
+    let result = execute_query(
+        r"SELECT year, account, number WHERE year NOT IN (2023, 2024)",
+        &directives,
+    );
+
+    // Should find 2 postings: both from 2025
+    assert_eq!(result.rows.len(), 2, "Expected 2 postings from 2025");
+
+    for row in &result.rows {
+        let year = match &row[0] {
+            Value::Integer(y) => *y,
+            other => panic!("Expected Integer for year, got {other:?}"),
+        };
+        assert_eq!(year, 2025, "Expected only 2025 postings");
+    }
+}
+
 #[test]
 fn test_filter_with_not_equal() {
     // Test filtering with !=
