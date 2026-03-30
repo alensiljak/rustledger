@@ -21,9 +21,9 @@ pull_request_rules:
     conditions:
       - author=dependabot[bot]
       - or:
-        - title~=(?i).*bump .* from .* to .*  # single package bumps
-        - title~=(?i).*bump the .* group.*    # grouped dependency updates
-        - title~=(?i).*update .* requirement
+          - title~=(?i).*bump .* from .* to .* # single package bumps
+          - title~=(?i).*bump the .* group.*  # grouped dependency updates
+          - title~=(?i).*update .* requirement
       - -title~=(?i)major  # exclude major updates
     actions:
       review:
@@ -52,8 +52,3 @@ pull_request_rules:
           This is a **major** dependency update. Please review carefully for breaking changes.
 
   # Delete head branch after merge
-  - name: Delete branch after merge
-    conditions:
-      - merged
-    actions:
-      delete_head_branch:
