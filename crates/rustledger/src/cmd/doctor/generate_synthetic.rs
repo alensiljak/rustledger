@@ -87,7 +87,14 @@ pub(super) fn cmd_generate_synthetic<W: Write>(
             )?;
 
             if write_manifest {
-                let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+                use std::fmt::Write;
+                let hash =
+                    Sha256::digest(content.as_bytes())
+                        .iter()
+                        .fold(String::new(), |mut s, b| {
+                            let _ = write!(s, "{b:02x}");
+                            s
+                        });
                 manifest.add_entry(
                     ManifestEntry::new(&filename, "edge-case")
                         .with_directive_count(collection.directives.len())
@@ -188,7 +195,14 @@ pub(super) fn cmd_generate_synthetic<W: Write>(
                 valid += 1;
 
                 if write_manifest {
-                    let hash = format!("{:x}", Sha256::digest(content.as_bytes()));
+                    use std::fmt::Write;
+                    let hash = Sha256::digest(content.as_bytes()).iter().fold(
+                        String::new(),
+                        |mut s, b| {
+                            let _ = write!(s, "{b:02x}");
+                            s
+                        },
+                    );
                     manifest.add_entry(
                         ManifestEntry::new(&filename, "proptest")
                             .with_directive_count(6 + num_txns) // Opens + transactions
