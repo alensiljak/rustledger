@@ -187,6 +187,8 @@ pub enum Expr {
         /// Upper bound.
         high: Box<Self>,
     },
+    /// Set literal for IN operator, e.g., `('EUR', 'USD')`.
+    Set(Vec<Self>),
 }
 
 /// A literal value.
@@ -586,6 +588,16 @@ impl fmt::Display for Expr {
             Self::Paren(inner) => write!(f, "({inner})"),
             Self::Between { value, low, high } => {
                 write!(f, "{value} BETWEEN {low} AND {high}")
+            }
+            Self::Set(elements) => {
+                write!(f, "(")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
             }
         }
     }

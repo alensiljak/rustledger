@@ -2258,6 +2258,136 @@ fn test_in_clause_with_accounts() {
     }
 }
 
+/// Regression test for issue #580: IN operator with tuple/set literal
+/// <https://github.com/rustledger/rustledger/issues/580>
+#[test]
+fn test_issue_580_in_operator_with_set_literal() {
+    // Test IN clause with a set literal like ('EUR', 'USD')
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:EUR")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:USD")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank:GBP")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "EUR expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new(
+                    "Assets:Bank:EUR",
+                    Amount::new(dec!(-100), "EUR"),
+                )),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "USD expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new(
+                    "Assets:Bank:USD",
+                    Amount::new(dec!(-50), "USD"),
+                )),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 17), "GBP expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "GBP")))
+                .with_posting(Posting::new(
+                    "Assets:Bank:GBP",
+                    Amount::new(dec!(-30), "GBP"),
+                )),
+        ),
+    ];
+
+    // Filter using IN with set literal - should match EUR and USD only
+    let result = execute_query(
+        r"SELECT account, currency, number WHERE currency IN ('EUR', 'USD')",
+        &directives,
+    );
+
+    // Should find 4 postings: 2 EUR (expense + bank) + 2 USD (expense + bank)
+    // GBP postings should be excluded
+    assert_eq!(result.rows.len(), 4, "Expected 4 postings (2 EUR + 2 USD)");
+
+    for row in &result.rows {
+        let currency = match &row[1] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency, got {other:?}"),
+        };
+        assert!(
+            currency == "EUR" || currency == "USD",
+            "Expected EUR or USD, got {currency}"
+        );
+    }
+}
+
+/// Test NOT IN operator with set literal
+#[test]
+fn test_not_in_operator_with_set_literal() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "EUR expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "USD expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 17), "GBP expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "GBP")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-30), "GBP"))),
+        ),
+    ];
+
+    // Filter using NOT IN with set literal - should match only GBP
+    let result = execute_query(
+        r"SELECT currency, number WHERE currency NOT IN ('EUR', 'USD')",
+        &directives,
+    );
+
+    // Should find 2 postings: GBP expense + GBP bank
+    assert_eq!(result.rows.len(), 2, "Expected 2 GBP postings");
+
+    for row in &result.rows {
+        let currency = match &row[0] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency, got {other:?}"),
+        };
+        assert_eq!(currency, "GBP", "Expected only GBP postings");
+    }
+}
+
+/// Test IN with single element set
+#[test]
+fn test_in_operator_single_element_set() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "EUR expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "USD expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+
+    // Single element set should work
+    let result = execute_query(r"SELECT currency WHERE currency IN ('EUR')", &directives);
+
+    assert_eq!(result.rows.len(), 2, "Expected 2 EUR postings");
+    for row in &result.rows {
+        let currency = match &row[0] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency, got {other:?}"),
+        };
+        assert_eq!(currency, "EUR");
+    }
+}
+
 #[test]
 fn test_filter_with_not_equal() {
     // Test filtering with !=

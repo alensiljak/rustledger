@@ -17,10 +17,14 @@ use rustledger_core::NaiveDate;
 type ParserInput<'a> = &'a str;
 type ParserExtra<'a> = extra::Err<Rich<'a, char>>;
 
-/// Helper enum for parsing comparison suffix (BETWEEN or binary comparison).
+/// Helper enum for parsing comparison suffix (BETWEEN, IN, or binary comparison).
 enum ComparisonSuffix {
     Between(Expr, Expr),
     Binary(BinaryOperator, Expr),
+    /// IN with right-hand side (set literal or expression).
+    In(Expr),
+    /// NOT IN with right-hand side (set literal or expression).
+    NotIn(Expr),
 }
 
 /// Parse a BQL query string.
@@ -550,6 +554,26 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
                         .then_ignore(ws1())
                         .then(additive.clone())
                         .map(|(low, high)| ComparisonSuffix::Between(low, high)),
+                    // NOT IN - try set literal first, then fall back to expression
+                    ws1()
+                        .ignore_then(kw("NOT"))
+                        .ignore_then(ws1())
+                        .ignore_then(kw("IN"))
+                        .ignore_then(ws())
+                        .ignore_then(choice((
+                            set_literal(expr.clone()),
+                            additive.clone(),
+                        )))
+                        .map(ComparisonSuffix::NotIn),
+                    // IN - try set literal first, then fall back to expression
+                    ws1()
+                        .ignore_then(kw("IN"))
+                        .ignore_then(ws())
+                        .ignore_then(choice((
+                            set_literal(expr.clone()),
+                            additive.clone(),
+                        )))
+                        .map(ComparisonSuffix::In),
                     // Regular comparison operators
                     ws()
                         .ignore_then(comparison_op())
@@ -562,6 +586,10 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
             .map(|(left, suffix)| match suffix {
                 Some(ComparisonSuffix::Between(low, high)) => Expr::between(left, low, high),
                 Some(ComparisonSuffix::Binary(op, right)) => Expr::binary(left, op, right),
+                Some(ComparisonSuffix::In(right)) => Expr::binary(left, BinaryOperator::In, right),
+                Some(ComparisonSuffix::NotIn(right)) => {
+                    Expr::binary(left, BinaryOperator::NotIn, right)
+                }
                 None => left,
             })
             // IS NULL / IS NOT NULL (postfix)
@@ -619,7 +647,7 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
     })
 }
 
-/// Parse comparison operators.
+/// Parse comparison operators (excluding IN/NOT IN which are handled specially).
 fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, ParserExtra<'a>> + Clone
 {
     choice((
@@ -633,13 +661,25 @@ fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, Parse
         just('<').to(BinaryOperator::Lt),
         just('>').to(BinaryOperator::Gt),
         just('~').to(BinaryOperator::Regex),
-        // Keyword operators
-        kw("NOT")
-            .ignore_then(ws1())
-            .ignore_then(kw("IN"))
-            .to(BinaryOperator::NotIn),
-        kw("IN").to(BinaryOperator::In),
     ))
+}
+
+/// Parse a set literal for IN operator, e.g., `('EUR', 'USD')`.
+///
+/// Returns `Expr::Set` containing the list of expressions.
+fn set_literal<'a>(
+    expr: impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone + 'a,
+) -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone {
+    just('(')
+        .ignore_then(ws())
+        .ignore_then(
+            expr.separated_by(ws().then(just(',')).then(ws()))
+                .at_least(1)
+                .collect::<Vec<_>>(),
+        )
+        .then_ignore(ws())
+        .then_ignore(just(')'))
+        .map(Expr::Set)
 }
 
 /// Parse primary expressions.

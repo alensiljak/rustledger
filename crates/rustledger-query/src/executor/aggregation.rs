@@ -497,6 +497,23 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
+            Expr::Set(elements) => {
+                // Evaluate all elements and collect as StringSet
+                let mut strings = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    let val = self.evaluate_having_expr(elem, row, col_map, alias_map, group)?;
+                    match val {
+                        Value::String(s) => strings.push(s),
+                        Value::Null => {} // Skip null values
+                        other => {
+                            return Err(QueryError::Type(format!(
+                                "Set literal elements must be strings, got {other:?}"
+                            )));
+                        }
+                    }
+                }
+                Ok(Value::StringSet(strings))
+            }
         }
     }
 }
