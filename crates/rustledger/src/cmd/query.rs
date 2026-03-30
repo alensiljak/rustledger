@@ -853,6 +853,18 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
         "tables" => {
             println!("entries");
             println!("postings");
+            println!();
+            println!("System tables (prefix with #):");
+            println!("  #accounts");
+            println!("  #balances");
+            println!("  #commodities");
+            println!("  #documents");
+            println!("  #entries");
+            println!("  #events");
+            println!("  #notes");
+            println!("  #postings");
+            println!("  #prices");
+            println!("  #transactions");
         }
         "describe" => {
             if args.is_empty() {
@@ -997,7 +1009,9 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                             println!("  5. Numberify output (remove currencies)");
                         }
                         println!();
-                        println!("Tables available: entries, postings");
+                        println!(
+                            "Tables available: entries, postings, #accounts, #balances, #commodities, #documents, #entries, #events, #notes, #postings, #prices, #transactions"
+                        );
                     }
                     Err(e) => eprintln!("error: {e}"),
                 }
