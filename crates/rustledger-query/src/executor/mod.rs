@@ -954,6 +954,7 @@ impl<'a> Executor<'a> {
                 let date: Option<chrono::NaiveDate> = if args.len() == 3 {
                     match &args[2] {
                         Value::Date(d) => Some(*d),
+                        Value::Null => None, // NULL date uses latest price
                         _ => {
                             return Err(QueryError::Type(
                                 "CONVERT: third argument must be a date".to_string(),
@@ -1007,15 +1008,24 @@ impl<'a> Executor<'a> {
                             }
                         }
                         // If result has single currency matching target, return as Amount
+                        // If result is empty, return zero in target currency (issue #586)
                         let positions = result.positions();
-                        if positions.len() == 1 && positions[0].units.currency == target_currency {
+                        if positions.is_empty() {
+                            Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
+                        } else if positions.len() == 1
+                            && positions[0].units.currency == target_currency
+                        {
                             Ok(Value::Amount(positions[0].units.clone()))
                         } else {
                             Ok(Value::Inventory(Box::new(result)))
                         }
                     }
                     Value::Number(n) => Ok(Value::Amount(Amount::new(*n, &target_currency))),
-                    Value::Null => Ok(Value::Null),
+                    Value::Null => {
+                        // For null values (e.g., empty sum), return zero in target currency
+                        // This matches Python beancount behavior for empty balances (issue #586)
+                        Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
+                    }
                     _ => Err(QueryError::Type(
                         "CONVERT expects a position, amount, inventory, or number".to_string(),
                     )),
