@@ -26,6 +26,20 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+/// System tables available in BQL queries (prefixed with #).
+const SYSTEM_TABLES: &[&str] = &[
+    "#accounts",
+    "#balances",
+    "#commodities",
+    "#documents",
+    "#entries",
+    "#events",
+    "#notes",
+    "#postings",
+    "#prices",
+    "#transactions",
+];
+
 /// Query beancount files with BQL.
 #[derive(Parser, Debug)]
 #[command(name = "query")]
@@ -855,16 +869,9 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
             println!("postings");
             println!();
             println!("System tables (prefix with #):");
-            println!("  #accounts");
-            println!("  #balances");
-            println!("  #commodities");
-            println!("  #documents");
-            println!("  #entries");
-            println!("  #events");
-            println!("  #notes");
-            println!("  #postings");
-            println!("  #prices");
-            println!("  #transactions");
+            for table in SYSTEM_TABLES {
+                println!("  {table}");
+            }
         }
         "describe" => {
             if args.is_empty() {
@@ -1009,9 +1016,10 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                             println!("  5. Numberify output (remove currencies)");
                         }
                         println!();
-                        println!(
-                            "Tables available: entries, postings, #accounts, #balances, #commodities, #documents, #entries, #events, #notes, #postings, #prices, #transactions"
-                        );
+                        println!("Tables available:");
+                        println!("  entries, postings");
+                        print!("  ");
+                        println!("{}", SYSTEM_TABLES.join(", "));
                     }
                     Err(e) => eprintln!("error: {e}"),
                 }
