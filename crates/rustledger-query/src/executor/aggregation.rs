@@ -108,6 +108,11 @@ impl<'a> Executor<'a> {
                         key.push(',');
                     }
                 }
+                Value::Set(values) => {
+                    // Generic set - use debug representation
+                    key.push('E');
+                    let _ = write!(key, "{values:?}");
+                }
                 Value::Metadata(meta) => {
                     // Metadata as GROUP BY key - use debug representation
                     key.push('M');
@@ -524,6 +529,17 @@ impl<'a> Executor<'a> {
                         "BETWEEN requires comparable values".to_string(),
                     )),
                 }
+            }
+            Expr::Set(elements) => {
+                // Evaluate all elements and collect as Set (supports any value types)
+                let mut values = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    let val = self.evaluate_having_expr(elem, row, col_map, alias_map, group)?;
+                    if !matches!(val, Value::Null) {
+                        values.push(val);
+                    }
+                }
+                Ok(Value::Set(values))
             }
         }
     }

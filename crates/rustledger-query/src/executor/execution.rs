@@ -488,6 +488,17 @@ impl Executor<'_> {
                     )),
                 }
             }
+            Expr::Set(elements) => {
+                // Evaluate all elements and collect as Set (supports any value types)
+                let mut values = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    let val = self.evaluate_subquery_expr(elem, row, column_map)?;
+                    if !matches!(val, Value::Null) {
+                        values.push(val);
+                    }
+                }
+                Ok(Value::Set(values))
+            }
         }
     }
 

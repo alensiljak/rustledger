@@ -233,6 +233,11 @@ impl Executor<'_> {
             Value::Position(p) => p.to_string(),
             Value::Inventory(inv) => inv.to_string(),
             Value::StringSet(ss) => ss.join(", "),
+            Value::Set(values) => {
+                // Format set elements as comma-separated values
+                let strs: Vec<String> = values.iter().map(Self::value_to_string).collect();
+                format!("({})", strs.join(", "))
+            }
             Value::Metadata(meta) => {
                 // Format metadata as key=value pairs
                 let pairs: Vec<String> = meta.iter().map(|(k, v)| format!("{k}: {v:?}")).collect();
