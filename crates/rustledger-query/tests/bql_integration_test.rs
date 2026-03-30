@@ -5746,3 +5746,156 @@ fn make_issue_575_directives() -> Vec<Directive> {
         ),
     ]
 }
+
+// ============================================================================
+// Regression Test: Issue #586 - CONVERT with NULL (empty sum)
+// ============================================================================
+
+/// Regression test for issue #586: `convert(sum(position), 'GBP')` fails on accounts with no balance
+/// <https://github.com/rustledger/rustledger/issues/586>
+///
+/// When an account has transactions that net to zero, or when `sum(position)` returns an
+/// empty inventory, `convert()` should return 0 in the target currency instead of failing.
+/// This matches Python beancount's behavior.
+#[test]
+fn test_issue_586_convert_null_returns_zero() {
+    // Set up accounts with different balance scenarios
+    let directives = vec![
+        Directive::Open(Open::new(
+            date(2024, 1, 1),
+            "Liabilities:CreditCards:WithBalance",
+        )),
+        Directive::Open(Open::new(
+            date(2024, 1, 1),
+            "Liabilities:CreditCards:ZeroBalance",
+        )),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Refund")),
+        // Price for conversion
+        Directive::Price(Price::new(
+            date(2024, 1, 1),
+            "EUR",
+            Amount::new(dec!(0.85), "GBP"),
+        )),
+        // Transaction on WithBalance account
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Groceries")
+                .with_posting(Posting::new(
+                    "Liabilities:CreditCards:WithBalance",
+                    Amount::new(dec!(-100), "EUR"),
+                ))
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR"))),
+        ),
+        // Two transactions on ZeroBalance that cancel each other out
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "Purchase")
+                .with_posting(Posting::new(
+                    "Liabilities:CreditCards:ZeroBalance",
+                    Amount::new(dec!(-50), "EUR"),
+                ))
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 17), "Refund")
+                .with_posting(Posting::new(
+                    "Liabilities:CreditCards:ZeroBalance",
+                    Amount::new(dec!(50), "EUR"),
+                ))
+                .with_posting(Posting::new("Income:Refund", Amount::new(dec!(-50), "EUR"))),
+        ),
+    ];
+
+    // Query that groups by account
+    let result = execute_query(
+        r"SELECT account, units(sum(position)) as Balance, convert(sum(position), 'GBP') as Converted
+           WHERE account ~ 'CreditCards'
+           GROUP BY account
+           ORDER BY account",
+        &directives,
+    );
+
+    // Should have 2 rows (both accounts with postings)
+    assert_eq!(
+        result.rows.len(),
+        2,
+        "Should return both accounts with transactions"
+    );
+    assert_eq!(result.columns, vec!["account", "Balance", "Converted"]);
+
+    // First row: WithBalance account (alphabetically comes before ZeroBalance)
+    match &result.rows[0][2] {
+        Value::Amount(a) => {
+            // -100 EUR * 0.85 = -85 GBP
+            assert_eq!(
+                a.number,
+                dec!(-85),
+                "convert(sum(position), 'GBP') should convert EUR to GBP"
+            );
+            assert_eq!(a.currency.as_ref(), "GBP");
+        }
+        other => panic!("Expected Amount for WithBalance converted, got {other:?}"),
+    }
+
+    // Second row: ZeroBalance account (positions cancel out)
+    // convert(empty_inventory, 'GBP') should return 0.00 GBP
+    match &result.rows[1][2] {
+        Value::Amount(a) => {
+            assert_eq!(
+                a.number,
+                dec!(0),
+                "convert() should return 0.00 GBP for account with zero balance"
+            );
+            assert_eq!(a.currency.as_ref(), "GBP");
+        }
+        other => panic!("Expected Amount for ZeroBalance converted, got {other:?}"),
+    }
+}
+
+/// Test that `convert()` falls back to original value when no price exists
+#[test]
+fn test_convert_no_price_fallback() {
+    // Test CONVERT when no conversion price is available
+    // The fallback behavior is to return the original value unchanged
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Deposit")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(100), "USD")))
+                .with_posting(Posting::new(
+                    "Income:Salary",
+                    Amount::new(dec!(-100), "USD"),
+                )),
+        ),
+    ];
+
+    // No USD->GBP price exists, so convert should return original value
+    let result = execute_query(
+        r"SELECT account, convert(sum(position), 'GBP') as converted
+           WHERE account = 'Assets:Bank'
+           GROUP BY account",
+        &directives,
+    );
+
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "Expected exactly one row for Assets:Bank"
+    );
+
+    // Without a USD->GBP price, convert returns the original inventory unchanged
+    // (this matches Python beancount fallback behavior)
+    match &result.rows[0][1] {
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1);
+            assert_eq!(positions[0].units.number, dec!(100));
+            assert_eq!(positions[0].units.currency.as_ref(), "USD");
+        }
+        Value::Amount(a) => {
+            // Could also return as Amount if single currency
+            assert_eq!(a.number, dec!(100));
+            assert_eq!(a.currency.as_ref(), "USD");
+        }
+        other => panic!("Expected Inventory or Amount with original USD, got {other:?}"),
+    }
+}

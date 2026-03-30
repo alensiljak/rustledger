@@ -151,8 +151,11 @@ impl Executor<'_> {
                     }
                 }
                 // If result has single currency matching target, return as Amount
+                // If result is empty, return zero in target currency (issue #586)
                 let positions = result.positions();
-                if positions.len() == 1 && positions[0].units.currency == target_currency {
+                if positions.is_empty() {
+                    Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
+                } else if positions.len() == 1 && positions[0].units.currency == target_currency {
                     Ok(Value::Amount(positions[0].units.clone()))
                 } else {
                     Ok(Value::Inventory(Box::new(result)))
@@ -161,6 +164,11 @@ impl Executor<'_> {
             Value::Number(n) => {
                 // Just wrap the number as an amount with the target currency
                 Ok(Value::Amount(Amount::new(n, &target_currency)))
+            }
+            Value::Null => {
+                // For null values (e.g., empty sum), return zero in target currency
+                // This matches Python beancount behavior for empty balances
+                Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
             }
             _ => Err(QueryError::Type(
                 "CONVERT expects a position, amount, inventory, or number".to_string(),
