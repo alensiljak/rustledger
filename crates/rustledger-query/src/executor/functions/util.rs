@@ -3,7 +3,7 @@
 //! This module includes metadata, conversion, casting, and helper functions.
 
 use rust_decimal::Decimal;
-use rustledger_core::{Amount, MetaValue};
+use rustledger_core::{Amount, Inventory, MetaValue, Position};
 
 use crate::ast::FunctionCall;
 use crate::error::QueryError;
@@ -137,19 +137,38 @@ impl Executor<'_> {
                 }
             }
             Value::Inventory(inv) => {
-                let mut total = Decimal::ZERO;
+                // Convert each position, keeping originals when no conversion available
+                // (matches Python beancount behavior)
+                let mut result = Inventory::default();
                 for pos in inv.positions() {
                     if pos.units.currency == target_currency {
-                        total += pos.units.number;
+                        result.add(Position::simple(pos.units.clone()));
                     } else if let Some(converted) = convert_amount(&pos.units) {
-                        total += converted.number;
+                        result.add(Position::simple(converted));
+                    } else {
+                        // No conversion available - keep original (Python beancount behavior)
+                        result.add(Position::simple(pos.units.clone()));
                     }
                 }
-                Ok(Value::Amount(Amount::new(total, &target_currency)))
+                // If result has single currency matching target, return as Amount
+                // If result is empty, return zero in target currency (issue #586)
+                let positions = result.positions();
+                if positions.is_empty() {
+                    Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
+                } else if positions.len() == 1 && positions[0].units.currency == target_currency {
+                    Ok(Value::Amount(positions[0].units.clone()))
+                } else {
+                    Ok(Value::Inventory(Box::new(result)))
+                }
             }
             Value::Number(n) => {
                 // Just wrap the number as an amount with the target currency
                 Ok(Value::Amount(Amount::new(n, &target_currency)))
+            }
+            Value::Null => {
+                // For null values (e.g., empty sum), return zero in target currency
+                // This matches Python beancount behavior for empty balances
+                Ok(Value::Amount(Amount::new(Decimal::ZERO, &target_currency)))
             }
             _ => Err(QueryError::Type(
                 "CONVERT expects a position, amount, inventory, or number".to_string(),

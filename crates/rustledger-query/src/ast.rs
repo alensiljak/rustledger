@@ -187,6 +187,8 @@ pub enum Expr {
         /// Upper bound.
         high: Box<Self>,
     },
+    /// Set literal for IN operator, e.g., `('EUR', 'USD')`.
+    Set(Vec<Self>),
 }
 
 /// A literal value.
@@ -587,6 +589,16 @@ impl fmt::Display for Expr {
             Self::Between { value, low, high } => {
                 write!(f, "{value} BETWEEN {low} AND {high}")
             }
+            Self::Set(elements) => {
+                write!(f, "(")?;
+                for (i, elem) in elements.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{elem}")?;
+                }
+                write!(f, ")")
+            }
         }
     }
 }
@@ -753,6 +765,25 @@ mod tests {
     fn test_expr_display_between() {
         let expr = Expr::between(Expr::column("x"), Expr::integer(1), Expr::integer(10));
         assert_eq!(expr.to_string(), "x BETWEEN 1 AND 10");
+    }
+
+    #[test]
+    fn test_expr_display_set() {
+        // Empty set is not valid in parsing, but test single element
+        let single = Expr::Set(vec![Expr::string("EUR")]);
+        assert_eq!(single.to_string(), r#"("EUR")"#);
+
+        // Multiple elements
+        let multi = Expr::Set(vec![
+            Expr::string("EUR"),
+            Expr::string("USD"),
+            Expr::string("GBP"),
+        ]);
+        assert_eq!(multi.to_string(), r#"("EUR", "USD", "GBP")"#);
+
+        // Mixed types (integers)
+        let numeric = Expr::Set(vec![Expr::integer(2023), Expr::integer(2024)]);
+        assert_eq!(numeric.to_string(), "(2023, 2024)");
     }
 
     #[test]

@@ -547,6 +547,49 @@ mod tests {
         assert_eq!(formatted, "2024-01-01 custom \"budget\"\n");
     }
 
+    /// Regression test for issue #573: custom directive values were not formatted
+    /// <https://github.com/rustledger/rustledger/issues/573>
+    #[test]
+    fn test_issue_573_format_custom_with_values() {
+        // Test case from issue: fava-option with multiple string values
+        let custom = Custom {
+            date: date(2024, 1, 1),
+            custom_type: "fava-option".to_string(),
+            values: vec![
+                MetaValue::String("language".to_string()),
+                MetaValue::String("en".to_string()),
+            ],
+            meta: Default::default(),
+        };
+        let config = FormatConfig::default();
+        let formatted = format_custom(&custom, &config);
+        assert_eq!(
+            formatted,
+            "2024-01-01 custom \"fava-option\" \"language\" \"en\"\n"
+        );
+    }
+
+    #[test]
+    fn test_format_custom_with_mixed_values() {
+        // Test custom directive with various value types
+        let custom = Custom {
+            date: date(2024, 3, 15),
+            custom_type: "budget".to_string(),
+            values: vec![
+                MetaValue::Account("Expenses:Food".to_string()),
+                MetaValue::Amount(Amount::new(dec!(500), "USD")),
+                MetaValue::String("monthly".to_string()),
+            ],
+            meta: Default::default(),
+        };
+        let config = FormatConfig::default();
+        let formatted = format_custom(&custom, &config);
+        assert_eq!(
+            formatted,
+            "2024-03-15 custom \"budget\" Expenses:Food 500 USD \"monthly\"\n"
+        );
+    }
+
     #[test]
     fn test_format_open_with_booking() {
         let open = Open {

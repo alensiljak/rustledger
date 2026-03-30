@@ -17,10 +17,14 @@ use rustledger_core::NaiveDate;
 type ParserInput<'a> = &'a str;
 type ParserExtra<'a> = extra::Err<Rich<'a, char>>;
 
-/// Helper enum for parsing comparison suffix (BETWEEN or binary comparison).
+/// Helper enum for parsing comparison suffix (BETWEEN, IN, or binary comparison).
 enum ComparisonSuffix {
     Between(Expr, Expr),
     Binary(BinaryOperator, Expr),
+    /// IN with right-hand side (set literal or expression).
+    In(Expr),
+    /// NOT IN with right-hand side (set literal or expression).
+    NotIn(Expr),
 }
 
 /// Parse a BQL query string.
@@ -106,13 +110,15 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
 
         // Table name FROM clause: FROM tablename (where tablename is not a keyword)
         // A table name is an identifier followed by WHERE/GROUP/ORDER/HAVING/LIMIT/PIVOT or end
+        // Supports system tables like #prices, #entries
         let table_from = ws1()
             .ignore_then(kw("FROM"))
             .ignore_then(ws1())
-            .ignore_then(identifier().try_map(|name, span| {
+            .ignore_then(table_identifier().try_map(|name, span| {
                 // Check if this looks like a table name (uppercase convention or doesn't look like account)
                 // Table names should not contain ':' which accounts have
-                if name.contains(':') {
+                // System tables starting with '#' are always valid
+                if !name.starts_with('#') && name.contains(':') {
                     Err(Rich::custom(
                         span,
                         "table names cannot contain ':' - this looks like an account filter expression",
@@ -550,6 +556,26 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
                         .then_ignore(ws1())
                         .then(additive.clone())
                         .map(|(low, high)| ComparisonSuffix::Between(low, high)),
+                    // NOT IN - try set literal first, then fall back to expression
+                    ws1()
+                        .ignore_then(kw("NOT"))
+                        .ignore_then(ws1())
+                        .ignore_then(kw("IN"))
+                        .ignore_then(ws())
+                        .ignore_then(choice((
+                            set_literal(expr.clone()),
+                            additive.clone(),
+                        )))
+                        .map(ComparisonSuffix::NotIn),
+                    // IN - try set literal first, then fall back to expression
+                    ws1()
+                        .ignore_then(kw("IN"))
+                        .ignore_then(ws())
+                        .ignore_then(choice((
+                            set_literal(expr.clone()),
+                            additive.clone(),
+                        )))
+                        .map(ComparisonSuffix::In),
                     // Regular comparison operators
                     ws()
                         .ignore_then(comparison_op())
@@ -562,6 +588,10 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
             .map(|(left, suffix)| match suffix {
                 Some(ComparisonSuffix::Between(low, high)) => Expr::between(left, low, high),
                 Some(ComparisonSuffix::Binary(op, right)) => Expr::binary(left, op, right),
+                Some(ComparisonSuffix::In(right)) => Expr::binary(left, BinaryOperator::In, right),
+                Some(ComparisonSuffix::NotIn(right)) => {
+                    Expr::binary(left, BinaryOperator::NotIn, right)
+                }
                 None => left,
             })
             // IS NULL / IS NOT NULL (postfix)
@@ -619,7 +649,7 @@ fn expr<'a>() -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone
     })
 }
 
-/// Parse comparison operators.
+/// Parse comparison operators (excluding IN/NOT IN which are handled specially).
 fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, ParserExtra<'a>> + Clone
 {
     choice((
@@ -633,13 +663,45 @@ fn comparison_op<'a>() -> impl Parser<'a, ParserInput<'a>, BinaryOperator, Parse
         just('<').to(BinaryOperator::Lt),
         just('>').to(BinaryOperator::Gt),
         just('~').to(BinaryOperator::Regex),
-        // Keyword operators
-        kw("NOT")
-            .ignore_then(ws1())
-            .ignore_then(kw("IN"))
-            .to(BinaryOperator::NotIn),
-        kw("IN").to(BinaryOperator::In),
     ))
+}
+
+/// Parse a set literal for IN operator, e.g., `('EUR', 'USD')`.
+///
+/// To distinguish from parenthesized expressions like `IN (tags)`, set literals
+/// require either:
+/// - Two or more comma-separated elements: `('EUR', 'USD')`
+/// - A single element with trailing comma: `('EUR',)`
+///
+/// This ensures `IN (tags)` is parsed as `IN <parenthesized-column>` rather than
+/// `IN <single-element-set>`.
+fn set_literal<'a>(
+    expr: impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone + 'a,
+) -> impl Parser<'a, ParserInput<'a>, Expr, ParserExtra<'a>> + Clone {
+    just('(')
+        .ignore_then(ws())
+        .ignore_then(
+            // Parse first element
+            expr.clone()
+                .then(
+                    // Then require either:
+                    // - comma + more elements (with optional trailing comma)
+                    // - trailing comma (for single-element sets)
+                    ws().ignore_then(just(',')).ignore_then(ws()).ignore_then(
+                        expr.separated_by(ws().then(just(',')).then(ws()))
+                            .allow_trailing()
+                            .collect::<Vec<_>>(),
+                    ),
+                )
+                .map(|(first, rest)| {
+                    let mut elements = vec![first];
+                    elements.extend(rest);
+                    elements
+                }),
+        )
+        .then_ignore(ws())
+        .then_ignore(just(')'))
+        .map(Expr::Set)
 }
 
 /// Parse primary expressions.
@@ -796,6 +858,19 @@ fn literal<'a>() -> impl Parser<'a, ParserInput<'a>, Literal, ParserExtra<'a>> +
 /// Parse an identifier (column name, function name).
 fn identifier<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
     text::ident().map(|s: &str| s.to_string())
+}
+
+/// Parse a table identifier, which can be a regular identifier or a system table
+/// starting with `#` (e.g., `#prices`, `#entries`).
+fn table_identifier<'a>() -> impl Parser<'a, ParserInput<'a>, String, ParserExtra<'a>> + Clone {
+    choice((
+        // System table: #identifier (e.g., #prices)
+        just('#')
+            .ignore_then(text::ident())
+            .map(|s: &str| format!("#{s}")),
+        // Regular table identifier
+        text::ident().map(|s: &str| s.to_string()),
+    ))
 }
 
 /// Parse a string literal.
@@ -1334,6 +1409,65 @@ mod tests {
     }
 
     #[test]
+    fn test_in_set_literal() {
+        // Multi-element set literal
+        let query = parse("SELECT * WHERE currency IN ('EUR', 'USD')").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    match op.right {
+                        Expr::Set(elements) => {
+                            assert_eq!(elements.len(), 2);
+                        }
+                        _ => panic!("Expected Set"),
+                    }
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Single-element set with trailing comma
+        let query = parse("SELECT * WHERE currency IN ('EUR',)").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    match op.right {
+                        Expr::Set(elements) => {
+                            assert_eq!(elements.len(), 1);
+                        }
+                        _ => panic!("Expected Set"),
+                    }
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+
+        // Parenthesized column (not a set literal)
+        let query = parse("SELECT * WHERE 'x' IN (tags)").unwrap();
+        match query {
+            Query::Select(sel) => match sel.where_clause.unwrap() {
+                Expr::BinaryOp(op) => {
+                    assert_eq!(op.op, BinaryOperator::In);
+                    // Should be Paren(Column), not Set([Column])
+                    match op.right {
+                        Expr::Paren(inner) => match *inner {
+                            Expr::Column(name) => assert_eq!(name, "tags"),
+                            _ => panic!("Expected Column inside Paren"),
+                        },
+                        other => panic!("Expected Paren, got {other:?}"),
+                    }
+                }
+                _ => panic!("Expected binary op"),
+            },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
     fn test_string_arg_function() {
         // First test a function with a column reference - should work
         let query = parse("SELECT foo(x)").unwrap();
@@ -1457,6 +1591,50 @@ mod tests {
                 }
                 _ => panic!("Expected function"),
             },
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_system_table_prices() {
+        // Test parsing SELECT FROM #prices (system table)
+        let query = parse("SELECT date, currency, amount FROM #prices").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert_eq!(sel.targets.len(), 3);
+                assert!(matches!(&sel.targets[0].expr, Expr::Column(c) if c == "date"));
+                assert!(matches!(&sel.targets[1].expr, Expr::Column(c) if c == "currency"));
+                assert!(matches!(&sel.targets[2].expr, Expr::Column(c) if c == "amount"));
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("#prices".to_string()));
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_system_table_with_where() {
+        // Test parsing system table with WHERE clause
+        let query = parse("SELECT * FROM #prices WHERE currency = 'EUR'").unwrap();
+        match query {
+            Query::Select(sel) => {
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("#prices".to_string()));
+                assert!(sel.where_clause.is_some());
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_regular_table_identifier() {
+        // Test parsing a regular (non-system) table
+        let query = parse("SELECT * FROM MyTable WHERE x = 1").unwrap();
+        match query {
+            Query::Select(sel) => {
+                let from = sel.from.unwrap();
+                assert_eq!(from.table_name, Some("MyTable".to_string()));
+            }
             _ => panic!("Expected SELECT query"),
         }
     }

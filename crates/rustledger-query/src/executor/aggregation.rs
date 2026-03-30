@@ -33,6 +33,34 @@ impl<'a> Executor<'a> {
             _ => false,
         }
     }
+
+    /// Extract non-aggregate expressions from SELECT targets for implicit GROUP BY.
+    ///
+    /// When aggregate functions are mixed with non-aggregated columns and no explicit
+    /// GROUP BY is provided, Python beancount implicitly groups by the non-aggregated
+    /// columns. This function extracts those columns.
+    ///
+    /// For example, in `SELECT sum(number), currency, account`:
+    /// - `sum(number)` is an aggregate
+    /// - `currency` and `account` are non-aggregates that should be grouped by
+    ///
+    /// Duplicate expressions are filtered out to avoid redundant evaluation during
+    /// grouping and unnecessarily larger group keys.
+    pub(super) fn extract_implicit_group_by_exprs(targets: &[Target]) -> Vec<Expr> {
+        let mut non_aggregate_exprs = Vec::new();
+        for target in targets {
+            // Skip wildcard - it expands to all columns, not useful for grouping
+            if matches!(target.expr, Expr::Wildcard) {
+                continue;
+            }
+            // Only include non-aggregate expressions, and deduplicate
+            if !Self::is_aggregate_expr(&target.expr) && !non_aggregate_exprs.contains(&target.expr)
+            {
+                non_aggregate_exprs.push(target.expr.clone());
+            }
+        }
+        non_aggregate_exprs
+    }
     pub(super) fn make_group_key(values: &[Value]) -> String {
         use std::fmt::Write;
         let mut key = String::new();
@@ -79,6 +107,11 @@ impl<'a> Executor<'a> {
                         key.push_str(s);
                         key.push(',');
                     }
+                }
+                Value::Set(values) => {
+                    // Generic set - use debug representation
+                    key.push('E');
+                    let _ = write!(key, "{values:?}");
                 }
                 Value::Metadata(meta) => {
                     // Metadata as GROUP BY key - use debug representation
@@ -496,6 +529,17 @@ impl<'a> Executor<'a> {
                         "BETWEEN requires comparable values".to_string(),
                     )),
                 }
+            }
+            Expr::Set(elements) => {
+                // Evaluate all elements and collect as Set (supports any value types)
+                let mut values = Vec::with_capacity(elements.len());
+                for elem in elements {
+                    let val = self.evaluate_having_expr(elem, row, col_map, alias_map, group)?;
+                    if !matches!(val, Value::Null) {
+                        values.push(val);
+                    }
+                }
+                Ok(Value::Set(values))
             }
         }
     }

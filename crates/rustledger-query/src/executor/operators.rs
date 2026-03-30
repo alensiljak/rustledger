@@ -63,15 +63,21 @@ impl Executor<'_> {
                 // Check if left value is in right set
                 match right {
                     Value::StringSet(set) => {
+                        // StringSet from columns like tags, links
                         let needle = match left {
                             Value::String(s) => s,
                             _ => {
                                 return Err(QueryError::Type(
-                                    "IN requires string left operand".to_string(),
+                                    "IN requires string left operand for StringSet".to_string(),
                                 ));
                             }
                         };
                         Ok(Value::Boolean(set.contains(&needle)))
+                    }
+                    Value::Set(values) => {
+                        // Generic set from set literal - check if left equals any element
+                        let found = values.iter().any(|v| self.values_equal(&left, v));
+                        Ok(Value::Boolean(found))
                     }
                     _ => Err(QueryError::Type(
                         "IN requires set right operand".to_string(),
@@ -103,15 +109,21 @@ impl Executor<'_> {
                 // NOT IN: check if left value is not in right set
                 match right {
                     Value::StringSet(set) => {
+                        // StringSet from columns like tags, links
                         let needle = match left {
                             Value::String(s) => s,
                             _ => {
                                 return Err(QueryError::Type(
-                                    "NOT IN requires string left operand".to_string(),
+                                    "NOT IN requires string left operand for StringSet".to_string(),
                                 ));
                             }
                         };
                         Ok(Value::Boolean(!set.contains(&needle)))
+                    }
+                    Value::Set(values) => {
+                        // Generic set from set literal - check if left equals any element
+                        let found = values.iter().any(|v| self.values_equal(&left, v));
+                        Ok(Value::Boolean(!found))
                     }
                     _ => Err(QueryError::Type(
                         "NOT IN requires set right operand".to_string(),
@@ -321,15 +333,21 @@ impl Executor<'_> {
                 // Check if left value is in right set
                 match right {
                     Value::StringSet(set) => {
+                        // StringSet from columns like tags, links
                         let needle = match left {
                             Value::String(s) => s,
                             _ => {
                                 return Err(QueryError::Type(
-                                    "IN requires string left operand".to_string(),
+                                    "IN requires string left operand for StringSet".to_string(),
                                 ));
                             }
                         };
                         Ok(Value::Boolean(set.contains(needle)))
+                    }
+                    Value::Set(values) => {
+                        // Generic set from set literal - check if left equals any element
+                        let found = values.iter().any(|v| self.values_equal(left, v));
+                        Ok(Value::Boolean(found))
                     }
                     _ => Err(QueryError::Type(
                         "IN requires set right operand".to_string(),
@@ -361,15 +379,21 @@ impl Executor<'_> {
                 // NOT IN: check if left value is not in right set
                 match right {
                     Value::StringSet(set) => {
+                        // StringSet from columns like tags, links
                         let needle = match left {
                             Value::String(s) => s,
                             _ => {
                                 return Err(QueryError::Type(
-                                    "NOT IN requires string left operand".to_string(),
+                                    "NOT IN requires string left operand for StringSet".to_string(),
                                 ));
                             }
                         };
                         Ok(Value::Boolean(!set.contains(needle)))
+                    }
+                    Value::Set(values) => {
+                        // Generic set from set literal - check if left does not equal any element
+                        let found = values.iter().any(|v| self.values_equal(left, v));
+                        Ok(Value::Boolean(!found))
                     }
                     _ => Err(QueryError::Type(
                         "NOT IN requires set right operand".to_string(),
