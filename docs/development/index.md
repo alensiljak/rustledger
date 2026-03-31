@@ -20,6 +20,7 @@ See [CONTRIBUTING.md](https://github.com/rustledger/rustledger/blob/main/CONTRIB
 
 | Guide | Description |
 |-------|-------------|
+| [Contributing Plugins](contributing-plugins.md) | Adding native plugins to rustledger |
 | [Testing](testing.md) | Running tests, adding test cases |
 | [Benchmarking](benchmarking.md) | Performance testing and profiling |
 

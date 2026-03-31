@@ -1,11 +1,87 @@
 ---
 title: Plugins Reference
-description: Available plugins and configuration
+description: Plugin architecture, built-in plugins, and custom plugin development
 ---
 
 # Plugins Reference
 
-rustledger supports native Rust plugins for validation and transformation.
+rustledger supports a flexible plugin system for validation and transformation of your ledger data.
+
+## Plugin Architecture
+
+rustledger supports three types of plugins:
+
+| Type | Performance | Use Case |
+|------|-------------|----------|
+| **Native Rust** | Fastest | Built-in plugins, core functionality |
+| **WASM** | Fast | Custom plugins, external development |
+| **Python** | Slow (10-100x) | Legacy compatibility, migration path |
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Beancount File                       │
+│  plugin "beancount.plugins.auto_accounts"               │
+│  plugin "my_custom_plugin.wasm"                         │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Plugin Loader                         │
+│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐       │
+│  │   Native    │ │    WASM     │ │   Python    │       │
+│  │  Registry   │ │   Runtime   │ │   Runtime   │       │
+│  │  (30 plugins)│ │ (Wasmtime)  │ │(CPython-WASI)│      │
+│  └─────────────┘ └─────────────┘ └─────────────┘       │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              Plugin Interface (PluginInput)             │
+│  - directives: Vec<DirectiveWrapper>                    │
+│  - options: PluginOptions                               │
+│  - config: Option<String>                               │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│              Plugin Output (PluginOutput)               │
+│  - directives: Vec<DirectiveWrapper> (possibly modified)│
+│  - errors: Vec<PluginError>                             │
+└─────────────────────────────────────────────────────────┘
+```
+
+### Plugin Loading
+
+Plugins are specified in your beancount file using the `plugin` directive:
+
+```beancount
+; Built-in plugin (by name)
+plugin "beancount.plugins.auto_accounts"
+
+; WASM plugin (by path)
+plugin "/path/to/my_plugin.wasm"
+
+; Plugin with configuration
+plugin "beancount.plugins.split_expenses" "alice bob"
+```
+
+### Plugin Execution Order
+
+Plugins execute in the order they appear in your file. This matters because:
+- Transformation plugins modify directives that subsequent plugins see
+- Validation plugins should typically run after transformation plugins
+
+```beancount
+; 1. First, auto-generate Open directives
+plugin "beancount.plugins.auto_accounts"
+
+; 2. Then, generate implicit prices from costs
+plugin "beancount.plugins.implicit_prices"
+
+; 3. Finally, validate the complete ledger
+plugin "beancount.plugins.check_commodity"
+plugin "beancount.plugins.noduplicates"
+```
 
 ## Using Plugins
 
@@ -16,8 +92,9 @@ plugin "beancount.plugins.auto_accounts"
 plugin "beancount.plugins.implicit_prices"
 ```
 
-
 ## Built-in Plugins
+
+rustledger includes 30 native plugins. Here are the most commonly used:
 
 ### Validation Plugins
 
@@ -59,6 +136,46 @@ plugin "beancount.plugins.implicit_prices"
 | `unrealized` | Calculate unrealized gains/losses |
 | `valuation` | Track opaque fund values |
 | `zerosum` | Match zero-sum postings within date ranges |
+
+### All Built-in Plugins
+
+<details>
+<summary>Complete list of 30 native plugins</summary>
+
+| Plugin | Description |
+|--------|-------------|
+| `auto_accounts` | Auto-generate Open directives |
+| `auto_tag` | Automatically tag transactions |
+| `box_accrual` | Accrual accounting for boxed periods |
+| `gain_loss` | Split capital gains into gain/loss accounts |
+| `long_short` | Split capital gains by holding period |
+| `check_average_cost` | Validate average cost bookings |
+| `check_closing` | Zero balance on account close |
+| `check_commodity` | Validate commodity declarations |
+| `check_drained` | Ensure accounts drained before close |
+| `close_tree` | Close descendant accounts |
+| `coherent_cost` | Enforce cost OR price (not both) |
+| `commodity_attr` | Validate commodity attributes |
+| `currency_accounts` | Auto-generate currency trading postings |
+| `effective_date` | Override posting date via metadata |
+| `forecast` | Generate recurring transactions |
+| `generate_base_ccy_prices` | Create base currency price entries |
+| `implicit_prices` | Generate prices from costs |
+| `leafonly` | Error on non-leaf account postings |
+| `noduplicates` | Detect duplicate transactions |
+| `nounused` | Warn on unused accounts |
+| `onecommodity` | Single commodity per account |
+| `pedantic` | Enable all strict validations |
+| `rename_accounts` | Rename accounts via metadata |
+| `rx_txn_plugin` | Link related transactions |
+| `sellgains` | Cross-check capital gains |
+| `split_expenses` | Split expenses across accounts |
+| `unique_prices` | One price per day per pair |
+| `unrealized` | Calculate unrealized gains |
+| `valuation` | Mark-to-market valuation |
+| `zerosum` | Group transactions that sum to zero |
+
+</details>
 
 ## Plugin Details
 
@@ -539,61 +656,44 @@ plugin "beancount.plugins.zerosum" "Assets:Reimbursable 30"
 
 Options: `"Account:Pattern days"` - Account pattern to match and maximum days between matching postings
 
-## Plugin Order
+## Custom Plugins
 
-Plugins run in the order specified:
+For custom functionality, you can write plugins in two ways:
 
-```beancount
-; auto_accounts runs first, creating Opens
-plugin "beancount.plugins.auto_accounts"
+### WASM Plugins (Recommended)
 
-; Then implicit_prices generates price directives
-plugin "beancount.plugins.implicit_prices"
+Write plugins in Rust, compile to WebAssembly, and use them without modifying rustledger.
 
-; Finally, validation plugins check the result
-plugin "beancount.plugins.check_commodity"
+**Quick start:**
+```bash
+# Clone the template
+git clone https://github.com/rustledger/rustledger
+cp -r rustledger/examples/wasm-plugin-template my-plugin
+cd my-plugin
+
+# Build
+rustup target add wasm32-unknown-unknown
+cargo build --target wasm32-unknown-unknown --release
+
+# Use in your beancount file
+# plugin "/path/to/target/wasm32-unknown-unknown/release/my_plugin.wasm"
 ```
 
-## Writing Custom Plugins
+See the [Custom Plugins Guide](../guides/custom-plugins.md) for a complete walkthrough.
 
-### Native Rust Plugin
+### Native Rust Plugins (Contributors)
 
-Add to `crates/rustledger-plugin/src/native/plugins/`:
+For adding plugins to rustledger itself, see [Contributing Plugins](../development/contributing-plugins.md).
 
-```rust
-// my_plugin.rs
-use crate::{NativePlugin, PluginInput, PluginOutput};
+## Python Plugin Compatibility
 
-pub struct MyPlugin;
+::: warning Experimental Feature
+Python plugin support is experimental and significantly slower than native plugins (10-100x). Use native equivalents when available.
+:::
 
-impl NativePlugin for MyPlugin {
-    fn name(&self) -> &'static str {
-        "my_plugin"
-    }
+rustledger can run some Python beancount plugins using CPython compiled to WebAssembly (WASI). This is primarily for migration purposes.
 
-    fn description(&self) -> &'static str {
-        "Description of what the plugin does"
-    }
-
-    fn process(&self, input: PluginInput) -> PluginOutput {
-        // input.directives - the directives to process
-        // input.config - optional config string from plugin directive
-        // Return PluginOutput with modified directives and/or errors
-        PluginOutput {
-            directives: input.directives,
-            errors: vec![],
-        }
-    }
-}
-```
-
-Register in `mod.rs`:
-
-```rust
-registry.register(Box::new(MyPlugin));
-```
-
-## Compatibility with Python Beancount
+### Supported Python Plugins
 
 Most Python beancount plugins have native equivalents:
 
@@ -618,7 +718,23 @@ Most Python beancount plugins have native equivalents:
 | `rename_accounts` | ✅ `rename_accounts` |
 | Custom Python | Rewrite in Rust |
 
+### Python Plugin Limitations
+
+- **Performance**: 10-100x slower than native plugins
+- **First run**: Downloads ~14MB CPython-WASI runtime
+- **Compilation**: First execution compiles WASM (~30 seconds)
+- **Not all plugins work**: C extensions and some stdlib modules unavailable
+- **Debugging**: Error messages may be less helpful
+
+### Migrating from Python Plugins
+
+1. Check if a native equivalent exists (see table above)
+2. If not, consider writing a [WASM plugin](../guides/custom-plugins.md)
+3. As a last resort, Python plugins may work but with limitations
+
 ## See Also
 
+- [Custom Plugins Guide](../guides/custom-plugins.md) - Writing WASM plugins
+- [Contributing Plugins](../development/contributing-plugins.md) - Adding native plugins
 - [check command](../commands/check.md) - Running validation
 - [Migration](../migration/from-beancount.md) - Python plugin migration
