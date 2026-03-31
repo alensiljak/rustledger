@@ -29,6 +29,7 @@ rledger doctor <SUBCOMMAND> [OPTIONS] [FILE]
 | `roundtrip` | Parse and re-format (test) |
 | `directories` | Validate directory structure |
 | `region` | Print transactions in a line range |
+| `generate-synthetic` | Generate synthetic beancount files for testing |
 
 ## Examples
 
@@ -138,6 +139,13 @@ rledger doctor missing-open ledger.beancount
 ```bash
 # Check that account directories match account hierarchy
 rledger doctor directories ledger.beancount documents/
+```
+
+### Generate Synthetic Test Data
+
+```bash
+# Generate a synthetic ledger for testing
+rledger doctor generate-synthetic > test-ledger.beancount
 ```
 
 ## See Also

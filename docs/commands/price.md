@@ -23,11 +23,13 @@ rledger price [OPTIONS] <COMMODITY>
 
 | Option | Description |
 |--------|-------------|
-| `-d, --date <DATE>` | Fetch price for specific date |
-| `-c, --currency <CURRENCY>` | Quote currency (default: USD) |
-| `-s, --source <SOURCE>` | Price source: `yahoo`, `coinbase` |
-| `-o, --output <FILE>` | Output file (stdout if not specified) |
-| `--from-file <FILE>` | Read commodities from ledger file |
+| `-P, --profile <PROFILE>` | Use a profile from config |
+| `-f, --file <FILE>` | Beancount file to read commodities from |
+| `-c, --currency <CURRENCY>` | Base currency for price quotes [default: USD] |
+| `-d, --date <DATE>` | Date for prices (YYYY-MM-DD, defaults to today) |
+| `-b, --beancount` | Output as beancount price directives |
+| `-m, --mapping <MAPPING>` | Yahoo Finance symbol mapping (e.g., `VTI:VTI,BTC:BTC-USD`) |
+| `-v, --verbose` | Show verbose output |
 
 ## Examples
 
@@ -57,13 +59,27 @@ rledger price EUR -c USD
 ### Cryptocurrency
 
 ```bash
-rledger price BTC -s coinbase
+# Use mapping to specify Yahoo Finance symbol for crypto
+rledger price BTC -m "BTC:BTC-USD"
 ```
 
 ### All Commodities from Ledger
 
 ```bash
-rledger price --from-file ledger.beancount
+rledger price -f ledger.beancount
+```
+
+### Output as Beancount Directives
+
+```bash
+rledger price AAPL -b
+```
+
+### Symbol Mapping for Yahoo Finance
+
+```bash
+# Map BTC to Yahoo's BTC-USD symbol
+rledger price BTC -m "BTC:BTC-USD"
 ```
 
 ### Append to Price File
@@ -94,12 +110,20 @@ Run with cron:
 0 18 * * 1-5 /path/to/update-prices.sh
 ```
 
-## Supported Sources
+## Price Sources
 
-| Source | Commodities | Command |
-|--------|-------------|---------|
-| Yahoo Finance | Stocks, ETFs, forex | `--source yahoo` (default) |
-| Coinbase | Cryptocurrencies | `--source coinbase` |
+Prices are fetched from Yahoo Finance. For commodities with non-standard symbols, use the `-m` mapping option:
+
+```bash
+# Standard stock symbols work directly
+rledger price AAPL GOOGL MSFT
+
+# Cryptocurrencies need mapping to Yahoo symbols
+rledger price BTC ETH -m "BTC:BTC-USD,ETH:ETH-USD"
+
+# Mutual funds and ETFs
+rledger price VTI VXUS
+```
 
 ## See Also
 
