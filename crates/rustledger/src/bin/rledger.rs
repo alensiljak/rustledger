@@ -363,13 +363,15 @@ fn main() -> ExitCode {
                 }
             }
         }
-        Commands::Price { args } => match rustledger::cmd::price_cmd::run(&args.price_args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                ExitCode::from(1)
+        Commands::Price { args } => {
+            match rustledger::cmd::price_cmd::run(&args.price_args, &config.price) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!("error: {e:#}");
+                    ExitCode::from(1)
+                }
             }
-        },
+        }
         Commands::Config { args } => match rustledger::cmd::config_cmd::run(&args) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

@@ -1,18 +1,20 @@
 //! Price fetching command for rustledger.
 //!
-//! Fetches current prices for commodities from online sources like Yahoo Finance.
+//! Fetches current prices for commodities from configurable online sources.
 
 use crate::cmd::completions::ShellType;
+use crate::cmd::price::sources::PriceSource;
+use crate::cmd::price::{PriceRequest, PriceSourceRegistry};
+use crate::config::{CommodityMapping, Config, PriceConfig};
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
+use chrono::NaiveDate;
 use clap::Parser;
-use rust_decimal::Decimal;
 use rustledger_loader::Loader;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use std::str::FromStr;
+use std::time::Duration;
 
 /// Fetch current prices for commodities.
 #[derive(Parser, Debug)]
@@ -54,99 +56,23 @@ pub struct PriceArgs {
     #[arg(short, long)]
     verbose: bool,
 
-    /// Yahoo Finance symbol mapping (e.g., VTI:VTI,BTC:BTC-USD).
+    /// Symbol mapping (e.g., VTI:VTI,BTC:BTC-USD).
+    /// Maps commodity names to ticker symbols.
     #[arg(short = 'm', long, value_delimiter = ',')]
     mapping: Vec<String>,
-}
 
-/// Price source trait for different data providers.
-pub trait PriceSource {
-    /// Fetch price for a symbol.
-    fn fetch_price(&self, symbol: &str) -> Result<Option<Decimal>>;
+    /// Use specific source (overrides mapping).
+    #[arg(short = 's', long)]
+    source: Option<String>,
 
-    /// Fetch prices for multiple symbols.
-    fn fetch_prices(&self, symbols: &[String]) -> HashMap<String, Result<Decimal>>;
+    /// Use ad-hoc external command as source.
+    /// The command receives the ticker as the first argument.
+    #[arg(long, value_name = "CMD")]
+    source_cmd: Option<String>,
 
-    /// Source name.
-    fn name(&self) -> &'static str;
-}
-
-/// Yahoo Finance price source.
-pub struct YahooFinance {
-    #[allow(dead_code)]
-    currency: String,
-}
-
-impl YahooFinance {
-    /// Create a new Yahoo Finance price source.
-    pub fn new(currency: impl Into<String>) -> Self {
-        Self {
-            currency: currency.into(),
-        }
-    }
-
-    /// Build the Yahoo Finance API URL.
-    fn build_url(&self, symbol: &str) -> String {
-        format!("https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d")
-    }
-}
-
-impl PriceSource for YahooFinance {
-    fn fetch_price(&self, symbol: &str) -> Result<Option<Decimal>> {
-        let url = self.build_url(symbol);
-
-        let mut response = ureq::get(&url)
-            .header("User-Agent", "Mozilla/5.0 (compatible; rustledger/1.0)")
-            .call()
-            .with_context(|| format!("Failed to fetch price for {symbol}"))?;
-
-        let json: serde_json::Value = response
-            .body_mut()
-            .read_json()
-            .with_context(|| format!("Failed to parse response for {symbol}"))?;
-
-        // Navigate to the price in the response
-        let price_value = json
-            .get("chart")
-            .and_then(|c| c.get("result"))
-            .and_then(|r| r.get(0))
-            .and_then(|r| r.get("meta"))
-            .and_then(|m| m.get("regularMarketPrice"));
-
-        match price_value {
-            Some(v) => {
-                // Parse directly from JSON number string to avoid f64 precision loss
-                let price_str = if let Some(n) = v.as_number() {
-                    n.to_string()
-                } else if let Some(s) = v.as_str() {
-                    s.to_string()
-                } else {
-                    return Ok(None);
-                };
-                let decimal = Decimal::from_str(&price_str)
-                    .with_context(|| format!("Failed to convert price {price_str} to decimal"))?;
-                Ok(Some(decimal))
-            }
-            None => Ok(None),
-        }
-    }
-
-    fn fetch_prices(&self, symbols: &[String]) -> HashMap<String, Result<Decimal>> {
-        let mut results = HashMap::new();
-
-        for symbol in symbols {
-            let result = self
-                .fetch_price(symbol)
-                .and_then(|opt| opt.ok_or_else(|| anyhow::anyhow!("No price found for {symbol}")));
-            results.insert(symbol.clone(), result);
-        }
-
-        results
-    }
-
-    fn name(&self) -> &'static str {
-        "yahoo"
-    }
+    /// List configured sources and exit.
+    #[arg(long)]
+    list_sources: bool,
 }
 
 /// Main entry point with custom binary name (for bean-price compatibility).
@@ -159,19 +85,16 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
+    // Load configuration
+    let config = Config::load().map(|l| l.config).unwrap_or_default();
+
     // If no file or symbols specified, try to get file from config
-    // Only apply when no symbols provided to avoid unexpected behavior where
-    // `bean-price AAPL` would also fetch prices for all commodities in the ledger
-    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
-    if args.price_args.file.is_none()
-        && args.price_args.symbols.is_empty()
-        && let Ok(loaded) = crate::config::Config::load()
-    {
+    if args.price_args.file.is_none() && args.price_args.symbols.is_empty() {
         let profile = std::env::var("RLEDGER_PROFILE").ok();
-        args.price_args.file = loaded.config.effective_file_path(profile.as_deref());
+        args.price_args.file = config.effective_file_path(profile.as_deref());
     }
 
-    match run(&args.price_args) {
+    match run(&args.price_args, &config.price) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
@@ -181,14 +104,27 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
 }
 
 /// Run the price command.
-pub fn run(args: &PriceArgs) -> Result<()> {
+pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
+    // Create the registry with config
+    let registry = PriceSourceRegistry::new(price_config);
+
+    // Handle --list-sources
+    if args.list_sources {
+        return list_sources(&registry);
+    }
+
+    // Handle --source-cmd (ad-hoc external command)
+    if let Some(cmd) = &args.source_cmd {
+        return run_with_external_command(args, cmd);
+    }
+
     let mut symbols_to_fetch: Vec<String> = args.symbols.clone();
 
-    // Build symbol mapping
-    let mut symbol_mapping: HashMap<String, String> = HashMap::new();
+    // Build symbol mapping from CLI args
+    let mut cli_mapping: HashMap<String, CommodityMapping> = HashMap::new();
     for mapping in &args.mapping {
         if let Some((from, to)) = mapping.split_once(':') {
-            symbol_mapping.insert(from.to_string(), to.to_string());
+            cli_mapping.insert(from.to_string(), CommodityMapping::Simple(to.to_string()));
         }
     }
 
@@ -221,59 +157,176 @@ pub fn run(args: &PriceArgs) -> Result<()> {
         return Ok(());
     }
 
-    // Map symbols to Yahoo Finance symbols
-    let yahoo_symbols: Vec<String> = symbols_to_fetch
-        .iter()
-        .map(|s| symbol_mapping.get(s).cloned().unwrap_or_else(|| s.clone()))
-        .collect();
-
     if args.verbose {
-        eprintln!("Fetching prices for: {yahoo_symbols:?}");
+        eprintln!("Fetching prices for: {symbols_to_fetch:?}");
     }
-
-    // Create price source and fetch
-    let source = YahooFinance::new(&args.currency);
-    let prices = source.fetch_prices(&yahoo_symbols);
 
     // Parse target date
     let date = if let Some(ref d) = args.date {
-        NaiveDate::parse_from_str(d, "%Y-%m-%d").with_context(|| format!("Invalid date: {d}"))?
+        Some(
+            NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                .with_context(|| format!("Invalid date: {d}"))?,
+        )
     } else {
-        Utc::now().date_naive()
+        None
+    };
+
+    // Merge CLI mapping with config mapping (CLI takes precedence)
+    let mut combined_mapping = price_config.mapping.clone();
+    for (k, v) in cli_mapping {
+        combined_mapping.insert(k, v);
+    }
+
+    let stdout = io::stdout();
+    let mut handle = stdout.lock();
+
+    // Fetch prices
+    for symbol in &symbols_to_fetch {
+        let result = if let Some(source_name) = &args.source {
+            // Use explicit source
+            fetch_with_source(&registry, source_name, symbol, &args.currency, date)
+        } else {
+            // Use mapping/default
+            registry.fetch_price(symbol, &args.currency, date, &combined_mapping)
+        };
+
+        match result {
+            Ok(response) => {
+                if args.beancount {
+                    // Output as beancount price directive
+                    let date_str = response.date.format("%Y-%m-%d");
+                    writeln!(
+                        handle,
+                        "{date_str} price {symbol} {} {}",
+                        response.price, response.currency
+                    )?;
+                } else {
+                    writeln!(handle, "{symbol}: {} {}", response.price, response.currency)?;
+                }
+            }
+            Err(e) => {
+                if args.verbose {
+                    eprintln!("Error fetching {symbol}: {e}");
+                } else {
+                    eprintln!("; Failed to fetch {symbol}: {e}");
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Fetch a price using a specific source.
+fn fetch_with_source(
+    registry: &PriceSourceRegistry,
+    source_name: &str,
+    ticker: &str,
+    currency: &str,
+    date: Option<NaiveDate>,
+) -> Result<crate::cmd::price::PriceResponse> {
+    let source = registry
+        .get(source_name)
+        .with_context(|| format!("Unknown source: {source_name}"))?;
+
+    let request = PriceRequest {
+        ticker: ticker.to_string(),
+        currency: currency.to_string(),
+        date,
+    };
+
+    source.fetch_price(&request)
+}
+
+/// Run with an ad-hoc external command.
+fn run_with_external_command(args: &PriceArgs, cmd: &str) -> Result<()> {
+    use crate::cmd::price::external::ExternalCommandSource;
+
+    // Parse the command string into parts
+    let command_parts: Vec<String> =
+        shell_words::split(cmd).with_context(|| format!("Failed to parse command: {cmd}"))?;
+
+    if command_parts.is_empty() {
+        anyhow::bail!("Empty command provided");
+    }
+
+    let source = ExternalCommandSource::new(command_parts, Duration::from_secs(30), HashMap::new());
+
+    let date = if let Some(ref d) = args.date {
+        Some(
+            NaiveDate::parse_from_str(d, "%Y-%m-%d")
+                .with_context(|| format!("Invalid date: {d}"))?,
+        )
+    } else {
+        None
     };
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
 
-    // Output results
-    for (i, original_symbol) in symbols_to_fetch.iter().enumerate() {
-        let yahoo_symbol = &yahoo_symbols[i];
+    for symbol in &args.symbols {
+        let request = PriceRequest {
+            ticker: symbol.clone(),
+            currency: args.currency.clone(),
+            date,
+        };
 
-        match prices.get(yahoo_symbol) {
-            Some(Ok(price)) => {
+        match source.fetch_price(&request) {
+            Ok(response) => {
                 if args.beancount {
-                    // Output as beancount price directive
-                    let date_str = date.format("%Y-%m-%d");
-                    let currency = &args.currency;
+                    let date_str = response.date.format("%Y-%m-%d");
                     writeln!(
                         handle,
-                        "{date_str} price {original_symbol} {price} {currency}"
+                        "{date_str} price {symbol} {} {}",
+                        response.price, response.currency
                     )?;
                 } else {
-                    let currency = &args.currency;
-                    writeln!(handle, "{original_symbol}: {price} {currency}")?;
+                    writeln!(handle, "{symbol}: {} {}", response.price, response.currency)?;
                 }
             }
-            Some(Err(e)) => {
+            Err(e) => {
                 if args.verbose {
-                    eprintln!("Error fetching {original_symbol}: {e}");
+                    eprintln!("Error fetching {symbol}: {e}");
                 } else {
-                    eprintln!("; Failed to fetch {original_symbol}: {e}");
+                    eprintln!("; Failed to fetch {symbol}: {e}");
                 }
             }
-            None => {
-                eprintln!("; No result for {original_symbol}");
-            }
+        }
+    }
+
+    Ok(())
+}
+
+/// List all configured sources.
+fn list_sources(registry: &PriceSourceRegistry) -> Result<()> {
+    println!("Available price sources:");
+    println!();
+
+    let sources = registry.list_sources();
+    let default_source = registry.default_source_name();
+
+    for name in sources {
+        if let Some(source) = registry.get(name) {
+            let default_marker = if name == default_source {
+                " (default)"
+            } else {
+                ""
+            };
+            let api_key_note = if source.requires_api_key() {
+                if let Some(env_var) = source.api_key_env_var() {
+                    if std::env::var(env_var).is_ok() {
+                        " [API key set]"
+                    } else {
+                        " [API key required]"
+                    }
+                } else {
+                    " [API key required]"
+                }
+            } else {
+                ""
+            };
+            println!("  {name}{default_marker}{api_key_note}");
+            println!("    {}", source.description());
         }
     }
 
@@ -308,5 +361,27 @@ mod tests {
         assert_eq!(args.price_args.currency, "EUR");
         assert!(args.price_args.beancount);
         assert_eq!(args.price_args.mapping.len(), 2);
+    }
+
+    #[test]
+    fn test_price_args_with_source() {
+        let args = Args::parse_from(["price", "-s", "coinbase", "BTC"]);
+        assert_eq!(args.price_args.source, Some("coinbase".to_string()));
+        assert_eq!(args.price_args.symbols, vec!["BTC"]);
+    }
+
+    #[test]
+    fn test_price_args_with_source_cmd() {
+        let args = Args::parse_from(["price", "--source-cmd", "echo 150.00 USD", "AAPL"]);
+        assert_eq!(
+            args.price_args.source_cmd,
+            Some("echo 150.00 USD".to_string())
+        );
+    }
+
+    #[test]
+    fn test_price_args_list_sources() {
+        let args = Args::parse_from(["price", "--list-sources"]);
+        assert!(args.price_args.list_sources);
     }
 }

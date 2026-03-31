@@ -60,6 +60,85 @@ pub struct Config {
     /// Command aliases.
     #[serde(default)]
     pub aliases: HashMap<String, String>,
+
+    /// Price fetching configuration.
+    #[serde(default)]
+    pub price: PriceConfig,
+}
+
+/// Price fetching configuration.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PriceConfig {
+    /// Default price source (defaults to "yahoo").
+    pub default_source: Option<String>,
+
+    /// Request timeout in seconds (defaults to 30).
+    pub timeout: Option<u64>,
+
+    /// Cache TTL in seconds (0 = disabled).
+    pub cache_ttl: Option<u64>,
+
+    /// Custom price source definitions.
+    #[serde(default)]
+    pub sources: HashMap<String, PriceSourceConfig>,
+
+    /// Commodity to source/ticker mappings.
+    #[serde(default)]
+    pub mapping: HashMap<String, CommodityMapping>,
+}
+
+/// Configuration for a custom price source.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PriceSourceConfig {
+    /// A built-in price source.
+    #[serde(rename = "builtin")]
+    Builtin,
+
+    /// An external command price source.
+    #[serde(rename = "command")]
+    Command {
+        /// The command and arguments to execute.
+        command: Vec<String>,
+
+        /// Optional timeout override in seconds.
+        #[serde(default)]
+        timeout: Option<u64>,
+
+        /// Additional environment variables.
+        #[serde(default)]
+        env: HashMap<String, String>,
+    },
+}
+
+/// Mapping configuration for a commodity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum CommodityMapping {
+    /// Simple ticker symbol (uses default source).
+    Simple(String),
+
+    /// Detailed mapping with source and optional ticker.
+    Detailed {
+        /// Source reference (single or fallback chain).
+        source: SourceRef,
+
+        /// Optional ticker symbol override.
+        #[serde(default)]
+        ticker: Option<String>,
+    },
+}
+
+/// Reference to one or more price sources.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SourceRef {
+    /// A single source name.
+    Single(String),
+
+    /// Fallback chain of sources (try in order).
+    Fallback(Vec<String>),
 }
 
 /// Default configuration options.
@@ -285,6 +364,9 @@ impl Config {
         // Merge command configs
         self.commands = self.commands.merge(other.commands);
 
+        // Merge price config
+        self.price = self.price.merge(other.price);
+
         self
     }
 
@@ -434,6 +516,44 @@ impl CommandsConfig {
         }
 
         self
+    }
+}
+
+impl PriceConfig {
+    /// Merge another price config into this one.
+    #[must_use]
+    fn merge(mut self, other: Self) -> Self {
+        if other.default_source.is_some() {
+            self.default_source = other.default_source;
+        }
+        if other.timeout.is_some() {
+            self.timeout = other.timeout;
+        }
+        if other.cache_ttl.is_some() {
+            self.cache_ttl = other.cache_ttl;
+        }
+
+        // Merge sources (other's sources override)
+        for (name, source) in other.sources {
+            self.sources.insert(name, source);
+        }
+
+        // Merge mappings (other's mappings override)
+        for (commodity, mapping) in other.mapping {
+            self.mapping.insert(commodity, mapping);
+        }
+
+        self
+    }
+
+    /// Get the effective default source.
+    pub fn effective_default_source(&self) -> &str {
+        self.default_source.as_deref().unwrap_or("yahoo")
+    }
+
+    /// Get the effective timeout in seconds.
+    pub fn effective_timeout(&self) -> u64 {
+        self.timeout.unwrap_or(30)
     }
 }
 
@@ -1292,5 +1412,177 @@ t = "check"
         assert_eq!(merged.output.color, Some(true));
         // User alias preserved
         assert_eq!(merged.resolve_alias("bal"), Some("report balances"));
+    }
+
+    #[test]
+    fn test_parse_price_config() {
+        let content = r#"
+[price]
+default_source = "coinbase"
+timeout = 60
+cache_ttl = 300
+
+[price.sources.custom]
+type = "command"
+command = ["python", "fetch_price.py"]
+timeout = 120
+
+[price.mapping]
+BTC = "BTC-USD"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        assert_eq!(config.price.default_source, Some("coinbase".to_string()));
+        assert_eq!(config.price.timeout, Some(60));
+        assert_eq!(config.price.cache_ttl, Some(300));
+        assert!(config.price.sources.contains_key("custom"));
+        assert!(config.price.mapping.contains_key("BTC"));
+    }
+
+    #[test]
+    fn test_parse_price_source_config() {
+        let content = r#"
+[price.sources.external]
+type = "command"
+command = ["./price-fetcher", "--symbol"]
+timeout = 45
+
+[price.sources.external.env]
+API_KEY = "test-key"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        if let Some(PriceSourceConfig::Command {
+            command,
+            timeout,
+            env,
+        }) = config.price.sources.get("external")
+        {
+            assert_eq!(command, &["./price-fetcher", "--symbol"]);
+            assert_eq!(*timeout, Some(45));
+            assert_eq!(env.get("API_KEY"), Some(&"test-key".to_string()));
+        } else {
+            panic!("Expected Command source config");
+        }
+    }
+
+    #[test]
+    fn test_parse_commodity_mapping_simple() {
+        let content = r#"
+[price.mapping]
+BTC = "BTC-USD"
+ETH = "ETH-USD"
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+        if let Some(CommodityMapping::Simple(ticker)) = config.price.mapping.get("BTC") {
+            assert_eq!(ticker, "BTC-USD");
+        } else {
+            panic!("Expected Simple mapping");
+        }
+    }
+
+    #[test]
+    fn test_parse_commodity_mapping_detailed() {
+        let content = r#"
+[price.mapping.VTI]
+source = "yahoo"
+ticker = "VTI"
+
+[price.mapping.EUR]
+source = ["ecb", "ratesapi"]
+"#;
+        let config: Config = toml::from_str(content).unwrap();
+
+        if let Some(CommodityMapping::Detailed { source, ticker }) = config.price.mapping.get("VTI")
+        {
+            assert!(matches!(source, SourceRef::Single(s) if s == "yahoo"));
+            assert_eq!(ticker.as_deref(), Some("VTI"));
+        } else {
+            panic!("Expected Detailed mapping for VTI");
+        }
+
+        if let Some(CommodityMapping::Detailed { source, ticker }) = config.price.mapping.get("EUR")
+        {
+            if let SourceRef::Fallback(sources) = source {
+                assert_eq!(sources, &["ecb", "ratesapi"]);
+            } else {
+                panic!("Expected Fallback source");
+            }
+            assert!(ticker.is_none());
+        } else {
+            panic!("Expected Detailed mapping for EUR");
+        }
+    }
+
+    #[test]
+    fn test_merge_price_config() {
+        let base = Config {
+            price: PriceConfig {
+                default_source: Some("yahoo".to_string()),
+                timeout: Some(30),
+                cache_ttl: None,
+                sources: HashMap::new(),
+                mapping: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "BTC".to_string(),
+                        CommodityMapping::Simple("BTC-USD".to_string()),
+                    );
+                    m
+                },
+            },
+            ..Default::default()
+        };
+
+        let override_cfg = Config {
+            price: PriceConfig {
+                default_source: Some("coinbase".to_string()),
+                timeout: None,
+                cache_ttl: Some(600),
+                sources: {
+                    let mut m = HashMap::new();
+                    m.insert("custom".to_string(), PriceSourceConfig::Builtin);
+                    m
+                },
+                mapping: {
+                    let mut m = HashMap::new();
+                    m.insert(
+                        "ETH".to_string(),
+                        CommodityMapping::Simple("ETH-USD".to_string()),
+                    );
+                    m
+                },
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merge(override_cfg);
+
+        // Overridden values
+        assert_eq!(merged.price.default_source, Some("coinbase".to_string()));
+        assert_eq!(merged.price.cache_ttl, Some(600));
+
+        // Preserved from base (override was None)
+        assert_eq!(merged.price.timeout, Some(30));
+
+        // Both mappings present
+        assert!(merged.price.mapping.contains_key("BTC"));
+        assert!(merged.price.mapping.contains_key("ETH"));
+
+        // New source added
+        assert!(merged.price.sources.contains_key("custom"));
+    }
+
+    #[test]
+    fn test_price_config_effective_defaults() {
+        let config = PriceConfig::default();
+        assert_eq!(config.effective_default_source(), "yahoo");
+        assert_eq!(config.effective_timeout(), 30);
+
+        let custom = PriceConfig {
+            default_source: Some("coinbase".to_string()),
+            timeout: Some(60),
+            ..Default::default()
+        };
+        assert_eq!(custom.effective_default_source(), "coinbase");
+        assert_eq!(custom.effective_timeout(), 60);
     }
 }
