@@ -91,29 +91,33 @@ for directive in result.directives {
 ### Loading with Includes
 
 ```rust
+use std::path::Path;
 use rustledger_loader::Loader;
 
-let loader = Loader::new();
-let ledger = loader.load_file("ledger.beancount")?;
+let mut loader = Loader::new();
+let result = loader.load(Path::new("ledger.beancount"))?;
 
-// Access processed directives with booking applied
-for entry in ledger.entries() {
-    println!("{}", entry);
+// Access loaded directives
+for directive in &result.directives {
+    println!("{:?}", directive);
 }
 ```
 
 ### Running Queries
 
 ```rust
-use rustledger_query::execute_query;
+use std::path::Path;
 use rustledger_loader::Loader;
+use rustledger_query::{parse as parse_query, Executor};
 
-let loader = Loader::new();
-let ledger = loader.load_file("ledger.beancount")?;
+let mut loader = Loader::new();
+let result = loader.load(Path::new("ledger.beancount"))?;
 
-let result = execute_query(&ledger, "SELECT account, sum(position) GROUP BY 1")?;
+let query = parse_query("SELECT account, sum(position) GROUP BY account")?;
+let executor = Executor::new(&result.directives);
+let query_result = executor.execute(&query)?;
 
-for row in result.rows {
+for row in &query_result.rows {
     println!("{:?}", row);
 }
 ```
