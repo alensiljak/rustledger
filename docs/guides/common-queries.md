@@ -60,12 +60,16 @@ ORDER BY total DESC
 ### Year-over-Year Comparison
 
 ```sql
--- Compare this year vs last year
-SELECT root(account, 2) AS category,
-       sum(cost(position)) FILTER (WHERE year(date) = 2023) AS "2023",
-       sum(cost(position)) FILTER (WHERE year(date) = 2024) AS "2024"
-WHERE account ~ "Expenses"
-GROUP BY category
+-- Compare years with separate queries
+-- 2023 expenses:
+SELECT root(account, 2) AS category, sum(cost(position)) AS total
+WHERE account ~ "Expenses" AND year(date) = 2023
+GROUP BY category ORDER BY total DESC
+
+-- 2024 expenses:
+SELECT root(account, 2) AS category, sum(cost(position)) AS total
+WHERE account ~ "Expenses" AND year(date) = 2024
+GROUP BY category ORDER BY total DESC
 ```
 
 ## Income Analysis
@@ -82,11 +86,15 @@ ORDER BY total
 ### Monthly Income vs Expenses
 
 ```sql
-SELECT year(date) AS year, month(date) AS month,
-       sum(cost(position)) FILTER (WHERE account ~ "Income") AS income,
-       sum(cost(position)) FILTER (WHERE account ~ "Expenses") AS expenses
-GROUP BY year, month
-ORDER BY year, month
+-- Monthly income
+SELECT year(date) AS year, month(date) AS month, sum(cost(position)) AS income
+WHERE account ~ "Income"
+GROUP BY year, month ORDER BY year, month
+
+-- Monthly expenses
+SELECT year(date) AS year, month(date) AS month, sum(cost(position)) AS expenses
+WHERE account ~ "Expenses"
+GROUP BY year, month ORDER BY year, month
 ```
 
 ## Transaction Queries
@@ -111,8 +119,9 @@ ORDER BY date DESC
 ### Large Transactions
 
 ```sql
-SELECT date, payee, narration, account, position
-WHERE number(cost(position)) > 500
+-- Find transactions over $500 (filter results manually or use report command)
+SELECT date, payee, narration, account, cost(position) AS amount
+WHERE account ~ "Expenses"
 ORDER BY date DESC
 ```
 

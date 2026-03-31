@@ -10,24 +10,52 @@ Import transactions from CSV and OFX bank statements.
 ## Usage
 
 ```bash
-rledger extract [OPTIONS] <FILE>
+rledger extract [OPTIONS] [FILE]
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | CSV or OFX file to import |
+| `FILE` | CSV or OFX file to import (required unless using `--list-importers`) |
 
 ## Options
 
+### Config-based Import
+
 | Option | Description |
 |--------|-------------|
-| `-i, --importer <NAME>` | Use a named importer from `importers.toml` |
-| `--importers-config <FILE>` | Path to `importers.toml` (auto-discovered by default) |
-| `-a, --account <ACCOUNT>` | Target account |
-| `-c, --currency <CURRENCY>` | Currency for amounts (default: USD) |
-| `--existing <FILE>` | Existing ledger (for duplicate detection) |
+| `-i, --importer <NAME>` | Use a named importer from config |
+| `--config <FILE>` | Path to importers.toml configuration file |
+| `--list-importers` | List available importers from config file and exit |
+
+### Direct CLI Import
+
+| Option | Description |
+|--------|-------------|
+| `-a, --account <ACCOUNT>` | Target account [default: Assets:Bank:Checking] |
+| `-c, --currency <CURRENCY>` | Currency for amounts [default: USD] |
+| `--date-column <COL>` | Date column name or index [default: Date] |
+| `--date-format <FMT>` | Date format (strftime-style) [default: %Y-%m-%d] |
+| `--narration-column <COL>` | Narration/description column [default: Description] |
+| `--payee-column <COL>` | Payee column name (optional) |
+| `--amount-column <COL>` | Amount column name or index [default: Amount] |
+| `--amount-locale <LOCALE>` | Locale for parsing amounts (e.g., `en_US`) |
+| `--amount-format <FMT>` | Custom format for parsing amounts |
+| `--debit-column <COL>` | Debit column (for separate debit/credit) |
+| `--credit-column <COL>` | Credit column (for separate debit/credit) |
+| `--delimiter <CHAR>` | CSV delimiter [default: ,] |
+| `--skip-rows <N>` | Number of header rows to skip [default: 0] |
+| `--invert-sign` | Invert sign of amounts |
+| `--no-header` | CSV has no header row |
+
+### Output Options
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output <FILE>` | Write output to file instead of stdout |
+| `--existing <FILE>` | Existing ledger file for duplicate detection |
+| `-P, --profile <PROFILE>` | Use a profile from config |
 
 ## Examples
 
@@ -142,7 +170,26 @@ rledger extract --importer checking statement.csv
 The `importers.toml` file is auto-discovered from the current directory or `~/.config/rledger/`. To specify a custom path:
 
 ```bash
-rledger extract --importers-config path/to/importers.toml --importer checking statement.csv
+rledger extract --config path/to/importers.toml --importer checking statement.csv
+```
+
+### List Available Importers
+
+```bash
+rledger extract --config importers.toml --list-importers
+```
+
+### Direct CLI Import (No Config)
+
+```bash
+rledger extract statement.csv \
+  -a Assets:Bank:Checking \
+  --date-column "Transaction Date" \
+  --date-format "%m/%d/%Y" \
+  --amount-column "Amount" \
+  --narration-column "Description" \
+  --skip-rows 1 \
+  --invert-sign
 ```
 
 ## See Also

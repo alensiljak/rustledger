@@ -10,21 +10,29 @@ Automatically format beancount files for consistent style.
 ## Usage
 
 ```bash
-rledger format [OPTIONS] [FILE]
+rledger format [OPTIONS] [FILE]...
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | The beancount file to format |
+| `FILE...` | One or more beancount files to format |
 
 ## Options
 
 | Option | Description |
 |--------|-------------|
-| `-i, --in-place` | Modify file in place |
 | `-P, --profile <PROFILE>` | Use a profile from config |
+| `-o, --output <OUTPUT>` | Output file (only valid with single input file) |
+| `-i, --in-place` | Format file(s) in place |
+| `--check` | Check if file is formatted (exit 1 if not) |
+| `--diff` | Show diff when using --check |
+| `-c, --currency-column <COLUMN>` | Column for aligning currencies [default: 60] |
+| `-w, --prefix-width <WIDTH>` | Force fixed prefix width (account name column) |
+| `-W, --num-width <WIDTH>` | Force fixed numbers width |
+| `--indent <INDENT>` | Number of spaces for posting indentation [default: 2] |
+| `-v, --verbose` | Show verbose output |
 
 ## Examples
 
@@ -44,9 +52,27 @@ rledger format --in-place ledger.beancount
 ### Format Multiple Files
 
 ```bash
-for f in *.beancount; do
-  rledger format --in-place "$f"
-done
+rledger format --in-place *.beancount
+```
+
+### Check Formatting (CI/Pre-commit)
+
+```bash
+# Exit with error if not formatted
+rledger format --check ledger.beancount
+
+# Show diff of what would change
+rledger format --check --diff ledger.beancount
+```
+
+### Custom Alignment
+
+```bash
+# Align currencies at column 80
+rledger format -c 80 ledger.beancount
+
+# Fixed account column width
+rledger format -w 40 ledger.beancount
 ```
 
 ### Pre-commit Hook

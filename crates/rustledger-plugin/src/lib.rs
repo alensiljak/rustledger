@@ -14,22 +14,9 @@
 //! - **WASM Plugins**: Sandboxed plugins loaded from `.wasm` files
 //! - **Native Plugins**: Built-in plugins implemented in Rust
 //!
-//! # Built-in Plugins (14)
+//! # Built-in Plugins (30)
 //!
-//! - `implicit_prices`: Generates price entries from transaction costs/prices
-//! - `check_commodity`: Verifies all commodities are declared
-//! - `auto_accounts`: Auto-generates Open directives for used accounts
-//! - `auto_tag`: Auto-tag transactions by account patterns
-//! - `leafonly`: Errors on postings to non-leaf accounts
-//! - `noduplicates`: Hash-based duplicate transaction detection
-//! - `onecommodity`: Enforces single commodity per account
-//! - `unique_prices`: One price per day per currency pair
-//! - `check_closing`: Zero balance assertion on account closing
-//! - `close_tree`: Closes descendant accounts automatically
-//! - `coherent_cost`: Enforces cost OR price (not both) consistency
-//! - `sellgains`: Cross-checks capital gains against sales
-//! - `pedantic`: Enables all strict validation rules
-//! - `unrealized`: Calculates unrealized gains/losses
+//! See the [plugin reference](https://rustledger.github.io/docs/reference/plugins) for the full list.
 //!
 //! # Example
 //!
