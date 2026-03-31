@@ -139,7 +139,7 @@ GROUP BY 1, 2
 PIVOT BY 2
 ```
 
-Note: PIVOT BY requires a column index (1-indexed), not an expression.
+Note: PIVOT BY must reference a SELECT output column, either by name or by its 1-indexed position; pivoting by an arbitrary expression (for example, `PIVOT BY YEAR(date)`) is not supported.
 
 ## Aggregate Functions
 

@@ -14,7 +14,8 @@ LIMIT 10
 
 ## Features
 
-- Full BQL support (SELECT, WHERE, GROUP BY, ORDER BY, LIMIT, PIVOT BY)
+- Full BQL support (SELECT, FROM, WHERE, GROUP BY, ORDER BY, LIMIT, PIVOT BY)
+- FROM clause for system tables (`#entries`, `#postings`, etc.)
 - Regex pattern matching (`~` operator)
 - Aggregate functions (SUM, COUNT, FIRST, LAST, MIN, MAX)
 - Date functions (YEAR, MONTH, DAY, QUARTER)
