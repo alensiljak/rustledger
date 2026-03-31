@@ -15,6 +15,7 @@ Practical tutorials for common rustledger tasks.
 | [Cookbook](cookbook.md) | Real-world examples for common scenarios |
 | [Common Queries](common-queries.md) | Useful BQL queries for everyday reporting |
 | [Budgeting](budgeting.md) | Track budgets and compare spending |
+| [Custom Plugins](custom-plugins.md) | Write your own WASM plugins |
 | [Importing Data](importing.md) | Import transactions from banks |
 | [Shell Aliases](shell-aliases.md) | Create shortcuts like `bal`, `reg` |
 | [Editor Integration](editor-integration.md) | VS Code, Vim, Emacs setup |
