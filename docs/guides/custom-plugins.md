@@ -76,14 +76,9 @@ struct PluginOutput {
 #[derive(Serialize)]
 struct PluginError {
     message: String,
+    source_file: Option<String>,
+    line_number: Option<u32>,
     severity: String,  // "error" or "warning"
-    source: Option<Source>,
-}
-
-#[derive(Serialize)]
-struct Source {
-    filename: Option<String>,
-    lineno: Option<u32>,
 }
 
 // Directive types - copy these from the wasm-plugin-template or define your own
@@ -107,9 +102,20 @@ struct Transaction {
     narration: String,
     tags: Vec<String>,
     links: Vec<String>,
-    meta: std::collections::HashMap<String, String>,
+    metadata: Vec<(String, MetaValue)>,
     postings: Vec<Posting>,
-    source: Option<Source>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+enum MetaValue {
+    String(String),
+    Number(String),
+    Date(String),
+    Account(String),
+    Currency(String),
+    Tag(String),
+    Amount(Amount),
+    Boolean(bool),
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -119,7 +125,7 @@ struct Posting {
     cost: Option<CostSpec>,
     price: Option<Amount>,
     flag: Option<String>,
-    meta: std::collections::HashMap<String, String>,
+    metadata: Vec<(String, MetaValue)>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -135,51 +141,42 @@ struct CostSpec {
     currency: Option<String>,
     date: Option<String>,
     label: Option<String>,
-    merge: Option<bool>,
+    merge: bool,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Open {
-    date: String,
     account: String,
     currencies: Vec<String>,
     booking: Option<String>,
-    meta: std::collections::HashMap<String, String>,
-    source: Option<Source>,
+    metadata: Vec<(String, MetaValue)>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Close {
-    date: String,
     account: String,
-    meta: std::collections::HashMap<String, String>,
-    source: Option<Source>,
+    metadata: Vec<(String, MetaValue)>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Balance {
-    date: String,
     account: String,
     amount: Amount,
     tolerance: Option<String>,
-    meta: std::collections::HashMap<String, String>,
-    source: Option<Source>,
+    metadata: Vec<(String, MetaValue)>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Price {
-    date: String,
     currency: String,
     amount: Amount,
-    meta: std::collections::HashMap<String, String>,
-    source: Option<Source>,
+    metadata: Vec<(String, MetaValue)>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
 struct Options {
     title: Option<String>,
-    operating_currency: Vec<String>,
-    // ... other options as needed
+    operating_currencies: Vec<String>,
 }
 
 // Memory allocation for WASM
@@ -272,7 +269,8 @@ fn process_directives(input: PluginInput) -> PluginOutput {
                                     units.number, units.currency, posting.account
                                 ),
                                 severity: "warning".to_string(),
-                                source: txn.source.clone(),
+                                source_file: None,
+                                line_number: None,
                             });
                         }
                     }
@@ -346,7 +344,8 @@ fn process_directives(input: PluginInput) -> PluginOutput {
                         txn.narration
                     ),
                     severity: "error".to_string(),
-                    source: txn.source.clone(),
+                    source_file: None,
+                                line_number: None,
                 });
             }
         }
@@ -407,7 +406,8 @@ fn process_directives(input: PluginInput) -> PluginOutput {
                                 units.currency, allowed
                             ),
                             severity: "error".to_string(),
-                            source: txn.source.clone(),
+                            source_file: None,
+                                line_number: None,
                         });
                     }
                 }
@@ -511,7 +511,8 @@ rledger check test.beancount
    errors.push(PluginError {
        message: format!("Account '{}' has {} postings", account, count),
        severity: "warning".to_string(),
-       source: txn.source.clone(),
+       source_file: None,
+                                line_number: None,
    });
    ```
 

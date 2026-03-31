@@ -359,11 +359,7 @@ fn process(&self, input: PluginInput) -> PluginOutput {
     for directive in &input.directives {
         if let Directive::Transaction(txn) = directive {
             if txn.postings.is_empty() {
-                errors.push(PluginError {
-                    message: "Transaction has no postings".to_string(),
-                    severity: PluginErrorSeverity::Error,
-                    source: txn.source.clone(),
-                });
+                errors.push(PluginError::error("Transaction has no postings"));
             }
         }
     }
@@ -404,22 +400,14 @@ for txn in &transactions {
 Write clear, actionable error messages:
 
 ```rust
-// Good
-PluginError {
-    message: format!(
-        "Account '{}' uses currency {} but was opened with {:?}",
-        posting.account, currency, allowed_currencies
-    ),
-    severity: PluginErrorSeverity::Error,
-    source: txn.source.clone(),
-}
+// Good - use builder methods and include context
+PluginError::error(format!(
+    "Account '{}' uses currency {} but was opened with {:?}",
+    posting.account, currency, allowed_currencies
+))
 
-// Bad
-PluginError {
-    message: "Invalid currency".to_string(),
-    severity: PluginErrorSeverity::Error,
-    source: None,
-}
+// Bad - vague message with no context
+PluginError::error("Invalid currency")
 ```
 
 ### Configuration Parsing
