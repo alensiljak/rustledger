@@ -50,6 +50,7 @@ mod parsed_ledger;
 
 // Re-export public API
 pub use api::{balances, format, parse, query, validate_source, version};
+pub use api::{parse_multi_file, query_multi_file, validate_multi_file};
 
 #[cfg(feature = "completions")]
 pub use api::bql_completions;
@@ -369,6 +370,47 @@ export class ParsedLedger {
     /** Find all references to the symbol at the given position. */
     getReferences(line: number, character: number): EditorReferencesResult | null;
 }
+
+// =============================================================================
+// Multi-File API (for WASM environments without filesystem access)
+// =============================================================================
+
+/** Map of file paths to their contents. */
+export type FileMap = Record<string, string>;
+
+/**
+ * Parse multiple Beancount files with include resolution.
+ *
+ * @param files - Object mapping file paths to their contents
+ * @param entryPoint - The main file to start loading from (must exist in files)
+ * @returns ParseResult with the combined ledger from all files
+ *
+ * @example
+ * const result = parseMultiFile({
+ *   "main.beancount": 'include "accounts.beancount"',
+ *   "accounts.beancount": "2024-01-01 open Assets:Bank USD"
+ * }, "main.beancount");
+ */
+export function parseMultiFile(files: FileMap, entryPoint: string): ParseResult;
+
+/**
+ * Validate multiple Beancount files with include resolution.
+ *
+ * @param files - Object mapping file paths to their contents
+ * @param entryPoint - The main file to start loading from (must exist in files)
+ * @returns ValidationResult indicating whether the combined ledger is valid
+ */
+export function validateMultiFile(files: FileMap, entryPoint: string): ValidationResult;
+
+/**
+ * Run a BQL query on multiple Beancount files.
+ *
+ * @param files - Object mapping file paths to their contents
+ * @param entryPoint - The main file to start loading from (must exist in files)
+ * @param query - The BQL query string to execute
+ * @returns QueryResult with columns, rows, and any errors
+ */
+export function queryMultiFile(files: FileMap, entryPoint: string, query: string): QueryResult;
 "#;
 
 // =============================================================================
@@ -447,6 +489,122 @@ mod tests {
         assert!(
             !validation_errors.is_empty(),
             "should detect Expenses:Food not opened"
+        );
+    }
+
+    // =========================================================================
+    // Multi-file API tests
+    // =========================================================================
+
+    #[test]
+    fn test_multi_file_include_resolution() {
+        use rustledger_loader::{Loader, VirtualFileSystem};
+        use std::path::Path;
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "accounts.beancount"
+
+2024-01-15 * "Coffee"
+  Expenses:Food  5.00 USD
+  Assets:Bank   -5.00 USD
+"#,
+        );
+        vfs.add_file(
+            "accounts.beancount",
+            r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+"#,
+        );
+
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+        let result = loader.load(Path::new("main.beancount")).unwrap();
+
+        assert!(result.errors.is_empty(), "should have no errors");
+        // 2 opens + 1 transaction = 3 directives
+        assert_eq!(result.directives.len(), 3);
+    }
+
+    #[test]
+    fn test_multi_file_nested_includes() {
+        use rustledger_loader::{Loader, VirtualFileSystem};
+        use std::path::Path;
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file("main.beancount", r#"include "accounts/index.beancount""#);
+        vfs.add_file(
+            "accounts/index.beancount",
+            r#"
+include "assets.beancount"
+include "expenses.beancount"
+"#,
+        );
+        vfs.add_file(
+            "accounts/assets.beancount",
+            "2024-01-01 open Assets:Bank USD",
+        );
+        vfs.add_file(
+            "accounts/expenses.beancount",
+            "2024-01-01 open Expenses:Food USD",
+        );
+
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+        let result = loader.load(Path::new("main.beancount")).unwrap();
+
+        assert!(result.errors.is_empty(), "should have no errors");
+        assert_eq!(result.directives.len(), 2); // 2 open directives
+    }
+
+    #[test]
+    fn test_multi_file_validation() {
+        use rustledger_booking::interpolate;
+        use rustledger_core::Directive;
+        use rustledger_loader::{Loader, VirtualFileSystem};
+        use std::path::Path;
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "accounts.beancount"
+
+2024-01-15 * "Coffee"
+  Expenses:Food  5.00 USD
+  Assets:Bank
+"#,
+        );
+        vfs.add_file(
+            "accounts.beancount",
+            r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+"#,
+        );
+
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+        let result = loader.load(Path::new("main.beancount")).unwrap();
+
+        assert!(result.errors.is_empty());
+
+        // Extract directives and interpolate transactions
+        let mut directives: Vec<_> = result.directives.into_iter().map(|s| s.value).collect();
+        for directive in &mut directives {
+            if let Directive::Transaction(txn) = directive {
+                if let Ok(result) = interpolate(txn) {
+                    *txn = result.transaction;
+                }
+            }
+        }
+        // Sort by date for proper validation
+        directives.sort_by_key(|d| d.date());
+        let validation_errors = validate_ledger(&directives);
+        assert!(
+            validation_errors.is_empty(),
+            "ledger should be valid, but got: {:?}",
+            validation_errors
         );
     }
 }
