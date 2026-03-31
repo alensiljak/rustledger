@@ -45,40 +45,22 @@ impl EcbSource {
     }
 }
 
-impl PriceSource for EcbSource {
-    fn name(&self) -> &'static str {
-        "ecb"
-    }
-
-    fn description(&self) -> &'static str {
-        "European Central Bank - currency exchange rates"
-    }
-
-    fn fetch_price(&self, request: &PriceRequest) -> Result<PriceResponse> {
-        // ECB provides rates where EUR is the base currency
-        // If requesting EUR, return 1.0
-        if request.ticker.to_uppercase() == "EUR" {
-            let date = request.date.unwrap_or_else(|| Utc::now().date_naive());
-            return Ok(PriceResponse {
-                price: Decimal::ONE,
-                currency: request.currency.clone(),
-                date,
-                source: self.name().to_string(),
-            });
-        }
-
-        let url = self.build_url(&request.ticker.to_uppercase());
+impl EcbSource {
+    /// Fetch a rate from the ECB API for a currency against EUR.
+    /// Returns (rate, date) where rate is "units of currency per 1 EUR".
+    fn fetch_rate(&self, currency: &str) -> Result<(Decimal, NaiveDate)> {
+        let url = self.build_url(&currency.to_uppercase());
 
         let mut response = ureq::get(&url)
             .header("User-Agent", user_agent())
             .header("Accept", "application/json")
             .call()
-            .with_context(|| format!("Failed to fetch ECB rate for {}", request.ticker))?;
+            .with_context(|| format!("Failed to fetch ECB rate for {currency}"))?;
 
         let json: serde_json::Value = response
             .body_mut()
             .read_json()
-            .with_context(|| format!("Failed to parse ECB response for {}", request.ticker))?;
+            .with_context(|| format!("Failed to parse ECB response for {currency}"))?;
 
         // Navigate the SDMX-JSON structure to find the rate
         let datasets = json
@@ -113,43 +95,100 @@ impl PriceSource for EcbSource {
         let rate = Decimal::from_str(&rate_value.to_string())
             .with_context(|| format!("Failed to parse rate: {rate_value}"))?;
 
-        let price = rate;
-
         // Try to get the date from the structure
-        let date = if let Some(structure) = json.get("structure") {
-            if let Some(dimensions) = structure.get("dimensions") {
-                if let Some(observation) = dimensions.get("observation") {
-                    if let Some(time_dim) = observation.as_array().and_then(|a| a.first()) {
-                        if let Some(values) = time_dim.get("values").and_then(|v| v.as_array()) {
-                            let idx: usize = obs_key.parse().unwrap_or(0);
-                            values
-                                .get(idx)
-                                .and_then(|v| v.get("id"))
-                                .and_then(serde_json::Value::as_str)
-                                .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-                                .unwrap_or_else(|| {
-                                    request.date.unwrap_or_else(|| Utc::now().date_naive())
-                                })
-                        } else {
-                            request.date.unwrap_or_else(|| Utc::now().date_naive())
-                        }
-                    } else {
-                        request.date.unwrap_or_else(|| Utc::now().date_naive())
-                    }
-                } else {
-                    request.date.unwrap_or_else(|| Utc::now().date_naive())
-                }
-            } else {
-                request.date.unwrap_or_else(|| Utc::now().date_naive())
+        let date = json
+            .get("structure")
+            .and_then(|s| s.get("dimensions"))
+            .and_then(|d| d.get("observation"))
+            .and_then(|o| o.as_array())
+            .and_then(|a| a.first())
+            .and_then(|t| t.get("values"))
+            .and_then(|v| v.as_array())
+            .and_then(|values| {
+                let idx: usize = obs_key.parse().unwrap_or(0);
+                values.get(idx)
+            })
+            .and_then(|v| v.get("id"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            .unwrap_or_else(|| Utc::now().date_naive());
+
+        Ok((rate, date))
+    }
+}
+
+impl PriceSource for EcbSource {
+    fn name(&self) -> &'static str {
+        "ecb"
+    }
+
+    fn description(&self) -> &'static str {
+        "European Central Bank - currency exchange rates"
+    }
+
+    fn fetch_price(&self, request: &PriceRequest) -> Result<PriceResponse> {
+        let ticker = request.ticker.to_uppercase();
+        let currency = request.currency.to_uppercase();
+
+        // ECB provides rates as "X per 1 EUR"
+        // We need to handle three cases:
+        // 1. ticker=EUR, currency=X: fetch X rate, return as-is (X per EUR)
+        // 2. ticker=X, currency=EUR: fetch X rate, invert it (EUR per X)
+        // 3. ticker=X, currency=Y: fetch both, compute cross-rate (Y per X)
+
+        let date = request.date.unwrap_or_else(|| Utc::now().date_naive());
+
+        if ticker == "EUR" && currency == "EUR" {
+            // EUR to EUR = 1
+            return Ok(PriceResponse {
+                price: Decimal::ONE,
+                currency,
+                date,
+                source: self.name().to_string(),
+            });
+        }
+
+        if ticker == "EUR" {
+            // EUR -> X: fetch X rate (X per EUR), return as-is
+            let (rate, rate_date) = self.fetch_rate(&currency)?;
+            return Ok(PriceResponse {
+                price: rate,
+                currency,
+                date: request.date.unwrap_or(rate_date),
+                source: self.name().to_string(),
+            });
+        }
+
+        if currency == "EUR" {
+            // X -> EUR: fetch X rate (X per EUR), invert to get EUR per X
+            let (rate, rate_date) = self.fetch_rate(&ticker)?;
+            if rate.is_zero() {
+                anyhow::bail!("Cannot invert zero rate for {ticker}");
             }
-        } else {
-            request.date.unwrap_or_else(|| Utc::now().date_naive())
-        };
+            let inverted = Decimal::ONE / rate;
+            return Ok(PriceResponse {
+                price: inverted,
+                currency,
+                date: request.date.unwrap_or(rate_date),
+                source: self.name().to_string(),
+            });
+        }
+
+        // Cross-rate: X -> Y via EUR
+        // X per EUR and Y per EUR => Y per X = (Y per EUR) / (X per EUR)
+        let (ticker_rate, ticker_date) = self.fetch_rate(&ticker)?;
+        let (currency_rate, _) = self.fetch_rate(&currency)?;
+
+        if ticker_rate.is_zero() {
+            anyhow::bail!("Cannot compute cross-rate: zero rate for {ticker}");
+        }
+
+        let cross_rate = currency_rate / ticker_rate;
 
         Ok(PriceResponse {
-            price,
-            currency: "EUR".to_string(),
-            date,
+            price: cross_rate,
+            currency,
+            date: request.date.unwrap_or(ticker_date),
             source: self.name().to_string(),
         })
     }
@@ -175,10 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn test_eur_returns_one() {
+    fn test_eur_to_eur_returns_one() {
+        // EUR to EUR should always return 1.0 without network access
         let source = EcbSource::new(Duration::from_secs(30));
-        let request = PriceRequest::new("EUR", "USD");
+        let request = PriceRequest::new("EUR", "EUR");
         let response = source.fetch_price(&request).unwrap();
         assert_eq!(response.price, Decimal::ONE);
+        assert_eq!(response.currency, "EUR");
     }
 }

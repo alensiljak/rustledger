@@ -113,11 +113,6 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
         return list_sources(&registry);
     }
 
-    // Handle --source-cmd (ad-hoc external command)
-    if let Some(cmd) = &args.source_cmd {
-        return run_with_external_command(args, cmd);
-    }
-
     let mut symbols_to_fetch: Vec<String> = args.symbols.clone();
 
     // Build symbol mapping from CLI args
@@ -170,6 +165,12 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
     } else {
         None
     };
+
+    // Handle --source-cmd (ad-hoc external command)
+    // This is placed after symbol discovery so -f flag works with --source-cmd
+    if let Some(cmd) = &args.source_cmd {
+        return run_with_external_command(args, cmd, &symbols_to_fetch, date, price_config);
+    }
 
     // Merge CLI mapping with config mapping (CLI takes precedence)
     let mut combined_mapping = price_config.mapping.clone();
@@ -239,7 +240,13 @@ fn fetch_with_source(
 }
 
 /// Run with an ad-hoc external command.
-fn run_with_external_command(args: &PriceArgs, cmd: &str) -> Result<()> {
+fn run_with_external_command(
+    args: &PriceArgs,
+    cmd: &str,
+    symbols: &[String],
+    date: Option<NaiveDate>,
+    price_config: &PriceConfig,
+) -> Result<()> {
     use crate::cmd::price::external::ExternalCommandSource;
 
     // Parse the command string into parts
@@ -250,21 +257,14 @@ fn run_with_external_command(args: &PriceArgs, cmd: &str) -> Result<()> {
         anyhow::bail!("Empty command provided");
     }
 
-    let source = ExternalCommandSource::new(command_parts, Duration::from_secs(30), HashMap::new());
-
-    let date = if let Some(ref d) = args.date {
-        Some(
-            NaiveDate::parse_from_str(d, "%Y-%m-%d")
-                .with_context(|| format!("Invalid date: {d}"))?,
-        )
-    } else {
-        None
-    };
+    // Use config timeout instead of hardcoded value
+    let timeout = Duration::from_secs(price_config.effective_timeout());
+    let source = ExternalCommandSource::new(command_parts, timeout, HashMap::new());
 
     let stdout = io::stdout();
     let mut handle = stdout.lock();
 
-    for symbol in &args.symbols {
+    for symbol in symbols {
         let request = PriceRequest {
             ticker: symbol.clone(),
             currency: args.currency.clone(),

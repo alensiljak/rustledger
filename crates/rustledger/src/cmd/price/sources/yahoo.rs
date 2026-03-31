@@ -86,13 +86,11 @@ impl PriceSource for YahooFinanceSource {
             .get("regularMarketPrice")
             .with_context(|| format!("No price found for {}", request.ticker))?;
 
-        // Parse directly from JSON number string to avoid f64 precision loss
-        let price_str = if let Some(n) = price_value.as_f64() {
-            n.to_string()
-        } else if let Some(s) = price_value.as_str() {
-            s.to_string()
-        } else {
-            anyhow::bail!("Invalid price format for {}", request.ticker);
+        // Parse directly from JSON number representation to avoid f64 precision loss
+        let price_str = match price_value {
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::String(s) => s.clone(),
+            _ => anyhow::bail!("Invalid price format for {}", request.ticker),
         };
 
         let price = Decimal::from_str(&price_str)

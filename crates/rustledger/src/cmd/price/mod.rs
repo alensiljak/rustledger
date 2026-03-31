@@ -134,10 +134,11 @@ impl PriceSourceRegistry {
                     Duration::from_secs(cmd_timeout.unwrap_or(config.effective_timeout()));
                 sources.insert(
                     name.clone(),
-                    Arc::new(external::ExternalCommandSource::new(
+                    Arc::new(external::ExternalCommandSource::with_name(
                         command.clone(),
                         cmd_timeout,
                         env.clone(),
+                        name.clone(),
                     )),
                 );
             }
@@ -196,9 +197,10 @@ impl PriceSourceRegistry {
         let (source_names, ticker) = self.resolve_mapping(commodity, mapping);
 
         let mut last_error = None;
+        let mut unknown_sources = Vec::new();
 
-        for source_name in source_names {
-            if let Some(source) = self.get(&source_name) {
+        for source_name in &source_names {
+            if let Some(source) = self.get(source_name) {
                 let request = PriceRequest {
                     ticker: ticker.clone(),
                     currency: currency.to_string(),
@@ -212,12 +214,33 @@ impl PriceSourceRegistry {
                         // Try next source in fallback chain
                     }
                 }
+            } else {
+                // Track unknown sources for error reporting
+                unknown_sources.push(source_name.clone());
             }
         }
 
-        Err(last_error.unwrap_or_else(|| {
+        // Build an informative error message
+        let err_msg = if let Some(e) = last_error {
+            if unknown_sources.is_empty() {
+                e
+            } else {
+                anyhow::anyhow!(
+                    "{}; note: unknown sources skipped: {}",
+                    e,
+                    unknown_sources.join(", ")
+                )
+            }
+        } else if !unknown_sources.is_empty() {
+            anyhow::anyhow!(
+                "No price source available for commodity {commodity}: unknown sources: {}",
+                unknown_sources.join(", ")
+            )
+        } else {
             anyhow::anyhow!("No price source available for commodity {commodity}")
-        }))
+        };
+
+        Err(err_msg)
     }
 
     /// Resolve a commodity to its source(s) and ticker.
