@@ -131,7 +131,16 @@ pub fn handle_code_lens(
 
 /// Handle a code lens resolve request.
 /// Computes expensive balance verification on demand.
-pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> CodeLens {
+///
+/// When `ledger_directives` is provided (multi-file mode), the balance calculation
+/// considers all transactions from the full ledger, not just the current file.
+/// This fixes issue #470 where balance assertions depending on transactions in
+/// other included files would incorrectly show as unresolved.
+pub fn handle_code_lens_resolve(
+    lens: CodeLens,
+    parse_result: &ParseResult,
+    ledger_directives: Option<&[Spanned<Directive>]>,
+) -> CodeLens {
     let mut resolved = lens.clone();
     let mut processed_balance = false;
 
@@ -155,8 +164,15 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
         // Parse the date
         let date = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d").ok();
 
-        // Calculate actual balance up to this date
-        let actual_balance = calculate_balance_at_date(parse_result, account, date);
+        // Calculate actual balance up to this date.
+        // Use full ledger directives if available (multi-file mode), otherwise fall back
+        // to single-file directives.
+        // TODO: Consider caching booked directives in LedgerState for large ledgers.
+        let actual_balance = calculate_balance_at_date(
+            ledger_directives.unwrap_or(&parse_result.directives),
+            account,
+            date,
+        );
         let actual_amount = actual_balance
             .get(expected_currency)
             .copied()
@@ -200,13 +216,15 @@ pub fn handle_code_lens_resolve(lens: CodeLens, parse_result: &ParseResult) -> C
 /// This function runs booking/interpolation before calculating balances,
 /// matching the behavior of validation. Without booking, auto-filled postings
 /// would not be counted in the balance.
+///
+/// Accepts directives directly to support both single-file and multi-file modes.
 fn calculate_balance_at_date(
-    parse_result: &ParseResult,
+    directives_in: &[Spanned<Directive>],
     account: &str,
     date: Option<chrono::NaiveDate>,
 ) -> HashMap<String, Decimal> {
     // Clone and sort directives by date (required for correct booking)
-    let mut directives: Vec<Spanned<Directive>> = parse_result.directives.clone();
+    let mut directives: Vec<Spanned<Directive>> = directives_in.to_vec();
     directives.sort_by(|a, b| {
         a.value
             .date()
@@ -372,7 +390,7 @@ mod tests {
             })),
         };
 
-        let resolved = handle_code_lens_resolve(lens, &result);
+        let resolved = handle_code_lens_resolve(lens, &result, None);
         assert!(resolved.command.is_some());
 
         let cmd = resolved.command.unwrap();
@@ -405,7 +423,7 @@ mod tests {
             })),
         };
 
-        let resolved = handle_code_lens_resolve(lens, &result);
+        let resolved = handle_code_lens_resolve(lens, &result, None);
 
         // For mismatched balances, codelens should NOT have a command.
         // The error is shown via diagnostics instead (issue #491).
@@ -444,7 +462,7 @@ mod tests {
             })),
         };
 
-        let resolved = handle_code_lens_resolve(lens, &result);
+        let resolved = handle_code_lens_resolve(lens, &result, None);
 
         // With booking, the auto-filled posting is counted and balance should pass
         assert!(
@@ -477,10 +495,80 @@ mod tests {
             data: None,
         };
 
-        let resolved = handle_code_lens_resolve(lens, &result);
+        let resolved = handle_code_lens_resolve(lens, &result, None);
         assert!(
             resolved.command.is_some(),
             "Lens must always have a command after resolve"
+        );
+    }
+
+    #[test]
+    fn test_code_lens_resolve_multifile_balance() {
+        // Test that balance verification uses full ledger directives when provided.
+        // This is the fix for issue #470: balance assertions that depend on
+        // transactions in other included files should verify correctly.
+
+        // The "current file" (bank.bean) has a balance assertion for 4950 USD
+        let bank_source = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking  5000 USD
+  Income:Salary
+2024-01-21 balance Assets:Bank:Checking 4950 USD
+"#;
+        let bank_result = parse(bank_source);
+
+        // The "other file" (credit_card.bean) has the -50 USD transaction
+        let credit_card_source = r#"2024-01-01 open Liabilities:Credit-Card
+2024-01-20 * "Pay off credit card"
+  Assets:Bank:Checking  -50 USD
+  Liabilities:Credit-Card
+"#;
+        let credit_card_result = parse(credit_card_source);
+
+        // Combine directives as the loader would
+        let mut full_directives = bank_result.directives.clone();
+        full_directives.extend(credit_card_result.directives.clone());
+
+        // Create a lens for the balance assertion on line 4 (0-indexed)
+        let lens = CodeLens {
+            range: Range {
+                start: Position::new(4, 0),
+                end: Position::new(4, 0),
+            },
+            command: None,
+            data: Some(serde_json::json!({
+                "kind": "balance",
+                "account": "Assets:Bank:Checking",
+                "date": "2024-01-21",
+                "expected_amount": "4950",
+                "expected_currency": "USD",
+            })),
+        };
+
+        // Without full ledger (single-file mode) - balance would be 5000, mismatch!
+        let resolved_single = handle_code_lens_resolve(lens.clone(), &bank_result, None);
+        assert!(
+            resolved_single.command.is_none(),
+            "Single-file mode should see mismatch (5000 != 4950)"
+        );
+
+        // With full ledger (multi-file mode) - balance is 5000 - 50 = 4950, match!
+        let resolved_multi = handle_code_lens_resolve(lens, &bank_result, Some(&full_directives));
+        assert!(
+            resolved_multi.command.is_some(),
+            "Multi-file mode should see match (5000 - 50 = 4950)"
+        );
+
+        let cmd = resolved_multi.command.unwrap();
+        assert!(
+            cmd.title.contains("✓"),
+            "Should show checkmark. Got: {}",
+            cmd.title
+        );
+        assert!(
+            cmd.title.contains("4950"),
+            "Should show correct balance. Got: {}",
+            cmd.title
         );
     }
 
@@ -502,7 +590,7 @@ mod tests {
             })),
         };
 
-        let resolved = handle_code_lens_resolve(lens, &result);
+        let resolved = handle_code_lens_resolve(lens, &result, None);
         assert!(
             resolved.command.is_some(),
             "Lens must always have a command after resolve"

@@ -775,6 +775,9 @@ impl MainLoopState {
     }
 
     /// Handle the codeLens/resolve request.
+    ///
+    /// Uses full ledger directives when available (multi-file mode) to correctly
+    /// verify balance assertions that depend on transactions in other included files.
     fn handle_code_lens_resolve_request(
         &self,
         req: lsp_server::Request,
@@ -792,7 +795,15 @@ impl MainLoopState {
         };
 
         let (_text, parse_result) = self.get_document_data(&uri);
-        let resolved = handle_code_lens_resolve(lens, &parse_result);
+
+        // Clone directives while holding the lock, then drop the guard before
+        // running the expensive balance calculation (issue #470).
+        let ledger_directives = {
+            let ledger_guard = self.ledger_state.read();
+            ledger_guard.directives().map(|d| d.to_vec())
+        };
+
+        let resolved = handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
 
         serde_json::to_value(resolved).map_err(|e| e.to_string())
     }
