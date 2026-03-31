@@ -166,6 +166,35 @@ PRs can auto-merge after CI passes if:
 - PR is not marked as draft
 - No merge conflicts
 
+### Using GLM5 for PR Reviews
+
+You can use [opencode](https://opencode.ai) with Together AI's GLM-5 model for additional PR review perspectives.
+
+**Setup:**
+```bash
+# Ensure Together AI API key is available
+export TOGETHER_API_KEY="your-api-key"
+```
+
+**Review a PR:**
+```bash
+# Save PR diff to a file (opencode can't run gh in non-interactive mode)
+gh pr diff <PR_NUMBER> > /tmp/pr-diff.txt
+
+# Run GLM5 review
+opencode run -m togetherai/zai-org/GLM-5 -f /tmp/pr-diff.txt -- \
+  "Review this PR diff. Check code examples for accuracy, type correctness, and completeness. Identify any issues."
+```
+
+**Available models:**
+```bash
+opencode models | grep togetherai  # List all Together AI models
+```
+
+Common models: `togetherai/zai-org/GLM-5`, `togetherai/deepseek-ai/DeepSeek-V3`, `togetherai/Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8`
+
+**Important:** Always validate GLM5 findings against actual source code - it can produce false positives (e.g., claiming WASM32 pointer packing is broken when it's correct for 32-bit targets).
+
 ## Security Considerations
 
 - **Parser**: Must handle malformed input gracefully (no panics)
