@@ -37,7 +37,7 @@ cd my_plugin
 [package]
 name = "my_plugin"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [lib]
 crate-type = ["cdylib"]
@@ -86,7 +86,8 @@ struct Source {
     lineno: Option<u32>,
 }
 
-// Directive types (simplified - see full types below)
+// Directive types - copy these from the wasm-plugin-template or define your own
+// matching the serialization format rustledger uses
 #[derive(Deserialize, Serialize, Clone)]
 #[serde(tag = "type")]
 enum Directive {
@@ -182,14 +183,14 @@ struct Options {
 }
 
 // Memory allocation for WASM
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn alloc(size: u32) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
     unsafe { std::alloc::alloc(layout) }
 }
 
 // Main plugin entry point
-#[unsafe(no_mangle)]
+#[no_mangle]
 pub extern "C" fn process(input_ptr: u32, input_len: u32) -> u64 {
     // Read input
     let input_bytes = unsafe {
@@ -505,12 +506,7 @@ rledger check test.beancount
 
 ## Debugging Tips
 
-1. **Print to stderr**: WASM plugins can write to stderr for debugging:
-   ```rust
-   eprintln!("Debug: processing {} directives", input.directives.len());
-   ```
-
-2. **Return detailed errors**: Include context in error messages:
+1. **Return detailed errors**: WASM plugins run in a sandbox without access to stderr, so include context in error messages for debugging:
    ```rust
    errors.push(PluginError {
        message: format!("Account '{}' has {} postings", account, count),
@@ -519,7 +515,7 @@ rledger check test.beancount
    });
    ```
 
-3. **Test incrementally**: Start with a minimal plugin and add features one at a time.
+2. **Test incrementally**: Start with a minimal plugin and add features one at a time.
 
 ## Performance Tips
 

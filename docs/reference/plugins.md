@@ -37,15 +37,15 @@ rustledger supports three types of plugins:
                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Plugin Interface (PluginInput)             │
-│  - directives: Vec<Directive>                           │
-│  - options: LedgerOptions                               │
+│  - directives: Vec<DirectiveWrapper>                    │
+│  - options: PluginOptions                               │
 │  - config: Option<String>                               │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Plugin Output (PluginOutput)               │
-│  - directives: Vec<Directive> (possibly modified)       │
+│  - directives: Vec<DirectiveWrapper> (possibly modified)│
 │  - errors: Vec<PluginError>                             │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -62,7 +62,7 @@ plugin "beancount.plugins.auto_accounts"
 plugin "/path/to/my_plugin.wasm"
 
 ; Plugin with configuration
-plugin "beancount.plugins.split_expenses" "alice,bob 50,50"
+plugin "beancount.plugins.split_expenses" "alice bob"
 ```
 
 ### Plugin Execution Order
@@ -147,8 +147,8 @@ rustledger includes 30 native plugins. Here are the most commonly used:
 | `auto_accounts` | Auto-generate Open directives |
 | `auto_tag` | Automatically tag transactions |
 | `box_accrual` | Accrual accounting for boxed periods |
-| `capital_gains_gain_loss` | Split capital gains into gain/loss accounts |
-| `capital_gains_long_short` | Split capital gains by holding period |
+| `gain_loss` | Split capital gains into gain/loss accounts |
+| `long_short` | Split capital gains by holding period |
 | `check_average_cost` | Validate average cost bookings |
 | `check_closing` | Zero balance on account close |
 | `check_commodity` | Validate commodity declarations |
@@ -167,7 +167,7 @@ rustledger includes 30 native plugins. Here are the most commonly used:
 | `onecommodity` | Single commodity per account |
 | `pedantic` | Enable all strict validations |
 | `rename_accounts` | Rename accounts via metadata |
-| `rxtxn` | Link related transactions |
+| `rx_txn_plugin` | Link related transactions |
 | `sellgains` | Cross-check capital gains |
 | `split_expenses` | Split expenses across accounts |
 | `unique_prices` | One price per day per pair |

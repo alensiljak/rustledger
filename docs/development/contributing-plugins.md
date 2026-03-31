@@ -27,15 +27,14 @@ Native plugins live in `crates/rustledger-plugin/src/native/plugins/`:
 crates/rustledger-plugin/
 ├── src/
 │   ├── lib.rs
-│   ├── types.rs           # PluginInput, PluginOutput, etc.
+│   ├── types.rs           # PluginInput, PluginOutput, DirectiveWrapper, etc.
 │   └── native/
-│       ├── mod.rs         # NativePlugin trait
-│       ├── registry.rs    # Plugin registration
+│       ├── mod.rs         # NativePlugin trait + NativePluginRegistry
 │       └── plugins/
 │           ├── mod.rs     # Plugin exports
 │           ├── auto_accounts.rs
 │           ├── implicit_prices.rs
-│           ├── noduplicates.rs
+│           ├── no_duplicates.rs
 │           └── your_plugin.rs  # Your new plugin
 ```
 
@@ -97,21 +96,20 @@ mod my_plugin;
 pub use my_plugin::MyPlugin;
 ```
 
-Then register it in `crates/rustledger-plugin/src/native/registry.rs`:
+Then register it in `crates/rustledger-plugin/src/native/mod.rs`:
 
 ```rust
 impl NativePluginRegistry {
     pub fn new() -> Self {
-        let mut registry = Self {
-            plugins: HashMap::new(),
-        };
-
-        // ... existing plugins ...
-
-        // Add your plugin
-        registry.register(Box::new(plugins::MyPlugin));
-
-        registry
+        Self {
+            plugins: vec![
+                // ... existing plugins ...
+                Box::new(ImplicitPricesPlugin),
+                Box::new(CheckCommodityPlugin),
+                // Add your plugin to the list
+                Box::new(MyPlugin),
+            ],
+        }
     }
 }
 ```
@@ -134,20 +132,23 @@ Add tests in your plugin file:
 mod tests {
     use super::*;
     use crate::types::*;
-    use rustledger_core::{Directive, Transaction, Posting, Amount};
 
-    fn make_transaction(narration: &str) -> Directive {
-        Directive::Transaction(Transaction {
-            date: chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-            flag: rustledger_core::TxnFlag::Okay,
-            payee: None,
-            narration: narration.to_string(),
-            tags: vec![],
-            links: vec![],
-            meta: Default::default(),
-            postings: vec![],
-            source: None,
-        })
+    fn make_transaction(narration: &str) -> DirectiveWrapper {
+        DirectiveWrapper {
+            directive_type: "transaction".to_string(),
+            date: "2024-01-15".to_string(),
+            filename: Some("test.beancount".to_string()),
+            lineno: Some(1),
+            data: DirectiveData::Transaction(TransactionData {
+                flag: "*".to_string(),
+                payee: None,
+                narration: narration.to_string(),
+                tags: vec![],
+                links: vec![],
+                metadata: vec![],
+                postings: vec![],
+            }),
+        }
     }
 
     #[test]
@@ -155,7 +156,7 @@ mod tests {
         let plugin = MyPlugin;
         let input = PluginInput {
             directives: vec![make_transaction("Test")],
-            options: Default::default(),
+            options: PluginOptions::default(),
             config: None,
         };
 
@@ -170,7 +171,7 @@ mod tests {
         let plugin = MyPlugin;
         let input = PluginInput {
             directives: vec![],
-            options: Default::default(),
+            options: PluginOptions::default(),
             config: Some("threshold=100".to_string()),
         };
 
@@ -183,8 +184,8 @@ mod tests {
         let plugin = MyPlugin;
         // Create input that should trigger an error
         let input = PluginInput {
-            directives: vec![/* problematic directive */],
-            options: Default::default(),
+            directives: vec![make_transaction("problematic")],
+            options: PluginOptions::default(),
             config: None,
         };
 
@@ -239,7 +240,7 @@ fn make_transaction(date: &str, narration: &str) -> DirectiveWrapper {
 #[test]
 fn test_my_plugin_integration() {
     let registry = NativePluginRegistry::new();
-    let plugin = registry.get("my_plugin").expect("plugin should exist");
+    let plugin = registry.find("my_plugin").expect("plugin should exist");
 
     let input = make_input(vec![
         make_transaction("2024-01-15", "Test transaction"),
