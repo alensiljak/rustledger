@@ -167,6 +167,7 @@ pub fn handle_code_lens_resolve(
         // Calculate actual balance up to this date.
         // Use full ledger directives if available (multi-file mode), otherwise fall back
         // to single-file directives.
+        // TODO: Consider caching booked directives in LedgerState for large ledgers.
         let actual_balance = calculate_balance_at_date(
             ledger_directives.unwrap_or(&parse_result.directives),
             account,

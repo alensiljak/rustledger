@@ -796,11 +796,14 @@ impl MainLoopState {
 
         let (_text, parse_result) = self.get_document_data(&uri);
 
-        // Get full ledger directives for multi-file balance verification (issue #470)
-        let ledger_guard = self.ledger_state.read();
-        let ledger_directives = ledger_guard.directives();
-        let resolved = handle_code_lens_resolve(lens, &parse_result, ledger_directives);
-        drop(ledger_guard);
+        // Clone directives while holding the lock, then drop the guard before
+        // running the expensive balance calculation (issue #470).
+        let ledger_directives = {
+            let ledger_guard = self.ledger_state.read();
+            ledger_guard.directives().map(|d| d.to_vec())
+        };
+
+        let resolved = handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
 
         serde_json::to_value(resolved).map_err(|e| e.to_string())
     }
