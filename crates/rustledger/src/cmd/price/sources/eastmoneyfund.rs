@@ -102,7 +102,10 @@ impl PriceSource for EastMoneyFundSource {
                 NaiveDate::parse_from_str(s, "%Y-%m-%d")
                     .or_else(|_| {
                         // Try parsing just the date portion (first 10 chars)
-                        if s.len() >= 10 {
+                        // Use char_indices for UTF-8 safety
+                        if let Some((idx, _)) = s.char_indices().nth(10) {
+                            NaiveDate::parse_from_str(&s[..idx], "%Y-%m-%d")
+                        } else if s.len() >= 10 && s.is_char_boundary(10) {
                             NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d")
                         } else {
                             // Return an error that will be converted to None by and_then

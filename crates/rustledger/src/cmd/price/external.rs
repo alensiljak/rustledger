@@ -109,6 +109,32 @@ impl ExternalCommandSource {
     }
 }
 
+/// Validate that a ticker symbol is safe to pass to external commands.
+///
+/// Rejects tickers containing shell metacharacters or path separators.
+fn validate_ticker(ticker: &str) -> Result<()> {
+    // Reject empty tickers
+    if ticker.is_empty() {
+        anyhow::bail!("Empty ticker symbol");
+    }
+
+    // Reject tickers with shell metacharacters or path components
+    let forbidden_chars = [
+        '/', '\\', '`', '$', '(', ')', '{', '}', '[', ']', '|', ';', '&', '<', '>', '\n', '\r',
+        '\0',
+    ];
+    if ticker.chars().any(|c| forbidden_chars.contains(&c)) {
+        anyhow::bail!("Ticker contains forbidden characters: {ticker}");
+    }
+
+    // Reject tickers starting with dash (could be interpreted as flags)
+    if ticker.starts_with('-') {
+        anyhow::bail!("Ticker cannot start with dash: {ticker}");
+    }
+
+    Ok(())
+}
+
 impl PriceSource for ExternalCommandSource {
     fn name(&self) -> &'static str {
         "external"
@@ -122,6 +148,9 @@ impl PriceSource for ExternalCommandSource {
         if self.command.is_empty() {
             anyhow::bail!("External command is empty");
         }
+
+        // Validate ticker to prevent command injection
+        validate_ticker(&request.ticker)?;
 
         let program = &self.command[0];
         let args = &self.command[1..];
@@ -276,5 +305,41 @@ mod tests {
         assert_eq!(response.price, Decimal::from_str("150.00").unwrap());
         assert_eq!(response.currency, "USD");
         assert_eq!(response.source, "external");
+    }
+
+    #[test]
+    fn test_validate_ticker_valid() {
+        assert!(validate_ticker("AAPL").is_ok());
+        assert!(validate_ticker("BTC-USD").is_ok());
+        assert!(validate_ticker("VTI").is_ok());
+        assert!(validate_ticker("SPY500").is_ok());
+    }
+
+    #[test]
+    fn test_validate_ticker_rejects_shell_metacharacters() {
+        assert!(validate_ticker("$(whoami)").is_err());
+        assert!(validate_ticker("AAPL;rm -rf /").is_err());
+        assert!(validate_ticker("AAPL|cat /etc/passwd").is_err());
+        assert!(validate_ticker("AAPL`id`").is_err());
+        assert!(validate_ticker("AAPL&echo").is_err());
+    }
+
+    #[test]
+    fn test_validate_ticker_rejects_paths() {
+        assert!(validate_ticker("/etc/passwd").is_err());
+        assert!(validate_ticker("../../../etc/passwd").is_err());
+        assert!(validate_ticker("C:\\Windows").is_err());
+    }
+
+    #[test]
+    fn test_validate_ticker_rejects_flags() {
+        assert!(validate_ticker("-h").is_err());
+        assert!(validate_ticker("--help").is_err());
+        assert!(validate_ticker("-rf").is_err());
+    }
+
+    #[test]
+    fn test_validate_ticker_rejects_empty() {
+        assert!(validate_ticker("").is_err());
     }
 }

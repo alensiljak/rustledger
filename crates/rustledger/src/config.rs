@@ -74,9 +74,16 @@ pub struct PriceConfig {
     pub default_source: Option<String>,
 
     /// Request timeout in seconds (defaults to 30).
+    ///
+    /// Note: Currently passed to sources but not enforced at the HTTP level
+    /// due to ureq 3.x API limitations. Sources may implement their own
+    /// timeout handling in the future.
     pub timeout: Option<u64>,
 
     /// Cache TTL in seconds (0 = disabled).
+    ///
+    /// TODO: Caching is not yet implemented. This field is reserved for
+    /// future use to cache price responses and reduce API calls.
     pub cache_ttl: Option<u64>,
 
     /// Custom price source definitions.

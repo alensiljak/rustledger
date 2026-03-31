@@ -34,6 +34,12 @@ use anyhow::Result;
 ///
 /// All price sources must implement this trait. The trait is object-safe
 /// to allow dynamic dispatch through `Arc<dyn PriceSource>`.
+///
+/// # Implementation Notes
+///
+/// Source implementations store a `timeout` field for future use. Currently,
+/// ureq 3.x doesn't support timeout on individual requests (only on the Agent).
+/// A future enhancement could use `ureq::Agent` with timeout configuration.
 pub trait PriceSource: Send + Sync {
     /// Returns the unique name of this source.
     fn name(&self) -> &'static str;

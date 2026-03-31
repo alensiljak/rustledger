@@ -104,31 +104,23 @@ impl PriceSourceRegistry {
             Arc::new(sources::EastMoneyFundSource::new(timeout)),
         );
 
-        // Register API key sources (only if env var is set)
-        if std::env::var("OANDA_API_KEY").is_ok() {
-            sources.insert(
-                "oanda".to_string(),
-                Arc::new(sources::OandaSource::new(timeout)),
-            );
-        }
-        if std::env::var("ALPHAVANTAGE_API_KEY").is_ok() {
-            sources.insert(
-                "alphavantage".to_string(),
-                Arc::new(sources::AlphaVantageSource::new(timeout)),
-            );
-        }
-        if std::env::var("CMC_API_KEY").is_ok() {
-            sources.insert(
-                "coinmarketcap".to_string(),
-                Arc::new(sources::CoinMarketCapSource::new(timeout)),
-            );
-        }
-        if std::env::var("QUANDL_API_KEY").is_ok() {
-            sources.insert(
-                "quandl".to_string(),
-                Arc::new(sources::QuandlSource::new(timeout)),
-            );
-        }
+        // Register API key sources (always registered; they return clear errors if key is missing)
+        sources.insert(
+            "oanda".to_string(),
+            Arc::new(sources::OandaSource::new(timeout)),
+        );
+        sources.insert(
+            "alphavantage".to_string(),
+            Arc::new(sources::AlphaVantageSource::new(timeout)),
+        );
+        sources.insert(
+            "coinmarketcap".to_string(),
+            Arc::new(sources::CoinMarketCapSource::new(timeout)),
+        );
+        sources.insert(
+            "quandl".to_string(),
+            Arc::new(sources::QuandlSource::new(timeout)),
+        );
 
         // Register custom command sources from config
         for (name, source_config) in &config.sources {
@@ -299,7 +291,7 @@ mod tests {
     fn test_registry_default_sources() {
         let registry = PriceSourceRegistry::default();
 
-        // Built-in sources should be registered
+        // Built-in sources should be registered (no API key required)
         assert!(registry.has_source("yahoo"));
         assert!(registry.has_source("coinbase"));
         assert!(registry.has_source("coincap"));
@@ -307,6 +299,12 @@ mod tests {
         assert!(registry.has_source("ratesapi"));
         assert!(registry.has_source("tsp"));
         assert!(registry.has_source("eastmoneyfund"));
+
+        // API key sources should also be registered (will error if key not set)
+        assert!(registry.has_source("oanda"));
+        assert!(registry.has_source("alphavantage"));
+        assert!(registry.has_source("coinmarketcap"));
+        assert!(registry.has_source("quandl"));
 
         // Default source should be yahoo
         assert_eq!(registry.default_source_name(), "yahoo");
@@ -322,7 +320,7 @@ mod tests {
 
         // List should be sorted
         let mut sorted = sources.clone();
-        sorted.sort();
+        sorted.sort_unstable();
         assert_eq!(sources, sorted);
     }
 
