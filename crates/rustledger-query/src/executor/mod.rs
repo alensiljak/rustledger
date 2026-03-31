@@ -59,6 +59,11 @@ mod operators;
 mod sort;
 mod window;
 
+/// Default column names for `SELECT *` wildcard expansion.
+/// This must match the order of values pushed in `evaluate_row()`.
+pub const WILDCARD_COLUMNS: &[&str] =
+    &["date", "flag", "payee", "narration", "account", "position"];
+
 impl<'a> Executor<'a> {
     /// Create a new executor with the given directives.
     pub fn new(directives: &'a [Directive]) -> Self {
@@ -1158,18 +1163,17 @@ impl<'a> Executor<'a> {
     fn resolve_column_names(&self, targets: &[Target]) -> Result<Vec<String>, QueryError> {
         let mut names = Vec::new();
         for (i, target) in targets.iter().enumerate() {
-            if let Some(alias) = &target.alias {
+            if matches!(target.expr, Expr::Wildcard) {
+                // Check wildcard BEFORE alias to catch `SELECT * AS alias` edge case
+                if target.alias.is_some() {
+                    return Err(QueryError::Evaluation(
+                        "Cannot alias wildcard (*) - it expands to multiple columns".to_string(),
+                    ));
+                }
+                // Expand wildcard using shared constant (must match evaluate_row expansion)
+                names.extend(WILDCARD_COLUMNS.iter().map(|s| (*s).to_string()));
+            } else if let Some(alias) = &target.alias {
                 names.push(alias.clone());
-            } else if matches!(target.expr, Expr::Wildcard) {
-                // Expand wildcard to default column names (must match evaluate_row expansion)
-                names.extend([
-                    "date".to_string(),
-                    "flag".to_string(),
-                    "payee".to_string(),
-                    "narration".to_string(),
-                    "account".to_string(),
-                    "position".to_string(),
-                ]);
             } else {
                 names.push(self.expr_to_name(&target.expr, i));
             }
@@ -2380,6 +2384,23 @@ mod tests {
         // Each row has expanded values matching the column names
         assert_eq!(result.len(), 4);
         assert_eq!(result.rows[0].len(), 6);
+    }
+
+    #[test]
+    fn test_wildcard_alias_rejected() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // SELECT * AS alias should fail - wildcard expands to multiple columns
+        let query = parse("SELECT * AS data").unwrap();
+        let result = executor.execute(&query);
+
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("Cannot alias wildcard"),
+            "Expected wildcard alias error, got: {err}"
+        );
     }
 
     #[test]
