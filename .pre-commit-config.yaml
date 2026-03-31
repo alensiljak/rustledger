@@ -51,7 +51,7 @@ repos:
         stages: [commit-msg]
         pass_filenames: true
 
-      # === Pre-push hooks (slower, run before push) ===
+      # === Pre-push hooks (fast checks only - heavy checks run in CI) ===
 
       # Branch name validation
       - id: branch-name
@@ -62,29 +62,8 @@ repos:
         pass_filenames: false
         always_run: true
 
-      # Clippy - runs when Rust files or Cargo manifests change
-      - id: clippy
-        name: clippy
-        entry: cargo clippy --all-features --all-targets -- -D warnings
-        language: system
-        files: \.(rs)$|Cargo\.(toml|lock)$
-        stages: [pre-push]
-        pass_filenames: false
-
-      # Cargo test - runs when Rust files or Cargo manifests change
-      - id: cargo-test
-        name: cargo-test
-        entry: cargo test --workspace --lib --quiet
-        language: system
-        files: \.(rs)$|Cargo\.(toml|lock)$
-        stages: [pre-push]
-        pass_filenames: false
-
-      # Cargo doc - runs when Rust files or Cargo manifests change
-      - id: cargo-doc
-        name: cargo-doc
-        entry: bash -c 'RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --quiet'
-        language: system
-        files: \.(rs)$|Cargo\.(toml|lock)$
-        stages: [pre-push]
-        pass_filenames: false
+      # NOTE: clippy, cargo-test, and cargo-doc are intentionally NOT run
+      # as pre-push hooks because they take too long (10-30 minutes for full
+      # workspace). These checks run in CI instead where they can be parallelized
+      # and cached. Use `cargo clippy` and `cargo test` manually before pushing
+      # if you want to catch issues early.

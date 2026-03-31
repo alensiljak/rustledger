@@ -34,6 +34,7 @@ mod options;
 #[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
 mod process;
 mod source_map;
+mod vfs;
 
 #[cfg(feature = "cache")]
 pub use cache::{
@@ -42,6 +43,7 @@ pub use cache::{
 };
 pub use options::Options;
 pub use source_map::{SourceFile, SourceMap};
+pub use vfs::{DiskFileSystem, FileSystem, VirtualFileSystem};
 
 // Re-export processing API when features are enabled
 #[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
@@ -53,7 +55,6 @@ pub use process::{
 use rustledger_core::{Directive, DisplayContext};
 use rustledger_parser::{ParseError, Span, Spanned};
 use std::collections::HashSet;
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
@@ -197,27 +198,6 @@ pub struct Plugin {
     pub force_python: bool,
 }
 
-/// Check if a file is GPG-encrypted based on extension or content.
-///
-/// Returns `true` for:
-/// - Files with `.gpg` extension
-/// - Files with `.asc` extension containing a PGP message header
-fn is_encrypted_file(path: &Path) -> bool {
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("gpg") => true,
-        Some("asc") => {
-            // Check for PGP header in first 1024 bytes
-            if let Ok(content) = fs::read_to_string(path) {
-                let check_len = 1024.min(content.len());
-                content[..check_len].contains("-----BEGIN PGP MESSAGE-----")
-            } else {
-                false
-            }
-        }
-        _ => false,
-    }
-}
-
 /// Decrypt a GPG-encrypted file using the system `gpg` command.
 ///
 /// This uses `gpg --batch --decrypt` which will use the user's
@@ -246,7 +226,7 @@ fn decrypt_gpg_file(path: &Path) -> Result<String, LoadError> {
 }
 
 /// Beancount file loader.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Loader {
     /// Files that have been loaded (for cycle detection).
     loaded_files: HashSet<PathBuf>,
@@ -259,6 +239,21 @@ pub struct Loader {
     root_dir: Option<PathBuf>,
     /// Whether to enforce path traversal protection.
     enforce_path_security: bool,
+    /// Filesystem abstraction for reading files.
+    fs: Box<dyn FileSystem>,
+}
+
+impl Default for Loader {
+    fn default() -> Self {
+        Self {
+            loaded_files: HashSet::new(),
+            include_stack: Vec::new(),
+            include_stack_set: HashSet::new(),
+            root_dir: None,
+            enforce_path_security: false,
+            fs: Box::new(DiskFileSystem),
+        }
+    }
 }
 
 impl Loader {
@@ -298,6 +293,27 @@ impl Loader {
         self
     }
 
+    /// Set a custom filesystem for file loading.
+    ///
+    /// This allows using a virtual filesystem (e.g., for WASM) instead of
+    /// the default disk filesystem.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use rustledger_loader::{Loader, VirtualFileSystem};
+    ///
+    /// let mut vfs = VirtualFileSystem::new();
+    /// vfs.add_file("main.beancount", "2024-01-01 open Assets:Bank USD");
+    ///
+    /// let loader = Loader::new().with_filesystem(Box::new(vfs));
+    /// ```
+    #[must_use]
+    pub fn with_filesystem(mut self, fs: Box<dyn FileSystem>) -> Self {
+        self.fs = fs;
+        self
+    }
+
     /// Load a beancount file and all its includes.
     ///
     /// Parses the file, processes options and plugin directives, and recursively
@@ -320,8 +336,8 @@ impl Loader {
         let mut source_map = SourceMap::new();
         let mut errors = Vec::new();
 
-        // Get normalized absolute path (WASI-compatible, doesn't require canonicalize)
-        let canonical = normalize_path(path);
+        // Get normalized path (uses filesystem-specific normalization)
+        let canonical = self.fs.normalize(path);
 
         // Set root directory for path security if enabled but not explicitly set
         if self.enforce_path_security && self.root_dir.is_none() {
@@ -380,18 +396,10 @@ impl Loader {
 
         // Read file (decrypting if necessary)
         // Try fast UTF-8 conversion first, fall back to lossy for non-UTF-8 files
-        let source: std::sync::Arc<str> = if is_encrypted_file(path) {
+        let source: std::sync::Arc<str> = if self.fs.is_encrypted(path) {
             decrypt_gpg_file(path)?.into()
         } else {
-            let bytes = fs::read(path).map_err(|e| LoadError::Io {
-                path: path_buf.clone(),
-                source: e,
-            })?;
-            // Try zero-copy conversion first (common case), fall back to lossy
-            match String::from_utf8(bytes) {
-                Ok(s) => s.into(),
-                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned().into(),
-            }
+            self.fs.read(path)?
         };
 
         // Add to source map (Arc::clone is cheap - just increments refcount)
@@ -522,8 +530,8 @@ impl Loader {
 
             // Load each matched file
             for matched_path in paths_to_load {
-                // Use normalize_path for WASI compatibility (canonicalize not supported)
-                let canonical = normalize_path(&matched_path);
+                // Use filesystem-specific normalization (VFS vs disk)
+                let canonical = self.fs.normalize(&matched_path);
 
                 // Additional security check for each matched file
                 // (glob could still match files outside root via symlinks)
@@ -647,35 +655,39 @@ mod tests {
 
     #[test]
     fn test_is_encrypted_file_gpg_extension() {
+        let fs = DiskFileSystem;
         let path = Path::new("test.beancount.gpg");
-        assert!(is_encrypted_file(path));
+        assert!(fs.is_encrypted(path));
     }
 
     #[test]
     fn test_is_encrypted_file_plain_beancount() {
+        let fs = DiskFileSystem;
         let path = Path::new("test.beancount");
-        assert!(!is_encrypted_file(path));
+        assert!(!fs.is_encrypted(path));
     }
 
     #[test]
     fn test_is_encrypted_file_asc_with_pgp_header() {
+        let fs = DiskFileSystem;
         let mut file = NamedTempFile::with_suffix(".asc").unwrap();
         writeln!(file, "-----BEGIN PGP MESSAGE-----").unwrap();
         writeln!(file, "some encrypted content").unwrap();
         writeln!(file, "-----END PGP MESSAGE-----").unwrap();
         file.flush().unwrap();
 
-        assert!(is_encrypted_file(file.path()));
+        assert!(fs.is_encrypted(file.path()));
     }
 
     #[test]
     fn test_is_encrypted_file_asc_without_pgp_header() {
+        let fs = DiskFileSystem;
         let mut file = NamedTempFile::with_suffix(".asc").unwrap();
         writeln!(file, "This is just a plain text file").unwrap();
         writeln!(file, "with .asc extension but no PGP content").unwrap();
         file.flush().unwrap();
 
-        assert!(!is_encrypted_file(file.path()));
+        assert!(!fs.is_encrypted(file.path()));
     }
 
     #[test]
@@ -730,5 +742,90 @@ mod tests {
         assert_eq!(result.plugins[0].name, "my_plugin");
         assert!(result.plugins[0].force_python);
         assert_eq!(result.plugins[0].config, Some("config_value".to_string()));
+    }
+
+    #[test]
+    fn test_virtual_filesystem_include_resolution() {
+        // Create a virtual filesystem with multiple files
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "accounts.beancount"
+
+2024-01-15 * "Coffee"
+  Expenses:Food  5.00 USD
+  Assets:Bank   -5.00 USD
+"#,
+        );
+        vfs.add_file(
+            "accounts.beancount",
+            r"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+",
+        );
+
+        // Load with virtual filesystem
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have 3 directives: 2 opens + 1 transaction
+        assert_eq!(result.directives.len(), 3);
+        assert!(result.errors.is_empty());
+
+        // Verify directive types
+        let directive_types: Vec<_> = result
+            .directives
+            .iter()
+            .map(|d| match &d.value {
+                rustledger_core::Directive::Open(_) => "open",
+                rustledger_core::Directive::Transaction(_) => "txn",
+                _ => "other",
+            })
+            .collect();
+        assert_eq!(directive_types, vec!["open", "open", "txn"]);
+    }
+
+    #[test]
+    fn test_virtual_filesystem_nested_includes() {
+        // Test deeply nested includes
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file("main.beancount", r#"include "level1.beancount""#);
+        vfs.add_file(
+            "level1.beancount",
+            r#"
+include "level2.beancount"
+2024-01-01 open Assets:Level1 USD
+"#,
+        );
+        vfs.add_file("level2.beancount", "2024-01-01 open Assets:Level2 USD");
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have 2 open directives from nested includes
+        assert_eq!(result.directives.len(), 2);
+        assert!(result.errors.is_empty());
+    }
+
+    #[test]
+    fn test_virtual_filesystem_missing_include() {
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file("main.beancount", r#"include "nonexistent.beancount""#);
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have an error for missing file
+        assert!(!result.errors.is_empty());
+        let error_msg = result.errors[0].to_string();
+        assert!(error_msg.contains("not found") || error_msg.contains("Io"));
     }
 }

@@ -487,7 +487,9 @@ impl Executor<'_> {
         let mut row = Vec::new();
         for target in targets {
             if matches!(target.expr, Expr::Wildcard) {
-                // Expand wildcard to default columns
+                // Expand wildcard to default columns.
+                // Order must match WILDCARD_COLUMNS constant in mod.rs:
+                // [date, flag, payee, narration, account, position]
                 row.push(Value::Date(ctx.transaction.date));
                 row.push(Value::String(ctx.transaction.flag.to_string()));
                 row.push(

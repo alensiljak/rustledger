@@ -3261,6 +3261,7 @@ dependencies = [
  "js-sys",
  "rustledger-booking",
  "rustledger-core",
+ "rustledger-loader",
  "rustledger-parser",
  "rustledger-plugin",
  "rustledger-query",

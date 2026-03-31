@@ -1,7 +1,7 @@
 //! Conversion functions between core types and JSON.
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::fmt::Write;
 
 use sha2::{Digest, Sha256};
 
@@ -35,7 +35,7 @@ pub fn compute_directive_hash(directive: &Directive) -> String {
                 hasher.update(posting.account.as_bytes());
                 if let Some(ref units) = posting.units {
                     if let Some(num) = units.number() {
-                        write!(&mut hasher, "{num}").ok();
+                        hasher.update(num.to_string().as_bytes());
                     }
                     if let Some(cur) = units.currency() {
                         hasher.update(cur.as_bytes());
@@ -60,7 +60,7 @@ pub fn compute_directive_hash(directive: &Directive) -> String {
             hasher.update(b"Balance");
             hasher.update(b.date.to_string().as_bytes());
             hasher.update(b.account.as_bytes());
-            write!(&mut hasher, "{}", b.amount.number).ok();
+            hasher.update(b.amount.number.to_string().as_bytes());
             hasher.update(b.amount.currency.as_bytes());
         }
         Directive::Pad(p) => {
@@ -78,7 +78,7 @@ pub fn compute_directive_hash(directive: &Directive) -> String {
             hasher.update(b"Price");
             hasher.update(p.date.to_string().as_bytes());
             hasher.update(p.currency.as_bytes());
-            write!(&mut hasher, "{}", p.amount.number).ok();
+            hasher.update(p.amount.number.to_string().as_bytes());
             hasher.update(p.amount.currency.as_bytes());
         }
         Directive::Event(e) => {
@@ -113,7 +113,10 @@ pub fn compute_directive_hash(directive: &Directive) -> String {
     }
 
     let result = hasher.finalize();
-    format!("{result:x}")
+    result.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// Convert core directive to JSON output format.

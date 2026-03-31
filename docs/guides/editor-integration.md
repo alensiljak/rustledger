@@ -9,44 +9,65 @@ Set up your editor for beancount editing with syntax highlighting, completion, a
 
 ## VS Code
 
-### Extension
+VS Code requires two extensions: one for syntax highlighting and one to connect to the LSP server.
 
-Install the rustledger VS Code extension:
+### Step 1: Install Syntax Highlighting
 
-1. Open VS Code
-2. Press `Ctrl+Shift+X` (Extensions)
-3. Search for "rustledger"
-4. Click Install
-
-Or from command line:
+Install the Beancount extension for syntax highlighting:
 
 ```bash
-code --install-extension rustledger.rustledger-vscode
+code --install-extension Lencerf.beancount
 ```
 
-### Features
+### Step 2: Install Generic LSP Client
 
-- Syntax highlighting
-- Real-time error diagnostics
-- Account name completion
-- Go to definition (accounts, commodities)
-- Hover information
-- Code formatting
+Install the Generic LSP Client (v2) extension:
 
-### Configuration
+```bash
+code --install-extension zsol.vscode-glspc
+```
 
-In VS Code settings (`Ctrl+,`):
+### Step 3: Configure LSP
+
+Add to your `.vscode/settings.json` (workspace) or user settings:
 
 ```json
 {
-  "rustledger.path": "rledger",
-  "rustledger.checkOnSave": true,
-  "rustledger.formatting.enabled": true,
+  "glspc.server.command": "rledger-lsp",
+  "glspc.server.commandArguments": [],
+  "glspc.server.languageId": ["beancount"],
   "[beancount]": {
     "editor.formatOnSave": true
   }
 }
 ```
+
+### Features
+
+Once configured, you get:
+
+- Syntax highlighting (from Lencerf.beancount)
+- Real-time error diagnostics
+- Account, payee, and tag completion
+- Go to definition (accounts, commodities)
+- Find all references
+- Hover information (account balances, metadata)
+- Document symbols / outline
+- Code formatting
+- Rename refactoring
+
+### Troubleshooting VS Code
+
+If the LSP isn't working:
+
+1. Ensure `rledger-lsp` is in your PATH:
+   ```bash
+   which rledger-lsp
+   ```
+
+2. Check the Output panel (`View > Output`) and select "Generic LSP Client" from the dropdown
+
+3. If you installed via a package manager, you may need to restart VS Code after installation
 
 ## Vim / Neovim
 

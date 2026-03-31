@@ -2,9 +2,12 @@
 //!
 //! These functions are exposed to JavaScript via wasm-bindgen.
 
+use std::collections::HashMap;
+use std::path::Path;
 use wasm_bindgen::prelude::*;
 
 use rustledger_core::Directive;
+use rustledger_loader::{FileSystem, LoadError, LoadResult};
 use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
@@ -17,6 +20,45 @@ use crate::types::{
 #[cfg(feature = "plugins")]
 use crate::types::{PluginInfo, PluginResult};
 use crate::utils::LineLookup;
+
+/// Convert [`LoadResult`] errors to detailed Error objects with line/column info.
+///
+/// This preserves parse error details that would be lost by simple `to_string()`.
+fn load_errors_to_errors(load_result: &LoadResult) -> Vec<Error> {
+    let mut errors = Vec::new();
+
+    for load_error in &load_result.errors {
+        match load_error {
+            LoadError::ParseErrors {
+                path,
+                errors: parse_errors,
+            } => {
+                // Expand parse errors with file path and line info
+                for parse_error in parse_errors {
+                    let span = parse_error.span();
+                    // Try to get line number from source map
+                    let line = load_result
+                        .source_map
+                        .get_by_path(path)
+                        .map(|file| file.line_col(span.0).0 as u32);
+
+                    let msg = format!("{}: {}", path.display(), parse_error);
+                    if let Some(line_num) = line {
+                        errors.push(Error::with_line(msg, line_num));
+                    } else {
+                        errors.push(Error::new(msg));
+                    }
+                }
+            }
+            other => {
+                // Other errors use default string conversion
+                errors.push(Error::new(other.to_string()));
+            }
+        }
+    }
+
+    errors
+}
 
 /// Parse a Beancount source string.
 ///
@@ -337,4 +379,332 @@ pub fn bql_completions(partial_query: &str, cursor_pos: usize) -> Result<JsValue
     };
 
     to_js(&json_result)
+}
+
+/// Parse multiple Beancount files with include resolution.
+///
+/// This function accepts a map of file paths to file contents and an entry point,
+/// resolving `include` directives across the files. This enables multi-file ledgers
+/// in WASM environments where filesystem access is not available.
+///
+/// # Arguments
+///
+/// * `files` - A JavaScript object mapping file paths to their contents.
+///   Example: `{ "main.beancount": "include \"accounts.beancount\"", "accounts.beancount": "..." }`
+/// * `entry_point` - The main file to start loading from (must exist in `files`).
+///
+/// # Returns
+///
+/// A `ParseResult` with the parsed ledger from all files and any errors.
+///
+/// # Example (JavaScript)
+///
+/// ```javascript
+/// const result = parseMultiFile({
+///   "main.beancount": `
+///     include "accounts.beancount"
+///     2024-01-15 * "Coffee"
+///       Expenses:Food  5.00 USD
+///       Assets:Bank
+///   `,
+///   "accounts.beancount": `
+///     2024-01-01 open Assets:Bank USD
+///     2024-01-01 open Expenses:Food USD
+///   `
+/// }, "main.beancount");
+/// ```
+#[wasm_bindgen(js_name = "parseMultiFile")]
+pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
+    use rustledger_booking::interpolate;
+    use rustledger_loader::{Loader, VirtualFileSystem};
+
+    // Parse the JavaScript object to a HashMap
+    let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+        .map_err(|e| JsError::new(&format!("Invalid files object: {e}")))?;
+
+    if file_map.is_empty() {
+        return Err(JsError::new("Files map cannot be empty"));
+    }
+
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
+        return Err(JsError::new(&format!(
+            "Entry point '{entry_point}' not found in files map"
+        )));
+    }
+
+    // Create loader with virtual filesystem
+    let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+
+    // Load from entry point
+    let load_result = match loader.load(Path::new(entry_point)) {
+        Ok(result) => result,
+        Err(e) => {
+            let result = ParseResult {
+                ledger: None,
+                errors: vec![Error::new(format!("Load error: {e}"))],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Collect load errors with detailed parse error info
+    let mut errors = load_errors_to_errors(&load_result);
+
+    // Extract options from loader options
+    let options = crate::types::LedgerOptions {
+        title: load_result.options.title.clone(),
+        operating_currencies: load_result.options.operating_currency.clone(),
+    };
+
+    // Extract and interpolate directives
+    let mut directives: Vec<Directive> = load_result
+        .directives
+        .into_iter()
+        .map(|s| s.value)
+        .collect();
+
+    // Interpolate transactions (fill in missing amounts)
+    if errors.is_empty() {
+        for directive in &mut directives {
+            if let Directive::Transaction(txn) = directive {
+                match interpolate(txn) {
+                    Ok(result) => {
+                        *txn = result.transaction;
+                    }
+                    Err(e) => {
+                        errors.push(Error::new(e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    let ledger = Some(Ledger {
+        directives: directives.iter().map(directive_to_json).collect(),
+        options,
+    });
+
+    let result = ParseResult { ledger, errors };
+    to_js(&result)
+}
+
+/// Validate multiple Beancount files with include resolution.
+///
+/// Similar to `parseMultiFile`, but also runs validation.
+/// Returns a `ValidationResult` indicating whether the ledger is valid.
+#[wasm_bindgen(js_name = "validateMultiFile")]
+pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
+    use rustledger_booking::interpolate;
+    use rustledger_loader::{Loader, VirtualFileSystem};
+    use rustledger_validate::validate as validate_ledger;
+
+    // Parse the JavaScript object to a HashMap
+    let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+        .map_err(|e| JsError::new(&format!("Invalid files object: {e}")))?;
+
+    if file_map.is_empty() {
+        return Err(JsError::new("Files map cannot be empty"));
+    }
+
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
+        return Err(JsError::new(&format!(
+            "Entry point '{entry_point}' not found in files map"
+        )));
+    }
+
+    // Create loader with virtual filesystem
+    let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+
+    // Load from entry point
+    let load_result = match loader.load(Path::new(entry_point)) {
+        Ok(result) => result,
+        Err(e) => {
+            let result = ValidationResult {
+                valid: false,
+                errors: vec![Error::new(format!("Load error: {e}"))],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Collect load errors with detailed parse error info
+    let mut errors = load_errors_to_errors(&load_result);
+
+    // Extract and interpolate directives
+    let mut directives: Vec<Directive> = load_result
+        .directives
+        .into_iter()
+        .map(|s| s.value)
+        .collect();
+
+    // Interpolate transactions
+    if errors.is_empty() {
+        for directive in &mut directives {
+            if let Directive::Transaction(txn) = directive {
+                match interpolate(txn) {
+                    Ok(result) => {
+                        *txn = result.transaction;
+                    }
+                    Err(e) => {
+                        errors.push(Error::new(e.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
+    // Run validation if no parse/interpolation errors
+    if errors.is_empty() {
+        let validation_errors = validate_ledger(&directives);
+        for err in validation_errors {
+            errors.push(Error::new(err.message));
+        }
+    }
+
+    let result = ValidationResult {
+        valid: errors.is_empty(),
+        errors,
+    };
+    to_js(&result)
+}
+
+/// Run a BQL query on multiple Beancount files.
+///
+/// Similar to `query`, but accepts multiple files with include resolution.
+///
+/// Note: Glob patterns in `include` directives are not supported in multi-file mode
+/// since there is no real filesystem to enumerate. Use explicit file paths instead.
+#[wasm_bindgen(js_name = "queryMultiFile")]
+pub fn query_multi_file(
+    files: JsValue,
+    entry_point: &str,
+    query_str: &str,
+) -> Result<JsValue, JsError> {
+    use rustledger_booking::interpolate;
+    use rustledger_loader::{Loader, VirtualFileSystem};
+    use rustledger_query::{Executor, parse as parse_query};
+
+    // Parse the JavaScript object to a HashMap
+    let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+        .map_err(|e| JsError::new(&format!("Invalid files object: {e}")))?;
+
+    if file_map.is_empty() {
+        return Err(JsError::new("Files map cannot be empty"));
+    }
+
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
+        return Err(JsError::new(&format!(
+            "Entry point '{entry_point}' not found in files map"
+        )));
+    }
+
+    // Create loader with virtual filesystem
+    let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+
+    // Load from entry point
+    let load_result = match loader.load(Path::new(entry_point)) {
+        Ok(result) => result,
+        Err(e) => {
+            let result = QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                errors: vec![Error::new(format!("Load error: {e}"))],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Collect load errors with detailed parse error info
+    let errors = load_errors_to_errors(&load_result);
+
+    if !errors.is_empty() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            errors,
+        };
+        return to_js(&result);
+    }
+
+    // Extract and interpolate directives
+    let mut directives: Vec<Directive> = load_result
+        .directives
+        .into_iter()
+        .map(|s| s.value)
+        .collect();
+
+    let mut interpolation_errors: Vec<Error> = Vec::new();
+    for directive in &mut directives {
+        if let Directive::Transaction(txn) = directive {
+            match interpolate(txn) {
+                Ok(result) => {
+                    *txn = result.transaction;
+                }
+                Err(e) => {
+                    interpolation_errors.push(Error::new(e.to_string()));
+                }
+            }
+        }
+    }
+
+    if !interpolation_errors.is_empty() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            errors: interpolation_errors,
+        };
+        return to_js(&result);
+    }
+
+    // Parse the query
+    let query = match parse_query(query_str) {
+        Ok(q) => q,
+        Err(e) => {
+            let result = QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                errors: vec![Error::new(e.to_string())],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Execute query
+    let mut executor = Executor::new(&directives);
+    match executor.execute(&query) {
+        Ok(result) => {
+            let rows: Vec<Vec<_>> = result
+                .rows
+                .iter()
+                .map(|row| row.iter().map(value_to_cell).collect())
+                .collect();
+
+            let query_result = QueryResult {
+                columns: result.columns,
+                rows,
+                errors: Vec::new(),
+            };
+            to_js(&query_result)
+        }
+        Err(e) => {
+            let result = QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                errors: vec![Error::new(format!("Query execution error: {e}"))],
+            };
+            to_js(&result)
+        }
+    }
 }
