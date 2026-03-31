@@ -14,12 +14,12 @@ LIMIT 10
 
 ## Features
 
-- Full BQL support (SELECT, FROM, WHERE, GROUP BY, ORDER BY, LIMIT)
+- Full BQL support (SELECT, WHERE, GROUP BY, ORDER BY, LIMIT, PIVOT BY)
 - Regex pattern matching (`~` operator)
 - Aggregate functions (SUM, COUNT, FIRST, LAST, MIN, MAX)
 - Date functions (YEAR, MONTH, DAY, QUARTER)
 - String functions (LENGTH, UPPER, LOWER)
-- Subqueries and PIVOT tables
+- Account functions (ROOT, LEAF, PARENT)
 
 ## Example
 
