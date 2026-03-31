@@ -273,29 +273,33 @@ pub trait NativePlugin: Send + Sync {
 
 ## Working with Directives
 
-### Common Directive Types
+::: info Plugin Types vs Core Types
+Plugins receive `DirectiveWrapper` with `DirectiveData` (from `crate::types`), not `rustledger_core::Directive`. These wrapper types use strings for dates and decimals to simplify serialization. See `crates/rustledger-plugin/src/types.rs` for the complete type definitions.
+:::
+
+### Iterating Over Directives
 
 ```rust
-use rustledger_core::{Directive, Transaction, Open, Close, Balance, Price};
+use crate::types::{DirectiveWrapper, DirectiveData, TransactionData};
 
-for directive in &input.directives {
-    match directive {
-        Directive::Transaction(txn) => {
-            // Access txn.date, txn.payee, txn.narration, txn.postings, etc.
+for wrapper in &input.directives {
+    match &wrapper.data {
+        DirectiveData::Transaction(txn) => {
+            // txn.flag, txn.payee, txn.narration, txn.postings, etc.
         }
-        Directive::Open(open) => {
-            // Access open.account, open.currencies, open.booking
+        DirectiveData::Open(open) => {
+            // open.account, open.currencies, open.booking
         }
-        Directive::Close(close) => {
-            // Access close.account
+        DirectiveData::Close(close) => {
+            // close.account
         }
-        Directive::Balance(bal) => {
-            // Access bal.account, bal.amount
+        DirectiveData::Balance(bal) => {
+            // bal.account, bal.amount
         }
-        Directive::Price(price) => {
-            // Access price.currency, price.amount
+        DirectiveData::Price(price) => {
+            // price.currency, price.amount
         }
-        // ... other types
+        _ => {}
     }
 }
 ```
@@ -306,14 +310,12 @@ for directive in &input.directives {
 fn process(&self, input: PluginInput) -> PluginOutput {
     let directives: Vec<_> = input.directives
         .into_iter()
-        .map(|d| {
-            if let Directive::Transaction(mut txn) = d {
+        .map(|mut wrapper| {
+            if let DirectiveData::Transaction(ref mut txn) = wrapper.data {
                 // Modify transaction
                 txn.tags.push("processed".to_string());
-                Directive::Transaction(txn)
-            } else {
-                d
             }
+            wrapper
         })
         .collect();
 
@@ -330,14 +332,21 @@ fn process(&self, input: PluginInput) -> PluginOutput {
 fn process(&self, input: PluginInput) -> PluginOutput {
     let mut directives = input.directives;
 
-    // Generate new directives
-    let new_price = Directive::Price(Price {
-        date: chrono::NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
-        currency: "AAPL".to_string(),
-        amount: Amount::new(Decimal::new(15000, 2), "USD"),
-        meta: Default::default(),
-        source: None,
-    });
+    // Generate new directives using wrapper types
+    let new_price = DirectiveWrapper {
+        directive_type: String::new(),
+        date: "2024-01-15".to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Price(PriceData {
+            currency: "AAPL".to_string(),
+            amount: AmountData {
+                number: "150.00".to_string(),
+                currency: "USD".to_string(),
+            },
+            metadata: vec![],
+        }),
+    };
 
     directives.push(new_price);
 
