@@ -185,8 +185,8 @@ ledger.free(); // Release WASM memory
 | `query()` | Run BQL queries |
 | `format()` | Format source with consistent alignment |
 | `expandPads()` | Expand pad directives |
-| `runPlugin()` | Run native plugins |
-| `bqlCompletions()` | BQL query completions |
+| `runPlugin()` | Run native plugins (requires `plugins` feature) |
+| `bqlCompletions()` | BQL query completions (requires `completions` feature) |
 
 ## WASI FFI (JSON-RPC)
 
@@ -254,38 +254,46 @@ echo '{"jsonrpc":"2.0","method":"ledger.validate","params":{"source":"2024-01-01
 ### Example: Python with wasmtime-py
 
 ```python
-from wasmtime import Store, Module, Instance, Linker, WasiConfig
+import subprocess
 import json
 
-# Load the WASI module
-store = Store()
-wasi_config = WasiConfig()
-wasi_config.inherit_stdin()
-wasi_config.inherit_stdout()
-store.set_wasi(wasi_config)
-
-module = Module.from_file(store.engine, "rustledger-ffi-wasi.wasm")
-linker = Linker(store.engine)
-linker.define_wasi()
-instance = linker.instantiate(store, module)
-
-# Helper to call JSON-RPC methods
-def call_rpc(method, params):
+def call_rpc(method, params, wasm_path="rustledger-ffi-wasi.wasm"):
+    """Call a JSON-RPC method on the rustledger WASI module."""
     request = json.dumps({
         "jsonrpc": "2.0",
         "method": method,
         "params": params,
         "id": 1
     })
-    # Write to stdin, read from stdout
-    # ... implementation depends on your WASI binding approach
-    pass
+
+    proc = subprocess.run(
+        ["wasmtime", wasm_path],
+        input=request,
+        capture_output=True,
+        text=True
+    )
+
+    if proc.returncode != 0:
+        raise RuntimeError(f"WASI module failed: {proc.stderr}")
+
+    response = json.loads(proc.stdout)
+    if "error" in response:
+        raise RuntimeError(f"JSON-RPC error: {response['error']}")
+
+    return response.get("result")
 
 # Validate a ledger
 result = call_rpc("ledger.validate", {
     "source": "2024-01-01 open Assets:Bank USD"
 })
-print(result)
+print(f"Valid: {result['valid']}")
+
+# Run a query
+balances = call_rpc("query.execute", {
+    "source": "2024-01-01 open Assets:Bank USD\n2024-01-15 * \"Test\"\n  Assets:Bank 100 USD\n  Income:Test",
+    "query": "BALANCES"
+})
+print(balances)
 ```
 
 ### Error Codes
@@ -325,7 +333,7 @@ echo '[
 For editor integrations, rustledger provides an LSP server:
 
 ```bash
-rledger lsp
+rledger-lsp
 ```
 
 The LSP supports:
