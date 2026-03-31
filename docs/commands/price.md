@@ -10,14 +10,14 @@ Fetch current and historical commodity prices from online sources.
 ## Usage
 
 ```bash
-rledger price [OPTIONS] <COMMODITY>
+rledger price [OPTIONS] [SYMBOL]...
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `COMMODITY` | Commodity symbol (e.g., AAPL, BTC, EUR) |
+| `SYMBOL...` | One or more commodity symbols (e.g., AAPL, BTC, EUR) |
 
 ## Options
 

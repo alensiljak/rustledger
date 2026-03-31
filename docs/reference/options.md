@@ -164,20 +164,20 @@ option "documents" "/home/user/finances/documents"
 | `name_equity` | string | Equity | Equity root name |
 | `name_income` | string | Income | Income root name |
 | `name_expenses` | string | Expenses | Expenses root name |
-| `account_previous_balances` | string | - | Opening balances account |
-| `account_previous_earnings` | string | - | Retained earnings account |
-| `account_previous_conversions` | string | - | Previous conversions account |
-| `account_current_earnings` | string | - | Current earnings account |
+| `account_previous_balances` | string | Equity:Opening-Balances | Opening balances account |
+| `account_previous_earnings` | string | Equity:Earnings:Previous | Retained earnings account |
+| `account_previous_conversions` | string | Equity:Conversions:Previous | Previous conversions account |
+| `account_current_earnings` | string | Equity:Earnings:Current | Current earnings account |
 | `account_current_conversions` | string | - | Current conversions account |
 | `account_unrealized_gains` | string | - | Unrealized gains account |
 | `account_rounding` | string | - | Rounding errors account |
 | `conversion_currency` | string | - | Currency for conversions |
 | `inferred_tolerance_default` | string | - | Balance tolerance |
-| `inferred_tolerance_multiplier` | decimal | 1.0 | Tolerance multiplier |
+| `inferred_tolerance_multiplier` | decimal | 0.5 | Tolerance multiplier |
 | `infer_tolerance_from_cost` | bool | FALSE | Infer tolerance from cost |
 | `documents` | string | - | Documents root directory |
 | `plugin_processing_mode` | string | default | Plugin mode |
-| `long_string_maxlines` | int | - | Max lines for long strings |
+| `long_string_maxlines` | int | 64 | Max lines for long strings |
 
 ## Example Configuration
 

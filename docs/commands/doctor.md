@@ -144,8 +144,11 @@ rledger doctor directories ledger.beancount documents/
 ### Generate Synthetic Test Data
 
 ```bash
-# Generate a synthetic ledger for testing
-rledger doctor generate-synthetic > test-ledger.beancount
+# Generate synthetic ledgers into default directory
+rledger doctor generate-synthetic
+
+# Specify output directory and options
+rledger doctor generate-synthetic --output tests/synthetic --count 10
 ```
 
 ## See Also

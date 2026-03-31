@@ -10,14 +10,14 @@ Automatically format beancount files for consistent style.
 ## Usage
 
 ```bash
-rledger format [OPTIONS] [FILE]
+rledger format [OPTIONS] [FILE]...
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | The beancount file to format |
+| `FILE...` | One or more beancount files to format |
 
 ## Options
 

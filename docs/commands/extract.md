@@ -10,14 +10,14 @@ Import transactions from CSV and OFX bank statements.
 ## Usage
 
 ```bash
-rledger extract [OPTIONS] <FILE>
+rledger extract [OPTIONS] [FILE]
 ```
 
 ## Arguments
 
 | Argument | Description |
 |----------|-------------|
-| `FILE` | CSV or OFX file to import |
+| `FILE` | CSV or OFX file to import (required unless using `--list-importers`) |
 
 ## Options
 
@@ -37,7 +37,7 @@ rledger extract [OPTIONS] <FILE>
 | `-c, --currency <CURRENCY>` | Currency for amounts [default: USD] |
 | `--date-column <COL>` | Date column name or index [default: Date] |
 | `--date-format <FMT>` | Date format (strftime-style) [default: %Y-%m-%d] |
-| `--narration-column <COL>` | Narration/description column |
+| `--narration-column <COL>` | Narration/description column [default: Description] |
 | `--payee-column <COL>` | Payee column name (optional) |
 | `--amount-column <COL>` | Amount column name or index [default: Amount] |
 | `--amount-locale <LOCALE>` | Locale for parsing amounts (e.g., `en_US`) |
