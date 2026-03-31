@@ -503,4 +503,4 @@ fn parse_config(config: &Option<String>) -> PluginConfig {
 
 - [Custom Plugins Guide](../guides/custom-plugins.md) - WASM plugins for personal use
 - [Plugins Reference](../reference/plugins.md) - All available plugins
-- [Contributing Guide](./contributing.md) - General contribution guidelines
+- [Contributing Guide](https://github.com/rustledger/rustledger/blob/main/CONTRIBUTING.md) - General contribution guidelines
