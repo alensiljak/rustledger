@@ -127,16 +127,6 @@ Multiplier for inferred tolerances.
 option "inferred_tolerance_multiplier" "1.1"
 ```
 
-## Date Options
-
-### fiscal_year_begin
-
-Start of fiscal year (for reports).
-
-```beancount
-option "fiscal_year_begin" "04-01"
-```
-
 ## Plugin Options
 
 ### plugin_processing_mode
@@ -153,14 +143,6 @@ Values:
 
 ## File Options
 
-### include_path
-
-Additional paths for includes.
-
-```beancount
-option "include_path" "/shared/ledgers"
-```
-
 ### documents
 
 Root directory for documents.
@@ -174,7 +156,7 @@ option "documents" "/home/user/finances/documents"
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `title` | string | - | Ledger title |
-| `operating_currency` | string | - | Primary currency |
+| `operating_currency` | string | - | Primary currency (can specify multiple) |
 | `booking_method` | string | STRICT | Lot booking method |
 | `render_commas` | bool | FALSE | Thousand separators |
 | `name_assets` | string | Assets | Assets root name |
@@ -182,16 +164,20 @@ option "documents" "/home/user/finances/documents"
 | `name_equity` | string | Equity | Equity root name |
 | `name_income` | string | Income | Income root name |
 | `name_expenses` | string | Expenses | Expenses root name |
+| `account_previous_balances` | string | - | Opening balances account |
 | `account_previous_earnings` | string | - | Retained earnings account |
+| `account_previous_conversions` | string | - | Previous conversions account |
 | `account_current_earnings` | string | - | Current earnings account |
-| `account_previous_balances` | string | Equity:Opening-Balances | Opening balances account |
+| `account_current_conversions` | string | - | Current conversions account |
 | `account_unrealized_gains` | string | - | Unrealized gains account |
-| `fiscal_year_begin` | string | 01-01 | Fiscal year start |
+| `account_rounding` | string | - | Rounding errors account |
+| `conversion_currency` | string | - | Currency for conversions |
 | `inferred_tolerance_default` | string | - | Balance tolerance |
-| `inferred_tolerance_multiplier` | string | 1.0 | Tolerance multiplier |
-| `documents` | string | - | Documents root |
-| `include_path` | string | - | Include search path |
+| `inferred_tolerance_multiplier` | decimal | 1.0 | Tolerance multiplier |
+| `infer_tolerance_from_cost` | bool | FALSE | Infer tolerance from cost |
+| `documents` | string | - | Documents root directory |
 | `plugin_processing_mode` | string | default | Plugin mode |
+| `long_string_maxlines` | int | - | Max lines for long strings |
 
 ## Example Configuration
 

@@ -60,13 +60,10 @@ WHERE date != 2024-01-15
 -- Exact match
 WHERE account = "Assets:Bank:Checking"
 
--- Regex match (case-sensitive)
+-- Regex match (case-insensitive by default)
 WHERE account ~ "Assets:Bank"
 WHERE narration ~ "coffee"
 WHERE payee ~ "Amazon"
-
--- Case-insensitive matching (use regex flags)
-WHERE account ~ "(?i)assets:bank"
 ```
 
 ### Logical Operators
@@ -297,6 +294,21 @@ ORDER BY date DESC
 ```sql
 SELECT sum(cost(position))
 WHERE account ~ "Assets" OR account ~ "Liabilities"
+```
+
+### Year-over-Year
+
+```sql
+-- Run separate queries for each year
+SELECT root(account, 2), sum(cost(position)) AS "2023"
+WHERE account ~ "Expenses" AND year(date) = 2023
+GROUP BY 1
+ORDER BY 1
+
+SELECT root(account, 2), sum(cost(position)) AS "2024"
+WHERE account ~ "Expenses" AND year(date) = 2024
+GROUP BY 1
+ORDER BY 1
 ```
 
 ## Output Formats

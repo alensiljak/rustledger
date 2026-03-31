@@ -29,6 +29,7 @@ Format: `file:line: error[code]: message`
 | E6xxx | Metadata errors |
 | E7xxx | Option errors |
 | E8xxx | Document errors |
+| E10xxx | Date warnings/info |
 
 ## Account Errors (E1xxx)
 
@@ -157,6 +158,12 @@ Or use `rledger doctor missing-open` to generate them.
 
 **Fix**: Add at least two postings to the transaction.
 
+### E3004: Transaction Has Single Posting (Warning)
+
+**Cause**: Transaction has only one posting line.
+
+**Fix**: Add a second posting to complete the transaction.
+
 ## Booking Errors (E4xxx)
 
 ### E4001: No Matching Lot
@@ -182,6 +189,12 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: In STRICT booking mode, multiple lots could match.
 
 **Fix**: Specify the exact lot using cost basis `{cost}` or date `{date}`.
+
+### E4004: Negative Inventory
+
+**Cause**: Reduction would create negative inventory.
+
+**Fix**: Check that you have sufficient holdings before selling.
 
 ## Currency Errors (E5xxx)
 
@@ -249,6 +262,20 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Document directive references missing file.
 
 **Fix**: Ensure file exists at specified path.
+
+## Date Warnings (E10xxx)
+
+### E10001: Date Out of Order (Info)
+
+**Cause**: Entries are not in chronological order.
+
+**Note**: This is informational only and does not prevent validation.
+
+### E10002: Entry Dated in Future (Warning)
+
+**Cause**: Entry has a date in the future.
+
+**Note**: This is a warning that may indicate a typo.
 
 ## Using Error Information
 
