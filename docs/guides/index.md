@@ -19,9 +19,11 @@ Practical tutorials for common rustledger tasks.
 | [Shell Aliases](shell-aliases.md) | Create shortcuts like `bal`, `reg` |
 | [Editor Integration](editor-integration.md) | VS Code, Vim, Emacs setup |
 | [Multi-file Ledgers](multi-file.md) | Organizing large ledgers |
+| [Integration Guide](integration.md) | Embedding rustledger in applications |
 
 ## Quick Links
 
 - **New to beancount?** Start with [Quick Start](../getting-started/quick-start.md)
 - **Switching tools?** See [Migration Guides](../migration/index.md)
 - **Looking for commands?** See [Command Reference](../commands/index.md)
+- **Building an app?** See [Integration Guide](integration.md)
