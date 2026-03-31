@@ -49,16 +49,25 @@ rledger-lsp --version
 
 ### VS Code
 
-Install the Beancount extension and configure custom LSP:
+Install two extensions:
 
-```json
-// .vscode/settings.json
-{
-  "beancount.languageServerPath": "rledger-lsp"
-}
+1. [Lencerf.beancount](https://marketplace.visualstudio.com/items?itemName=Lencerf.beancount) for syntax highlighting
+2. [Generic LSP Client (v2)](https://marketplace.visualstudio.com/items?itemName=zsol.vscode-glspc) to connect to `rledger-lsp`
+
+```bash
+code --install-extension Lencerf.beancount
+code --install-extension zsol.vscode-glspc
 ```
 
-Or use a generic LSP client extension like "vscode-lsp-sample".
+Add to `.vscode/settings.json`:
+
+```json
+{
+  "glspc.server.command": "rledger-lsp",
+  "glspc.server.commandArguments": [],
+  "glspc.server.languageId": ["beancount"]
+}
+```
 
 ### Neovim (nvim-lspconfig)
 
