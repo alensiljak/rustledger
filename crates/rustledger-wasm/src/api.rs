@@ -7,6 +7,7 @@ use std::path::Path;
 use wasm_bindgen::prelude::*;
 
 use rustledger_core::Directive;
+use rustledger_loader::{FileSystem, LoadError, LoadResult};
 use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
@@ -19,6 +20,45 @@ use crate::types::{
 #[cfg(feature = "plugins")]
 use crate::types::{PluginInfo, PluginResult};
 use crate::utils::LineLookup;
+
+/// Convert [`LoadResult`] errors to detailed Error objects with line/column info.
+///
+/// This preserves parse error details that would be lost by simple `to_string()`.
+fn load_errors_to_errors(load_result: &LoadResult) -> Vec<Error> {
+    let mut errors = Vec::new();
+
+    for load_error in &load_result.errors {
+        match load_error {
+            LoadError::ParseErrors {
+                path,
+                errors: parse_errors,
+            } => {
+                // Expand parse errors with file path and line info
+                for parse_error in parse_errors {
+                    let span = parse_error.span();
+                    // Try to get line number from source map
+                    let line = load_result
+                        .source_map
+                        .get_by_path(path)
+                        .map(|file| file.line_col(span.0).0 as u32);
+
+                    let msg = format!("{}: {}", path.display(), parse_error);
+                    if let Some(line_num) = line {
+                        errors.push(Error::with_line(msg, line_num));
+                    } else {
+                        errors.push(Error::new(msg));
+                    }
+                }
+            }
+            other => {
+                // Other errors use default string conversion
+                errors.push(Error::new(other.to_string()));
+            }
+        }
+    }
+
+    errors
+}
 
 /// Parse a Beancount source string.
 ///
@@ -386,14 +426,15 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
         return Err(JsError::new("Files map cannot be empty"));
     }
 
-    if !file_map.contains_key(entry_point) {
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
         return Err(JsError::new(&format!(
             "Entry point '{entry_point}' not found in files map"
         )));
     }
-
-    // Create virtual filesystem with all files
-    let vfs = VirtualFileSystem::from_files(file_map);
 
     // Create loader with virtual filesystem
     let mut loader = Loader::new().with_filesystem(Box::new(vfs));
@@ -410,12 +451,8 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
         }
     };
 
-    // Collect load errors
-    let mut errors: Vec<Error> = load_result
-        .errors
-        .iter()
-        .map(|e| Error::new(e.to_string()))
-        .collect();
+    // Collect load errors with detailed parse error info
+    let mut errors = load_errors_to_errors(&load_result);
 
     // Extract options from loader options
     let options = crate::types::LedgerOptions {
@@ -473,14 +510,15 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         return Err(JsError::new("Files map cannot be empty"));
     }
 
-    if !file_map.contains_key(entry_point) {
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
         return Err(JsError::new(&format!(
             "Entry point '{entry_point}' not found in files map"
         )));
     }
-
-    // Create virtual filesystem with all files
-    let vfs = VirtualFileSystem::from_files(file_map);
 
     // Create loader with virtual filesystem
     let mut loader = Loader::new().with_filesystem(Box::new(vfs));
@@ -497,12 +535,8 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         }
     };
 
-    // Collect load errors
-    let mut errors: Vec<Error> = load_result
-        .errors
-        .iter()
-        .map(|e| Error::new(e.to_string()))
-        .collect();
+    // Collect load errors with detailed parse error info
+    let mut errors = load_errors_to_errors(&load_result);
 
     // Extract and interpolate directives
     let mut directives: Vec<Directive> = load_result
@@ -545,6 +579,9 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
 /// Run a BQL query on multiple Beancount files.
 ///
 /// Similar to `query`, but accepts multiple files with include resolution.
+///
+/// Note: Glob patterns in `include` directives are not supported in multi-file mode
+/// since there is no real filesystem to enumerate. Use explicit file paths instead.
 #[wasm_bindgen(js_name = "queryMultiFile")]
 pub fn query_multi_file(
     files: JsValue,
@@ -563,14 +600,15 @@ pub fn query_multi_file(
         return Err(JsError::new("Files map cannot be empty"));
     }
 
-    if !file_map.contains_key(entry_point) {
+    // Create virtual filesystem with all files
+    let vfs = VirtualFileSystem::from_files(file_map);
+
+    // Check entry point exists using VFS path normalization
+    if !vfs.exists(Path::new(entry_point)) {
         return Err(JsError::new(&format!(
             "Entry point '{entry_point}' not found in files map"
         )));
     }
-
-    // Create virtual filesystem with all files
-    let vfs = VirtualFileSystem::from_files(file_map);
 
     // Create loader with virtual filesystem
     let mut loader = Loader::new().with_filesystem(Box::new(vfs));
@@ -588,12 +626,8 @@ pub fn query_multi_file(
         }
     };
 
-    // Collect load errors
-    let errors: Vec<Error> = load_result
-        .errors
-        .iter()
-        .map(|e| Error::new(e.to_string()))
-        .collect();
+    // Collect load errors with detailed parse error info
+    let errors = load_errors_to_errors(&load_result);
 
     if !errors.is_empty() {
         let result = QueryResult {
@@ -611,17 +645,27 @@ pub fn query_multi_file(
         .map(|s| s.value)
         .collect();
 
+    let mut interpolation_errors: Vec<Error> = Vec::new();
     for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive
-            && let Err(e) = interpolate(txn)
-        {
-            let result = QueryResult {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                errors: vec![Error::new(e.to_string())],
-            };
-            return to_js(&result);
+        if let Directive::Transaction(txn) = directive {
+            match interpolate(txn) {
+                Ok(result) => {
+                    *txn = result.transaction;
+                }
+                Err(e) => {
+                    interpolation_errors.push(Error::new(e.to_string()));
+                }
+            }
         }
+    }
+
+    if !interpolation_errors.is_empty() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            errors: interpolation_errors,
+        };
+        return to_js(&result);
     }
 
     // Parse the query
