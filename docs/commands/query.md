@@ -25,7 +25,11 @@ rledger query [OPTIONS] [FILE] [QUERY]
 | Option | Description |
 |--------|-------------|
 | `-P, --profile <PROFILE>` | Use a profile from config |
-| `-f, --format <FORMAT>` | Output format: `text`, `csv`, `json` |
+| `-F, --query-file <FILE>` | Read query from file |
+| `-o, --output <FILE>` | Output file (default: stdout) |
+| `-f, --format <FORMAT>` | Output format: `text`, `csv`, `json`, `beancount` |
+| `-m, --numberify` | Remove currencies, output raw numbers |
+| `-q, --no-errors` | Suppress ledger validation errors on load |
 | `-v, --verbose` | Show verbose output |
 
 ## Examples

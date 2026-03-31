@@ -11,7 +11,6 @@ BQL (Beancount Query Language) is a SQL-like language for querying beancount led
 
 ```sql
 SELECT columns
-FROM entries
 WHERE condition
 GROUP BY columns
 ORDER BY columns
@@ -42,18 +41,6 @@ SELECT year(date), month(date), sum(cost(position))
 SELECT account AS acc, sum(position) AS balance
 ```
 
-## FROM Clause
-
-Optional. Defaults to all entries:
-
-```sql
--- Explicit (rarely needed)
-SELECT * FROM entries
-
--- Usually omitted
-SELECT account, sum(position) GROUP BY account
-```
-
 ## WHERE Clause
 
 ### Comparison Operators
@@ -73,13 +60,13 @@ WHERE date != 2024-01-15
 -- Exact match
 WHERE account = "Assets:Bank:Checking"
 
--- Regex match
+-- Regex match (case-sensitive)
 WHERE account ~ "Assets:Bank"
 WHERE narration ~ "coffee"
 WHERE payee ~ "Amazon"
 
--- Case-insensitive regex
-WHERE account ~* "assets:bank"
+-- Case-insensitive matching (use regex flags)
+WHERE account ~ "(?i)assets:bank"
 ```
 
 ### Logical Operators
@@ -140,6 +127,20 @@ LIMIT 10
 LIMIT 100
 ```
 
+## PIVOT BY Clause
+
+Pivot results to create columns from row values:
+
+```sql
+-- Expenses by category and year, pivoted by year
+SELECT root(account, 2), year(date), sum(cost(position))
+WHERE account ~ "Expenses"
+GROUP BY 1, 2
+PIVOT BY 2
+```
+
+Note: PIVOT BY must reference a SELECT output column, either by name or by its 1-indexed position; pivoting by an arbitrary expression (for example, `PIVOT BY YEAR(date)`) is not supported.
+
 ## Aggregate Functions
 
 | Function | Description |
@@ -186,6 +187,8 @@ SELECT min(date), max(date)
 | Function | Description |
 |----------|-------------|
 | `length(str)` | String length |
+| `upper(str)` | Convert to uppercase |
+| `lower(str)` | Convert to lowercase |
 | `root(account, n)` | First n account segments |
 | `leaf(account)` | Last account segment |
 | `parent(account)` | All but last segment |
@@ -296,17 +299,6 @@ SELECT sum(cost(position))
 WHERE account ~ "Assets" OR account ~ "Liabilities"
 ```
 
-### Year-over-Year
-
-```sql
-SELECT root(account, 2),
-       sum(cost(position)) FILTER (WHERE year(date) = 2023) AS "2023",
-       sum(cost(position)) FILTER (WHERE year(date) = 2024) AS "2024"
-WHERE account ~ "Expenses"
-GROUP BY 1
-ORDER BY 1
-```
-
 ## Output Formats
 
 ```bash
@@ -351,8 +343,8 @@ WHERE year(date) = year(today())
 -- This month
 WHERE year(date) = year(today()) AND month(date) = month(today())
 
--- Last 30 days
-WHERE date >= today() - 30
+-- Specific date range
+WHERE date >= 2024-01-01 AND date < 2024-02-01
 ```
 
 ## See Also

@@ -24,8 +24,12 @@ rledger check [OPTIONS] [FILE]
 | Option | Description |
 |--------|-------------|
 | `-P, --profile <PROFILE>` | Use a profile from config |
+| `-v, --verbose` | Show verbose output including timing |
+| `-q, --quiet` | Suppress all output (just use exit code) |
+| `-C, --no-cache` | Disable the binary cache for parsed directives |
+| `-a, --auto` | Implicitly enable auto-plugins (`auto_accounts`, etc.) |
+| `--plugin <WASM_FILE>` | Load a WASM plugin (can be repeated) |
 | `--native-plugin <PLUGIN>` | Enable a native plugin (can be repeated) |
-| `-v, --verbose` | Show verbose output |
 | `-f, --format <FORMAT>` | Output format: `text`, `json` |
 
 ## Examples
