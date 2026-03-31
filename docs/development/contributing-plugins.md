@@ -203,23 +203,55 @@ Add integration tests in `crates/rustledger-plugin/tests/`:
 ```rust
 // crates/rustledger-plugin/tests/my_plugin_test.rs
 
-use rustledger_plugin::{NativePluginRegistry, run_plugin};
+use rustledger_plugin::native::{NativePlugin, NativePluginRegistry};
+use rustledger_plugin::types::*;
+
+// Helper to create test input
+fn make_input(directives: Vec<DirectiveWrapper>) -> PluginInput {
+    PluginInput {
+        directives,
+        options: PluginOptions {
+            operating_currencies: vec!["USD".to_string()],
+            title: None,
+        },
+        config: None,
+    }
+}
+
+fn make_transaction(date: &str, narration: &str) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: Some("test.beancount".to_string()),
+        lineno: Some(1),
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![],
+        }),
+    }
+}
 
 #[test]
 fn test_my_plugin_integration() {
     let registry = NativePluginRegistry::new();
-    let plugin = registry.get("my_plugin").unwrap();
+    let plugin = registry.get("my_plugin").expect("plugin should exist");
 
-    let ledger = r#"
-        2024-01-01 open Assets:Bank USD
+    let input = make_input(vec![
+        make_transaction("2024-01-15", "Test transaction"),
+    ]);
 
-        2024-01-15 * "Test"
-          Assets:Bank  100.00 USD
-          Income:Test -100.00 USD
-    "#;
+    let output = plugin.process(input);
 
-    // Parse and run plugin
-    // Assert expected behavior
+    // Verify no errors
+    assert!(output.errors.is_empty(), "expected no errors");
+
+    // Verify directives were processed
+    assert_eq!(output.directives.len(), 1);
 }
 ```
 
