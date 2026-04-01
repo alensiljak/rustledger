@@ -1039,6 +1039,81 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
+            // Type casting functions
+            "STR" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(s) => Ok(Value::String(s.clone())),
+                    Value::Integer(i) => Ok(Value::String(i.to_string())),
+                    Value::Number(n) => Ok(Value::String(n.to_string())),
+                    Value::Boolean(b) => {
+                        Ok(Value::String(if *b { "TRUE" } else { "FALSE" }.to_string()))
+                    }
+                    Value::Date(d) => Ok(Value::String(d.to_string())),
+                    Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
+                    Value::Inventory(inv) => Ok(Value::String(inv.to_string())),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type("STR expects a scalar value".to_string())),
+                }
+            }
+            "INT" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Integer(i) => Ok(Value::Integer(*i)),
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        Ok(Value::Integer(n.to_i64().unwrap_or(0)))
+                    }
+                    Value::Boolean(b) => Ok(Value::Integer(i64::from(*b))),
+                    Value::String(s) => s.parse::<i64>().map(Value::Integer).map_err(|_| {
+                        QueryError::Type(format!("INT: cannot parse '{s}' as integer"))
+                    }),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "INT expects a number, integer, boolean, or string".to_string(),
+                    )),
+                }
+            }
+            "DECIMAL" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Number(n) => Ok(Value::Number(*n)),
+                    Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
+                    Value::Boolean(b) => {
+                        Ok(Value::Number(if *b { Decimal::ONE } else { Decimal::ZERO }))
+                    }
+                    Value::String(s) => s
+                        .parse::<Decimal>()
+                        .map(Value::Number)
+                        .map_err(|_| QueryError::Type(format!("DECIMAL: cannot parse '{s}'"))),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "DECIMAL expects a number, integer, boolean, or string".to_string(),
+                    )),
+                }
+            }
+            "BOOL" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::Boolean(b) => Ok(Value::Boolean(*b)),
+                    Value::Integer(i) => Ok(Value::Boolean(*i != 0)),
+                    Value::Number(n) => Ok(Value::Boolean(!n.is_zero())),
+                    Value::String(s) => {
+                        let s_upper = s.to_uppercase();
+                        match s_upper.as_str() {
+                            "TRUE" | "YES" | "1" | "T" | "Y" => Ok(Value::Boolean(true)),
+                            "FALSE" | "NO" | "0" | "F" | "N" | "" => Ok(Value::Boolean(false)),
+                            _ => Err(QueryError::Type(format!(
+                                "BOOL: cannot parse '{s}' as boolean"
+                            ))),
+                        }
+                    }
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "BOOL expects a boolean, number, integer, or string".to_string(),
+                    )),
+                }
+            }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
             _ => Err(QueryError::UnknownFunction(name.to_string())),
@@ -2451,6 +2526,66 @@ mod tests {
         let query = parse("SELECT bool(0)").unwrap();
         let result = executor.execute(&query).unwrap();
         assert_eq!(result.rows[0][0], Value::Boolean(false));
+    }
+
+    /// Test that type casting functions work in aggregate context (issue #630).
+    #[test]
+    fn test_type_casting_in_aggregate_context() {
+        let txn1 = Transaction::new(date(2024, 1, 15), "Item 1")
+            .with_flag('*')
+            .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-10), "USD")));
+
+        let txn2 = Transaction::new(date(2024, 1, 16), "Item 2")
+            .with_flag('*')
+            .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(20), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-20), "USD")));
+
+        let directives = vec![Directive::Transaction(txn1), Directive::Transaction(txn2)];
+        let mut executor = Executor::new(&directives);
+
+        // Test STR wrapping an aggregate - this was the issue in #630
+        let query = parse("SELECT str(sum(number(units))) GROUP BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows.len(), 2); // Two accounts
+
+        // All values should be strings after STR conversion
+        assert!(
+            result
+                .rows
+                .iter()
+                .all(|r| matches!(&r[0], Value::String(_)))
+        );
+
+        // Test INT in aggregate context
+        let query = parse("SELECT int(sum(number(units))) GROUP BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .all(|r| matches!(&r[0], Value::Integer(_)))
+        );
+
+        // Test DECIMAL in aggregate context
+        let query = parse("SELECT decimal(count(*)) GROUP BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .all(|r| matches!(&r[0], Value::Number(_)))
+        );
+
+        // Test BOOL in aggregate context
+        let query = parse("SELECT bool(count(*)) GROUP BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert!(
+            result
+                .rows
+                .iter()
+                .all(|r| matches!(&r[0], Value::Boolean(true)))
+        );
     }
 
     #[test]
