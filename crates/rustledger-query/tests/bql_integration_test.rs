@@ -6220,3 +6220,78 @@ fn test_issue_593_value_uses_latest_implicit_price() {
         "SUM(value(position)) should be 5.60 EUR (4 ABC * 1.40 latest price)"
     );
 }
+
+// ============================================================================
+// Issue #632: Beancount-compatible table name aliases
+// ============================================================================
+
+// Regression test for issue #632: System tables should work without # prefix
+// for Python beancount compatibility.
+// https://github.com/rustledger/rustledger/issues/632
+
+#[test]
+fn test_issue_632_table_aliases_without_hash_prefix() {
+    let directives = make_test_directives();
+
+    // Test all system tables with and without # prefix
+    let tables_to_test = [
+        ("transactions", "#transactions"),
+        ("entries", "#entries"),
+        ("postings", "#postings"),
+        ("prices", "#prices"),
+        ("balances", "#balances"),
+        ("accounts", "#accounts"),
+        ("events", "#events"),
+        ("notes", "#notes"),
+        ("documents", "#documents"),
+        ("commodities", "#commodities"),
+    ];
+
+    for (alias, canonical) in tables_to_test {
+        let query_alias = format!("SELECT * FROM {alias}");
+        let query_canonical = format!("SELECT * FROM {canonical}");
+
+        let result_alias = execute_query(&query_alias, &directives);
+        let result_canonical = execute_query(&query_canonical, &directives);
+
+        assert_eq!(
+            result_alias.columns, result_canonical.columns,
+            "Columns should match for '{alias}' vs '{canonical}'"
+        );
+        assert_eq!(
+            result_alias.rows.len(),
+            result_canonical.rows.len(),
+            "Row count should match for '{alias}' vs '{canonical}'"
+        );
+    }
+}
+
+#[test]
+fn test_issue_632_user_table_takes_precedence_over_alias() {
+    let directives = make_test_directives();
+    let mut executor = Executor::new(&directives);
+
+    // Create a user table named "balances" (same name as system table alias)
+    let create_query = parse("CREATE TABLE balances (name, value)").expect("should parse");
+    executor.execute(&create_query).expect("should execute");
+
+    // Insert into user table
+    let insert_query = parse("INSERT INTO balances VALUES ('test', 123)").expect("should parse");
+    executor.execute(&insert_query).expect("should execute");
+
+    // SELECT FROM balances should use the user table, not #balances system table
+    let select_query = parse("SELECT * FROM balances").expect("should parse");
+    let result = executor.execute(&select_query).expect("should execute");
+
+    // User table has columns "name" and "value"
+    assert_eq!(result.columns, vec!["name", "value"]);
+    assert_eq!(result.rows.len(), 1);
+
+    // System table #balances has different columns (date, account, ...)
+    // This proves the user table took precedence
+    if let Value::String(name) = &result.rows[0][0] {
+        assert_eq!(name, "test");
+    } else {
+        panic!("Expected String value for name column");
+    }
+}

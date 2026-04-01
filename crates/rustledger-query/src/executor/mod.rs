@@ -1198,20 +1198,32 @@ impl<'a> Executor<'a> {
     /// Get a built-in system table by name.
     ///
     /// Built-in tables are virtual tables that provide access to ledger data:
-    /// - `#prices`: Price directives from the ledger
-    /// - `#balances`: Balance assertion directives from the ledger
-    /// - `#commodities`: Commodity directives from the ledger
-    /// - `#events`: Event directives from the ledger
-    /// - `#notes`: Note directives from the ledger
-    /// - `#documents`: Document directives from the ledger
-    /// - `#accounts`: Open/Close directives paired by account
-    /// - `#transactions`: Transaction directives from the ledger
-    /// - `#entries`: All directives with source location info
-    /// - `#postings`: All postings from transactions
+    /// - `#prices` / `prices`: Price directives from the ledger
+    /// - `#balances` / `balances`: Balance assertion directives from the ledger
+    /// - `#commodities` / `commodities`: Commodity directives from the ledger
+    /// - `#events` / `events`: Event directives from the ledger
+    /// - `#notes` / `notes`: Note directives from the ledger
+    /// - `#documents` / `documents`: Document directives from the ledger
+    /// - `#accounts` / `accounts`: Open/Close directives paired by account
+    /// - `#transactions` / `transactions`: Transaction directives from the ledger
+    /// - `#entries` / `entries`: All directives with source location info
+    /// - `#postings` / `postings`: All postings from transactions
+    ///
+    /// Both `#`-prefixed and non-prefixed names are supported for Python beancount
+    /// compatibility (issue #632).
     ///
     /// Returns `None` if the table name is not a recognized built-in table.
     pub(super) fn get_builtin_table(&self, table_name: &str) -> Option<Table> {
-        match table_name.to_uppercase().as_str() {
+        // Normalize table name: add # prefix if missing for Python beancount compatibility.
+        // Beancount uses "transactions" while rustledger canonically uses "#transactions".
+        let upper = table_name.to_uppercase();
+        let normalized = if upper.starts_with('#') {
+            upper
+        } else {
+            format!("#{upper}")
+        };
+
+        match normalized.as_str() {
             "#PRICES" => Some(self.build_prices_table()),
             "#BALANCES" => Some(self.build_balances_table()),
             "#COMMODITIES" => Some(self.build_commodities_table()),
