@@ -51,12 +51,13 @@ jobs:
         working-directory: website
         run: bun install --frozen-lockfile
 
-      - name: Copy docs from PR to website
+      - name: Sync docs from PR to website
         run: |
-          # Remove placeholder docs and copy from this PR
-          rm -rf website/docs/getting-started website/docs/commands website/docs/guides \
-                 website/docs/migration website/docs/reference website/docs/development
-          cp -r rustledger/docs/* website/docs/
+          # Use rsync to properly sync docs, deleting files that don't exist in PR
+          # This catches dead links to files that were removed
+          rsync -av --delete \
+            --exclude='.vitepress' \
+            rustledger/docs/ website/docs/
 
       - name: Build docs with VitePress
         working-directory: website
