@@ -1051,7 +1051,6 @@ impl<'a> Executor<'a> {
                     }
                     Value::Date(d) => Ok(Value::String(d.to_string())),
                     Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
-                    Value::Inventory(inv) => Ok(Value::String(inv.to_string())),
                     Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type("STR expects a scalar value".to_string())),
                 }
@@ -1062,7 +1061,10 @@ impl<'a> Executor<'a> {
                     Value::Integer(i) => Ok(Value::Integer(*i)),
                     Value::Number(n) => {
                         use rust_decimal::prelude::ToPrimitive;
-                        Ok(Value::Integer(n.to_i64().unwrap_or(0)))
+                        let truncated = n.trunc();
+                        truncated.to_i64().map(Value::Integer).ok_or_else(|| {
+                            QueryError::Type(format!("INT: cannot convert '{n}' to integer"))
+                        })
                     }
                     Value::Boolean(b) => Ok(Value::Integer(i64::from(*b))),
                     Value::String(s) => s.parse::<i64>().map(Value::Integer).map_err(|_| {
@@ -2545,47 +2547,42 @@ mod tests {
         let mut executor = Executor::new(&directives);
 
         // Test STR wrapping an aggregate - this was the issue in #630
-        let query = parse("SELECT str(sum(number(units))) GROUP BY account").unwrap();
+        // Each account has 2 postings summed: Expenses:Food = 30, Assets:Cash = -30
+        let query =
+            parse("SELECT account, str(sum(number(units))) GROUP BY account ORDER BY account")
+                .unwrap();
         let result = executor.execute(&query).unwrap();
-        assert_eq!(result.rows.len(), 2); // Two accounts
-
-        // All values should be strings after STR conversion
-        assert!(
-            result
-                .rows
-                .iter()
-                .all(|r| matches!(&r[0], Value::String(_)))
+        assert_eq!(result.rows.len(), 2);
+        // Verify actual string values
+        assert_eq!(result.rows[0][0], Value::String("Assets:Cash".to_string()));
+        assert_eq!(result.rows[0][1], Value::String("-30".to_string()));
+        assert_eq!(
+            result.rows[1][0],
+            Value::String("Expenses:Food".to_string())
         );
+        assert_eq!(result.rows[1][1], Value::String("30".to_string()));
 
-        // Test INT in aggregate context
-        let query = parse("SELECT int(sum(number(units))) GROUP BY account").unwrap();
+        // Test INT in aggregate context - verify truncation works
+        let query =
+            parse("SELECT account, int(sum(number(units))) GROUP BY account ORDER BY account")
+                .unwrap();
         let result = executor.execute(&query).unwrap();
-        assert!(
-            result
-                .rows
-                .iter()
-                .all(|r| matches!(&r[0], Value::Integer(_)))
-        );
+        assert_eq!(result.rows[0][1], Value::Integer(-30));
+        assert_eq!(result.rows[1][1], Value::Integer(30));
 
-        // Test DECIMAL in aggregate context
-        let query = parse("SELECT decimal(count(*)) GROUP BY account").unwrap();
+        // Test DECIMAL in aggregate context - verify count conversion
+        let query =
+            parse("SELECT account, decimal(count(*)) GROUP BY account ORDER BY account").unwrap();
         let result = executor.execute(&query).unwrap();
-        assert!(
-            result
-                .rows
-                .iter()
-                .all(|r| matches!(&r[0], Value::Number(_)))
-        );
+        assert_eq!(result.rows[0][1], Value::Number(dec!(2))); // 2 postings per account
+        assert_eq!(result.rows[1][1], Value::Number(dec!(2)));
 
-        // Test BOOL in aggregate context
-        let query = parse("SELECT bool(count(*)) GROUP BY account").unwrap();
+        // Test BOOL in aggregate context - count > 0 should be true
+        let query =
+            parse("SELECT account, bool(count(*)) GROUP BY account ORDER BY account").unwrap();
         let result = executor.execute(&query).unwrap();
-        assert!(
-            result
-                .rows
-                .iter()
-                .all(|r| matches!(&r[0], Value::Boolean(true)))
-        );
+        assert_eq!(result.rows[0][1], Value::Boolean(true));
+        assert_eq!(result.rows[1][1], Value::Boolean(true));
     }
 
     #[test]
