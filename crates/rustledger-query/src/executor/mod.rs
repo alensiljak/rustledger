@@ -1214,26 +1214,23 @@ impl<'a> Executor<'a> {
     ///
     /// Returns `None` if the table name is not a recognized built-in table.
     pub(super) fn get_builtin_table(&self, table_name: &str) -> Option<Table> {
-        // Normalize table name: add # prefix if missing for Python beancount compatibility.
-        // Beancount uses "transactions" while rustledger canonically uses "#transactions".
+        // Normalize table name: strip # prefix if present for Python beancount compatibility.
+        // Both "#transactions" (rustledger) and "transactions" (beancount) work.
+        // Using strip_prefix avoids allocation in the common case.
         let upper = table_name.to_uppercase();
-        let normalized = if upper.starts_with('#') {
-            upper
-        } else {
-            format!("#{upper}")
-        };
+        let normalized = upper.strip_prefix('#').unwrap_or(&upper);
 
-        match normalized.as_str() {
-            "#PRICES" => Some(self.build_prices_table()),
-            "#BALANCES" => Some(self.build_balances_table()),
-            "#COMMODITIES" => Some(self.build_commodities_table()),
-            "#EVENTS" => Some(self.build_events_table()),
-            "#NOTES" => Some(self.build_notes_table()),
-            "#DOCUMENTS" => Some(self.build_documents_table()),
-            "#ACCOUNTS" => Some(self.build_accounts_table()),
-            "#TRANSACTIONS" => Some(self.build_transactions_table()),
-            "#ENTRIES" => Some(self.build_entries_table()),
-            "#POSTINGS" => Some(self.build_postings_table()),
+        match normalized {
+            "PRICES" => Some(self.build_prices_table()),
+            "BALANCES" => Some(self.build_balances_table()),
+            "COMMODITIES" => Some(self.build_commodities_table()),
+            "EVENTS" => Some(self.build_events_table()),
+            "NOTES" => Some(self.build_notes_table()),
+            "DOCUMENTS" => Some(self.build_documents_table()),
+            "ACCOUNTS" => Some(self.build_accounts_table()),
+            "TRANSACTIONS" => Some(self.build_transactions_table()),
+            "ENTRIES" => Some(self.build_entries_table()),
+            "POSTINGS" => Some(self.build_postings_table()),
             _ => None,
         }
     }

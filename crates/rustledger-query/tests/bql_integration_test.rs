@@ -6248,6 +6248,7 @@ fn test_issue_632_table_aliases_without_hash_prefix() {
     ];
 
     for (alias, canonical) in tables_to_test {
+        // Compare schema and row counts between alias and canonical form
         let query_alias = format!("SELECT * FROM {alias}");
         let query_canonical = format!("SELECT * FROM {canonical}");
 
