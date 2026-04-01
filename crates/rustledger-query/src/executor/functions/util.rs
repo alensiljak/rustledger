@@ -182,21 +182,76 @@ impl Executor<'_> {
         func: &FunctionCall,
         ctx: &PostingContext,
     ) -> Result<Value, QueryError> {
-        use rust_decimal::prelude::ToPrimitive;
-
         Self::require_args("INT", func, 1)?;
-
         let val = self.evaluate_expr(&func.args[0], ctx)?;
+        Self::value_to_int(&val)
+    }
+
+    /// Evaluate DECIMAL function (convert to decimal).
+    pub(crate) fn eval_decimal(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("DECIMAL", func, 1)?;
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        Self::value_to_decimal(&val)
+    }
+
+    /// Evaluate STR function (convert to string).
+    pub(crate) fn eval_str(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("STR", func, 1)?;
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        Self::value_to_str(&val)
+    }
+
+    /// Evaluate BOOL function (convert to boolean).
+    pub(crate) fn eval_bool(
+        &self,
+        func: &FunctionCall,
+        ctx: &PostingContext,
+    ) -> Result<Value, QueryError> {
+        Self::require_args("BOOL", func, 1)?;
+        let val = self.evaluate_expr(&func.args[0], ctx)?;
+        Self::value_to_bool(&val)
+    }
+
+    // =========================================================================
+    // Value conversion helpers (shared between eval_* and evaluate_function_on_values)
+    // =========================================================================
+
+    /// Convert a Value to string.
+    pub(crate) fn value_to_str(val: &Value) -> Result<Value, QueryError> {
         match val {
-            Value::Integer(i) => Ok(Value::Integer(i)),
+            Value::String(s) => Ok(Value::String(s.clone())),
+            Value::Integer(i) => Ok(Value::String(i.to_string())),
+            Value::Number(n) => Ok(Value::String(n.to_string())),
+            Value::Boolean(b) => Ok(Value::String(if *b { "TRUE" } else { "FALSE" }.to_string())),
+            Value::Date(d) => Ok(Value::String(d.to_string())),
+            Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
+            Value::Null => Ok(Value::Null),
+            _ => Err(QueryError::Type(
+                "STR expects a string, integer, number, boolean, date, or amount".to_string(),
+            )),
+        }
+    }
+
+    /// Convert a Value to integer.
+    pub(crate) fn value_to_int(val: &Value) -> Result<Value, QueryError> {
+        use rust_decimal::prelude::ToPrimitive;
+        match val {
+            Value::Integer(i) => Ok(Value::Integer(*i)),
             Value::Number(n) => {
-                // Truncate decimal to integer
-                n.trunc()
-                    .to_i64()
-                    .map(Value::Integer)
-                    .ok_or_else(|| QueryError::Type("INT: number too large for integer".into()))
+                let truncated = n.trunc();
+                truncated.to_i64().map(Value::Integer).ok_or_else(|| {
+                    QueryError::Type(format!("INT: cannot convert '{n}' to integer"))
+                })
             }
-            Value::Boolean(b) => Ok(Value::Integer(i64::from(b))),
+            Value::Boolean(b) => Ok(Value::Integer(i64::from(*b))),
             Value::String(s) => s
                 .parse::<i64>()
                 .map(Value::Integer)
@@ -208,19 +263,12 @@ impl Executor<'_> {
         }
     }
 
-    /// Evaluate DECIMAL function (convert to decimal).
-    pub(crate) fn eval_decimal(
-        &self,
-        func: &FunctionCall,
-        ctx: &PostingContext,
-    ) -> Result<Value, QueryError> {
-        Self::require_args("DECIMAL", func, 1)?;
-
-        let val = self.evaluate_expr(&func.args[0], ctx)?;
+    /// Convert a Value to decimal.
+    pub(crate) fn value_to_decimal(val: &Value) -> Result<Value, QueryError> {
         match val {
-            Value::Number(n) => Ok(Value::Number(n)),
-            Value::Integer(i) => Ok(Value::Number(Decimal::from(i))),
-            Value::Boolean(b) => Ok(Value::Number(if b { Decimal::ONE } else { Decimal::ZERO })),
+            Value::Number(n) => Ok(Value::Number(*n)),
+            Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
+            Value::Boolean(b) => Ok(Value::Number(if *b { Decimal::ONE } else { Decimal::ZERO })),
             Value::String(s) => s
                 .parse::<Decimal>()
                 .map(Value::Number)
@@ -232,39 +280,11 @@ impl Executor<'_> {
         }
     }
 
-    /// Evaluate STR function (convert to string).
-    pub(crate) fn eval_str(
-        &self,
-        func: &FunctionCall,
-        ctx: &PostingContext,
-    ) -> Result<Value, QueryError> {
-        Self::require_args("STR", func, 1)?;
-
-        let val = self.evaluate_expr(&func.args[0], ctx)?;
+    /// Convert a Value to boolean.
+    pub(crate) fn value_to_bool(val: &Value) -> Result<Value, QueryError> {
         match val {
-            Value::String(s) => Ok(Value::String(s)),
-            Value::Integer(i) => Ok(Value::String(i.to_string())),
-            Value::Number(n) => Ok(Value::String(n.to_string())),
-            Value::Boolean(b) => Ok(Value::String(if b { "TRUE" } else { "FALSE" }.to_string())),
-            Value::Date(d) => Ok(Value::String(d.to_string())),
-            Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
-            Value::Null => Ok(Value::Null),
-            _ => Err(QueryError::Type("STR expects a scalar value".to_string())),
-        }
-    }
-
-    /// Evaluate BOOL function (convert to boolean).
-    pub(crate) fn eval_bool(
-        &self,
-        func: &FunctionCall,
-        ctx: &PostingContext,
-    ) -> Result<Value, QueryError> {
-        Self::require_args("BOOL", func, 1)?;
-
-        let val = self.evaluate_expr(&func.args[0], ctx)?;
-        match val {
-            Value::Boolean(b) => Ok(Value::Boolean(b)),
-            Value::Integer(i) => Ok(Value::Boolean(i != 0)),
+            Value::Boolean(b) => Ok(Value::Boolean(*b)),
+            Value::Integer(i) => Ok(Value::Boolean(*i != 0)),
             Value::Number(n) => Ok(Value::Boolean(!n.is_zero())),
             Value::String(s) => {
                 let s_upper = s.to_uppercase();
@@ -278,7 +298,7 @@ impl Executor<'_> {
             }
             Value::Null => Ok(Value::Null),
             _ => Err(QueryError::Type(
-                "BOOL expects an integer, number, boolean, or string".to_string(),
+                "BOOL expects a boolean, number, integer, or string".to_string(),
             )),
         }
     }

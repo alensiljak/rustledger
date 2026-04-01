@@ -1039,82 +1039,22 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
-            // Type casting functions
+            // Type casting functions - use shared helpers
             "STR" => {
                 Self::require_args_count(&name_upper, args, 1)?;
-                match &args[0] {
-                    Value::String(s) => Ok(Value::String(s.clone())),
-                    Value::Integer(i) => Ok(Value::String(i.to_string())),
-                    Value::Number(n) => Ok(Value::String(n.to_string())),
-                    Value::Boolean(b) => {
-                        Ok(Value::String(if *b { "TRUE" } else { "FALSE" }.to_string()))
-                    }
-                    Value::Date(d) => Ok(Value::String(d.to_string())),
-                    Value::Amount(a) => Ok(Value::String(format!("{} {}", a.number, a.currency))),
-                    Value::Null => Ok(Value::Null),
-                    _ => Err(QueryError::Type("STR expects a scalar value".to_string())),
-                }
+                Self::value_to_str(&args[0])
             }
             "INT" => {
                 Self::require_args_count(&name_upper, args, 1)?;
-                match &args[0] {
-                    Value::Integer(i) => Ok(Value::Integer(*i)),
-                    Value::Number(n) => {
-                        use rust_decimal::prelude::ToPrimitive;
-                        let truncated = n.trunc();
-                        truncated.to_i64().map(Value::Integer).ok_or_else(|| {
-                            QueryError::Type(format!("INT: cannot convert '{n}' to integer"))
-                        })
-                    }
-                    Value::Boolean(b) => Ok(Value::Integer(i64::from(*b))),
-                    Value::String(s) => s.parse::<i64>().map(Value::Integer).map_err(|_| {
-                        QueryError::Type(format!("INT: cannot parse '{s}' as integer"))
-                    }),
-                    Value::Null => Ok(Value::Null),
-                    _ => Err(QueryError::Type(
-                        "INT expects a number, integer, boolean, or string".to_string(),
-                    )),
-                }
+                Self::value_to_int(&args[0])
             }
             "DECIMAL" => {
                 Self::require_args_count(&name_upper, args, 1)?;
-                match &args[0] {
-                    Value::Number(n) => Ok(Value::Number(*n)),
-                    Value::Integer(i) => Ok(Value::Number(Decimal::from(*i))),
-                    Value::Boolean(b) => {
-                        Ok(Value::Number(if *b { Decimal::ONE } else { Decimal::ZERO }))
-                    }
-                    Value::String(s) => s
-                        .parse::<Decimal>()
-                        .map(Value::Number)
-                        .map_err(|_| QueryError::Type(format!("DECIMAL: cannot parse '{s}'"))),
-                    Value::Null => Ok(Value::Null),
-                    _ => Err(QueryError::Type(
-                        "DECIMAL expects a number, integer, boolean, or string".to_string(),
-                    )),
-                }
+                Self::value_to_decimal(&args[0])
             }
             "BOOL" => {
                 Self::require_args_count(&name_upper, args, 1)?;
-                match &args[0] {
-                    Value::Boolean(b) => Ok(Value::Boolean(*b)),
-                    Value::Integer(i) => Ok(Value::Boolean(*i != 0)),
-                    Value::Number(n) => Ok(Value::Boolean(!n.is_zero())),
-                    Value::String(s) => {
-                        let s_upper = s.to_uppercase();
-                        match s_upper.as_str() {
-                            "TRUE" | "YES" | "1" | "T" | "Y" => Ok(Value::Boolean(true)),
-                            "FALSE" | "NO" | "0" | "F" | "N" | "" => Ok(Value::Boolean(false)),
-                            _ => Err(QueryError::Type(format!(
-                                "BOOL: cannot parse '{s}' as boolean"
-                            ))),
-                        }
-                    }
-                    Value::Null => Ok(Value::Null),
-                    _ => Err(QueryError::Type(
-                        "BOOL expects a boolean, number, integer, or string".to_string(),
-                    )),
-                }
+                Self::value_to_bool(&args[0])
             }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
@@ -2583,6 +2523,56 @@ mod tests {
         let result = executor.execute(&query).unwrap();
         assert_eq!(result.rows[0][1], Value::Boolean(true));
         assert_eq!(result.rows[1][1], Value::Boolean(true));
+    }
+
+    /// Test INT truncation behavior with decimals.
+    #[test]
+    fn test_int_truncation() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test INT truncates toward zero (not floor/ceil)
+        let query = parse("SELECT int(5.7)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(5));
+
+        let query = parse("SELECT int(-5.7)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(-5));
+
+        let query = parse("SELECT int(0.999)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(0));
+    }
+
+    /// Test type casting error cases.
+    #[test]
+    fn test_type_casting_errors() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // INT with non-numeric string should error
+        let query = parse("SELECT int('not-a-number')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse 'not-a-number'")
+        );
+
+        // DECIMAL with invalid string should error
+        let query = parse("SELECT decimal('invalid')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot parse"));
+
+        // BOOL with unrecognized string should error
+        let query = parse("SELECT bool('maybe')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot parse"));
     }
 
     #[test]
