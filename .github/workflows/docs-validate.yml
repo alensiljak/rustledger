@@ -1,0 +1,50 @@
+name: Docs Validation
+
+on:
+  pull_request:
+    paths:
+      - 'docs/**'
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+
+jobs:
+  validate-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout rustledger (with docs)
+        uses: actions/checkout@v4
+        with:
+          path: rustledger
+
+      - name: Checkout website repo (for VitePress config)
+        uses: actions/checkout@v4
+        with:
+          repository: rustledger/rustledger.github.io
+          path: website
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        working-directory: website
+        run: bun install
+
+      - name: Copy docs from PR to website
+        run: |
+          # Remove placeholder docs
+          rm -rf website/docs/getting-started website/docs/commands website/docs/guides \
+                 website/docs/migration website/docs/reference website/docs/development
+
+          # Copy docs from this PR (excluding .vitepress which website maintains)
+          cp -r rustledger/docs/* website/docs/
+
+          echo "Docs structure:"
+          ls -la website/docs/
+
+      - name: Build docs with VitePress
+        working-directory: website
+        run: bun run docs:build
+
+      - name: Report success
+        run: echo "✅ Docs validated successfully - no dead links or build errors"
