@@ -1039,6 +1039,23 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
+            // Type casting functions - use shared helpers
+            "STR" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                Self::value_to_str(&args[0])
+            }
+            "INT" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                Self::value_to_int(&args[0])
+            }
+            "DECIMAL" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                Self::value_to_decimal(&args[0])
+            }
+            "BOOL" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                Self::value_to_bool(&args[0])
+            }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
             _ => Err(QueryError::UnknownFunction(name.to_string())),
@@ -2451,6 +2468,111 @@ mod tests {
         let query = parse("SELECT bool(0)").unwrap();
         let result = executor.execute(&query).unwrap();
         assert_eq!(result.rows[0][0], Value::Boolean(false));
+    }
+
+    /// Test that type casting functions work in aggregate context (issue #630).
+    #[test]
+    fn test_type_casting_in_aggregate_context() {
+        let txn1 = Transaction::new(date(2024, 1, 15), "Item 1")
+            .with_flag('*')
+            .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-10), "USD")));
+
+        let txn2 = Transaction::new(date(2024, 1, 16), "Item 2")
+            .with_flag('*')
+            .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(20), "USD")))
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-20), "USD")));
+
+        let directives = vec![Directive::Transaction(txn1), Directive::Transaction(txn2)];
+        let mut executor = Executor::new(&directives);
+
+        // Test STR wrapping an aggregate - this was the issue in #630
+        // Each account has 2 postings summed: Expenses:Food = 30, Assets:Cash = -30
+        let query =
+            parse("SELECT account, str(sum(number(units))) GROUP BY account ORDER BY account")
+                .unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows.len(), 2);
+        // Verify actual string values
+        assert_eq!(result.rows[0][0], Value::String("Assets:Cash".to_string()));
+        assert_eq!(result.rows[0][1], Value::String("-30".to_string()));
+        assert_eq!(
+            result.rows[1][0],
+            Value::String("Expenses:Food".to_string())
+        );
+        assert_eq!(result.rows[1][1], Value::String("30".to_string()));
+
+        // Test INT in aggregate context - verify truncation works
+        let query =
+            parse("SELECT account, int(sum(number(units))) GROUP BY account ORDER BY account")
+                .unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][1], Value::Integer(-30));
+        assert_eq!(result.rows[1][1], Value::Integer(30));
+
+        // Test DECIMAL in aggregate context - verify count conversion
+        let query =
+            parse("SELECT account, decimal(count(*)) GROUP BY account ORDER BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][1], Value::Number(dec!(2))); // 2 postings per account
+        assert_eq!(result.rows[1][1], Value::Number(dec!(2)));
+
+        // Test BOOL in aggregate context - count > 0 should be true
+        let query =
+            parse("SELECT account, bool(count(*)) GROUP BY account ORDER BY account").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][1], Value::Boolean(true));
+        assert_eq!(result.rows[1][1], Value::Boolean(true));
+    }
+
+    /// Test INT truncation behavior with decimals.
+    #[test]
+    fn test_int_truncation() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // Test INT truncates toward zero (not floor/ceil)
+        let query = parse("SELECT int(5.7)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(5));
+
+        let query = parse("SELECT int(-5.7)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(-5));
+
+        let query = parse("SELECT int(0.999)").unwrap();
+        let result = executor.execute(&query).unwrap();
+        assert_eq!(result.rows[0][0], Value::Integer(0));
+    }
+
+    /// Test type casting error cases.
+    #[test]
+    fn test_type_casting_errors() {
+        let directives = sample_directives();
+        let mut executor = Executor::new(&directives);
+
+        // INT with non-numeric string should error
+        let query = parse("SELECT int('not-a-number')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("cannot parse 'not-a-number'")
+        );
+
+        // DECIMAL with invalid string should error
+        let query = parse("SELECT decimal('invalid')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot parse"));
+
+        // BOOL with unrecognized string should error
+        let query = parse("SELECT bool('maybe')").unwrap();
+        let result = executor.execute(&query);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot parse"));
     }
 
     #[test]
