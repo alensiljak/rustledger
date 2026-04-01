@@ -324,14 +324,15 @@ impl Executor<'_> {
     ) -> Result<QueryResult, QueryError> {
         let table_name_upper = table_name.to_uppercase();
 
-        // Check for built-in system tables first (e.g., #prices)
-        // Then fall back to user-created tables
+        // Check for user-created tables first (exact match takes precedence),
+        // then fall back to built-in system tables (which support aliases like
+        // "transactions" for "#transactions" for beancount compatibility).
         let builtin_table;
-        let table = if let Some(builtin) = self.get_builtin_table(&table_name_upper) {
+        let table = if let Some(user_table) = self.tables.get(&table_name_upper) {
+            user_table
+        } else if let Some(builtin) = self.get_builtin_table(table_name) {
             builtin_table = builtin;
             &builtin_table
-        } else if let Some(user_table) = self.tables.get(&table_name_upper) {
-            user_table
         } else {
             let hint = if table_name.starts_with('#') {
                 ". Available system tables: #accounts, #balances, #commodities, #documents, #entries, #events, #notes, #postings, #prices, #transactions"

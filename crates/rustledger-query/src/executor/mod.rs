@@ -1215,30 +1215,39 @@ impl<'a> Executor<'a> {
     /// Get a built-in system table by name.
     ///
     /// Built-in tables are virtual tables that provide access to ledger data:
-    /// - `#prices`: Price directives from the ledger
-    /// - `#balances`: Balance assertion directives from the ledger
-    /// - `#commodities`: Commodity directives from the ledger
-    /// - `#events`: Event directives from the ledger
-    /// - `#notes`: Note directives from the ledger
-    /// - `#documents`: Document directives from the ledger
-    /// - `#accounts`: Open/Close directives paired by account
-    /// - `#transactions`: Transaction directives from the ledger
-    /// - `#entries`: All directives with source location info
-    /// - `#postings`: All postings from transactions
+    /// - `#prices` / `prices`: Price directives from the ledger
+    /// - `#balances` / `balances`: Balance assertion directives from the ledger
+    /// - `#commodities` / `commodities`: Commodity directives from the ledger
+    /// - `#events` / `events`: Event directives from the ledger
+    /// - `#notes` / `notes`: Note directives from the ledger
+    /// - `#documents` / `documents`: Document directives from the ledger
+    /// - `#accounts` / `accounts`: Open/Close directives paired by account
+    /// - `#transactions` / `transactions`: Transaction directives from the ledger
+    /// - `#entries` / `entries`: All directives with source location info
+    /// - `#postings` / `postings`: All postings from transactions
+    ///
+    /// Both `#`-prefixed and non-prefixed names are supported for Python beancount
+    /// compatibility (issue #632).
     ///
     /// Returns `None` if the table name is not a recognized built-in table.
     pub(super) fn get_builtin_table(&self, table_name: &str) -> Option<Table> {
-        match table_name.to_uppercase().as_str() {
-            "#PRICES" => Some(self.build_prices_table()),
-            "#BALANCES" => Some(self.build_balances_table()),
-            "#COMMODITIES" => Some(self.build_commodities_table()),
-            "#EVENTS" => Some(self.build_events_table()),
-            "#NOTES" => Some(self.build_notes_table()),
-            "#DOCUMENTS" => Some(self.build_documents_table()),
-            "#ACCOUNTS" => Some(self.build_accounts_table()),
-            "#TRANSACTIONS" => Some(self.build_transactions_table()),
-            "#ENTRIES" => Some(self.build_entries_table()),
-            "#POSTINGS" => Some(self.build_postings_table()),
+        // Normalize table name: strip # prefix if present for Python beancount compatibility.
+        // Both "#transactions" (rustledger) and "transactions" (beancount) work.
+        // Using strip_prefix avoids allocation in the common case.
+        let upper = table_name.to_uppercase();
+        let normalized = upper.strip_prefix('#').unwrap_or(&upper);
+
+        match normalized {
+            "PRICES" => Some(self.build_prices_table()),
+            "BALANCES" => Some(self.build_balances_table()),
+            "COMMODITIES" => Some(self.build_commodities_table()),
+            "EVENTS" => Some(self.build_events_table()),
+            "NOTES" => Some(self.build_notes_table()),
+            "DOCUMENTS" => Some(self.build_documents_table()),
+            "ACCOUNTS" => Some(self.build_accounts_table()),
+            "TRANSACTIONS" => Some(self.build_transactions_table()),
+            "ENTRIES" => Some(self.build_entries_table()),
+            "POSTINGS" => Some(self.build_postings_table()),
             _ => None,
         }
     }
