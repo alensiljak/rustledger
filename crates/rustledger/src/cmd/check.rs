@@ -497,8 +497,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let mut python_plugins_to_run: Vec<rustledger_loader::Plugin> = Vec::new();
     #[cfg(feature = "python-plugin-wasm")]
     let mut wasm_plugins_from_file: Vec<(PathBuf, Option<String>)> = Vec::new();
-
-    // Get the beancount file's parent directory for resolving relative plugin paths
+    #[cfg(feature = "python-plugin-wasm")]
     let beancount_dir = file.parent().unwrap_or(std::path::Path::new("."));
 
     for plugin in &load_result.plugins {
@@ -864,14 +863,13 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
         #[cfg(feature = "python-plugin-wasm")]
         if !args.plugins.is_empty() || !wasm_plugins_from_file.is_empty() {
-            let mut wasm_manager = PluginManager::new();
-
-            // Load WASM plugins declared in beancount file
-            for (plugin_path, _config) in &wasm_plugins_from_file {
+            // Execute WASM plugins declared in beancount file (each with its own config)
+            for (plugin_path, config) in &wasm_plugins_from_file {
                 if args.verbose && !args.quiet {
                     eprintln!("  Loading WASM plugin: {}", plugin_path.display());
                 }
-                if let Err(e) = wasm_manager.load(plugin_path) {
+                let mut plugin_manager = PluginManager::new();
+                if let Err(e) = plugin_manager.load(plugin_path) {
                     if !args.quiet {
                         writeln!(
                             stdout,
@@ -881,33 +879,17 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         )?;
                     }
                     error_count += 1;
-                }
-            }
-
-            // Load WASM plugins from CLI --plugin flag
-            for plugin_path in &args.plugins {
-                if args.verbose && !args.quiet {
-                    eprintln!("  Loading WASM plugin: {}", plugin_path.display());
-                }
-                if let Err(e) = wasm_manager.load(plugin_path) {
-                    if !args.quiet {
-                        writeln!(
-                            stdout,
-                            "error: failed to load WASM plugin {}: {}",
-                            plugin_path.display(),
-                            e
-                        )?;
-                    }
-                    error_count += 1;
-                }
-            }
-
-            if !wasm_manager.is_empty() {
-                if args.verbose && !args.quiet {
-                    eprintln!("  Executing {} WASM plugin(s)...", wasm_manager.len());
+                    continue;
                 }
 
-                match wasm_manager.execute_all(current_input.clone()) {
+                // Execute with this plugin's config
+                let plugin_input = PluginInput {
+                    directives: current_input.directives.clone(),
+                    options: current_input.options.clone(),
+                    config: config.clone(),
+                };
+
+                match plugin_manager.execute(0, &plugin_input) {
                     Ok(output) => {
                         for err in &output.errors {
                             if !args.quiet {
@@ -915,18 +897,67 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             }
                             error_count += 1;
                         }
-
-                        current_input = PluginInput {
-                            directives: output.directives,
-                            options: current_input.options.clone(),
-                            config: None,
-                        };
+                        current_input.directives = output.directives;
                     }
                     Err(e) => {
                         if !args.quiet {
-                            writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
+                            writeln!(
+                                stdout,
+                                "error: WASM plugin {} execution failed: {e}",
+                                plugin_path.display()
+                            )?;
                         }
                         error_count += 1;
+                    }
+                }
+            }
+
+            // Execute WASM plugins from CLI --plugin flag (no config)
+            if !args.plugins.is_empty() {
+                let mut wasm_manager = PluginManager::new();
+                for plugin_path in &args.plugins {
+                    if args.verbose && !args.quiet {
+                        eprintln!("  Loading WASM plugin: {}", plugin_path.display());
+                    }
+                    if let Err(e) = wasm_manager.load(plugin_path) {
+                        if !args.quiet {
+                            writeln!(
+                                stdout,
+                                "error: failed to load WASM plugin {}: {}",
+                                plugin_path.display(),
+                                e
+                            )?;
+                        }
+                        error_count += 1;
+                    }
+                }
+
+                if !wasm_manager.is_empty() {
+                    if args.verbose && !args.quiet {
+                        eprintln!("  Executing {} WASM plugin(s)...", wasm_manager.len());
+                    }
+
+                    match wasm_manager.execute_all(current_input.clone()) {
+                        Ok(output) => {
+                            for err in &output.errors {
+                                if !args.quiet {
+                                    writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
+                                }
+                                error_count += 1;
+                            }
+
+                            current_input = PluginInput {
+                                directives: output.directives,
+                                options: current_input.options.clone(),
+                                config: None,
+                            };
+                        }
+                        Err(e) => {
+                            if !args.quiet {
+                                writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
+                            }
+                            error_count += 1;
+                        }
                     }
                 }
             }
