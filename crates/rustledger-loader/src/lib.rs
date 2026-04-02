@@ -881,6 +881,71 @@ include "transactions/*.beancount"
     }
 
     #[test]
+    fn test_virtual_filesystem_glob_dot_slash_prefix() {
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "./transactions/*.beancount"
+
+2024-01-01 open Assets:Bank USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2024.beancount",
+            r#"
+2024-01-01 open Expenses:Food USD
+
+2024-06-15 * "Groceries"
+  Expenses:Food  50.00 USD
+  Assets:Bank   -50.00 USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2025.beancount",
+            r#"
+2025-01-01 open Expenses:Rent USD
+
+2025-02-01 * "Rent"
+  Expenses:Rent  1000.00 USD
+  Assets:Bank   -1000.00 USD
+"#,
+        );
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have: 1 open from main + 2 opens from transactions + 2 txns
+        let opens = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+            .count();
+        assert_eq!(
+            opens, 3,
+            "expected 3 open directives (1 main + 2 transactions), ./ prefix should be normalized"
+        );
+
+        let txns = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+            .count();
+        assert_eq!(
+            txns, 2,
+            "expected 2 transactions from glob-matched files despite ./ prefix"
+        );
+
+        assert!(
+            result.errors.is_empty(),
+            "expected no errors, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
     fn test_virtual_filesystem_glob_no_match() {
         let mut vfs = VirtualFileSystem::new();
         vfs.add_file("main.beancount", r#"include "nonexistent/*.beancount""#);
