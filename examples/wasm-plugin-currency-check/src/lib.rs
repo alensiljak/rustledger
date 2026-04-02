@@ -5,125 +5,13 @@
 //! - Warns about mixed currencies in expense accounts
 //! - Enforces operating currency for certain account types
 
-use serde::{Deserialize, Serialize};
+use rustledger_plugin_types::*;
 use std::collections::{HashMap, HashSet};
 
-// Plugin types (matching beancount-plugin/src/types.rs)
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginInput {
-    pub directives: Vec<DirectiveWrapper>,
-    pub options: PluginOptions,
-    pub config: Option<String>,
-}
+// ============================================================================
+// Required Exports
+// ============================================================================
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginOutput {
-    pub directives: Vec<DirectiveWrapper>,
-    pub errors: Vec<PluginError>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginOptions {
-    pub operating_currencies: Vec<String>,
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginError {
-    pub message: String,
-    pub severity: String,
-    pub date: Option<String>,
-    pub account: Option<String>,
-}
-
-impl PluginError {
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            severity: "warning".to_string(),
-            date: None,
-            account: None,
-        }
-    }
-
-    pub fn with_date(mut self, date: &str) -> Self {
-        self.date = Some(date.to_string());
-        self
-    }
-
-    pub fn with_account(mut self, account: &str) -> Self {
-        self.account = Some(account.to_string());
-        self
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DirectiveWrapper {
-    pub directive_type: String,
-    pub date: String,
-    pub data: DirectiveData,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum DirectiveData {
-    Transaction(TransactionData),
-    Commodity(CommodityData),
-    Open(OpenData),
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionData {
-    pub flag: String,
-    pub payee: Option<String>,
-    pub narration: String,
-    pub tags: Vec<String>,
-    pub links: Vec<String>,
-    pub metadata: Vec<(String, serde_json::Value)>,
-    pub postings: Vec<PostingData>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostingData {
-    pub account: String,
-    pub units: Option<AmountData>,
-    pub cost: Option<CostData>,
-    pub price: Option<serde_json::Value>,
-    pub flag: Option<String>,
-    pub metadata: Vec<(String, serde_json::Value)>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AmountData {
-    pub number: String,
-    pub currency: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostData {
-    pub number_per: Option<String>,
-    pub number_total: Option<String>,
-    pub currency: Option<String>,
-    pub date: Option<String>,
-    pub label: Option<String>,
-    pub merge: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommodityData {
-    pub currency: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenData {
-    pub account: String,
-    pub currencies: Vec<String>,
-    pub booking: Option<String>,
-}
-
-// Memory management
 #[no_mangle]
 pub extern "C" fn alloc(size: u32) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
@@ -158,12 +46,7 @@ pub extern "C" fn process(input_ptr: u32, input_len: u32) -> u64 {
 fn pack_error(message: &str) -> u64 {
     let output = PluginOutput {
         directives: Vec::new(),
-        errors: vec![PluginError {
-            message: message.to_string(),
-            severity: "error".to_string(),
-            date: None,
-            account: None,
-        }],
+        errors: vec![PluginError::error(message)],
     };
     let bytes = rmp_serde::to_vec(&output).unwrap_or_default();
     let ptr = alloc(bytes.len() as u32);
@@ -173,7 +56,11 @@ fn pack_error(message: &str) -> u64 {
     ((ptr as u64) << 32) | (bytes.len() as u64)
 }
 
-/// Main plugin logic: check currency usage
+// ============================================================================
+// Plugin Logic
+// ============================================================================
+
+/// Check currency usage across the ledger.
 fn check_currencies(input: PluginInput) -> PluginOutput {
     let mut errors = Vec::new();
 
@@ -204,18 +91,14 @@ fn check_currencies(input: PluginInput) -> PluginOutput {
                         .or_default()
                         .insert(units.currency.clone());
 
-                    // Warn about undeclared currencies (if we have any declared)
+                    // Warn about undeclared currencies
                     if !declared_currencies.is_empty()
                         && !declared_currencies.contains(&units.currency)
                     {
-                        errors.push(
-                            PluginError::warning(format!(
-                                "Currency '{}' used but not declared as commodity",
-                                units.currency
-                            ))
-                            .with_date(&wrapper.date)
-                            .with_account(&posting.account),
-                        );
+                        errors.push(PluginError::warning(format!(
+                            "Currency '{}' used but not declared (date: {}, account: {})",
+                            units.currency, wrapper.date, posting.account
+                        )));
                     }
                 }
 
@@ -225,14 +108,10 @@ fn check_currencies(input: PluginInput) -> PluginOutput {
                         if !declared_currencies.is_empty()
                             && !declared_currencies.contains(currency)
                         {
-                            errors.push(
-                                PluginError::warning(format!(
-                                    "Cost currency '{}' not declared as commodity",
-                                    currency
-                                ))
-                                .with_date(&wrapper.date)
-                                .with_account(&posting.account),
-                            );
+                            errors.push(PluginError::warning(format!(
+                                "Cost currency '{}' not declared (date: {}, account: {})",
+                                currency, wrapper.date, posting.account
+                            )));
                         }
                     }
                 }
@@ -242,19 +121,15 @@ fn check_currencies(input: PluginInput) -> PluginOutput {
 
     // Warn about accounts with multiple currencies (for expense/income accounts)
     for (account, currencies) in &account_currencies {
-        if currencies.len() > 1 {
-            // Only warn for expense/income accounts
-            if account.starts_with("Expenses:") || account.starts_with("Income:") {
-                let currency_list: Vec<_> = currencies.iter().collect();
-                errors.push(
-                    PluginError::warning(format!(
-                        "Account '{}' uses multiple currencies: {}",
-                        account,
-                        currency_list.join(", ")
-                    ))
-                    .with_account(account),
-                );
-            }
+        if currencies.len() > 1
+            && (account.starts_with("Expenses:") || account.starts_with("Income:"))
+        {
+            let currency_list: Vec<&str> = currencies.iter().map(|s| s.as_str()).collect();
+            errors.push(PluginError::warning(format!(
+                "Account '{}' uses multiple currencies: {}",
+                account,
+                currency_list.join(", ")
+            )));
         }
     }
 
@@ -263,6 +138,10 @@ fn check_currencies(input: PluginInput) -> PluginOutput {
         errors,
     }
 }
+
+// ============================================================================
+// Tests
+// ============================================================================
 
 #[cfg(test)]
 mod tests {
@@ -273,15 +152,20 @@ mod tests {
         let input = PluginInput {
             directives: vec![
                 DirectiveWrapper {
-                    directive_type: "commodity".to_string(),
+                    directive_type: String::new(),
                     date: "2024-01-01".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Commodity(CommodityData {
                         currency: "USD".to_string(),
+                        metadata: vec![],
                     }),
                 },
                 DirectiveWrapper {
-                    directive_type: "transaction".to_string(),
+                    directive_type: String::new(),
                     date: "2024-01-15".to_string(),
+                    filename: None,
+                    lineno: None,
                     data: DirectiveData::Transaction(TransactionData {
                         flag: "*".to_string(),
                         payee: None,
