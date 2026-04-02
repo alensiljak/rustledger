@@ -65,6 +65,16 @@
 //! this to allocate memory in the WASM linear memory for passing input data.
 //! The plugin uses it to allocate memory for output data.
 //!
+//! Optionally, plugins can export a `dealloc(ptr: *mut u8, size: u32)` function
+//! to free memory. This is not required by the host but can be useful for
+//! memory management within longer-running plugin operations.
+//!
+//! # Version Compatibility
+//!
+//! Plugin types are versioned with rustledger. For best compatibility, use the
+//! same minor version of `rustledger-plugin-types` as the rustledger host you're
+//! targeting (e.g., `0.10.x` for rustledger `0.10.x`).
+//!
 //! # Building
 //!
 //! Build your plugin for the WASM target:
