@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.10.1](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.10.1) - 2026-04-02
+
+### Bug Fixes
+
+- improve importers config with default_expense, error handling, and docs
+- correct contra account logic for CSV importer sign convention
+
+### Features
+
+- add importers.toml config with account mappings for extract
+
+### Refactoring
+
+- audit fixes for extract command quality and correctness
+
+### Testing
+
+- add coverage for default_expense and default_income paths
+
 ## [0.10.0](https://github.com/rustledger/rustledger/compare/v0.9.0...v0.10.0) - 2026-02-18
 
 ### Bug Fixes

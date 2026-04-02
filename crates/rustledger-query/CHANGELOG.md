@@ -6,6 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.10.2](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.10.2) - 2026-04-02
+
+### Bug Fixes
+
+- *(query)* make BQL regex matching case-insensitive
+- VALUE() function beancount compatibility
+- *(bql)* require comma for set literals to avoid breaking IN (column)
+- handle NULL and empty inventory in CONVERT function
+- expand wildcard column names for JSON output
+- address PR review - shared constant and reject wildcard aliases
+- *(query)* support beancount-compatible table names without # prefix
+- *(query)* return value as-is when no target currency for VALUE()
+- address review comments on VALUE() fallback
+- inline format arg to fix clippy::uninlined_format_args
+
+### Documentation
+
+- add issue #568 references to VALUE() regression tests
+- remove non-working BQL features from documentation
+- address PR review comments
+
+### Features
+
+- support chained price lookups in get_latest_price()
+- *(bql)* support IN operator with set literals
+- *(bql)* support numeric and mixed-type sets in IN operator
+
+### Refactoring
+
+- unify VALUE() implementation to single shared helper
+- address review comments
+
+### Testing
+
+- *(bql)* add unit test for Expr::Set Display formatting
+
 ## [0.10.1](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.10.1) - 2026-03-12
 
 ### Documentation

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.10.2](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.10.2) - 2026-04-02
+
+### Bug Fixes
+
+- *(ffi-wasi)* handle Value::Set variant in convert.rs
+- address PR review comments
+- update sha2 usage in ffi-wasi for MSRV 1.90 compatibility
+
 ## [0.10.1](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.10.1) - 2026-03-12
 
 ### Documentation
