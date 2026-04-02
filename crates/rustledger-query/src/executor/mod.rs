@@ -1119,16 +1119,22 @@ impl<'a> Executor<'a> {
                 _ => None,
             };
 
-            inferred
-                .or_else(|| self.target_currency.clone())
-                .ok_or_else(|| {
-                    QueryError::InvalidArguments(
-                        "VALUE".to_string(),
-                        "no target currency set; either pass the currency as VALUE(position, 'USD'), \
-                         use a position with cost basis, or call set_target_currency() on the executor"
-                            .to_string(),
-                    )
-                })?
+            match inferred.or_else(|| self.target_currency.clone()) {
+                Some(c) => c,
+                None => {
+                    // No currency can be determined — return value as-is
+                    // (matches Python beancount behavior for positions without cost)
+                    return match val {
+                        Value::Position(p) => Ok(Value::Amount(p.units.clone())),
+                        Value::Amount(a) => Ok(Value::Amount(a.clone())),
+                        Value::Inventory(inv) => Ok(Value::Inventory(inv.clone())),
+                        Value::Null => Ok(Value::Null),
+                        _ => Err(QueryError::Type(
+                            "VALUE expects a position, amount, or inventory".to_string(),
+                        )),
+                    };
+                }
+            }
         };
 
         // Use latest available price for conversion (beancount compatibility).

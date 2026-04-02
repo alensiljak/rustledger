@@ -3712,6 +3712,91 @@ fn make_chained_price_directives() -> Vec<Directive> {
 }
 
 // ============================================================================
+// VALUE() returns as-is when no target currency (Issue #641)
+// ============================================================================
+
+#[test]
+fn test_value_no_currency_returns_as_is() {
+    // Regression test for issue #641:
+    // VALUE() with no explicit currency and no cost basis should return the
+    // value as-is (the units themselves), matching Python beancount behavior.
+    // Previously this errored with "no target currency set".
+
+    // Create directives with positions that have NO cost basis
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Grocery store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+
+    // VALUE(position) on a position without cost basis and no explicit currency
+    // should return the units as-is instead of erroring
+    let result = execute_query(
+        r#"SELECT account, value(position) as val
+           WHERE account = "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(a) = &result.rows[0][1] {
+        assert_eq!(a.number, dec!(50));
+        assert_eq!(a.currency, "USD");
+    } else {
+        panic!(
+            "Expected Amount value when VALUE() has no target currency, got {:?}",
+            result.rows[0][1]
+        );
+    }
+}
+
+#[test]
+fn test_value_no_currency_aggregated_returns_as_is() {
+    // Regression test for issue #641:
+    // VALUE(SUM(position)) with no explicit currency and no cost basis should
+    // return the inventory as-is, matching Python beancount behavior.
+
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Grocery store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 10), "Restaurant")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-30), "USD"))),
+        ),
+    ];
+
+    // VALUE(SUM(position)) with no currency should not error
+    let result = execute_query(
+        r#"SELECT account, value(sum(position)) as val
+           GROUP BY account
+           HAVING account = "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // The result should be an inventory returned as-is (not converted)
+    // or an amount if the inventory collapses to a single currency
+    match &result.rows[0][1] {
+        Value::Inventory(_) | Value::Amount(_) => {
+            // Both are acceptable - the key is that it doesn't error
+        }
+        other => panic!(
+            "Expected Inventory or Amount when VALUE() has no target currency, got {:?}",
+            other
+        ),
+    }
+}
+
+// ============================================================================
 // #prices System Table Tests (Issue #562)
 // ============================================================================
 
