@@ -43,7 +43,10 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// # Errors
     ///
     /// Returns an error string if the pattern is invalid.
-    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String>;
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        let _ = pattern;
+        Err("glob is not supported by this filesystem".to_string())
+    }
 }
 
 /// Default filesystem that reads from disk.
@@ -127,13 +130,10 @@ impl FileSystem for DiskFileSystem {
 
     fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
         let entries = glob::glob(pattern).map_err(|e| e.to_string())?;
-        let mut matched = Vec::new();
-        for entry in entries {
-            match entry {
-                Ok(p) => matched.push(p),
-                Err(e) => return Err(e.to_string()),
-            }
-        }
+        // Skip entries that error (e.g., permission denied) rather than
+        // failing the entire glob. The loader will catch missing/unreadable
+        // files later when it tries to read them.
+        let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
         matched.sort();
         Ok(matched)
     }
@@ -244,7 +244,11 @@ impl FileSystem for VirtualFileSystem {
     }
 
     fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
-        let glob_pattern = glob::Pattern::new(pattern).map_err(|e| e.to_string())?;
+        // Normalize the pattern the same way stored keys are normalized,
+        // so that backslashes or leading "./" in the pattern still match.
+        let normalized = pattern.replace('\\', "/");
+        let normalized = normalized.strip_prefix("./").unwrap_or(&normalized);
+        let glob_pattern = glob::Pattern::new(normalized).map_err(|e| e.to_string())?;
         let mut matched: Vec<PathBuf> = self
             .files
             .keys()
