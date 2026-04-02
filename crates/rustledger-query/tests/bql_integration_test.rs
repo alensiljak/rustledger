@@ -3784,10 +3784,17 @@ fn test_value_no_currency_aggregated_returns_as_is() {
 
     assert_eq!(result.len(), 1);
     // The result should be an inventory returned as-is (not converted)
-    // or an amount if the inventory collapses to a single currency
+    // or an amount if the inventory collapses to a single currency.
+    // Either way, the value must be 80 USD (50 + 30).
+    let expected = Amount::new(dec!(80), "USD");
     match &result.rows[0][1] {
-        Value::Inventory(_) | Value::Amount(_) => {
-            // Both are acceptable - the key is that it doesn't error
+        Value::Amount(a) => {
+            assert_eq!(*a, expected, "Expected 80 USD amount");
+        }
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single-currency inventory");
+            assert_eq!(positions[0].units, expected, "Expected 80 USD in inventory");
         }
         other => panic!(
             "Expected Inventory or Amount when VALUE() has no target currency, got {:?}",

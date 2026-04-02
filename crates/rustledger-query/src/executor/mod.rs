@@ -1096,7 +1096,14 @@ impl<'a> Executor<'a> {
     /// * `explicit_currency` - Optional explicit target currency
     ///
     /// # Returns
-    /// The converted Amount, or an error if conversion is not possible.
+    /// - `Value::Amount` when conversion succeeds or the input is a single amount/position
+    /// - `Value::Inventory` when no target currency can be determined and the input is an inventory
+    /// - `Value::Null` when the input is null
+    ///
+    /// When no explicit currency is provided and none can be inferred from the
+    /// cost basis or executor settings, the input value is returned as-is rather
+    /// than producing an error. This matches Python beancount behavior for
+    /// positions without cost.
     pub(crate) fn convert_to_market_value(
         &self,
         val: &Value,
