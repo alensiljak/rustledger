@@ -191,6 +191,8 @@
             tokei # Code stats
             git-cliff # Changelog generation
             uv # Python package manager for compat testing
+            tmux
+            gh
 
             # Documentation
             mdbook
@@ -323,6 +325,9 @@
 
             # Shell initialization
             shellHook = ''
+              # Source agent-env when present (for example, to load API keys and claude PATH)
+              [[ -f ~/.agent-env ]] && source ~/.agent-env
+
               # Install prek hooks if not already installed
               if command -v prek &> /dev/null && [ -f .pre-commit-config.yaml ]; then
                 prek install --hook-type pre-commit --hook-type pre-push --hook-type commit-msg 2>/dev/null || true
