@@ -5,6 +5,7 @@ edition = "2021"
 description = "Plugin that validates currency usage across accounts"
 
 [workspace]
+resolver = "3"
 
 [lib]
 crate-type = ["cdylib"]

@@ -93,7 +93,7 @@ fn process_directives(input: PluginInput) -> PluginOutput {
     for mut wrapper in input.directives {
         // Example: add a tag to all transactions
         if let DirectiveData::Transaction(ref mut txn) = wrapper.data {
-            if !txn.tags.contains(&"processed".to_string()) {
+            if !txn.tags.iter().any(|t| t == "processed") {
                 txn.tags.push("processed".to_string());
             }
         }

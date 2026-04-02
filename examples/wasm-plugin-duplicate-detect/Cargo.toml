@@ -5,6 +5,7 @@ edition = "2021"
 description = "Plugin that detects potentially duplicate transactions"
 
 [workspace]
+resolver = "3"
 
 [lib]
 crate-type = ["cdylib"]

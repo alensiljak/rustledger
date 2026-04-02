@@ -5,6 +5,7 @@ edition = "2021"
 description = "Example rustledger WASM plugin demonstrating common patterns"
 
 [workspace]
+resolver = "3"
 
 [lib]
 crate-type = ["cdylib"]
