@@ -3797,8 +3797,7 @@ fn test_value_no_currency_aggregated_returns_as_is() {
             assert_eq!(positions[0].units, expected, "Expected 80 USD in inventory");
         }
         other => panic!(
-            "Expected Inventory or Amount when VALUE() has no target currency, got {:?}",
-            other
+            "Expected Inventory or Amount when VALUE() has no target currency, got {other:?}",
         ),
     }
 }
