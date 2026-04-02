@@ -37,6 +37,13 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// For disk filesystems, this makes paths absolute.
     /// For virtual filesystems, this just cleans up the path.
     fn normalize(&self, path: &Path) -> PathBuf;
+
+    /// Expand a glob pattern and return matching paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the pattern is invalid.
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String>;
 }
 
 /// Default filesystem that reads from disk.
@@ -116,6 +123,19 @@ impl FileSystem for DiskFileSystem {
             // Last resort: just return the path as-is
             path.to_path_buf()
         }
+    }
+
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        let entries = glob::glob(pattern).map_err(|e| e.to_string())?;
+        let mut matched = Vec::new();
+        for entry in entries {
+            match entry {
+                Ok(p) => matched.push(p),
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        matched.sort();
+        Ok(matched)
     }
 }
 
@@ -221,6 +241,18 @@ impl FileSystem for VirtualFileSystem {
     fn normalize(&self, path: &Path) -> PathBuf {
         // For virtual filesystem, just clean up the path without making it absolute
         normalize_vfs_path(path)
+    }
+
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        let glob_pattern = glob::Pattern::new(pattern).map_err(|e| e.to_string())?;
+        let mut matched: Vec<PathBuf> = self
+            .files
+            .keys()
+            .filter(|path| glob_pattern.matches_path(path))
+            .cloned()
+            .collect();
+        matched.sort();
+        Ok(matched)
     }
 }
 
