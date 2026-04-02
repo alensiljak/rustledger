@@ -54,7 +54,7 @@
 //!
 //! # Serialization Format
 //!
-//! Plugins communicate with the host via MessagePack serialization. The host
+//! Plugins communicate with the host via `MessagePack` serialization. The host
 //! calls `process(ptr, len)` with a pointer to MessagePack-encoded [`PluginInput`].
 //! The plugin returns a packed u64 containing a pointer and length to
 //! MessagePack-encoded [`PluginOutput`].
@@ -94,7 +94,7 @@ use serde::{Deserialize, Serialize};
 
 /// Input passed to a plugin.
 ///
-/// The host serializes this struct via MessagePack and passes it to the
+/// The host serializes this struct via `MessagePack` and passes it to the
 /// plugin's `process` function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginInput {
@@ -111,7 +111,7 @@ pub struct PluginInput {
 
 /// Output returned from a plugin.
 ///
-/// The plugin serializes this struct via MessagePack and returns a pointer
+/// The plugin serializes this struct via `MessagePack` and returns a pointer
 /// to it from the `process` function.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginOutput {
@@ -265,7 +265,7 @@ impl DirectiveWrapper {
 
     /// Returns a sort key tuple matching Python beancount's `entry_sortkey()`.
     ///
-    /// Sorts by: (date, type_order, lineno)
+    /// Sorts by: (date, `type_order`, lineno)
     #[must_use]
     pub fn sort_key(&self) -> (&str, i8, u32) {
         (
