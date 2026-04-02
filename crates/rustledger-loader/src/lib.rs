@@ -490,28 +490,12 @@ impl Loader {
 
             // Expand glob patterns or use literal path
             let paths_to_load: Vec<PathBuf> = if has_glob {
-                match glob::glob(&full_path_str) {
-                    Ok(entries) => {
-                        let mut matched: Vec<PathBuf> = Vec::new();
-                        for entry in entries {
-                            match entry {
-                                Ok(p) => matched.push(p),
-                                Err(e) => {
-                                    errors.push(LoadError::GlobError {
-                                        pattern: include_path.clone(),
-                                        message: e.to_string(),
-                                    });
-                                }
-                            }
-                        }
-                        // Sort for deterministic ordering
-                        matched.sort();
-                        matched
-                    }
+                match self.fs.glob(&full_path_str) {
+                    Ok(matched) => matched,
                     Err(e) => {
                         errors.push(LoadError::GlobError {
                             pattern: include_path.clone(),
-                            message: e.to_string(),
+                            message: e,
                         });
                         continue;
                     }
@@ -827,5 +811,159 @@ include "level2.beancount"
         assert!(!result.errors.is_empty());
         let error_msg = result.errors[0].to_string();
         assert!(error_msg.contains("not found") || error_msg.contains("Io"));
+    }
+
+    #[test]
+    fn test_virtual_filesystem_glob_include() {
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "transactions/*.beancount"
+
+2024-01-01 open Assets:Bank USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2024.beancount",
+            r#"
+2024-01-01 open Expenses:Food USD
+
+2024-06-15 * "Groceries"
+  Expenses:Food  50.00 USD
+  Assets:Bank   -50.00 USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2025.beancount",
+            r#"
+2025-01-01 open Expenses:Rent USD
+
+2025-02-01 * "Rent"
+  Expenses:Rent  1000.00 USD
+  Assets:Bank   -1000.00 USD
+"#,
+        );
+        // This file should NOT be matched by the glob
+        vfs.add_file(
+            "other/ignored.beancount",
+            "2024-01-01 open Expenses:Other USD",
+        );
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have: 1 open from main + 2 opens from transactions + 2 txns
+        let opens = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+            .count();
+        assert_eq!(
+            opens, 3,
+            "expected 3 open directives (1 main + 2 transactions)"
+        );
+
+        let txns = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+            .count();
+        assert_eq!(txns, 2, "expected 2 transactions from glob-matched files");
+
+        assert!(
+            result.errors.is_empty(),
+            "expected no errors, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_virtual_filesystem_glob_dot_slash_prefix() {
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "./transactions/*.beancount"
+
+2024-01-01 open Assets:Bank USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2024.beancount",
+            r#"
+2024-01-01 open Expenses:Food USD
+
+2024-06-15 * "Groceries"
+  Expenses:Food  50.00 USD
+  Assets:Bank   -50.00 USD
+"#,
+        );
+        vfs.add_file(
+            "transactions/2025.beancount",
+            r#"
+2025-01-01 open Expenses:Rent USD
+
+2025-02-01 * "Rent"
+  Expenses:Rent  1000.00 USD
+  Assets:Bank   -1000.00 USD
+"#,
+        );
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have: 1 open from main + 2 opens from transactions + 2 txns
+        let opens = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+            .count();
+        assert_eq!(
+            opens, 3,
+            "expected 3 open directives (1 main + 2 transactions), ./ prefix should be normalized"
+        );
+
+        let txns = result
+            .directives
+            .iter()
+            .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+            .count();
+        assert_eq!(
+            txns, 2,
+            "expected 2 transactions from glob-matched files despite ./ prefix"
+        );
+
+        assert!(
+            result.errors.is_empty(),
+            "expected no errors, got: {:?}",
+            result.errors
+        );
+    }
+
+    #[test]
+    fn test_virtual_filesystem_glob_no_match() {
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file("main.beancount", r#"include "nonexistent/*.beancount""#);
+
+        let result = Loader::new()
+            .with_filesystem(Box::new(vfs))
+            .load(Path::new("main.beancount"))
+            .unwrap();
+
+        // Should have a GlobNoMatch error
+        let has_glob_error = result
+            .errors
+            .iter()
+            .any(|e| matches!(e, LoadError::GlobNoMatch { .. }));
+        assert!(
+            has_glob_error,
+            "expected GlobNoMatch error, got: {:?}",
+            result.errors
+        );
     }
 }
