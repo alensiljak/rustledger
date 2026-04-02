@@ -1,102 +1,19 @@
 //! Duplicate Transaction Detector Plugin
 //!
 //! This plugin detects potentially duplicate transactions by comparing:
-//! - Same date
+//! - Same date (within configurable window)
 //! - Same payee (if present)
 //! - Same amount
 //!
 //! Configure with: "days=N" to look for duplicates within N days (default 3)
 
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use rustledger_plugin_types::*;
+use std::collections::HashSet;
 
-// Plugin types
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginInput {
-    pub directives: Vec<DirectiveWrapper>,
-    pub options: PluginOptions,
-    pub config: Option<String>,
-}
+// ============================================================================
+// Required Exports
+// ============================================================================
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginOutput {
-    pub directives: Vec<DirectiveWrapper>,
-    pub errors: Vec<PluginError>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginOptions {
-    pub operating_currencies: Vec<String>,
-    pub title: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PluginError {
-    pub message: String,
-    pub severity: String,
-    pub date: Option<String>,
-    pub account: Option<String>,
-}
-
-impl PluginError {
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self {
-            message: message.into(),
-            severity: "warning".to_string(),
-            date: None,
-            account: None,
-        }
-    }
-
-    pub fn with_date(mut self, date: &str) -> Self {
-        self.date = Some(date.to_string());
-        self
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DirectiveWrapper {
-    pub directive_type: String,
-    pub date: String,
-    pub data: DirectiveData,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "kind")]
-pub enum DirectiveData {
-    Transaction(TransactionData),
-    #[serde(other)]
-    Other,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionData {
-    pub flag: String,
-    pub payee: Option<String>,
-    pub narration: String,
-    pub tags: Vec<String>,
-    pub links: Vec<String>,
-    pub metadata: Vec<(String, serde_json::Value)>,
-    pub postings: Vec<PostingData>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PostingData {
-    pub account: String,
-    pub units: Option<AmountData>,
-    pub cost: Option<serde_json::Value>,
-    pub price: Option<serde_json::Value>,
-    pub flag: Option<String>,
-    pub metadata: Vec<(String, serde_json::Value)>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AmountData {
-    pub number: String,
-    pub currency: String,
-}
-
-// Memory management
 #[no_mangle]
 pub extern "C" fn alloc(size: u32) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size as usize, 1).unwrap();
@@ -131,12 +48,7 @@ pub extern "C" fn process(input_ptr: u32, input_len: u32) -> u64 {
 fn pack_error(message: &str) -> u64 {
     let output = PluginOutput {
         directives: Vec::new(),
-        errors: vec![PluginError {
-            message: message.to_string(),
-            severity: "error".to_string(),
-            date: None,
-            account: None,
-        }],
+        errors: vec![PluginError::error(message)],
     };
     let bytes = rmp_serde::to_vec(&output).unwrap_or_default();
     let ptr = alloc(bytes.len() as u32);
@@ -146,15 +58,19 @@ fn pack_error(message: &str) -> u64 {
     ((ptr as u64) << 32) | (bytes.len() as u64)
 }
 
-/// Transaction fingerprint for duplicate detection
+// ============================================================================
+// Plugin Logic
+// ============================================================================
+
+/// Transaction fingerprint for duplicate detection.
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct TxnFingerprint {
     payee: Option<String>,
-    amount: String, // First posting amount as string
+    amount: String,
     currency: String,
 }
 
-/// Parse date string to (year, month, day)
+/// Parse date string to (year, month, day).
 fn parse_date(date: &str) -> Option<(i32, u32, u32)> {
     let parts: Vec<&str> = date.split('-').collect();
     if parts.len() != 3 {
@@ -166,14 +82,10 @@ fn parse_date(date: &str) -> Option<(i32, u32, u32)> {
     Some((year, month, day))
 }
 
-/// Calculate days between two dates (approximate)
+/// Calculate days between two dates (approximate).
 fn days_between(date1: &str, date2: &str) -> i32 {
-    let d1 = parse_date(date1);
-    let d2 = parse_date(date2);
-
-    match (d1, d2) {
+    match (parse_date(date1), parse_date(date2)) {
         (Some((y1, m1, d1)), Some((y2, m2, d2))) => {
-            // Simple approximation: assume 30 days per month
             let days1 = y1 * 365 + m1 as i32 * 30 + d1 as i32;
             let days2 = y2 * 365 + m2 as i32 * 30 + d2 as i32;
             (days1 - days2).abs()
@@ -182,7 +94,7 @@ fn days_between(date1: &str, date2: &str) -> i32 {
     }
 }
 
-/// Main plugin logic: detect duplicate transactions
+/// Detect potentially duplicate transactions.
 fn detect_duplicates(input: PluginInput) -> PluginOutput {
     let mut errors = Vec::new();
 
@@ -194,12 +106,12 @@ fn detect_duplicates(input: PluginInput) -> PluginOutput {
         .and_then(|s| s.parse().ok())
         .unwrap_or(3);
 
-    // Collect all transactions with their fingerprints
-    let mut transactions: Vec<(String, TxnFingerprint, &str)> = Vec::new();
+    // Collect transactions with fingerprints
+    let mut transactions: Vec<(String, TxnFingerprint, String)> = Vec::new();
 
     for wrapper in &input.directives {
         if let DirectiveData::Transaction(txn) = &wrapper.data {
-            // Skip flagged transactions (already reconciled)
+            // Skip pending transactions
             if txn.flag == "!" {
                 continue;
             }
@@ -212,38 +124,37 @@ fn detect_duplicates(input: PluginInput) -> PluginOutput {
                         amount: units.number.clone(),
                         currency: units.currency.clone(),
                     };
-                    transactions.push((wrapper.date.clone(), fingerprint, &txn.narration));
+                    transactions.push((
+                        wrapper.date.clone(),
+                        fingerprint,
+                        txn.narration.clone(),
+                    ));
                 }
             }
         }
     }
 
-    // Compare all pairs looking for potential duplicates
-    let mut reported: std::collections::HashSet<(usize, usize)> = std::collections::HashSet::new();
+    // Compare pairs looking for duplicates
+    let mut reported: HashSet<(usize, usize)> = HashSet::new();
 
     for i in 0..transactions.len() {
         for j in (i + 1)..transactions.len() {
             let (date1, fp1, narr1) = &transactions[i];
             let (date2, fp2, narr2) = &transactions[j];
 
-            // Check if within day window
             if days_between(date1, date2) > day_window {
                 continue;
             }
 
-            // Check if fingerprints match
             if fp1 == fp2 {
                 let key = (i.min(j), i.max(j));
                 if !reported.contains(&key) {
                     reported.insert(key);
-                    errors.push(
-                        PluginError::warning(format!(
-                            "Potential duplicate: '{}' on {} and '{}' on {} \
-                             (same payee {:?}, amount {} {})",
-                            narr1, date1, narr2, date2, fp1.payee, fp1.amount, fp1.currency
-                        ))
-                        .with_date(date1),
-                    );
+                    errors.push(PluginError::warning(format!(
+                        "Potential duplicate: '{}' on {} and '{}' on {} \
+                         (same payee {:?}, amount {} {})",
+                        narr1, date1, narr2, date2, fp1.payee, fp1.amount, fp1.currency
+                    )));
                 }
             }
         }
@@ -255,14 +166,25 @@ fn detect_duplicates(input: PluginInput) -> PluginOutput {
     }
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_transaction(date: &str, payee: Option<&str>, narration: &str, amount: &str) -> DirectiveWrapper {
+    fn make_transaction(
+        date: &str,
+        payee: Option<&str>,
+        narration: &str,
+        amount: &str,
+    ) -> DirectiveWrapper {
         DirectiveWrapper {
-            directive_type: "transaction".to_string(),
+            directive_type: String::new(),
             date: date.to_string(),
+            filename: None,
+            lineno: None,
             data: DirectiveData::Transaction(TransactionData {
                 flag: "*".to_string(),
                 payee: payee.map(String::from),
@@ -321,7 +243,10 @@ mod tests {
 
         let output = detect_duplicates(input);
 
-        assert!(output.errors.is_empty(), "Different amounts should not be duplicates");
+        assert!(
+            output.errors.is_empty(),
+            "Different amounts should not be duplicates"
+        );
     }
 
     #[test]
@@ -335,11 +260,14 @@ mod tests {
                 operating_currencies: vec!["USD".to_string()],
                 title: None,
             },
-            config: Some("days=3".to_string()), // Only 3 day window
+            config: Some("days=3".to_string()),
         };
 
         let output = detect_duplicates(input);
 
-        assert!(output.errors.is_empty(), "10 days apart should not be flagged with 3-day window");
+        assert!(
+            output.errors.is_empty(),
+            "10 days apart should not be flagged with 3-day window"
+        );
     }
 }

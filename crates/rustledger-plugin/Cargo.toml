@@ -19,6 +19,7 @@ python-plugins = ["wasm-runtime", "wasmtime-wasi", "ureq", "zip", "sha2", "dirs"
 
 [dependencies]
 rustledger-core.workspace = true
+rustledger-plugin-types.workspace = true
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }
 serde.workspace = true

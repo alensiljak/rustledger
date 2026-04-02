@@ -3201,6 +3201,7 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "rustledger-core",
+ "rustledger-plugin-types",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -3211,6 +3212,15 @@ dependencies = [
  "wasmtime-wasi",
  "wat",
  "zip",
+]
+
+[[package]]
+name = "rustledger-plugin-types"
+version = "0.10.1"
+dependencies = [
+ "rmp-serde",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

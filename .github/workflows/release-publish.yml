@@ -72,12 +72,13 @@ jobs:
           # To determine the correct order, run: cargo metadata --format-version=1 | jq -r '.packages[].name'
           # and arrange so that each crate's dependencies appear before it.
           # Current dependency tree (simplified):
-          #   core -> parser -> booking -> plugin -> validate -> loader -> query -> importer -> rustledger
+          #   core -> parser -> booking -> plugin-types -> plugin -> validate -> loader -> query -> importer -> rustledger
           #   wasm and ffi-wasi depend on most crates; lsp depends on query
           CRATES=(
             rustledger-core
             rustledger-parser
             rustledger-booking
+            rustledger-plugin-types
             rustledger-plugin
             rustledger-validate
             rustledger-loader

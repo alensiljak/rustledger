@@ -8,6 +8,7 @@ members = [
   "crates/rustledger-validate",
   "crates/rustledger-query",
   "crates/rustledger-plugin",
+  "crates/rustledger-plugin-types",
   "crates/rustledger-importer",
   "crates/rustledger",
   "crates/rustledger-wasm",
@@ -23,6 +24,7 @@ default-members = [
   "crates/rustledger-validate",
   "crates/rustledger-query",
   "crates/rustledger-plugin",
+  "crates/rustledger-plugin-types",
   "crates/rustledger-importer",
   "crates/rustledger",
   "crates/rustledger-lsp",
@@ -131,6 +133,7 @@ rustledger-booking = { version = "0.10.1", path = "crates/rustledger-booking" }
 rustledger-validate = { version = "0.10.1", path = "crates/rustledger-validate" }
 rustledger-query = { version = "0.10.1", path = "crates/rustledger-query" }
 rustledger-plugin = { version = "0.10.1", path = "crates/rustledger-plugin", default-features = false }
+rustledger-plugin-types = { version = "0.10.1", path = "crates/rustledger-plugin-types" }
 rustledger-importer = { version = "0.10.0", path = "crates/rustledger-importer" }
 
 [workspace.lints.rust]

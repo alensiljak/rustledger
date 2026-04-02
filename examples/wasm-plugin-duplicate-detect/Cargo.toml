@@ -4,12 +4,17 @@ version = "0.1.0"
 edition = "2021"
 description = "Plugin that detects potentially duplicate transactions"
 
+[workspace]
+resolver = "3"
+
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
+# Use the official types crate for compatibility
+rustledger-plugin-types = { path = "../../crates/rustledger-plugin-types" }
+# MessagePack for serialization (matching the host)
 rmp-serde = "1.1"
-serde = { version = "1.0", features = ["derive"] }
 
 [profile.release]
 opt-level = "s"
