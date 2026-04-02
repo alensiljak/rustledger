@@ -519,6 +519,44 @@ fn test_execute_distinct() {
     assert_eq!(payees.len(), unique_payees.len());
 }
 
+#[test]
+fn test_distinct_coalesce_deduplicates_rows() {
+    // The default directives have two transactions with payee "Grocery Store"
+    // and one with no payee (narration "Transfer to savings"). DISTINCT should
+    // collapse the duplicate payee into a single row.
+    let directives = make_test_directives();
+
+    // Without DISTINCT we get one row per transaction (5 total).
+    let all_rows = execute_query(
+        r"SELECT COALESCE(payee, narration) AS payee FROM transactions ORDER BY payee",
+        &directives,
+    );
+
+    // With DISTINCT the duplicate "Grocery Store" rows should be collapsed.
+    let distinct_rows = execute_query(
+        r"SELECT DISTINCT(COALESCE(payee, narration)) AS payee FROM transactions ORDER BY payee",
+        &directives,
+    );
+
+    // Verify deduplication: distinct result must have fewer rows.
+    assert!(
+        distinct_rows.len() < all_rows.len(),
+        "DISTINCT should produce fewer rows than the full result set ({} vs {})",
+        distinct_rows.len(),
+        all_rows.len(),
+    );
+
+    // Verify no duplicate values remain in the distinct result.
+    let values: Vec<&Value> = distinct_rows.rows.iter().map(|row| &row[0]).collect();
+    let unique: std::collections::HashSet<String> =
+        values.iter().map(|v| format!("{v:?}")).collect();
+    assert_eq!(
+        values.len(),
+        unique.len(),
+        "DISTINCT result should contain no duplicate values"
+    );
+}
+
 // ============================================================================
 // Real-World Query Scenarios
 // ============================================================================
