@@ -253,14 +253,7 @@ When running in headless mode (`claude -p`) or via Agent Orchestrator (`ao`), fo
 - Add tests for every code path you change or add
 
 ### 4. Verify Before PR
-Run these in order, fix any failures before proceeding:
-```bash
-cargo check --all-features --all-targets
-cargo test --all-features
-cargo clippy --all-features --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo deny check
-```
+Run the commands from the **Build Commands** section above in order, and fix any failures before proceeding.
 
 ### 5. Create the PR
 - Title: `fix: <description>` or `feat: <description>` (conventional commits)

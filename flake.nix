@@ -325,7 +325,7 @@
 
             # Shell initialization
             shellHook = ''
-              # Source agent-env if running on an agent box (API keys, claude PATH)
+              # Source agent-env when present (for example, to load API keys and claude PATH)
               [[ -f ~/.agent-env ]] && source ~/.agent-env
 
               # Install prek hooks if not already installed
