@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.11.0) - 2026-04-02
+
+### Bug Fixes
+
+- adapt to sha2 0.11.0 API changes
+- *(price)* address PR review feedback
+- address PR review feedback for custom price sources
+- route WASM plugins declared in beancount file to WASM runtime
+- address Copilot review comments
+
+### Documentation
+
+- fix currency_accounts plugin description
+
+### Features
+
+- add filtering options to report networth
+- *(bql)* support numeric and mixed-type sets in IN operator
+- *(extract)* add --list-importers and filename pattern matching
+- *(price)* implement custom price sources with pluggable registry
+
 ## [0.10.1](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.10.1) - 2026-03-12
 
 ### Bug Fixes
