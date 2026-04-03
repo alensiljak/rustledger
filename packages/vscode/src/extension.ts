@@ -1,3 +1,4 @@
+import { execFileSync } from "child_process";
 import * as vscode from "vscode";
 import {
   LanguageClient,
@@ -5,7 +6,18 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 
+const INSTALL_URL = "https://rustledger.github.io/getting-started/installation.html";
+
 let client: LanguageClient | undefined;
+
+function findBinary(command: string): boolean {
+  try {
+    execFileSync(command, ["--version"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export async function activate(
   context: vscode.ExtensionContext,
@@ -14,6 +26,18 @@ export async function activate(
   const command = config.get<string>("server.path", "rledger-lsp");
   const extraArgs = config.get<string[]>("server.extraArgs", []);
   const journalFile = config.get<string>("journalFile", "");
+
+  if (!findBinary(command)) {
+    const install = "Install";
+    const result = await vscode.window.showWarningMessage(
+      `Could not find "${command}". Install rustledger to enable language features.`,
+      install,
+    );
+    if (result === install) {
+      vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
+    }
+    return;
+  }
 
   const serverOptions: ServerOptions = {
     command,
