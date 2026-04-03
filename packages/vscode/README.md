@@ -54,6 +54,11 @@ cargo install rustledger-lsp
 | Command | Description |
 |---------|-------------|
 | `rustledger: Restart Language Server` | Restart the LSP server (useful after updating `rledger-lsp`) |
+| `rustledger: Check for Updates` | Check for a newer version of the extension |
+
+## Auto-Update
+
+The extension automatically checks for updates on startup. When a new version is available, you'll see a notification with an "Update" button that downloads and installs the latest version directly from GitHub Releases.
 
 ## Troubleshooting
 

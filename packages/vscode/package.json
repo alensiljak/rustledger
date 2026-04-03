@@ -57,6 +57,11 @@
         "command": "rustledger.restartServer",
         "title": "Restart Language Server",
         "category": "rustledger"
+      },
+      {
+        "command": "rustledger.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "rustledger"
       }
     ],
     "configuration": {
