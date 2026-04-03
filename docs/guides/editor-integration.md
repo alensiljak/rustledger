@@ -9,44 +9,63 @@ Set up your editor for beancount editing with syntax highlighting, completion, a
 
 ## VS Code
 
-VS Code requires two extensions: one for syntax highlighting and one to connect to the LSP server.
+The VS Code extension is a thin wrapper that connects to `rledger-lsp`. **All features require `rledger-lsp` to be installed.**
 
-### Step 1: Install Syntax Highlighting
-
-Install the Beancount extension for syntax highlighting:
+### 1. Install rledger-lsp
 
 ```bash
-code --install-extension Lencerf.beancount
+# macOS
+brew install rustledger
+
+# Arch Linux
+yay -S rustledger-bin
+
+# Cargo
+cargo install rustledger-lsp
 ```
 
-### Step 2: Install Generic LSP Client
+### 2. Install the extension
 
-Install the Generic LSP Client (v2) extension:
+Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest) and install:
 
 ```bash
-code --install-extension zsol.vscode-glspc
+code --install-extension rustledger-vscode.vsix
 ```
 
-### Step 3: Configure LSP
+Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select the downloaded file.
 
-Add to your `.vscode/settings.json` (workspace) or user settings:
+### Optional: Enable format on save
+
+Add to your `.vscode/settings.json`:
 
 ```json
 {
-  "glspc.server.command": "rledger-lsp",
-  "glspc.server.commandArguments": [],
-  "glspc.server.languageId": ["beancount"],
   "[beancount]": {
     "editor.formatOnSave": true
   }
 }
 ```
 
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `rustledger.server.path` | `rledger-lsp` | Path to the rledger-lsp binary |
+| `rustledger.server.extraArgs` | `[]` | Extra arguments passed to rledger-lsp |
+| `rustledger.journalFile` | `""` | Root journal file (auto-discovered if empty) |
+| `rustledger.checkForUpdates` | `true` | Check for extension updates on startup |
+
+### Auto-Update
+
+The extension automatically checks for updates on startup and notifies you when a new version is available. Updates are downloaded directly from GitHub Releases. To disable, set `rustledger.checkForUpdates` to `false`.
+
+You can also manually check via: `Ctrl+Shift+P` → "rustledger: Check for Updates"
+
 ### Features
 
-Once configured, you get:
+All features are provided by `rledger-lsp`:
 
-- Syntax highlighting (from Lencerf.beancount)
+- Semantic highlighting
 - Real-time error diagnostics
 - Account, payee, and tag completion
 - Go to definition (accounts, commodities)
@@ -55,17 +74,18 @@ Once configured, you get:
 - Document symbols / outline
 - Code formatting
 - Rename refactoring
+- Inlay hints and code lens
 
 ### Troubleshooting VS Code
 
-If the LSP isn't working:
+If LSP features aren't working:
 
 1. Ensure `rledger-lsp` is in your PATH:
    ```bash
    which rledger-lsp
    ```
 
-2. Check the Output panel (`View > Output`) and select "Generic LSP Client" from the dropdown
+2. Check the Output panel (`View > Output`) and select "rustledger" from the dropdown
 
 3. If you installed via a package manager, you may need to restart VS Code after installation
 

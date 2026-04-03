@@ -1,0 +1,104 @@
+{
+  "name": "rustledger-vscode",
+  "displayName": "rustledger",
+  "description": "Beancount language support powered by rustledger — completions, diagnostics, formatting, and more",
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rustledger/rustledger",
+    "directory": "packages/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/rustledger/rustledger/issues"
+  },
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "keywords": [
+    "beancount",
+    "accounting",
+    "ledger",
+    "plaintext accounting",
+    "double-entry"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "beancount",
+        "aliases": [
+          "Beancount",
+          "beancount"
+        ],
+        "extensions": [
+          ".beancount",
+          ".bean"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "rustledger.restartServer",
+        "title": "Restart Language Server",
+        "category": "rustledger"
+      },
+      {
+        "command": "rustledger.checkForUpdates",
+        "title": "Check for Updates",
+        "category": "rustledger"
+      }
+    ],
+    "configuration": {
+      "title": "rustledger",
+      "properties": {
+        "rustledger.server.path": {
+          "type": "string",
+          "default": "rledger-lsp",
+          "description": "Path to the rledger-lsp binary"
+        },
+        "rustledger.server.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Extra arguments passed to rledger-lsp"
+        },
+        "rustledger.journalFile": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the root journal file (e.g., main.beancount). If empty, the LSP discovers it automatically."
+        },
+        "rustledger.checkForUpdates": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically check for extension updates on startup"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --watch",
+    "package": "npm run build && vsce package --no-dependencies -o rustledger-vscode.vsix"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.82.0",
+    "@vscode/vsce": "^3.0.0",
+    "esbuild": "^0.24.0",
+    "typescript": "^5.5.0"
+  }
+}

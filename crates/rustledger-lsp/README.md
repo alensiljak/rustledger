@@ -49,25 +49,13 @@ rledger-lsp --version
 
 ### VS Code
 
-Install two extensions:
-
-1. [Lencerf.beancount](https://marketplace.visualstudio.com/items?itemName=Lencerf.beancount) for syntax highlighting
-2. [Generic LSP Client (v2)](https://marketplace.visualstudio.com/items?itemName=zsol.vscode-glspc) to connect to `rledger-lsp`
+Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest) and install:
 
 ```bash
-code --install-extension Lencerf.beancount
-code --install-extension zsol.vscode-glspc
+code --install-extension rustledger-vscode.vsix
 ```
 
-Add to `.vscode/settings.json`:
-
-```json
-{
-  "glspc.server.command": "rledger-lsp",
-  "glspc.server.commandArguments": [],
-  "glspc.server.languageId": ["beancount"]
-}
-```
+The extension provides syntax highlighting and automatically connects to `rledger-lsp` for completions, diagnostics, hover, and more. If `rledger-lsp` is not installed, it will prompt you to install it.
 
 ### Neovim (nvim-lspconfig)
 

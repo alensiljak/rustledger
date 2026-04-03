@@ -67,7 +67,7 @@ rustledger is a pure Rust implementation of Beancount, the double-entry bookkeep
 
 ## Architecture
 
-The project is a Cargo workspace with 12 crates:
+The project is a Cargo workspace with 12 crates plus editor extensions:
 
 | Crate | Purpose |
 |-------|---------|
@@ -83,6 +83,10 @@ The project is a Cargo workspace with 12 crates:
 | `rustledger-wasm` | WebAssembly library target |
 | `rustledger-lsp` | Language Server Protocol implementation |
 | `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
+
+| Package | Purpose |
+|---------|---------|
+| `packages/vscode` | VS Code extension (thin LSP client wrapper) |
 
 ## Code Standards
 
@@ -221,6 +225,30 @@ Common models: `togetherai/zai-org/GLM-5`, `togetherai/deepseek-ai/DeepSeek-V3`,
 1. Add variant to `ValidationError` enum in `rustledger-validate/src/lib.rs`
 1. Implement detection in `validate_*` function
 1. Add tests covering the error case
+
+### VS Code Extension
+
+The VS Code extension (`packages/vscode`) is a **thin wrapper** around `rledger-lsp`. All language features come from the LSP.
+
+**Design principles:**
+- No TextMate grammar — semantic highlighting provided by LSP
+- No syntax validation — diagnostics provided by LSP
+- No indentation rules — keep it minimal
+- Only provide: file associations, LSP client connection, auto-update
+
+**What the extension contains:**
+- `extension.ts` — LSP client + GitHub Releases auto-update
+- `language-configuration.json` — comment character (`;`) and bracket pairs only
+- `package.json` — file associations (`.beancount`, `.bean`) and settings
+
+**Building locally:**
+```bash
+cd packages/vscode
+npm ci
+npm run package  # Creates rustledger-vscode.vsix
+```
+
+**Version handling:** The extension version is synced from the release tag during CI (not from `package.json`).
 
 ## Build Commands
 
