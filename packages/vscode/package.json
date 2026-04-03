@@ -13,6 +13,7 @@
   "bugs": {
     "url": "https://github.com/rustledger/rustledger/issues"
   },
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.82.0"
   },
