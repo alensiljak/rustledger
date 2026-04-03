@@ -39,6 +39,16 @@ cargo install rustledger-lsp
 | `rustledger.server.extraArgs` | `[]` | Extra arguments passed to rledger-lsp |
 | `rustledger.journalFile` | `""` | Root journal file (auto-discovered if empty) |
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `rustledger: Restart Language Server` | Restart the LSP server (useful after updating `rledger-lsp`) |
+
+## Troubleshooting
+
+Check the Output panel (`View > Output`, select "rustledger" from the dropdown) for LSP logs and error messages.
+
 ## Multi-File Support
 
 The LSP automatically discovers your root journal file (`main.beancount`, `ledger.beancount`, etc.) and follows `include` directives for cross-file completions and diagnostics. Set `rustledger.journalFile` if auto-discovery doesn't find yours.

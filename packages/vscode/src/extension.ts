@@ -6,9 +6,11 @@ import {
   ServerOptions,
 } from "vscode-languageclient/node";
 
-const INSTALL_URL = "https://rustledger.github.io/getting-started/installation.html";
+const INSTALL_URL =
+  "https://rustledger.github.io/getting-started/installation.html";
 
 let client: LanguageClient | undefined;
+let outputChannel: vscode.OutputChannel | undefined;
 
 function findBinary(command: string): boolean {
   try {
@@ -19,9 +21,7 @@ function findBinary(command: string): boolean {
   }
 }
 
-export async function activate(
-  context: vscode.ExtensionContext,
-): Promise<void> {
+async function startClient(context: vscode.ExtensionContext): Promise<boolean> {
   const config = vscode.workspace.getConfiguration("rustledger");
   const command = config.get<string>("server.path", "rledger-lsp");
   const extraArgs = config.get<string[]>("server.extraArgs", []);
@@ -36,7 +36,7 @@ export async function activate(
     if (result === install) {
       vscode.env.openExternal(vscode.Uri.parse(INSTALL_URL));
     }
-    return;
+    return false;
   }
 
   const serverOptions: ServerOptions = {
@@ -49,6 +49,13 @@ export async function activate(
     initializationOptions.journalFile = journalFile;
   }
 
+  if (!outputChannel) {
+    outputChannel = vscode.window.createOutputChannel("rustledger", {
+      log: true,
+    });
+    context.subscriptions.push(outputChannel);
+  }
+
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
@@ -56,6 +63,7 @@ export async function activate(
         vscode.workspace.createFileSystemWatcher("**/*.{beancount,bean}"),
     },
     initializationOptions,
+    outputChannel,
   };
 
   client = new LanguageClient(
@@ -66,11 +74,36 @@ export async function activate(
   );
 
   await client.start();
-  context.subscriptions.push({
-    dispose: () => {
-      client?.stop();
+  outputChannel.appendLine(`Started rledger-lsp: ${command}`);
+  return true;
+}
+
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  // Register restart command
+  const restartCommand = vscode.commands.registerCommand(
+    "rustledger.restartServer",
+    async () => {
+      outputChannel?.appendLine("Restarting rledger-lsp...");
+      if (client) {
+        await client.stop();
+        client = undefined;
+      }
+      await startClient(context);
     },
-  });
+  );
+  context.subscriptions.push(restartCommand);
+
+  // Start the client
+  const started = await startClient(context);
+  if (started) {
+    context.subscriptions.push({
+      dispose: () => {
+        client?.stop();
+      },
+    });
+  }
 }
 
 export async function deactivate(): Promise<void> {

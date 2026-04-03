@@ -53,6 +53,13 @@
         "path": "./syntaxes/beancount.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "rustledger.restartServer",
+        "title": "Restart Language Server",
+        "category": "rustledger"
+      }
+    ],
     "configuration": {
       "title": "rustledger",
       "properties": {
