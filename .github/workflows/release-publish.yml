@@ -90,6 +90,7 @@ jobs:
             rustledger-lsp
           )
 
+          set -o pipefail
           FAILED=()
           for crate in "${CRATES[@]}"; do
             echo "::group::Publishing $crate"
