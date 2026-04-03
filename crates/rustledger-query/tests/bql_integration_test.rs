@@ -519,6 +519,44 @@ fn test_execute_distinct() {
     assert_eq!(payees.len(), unique_payees.len());
 }
 
+#[test]
+fn test_distinct_coalesce_deduplicates_rows() {
+    // The default directives have two transactions with payee "Grocery Store"
+    // and one with no payee (narration "Transfer to savings"). DISTINCT should
+    // collapse the duplicate payee into a single row.
+    let directives = make_test_directives();
+
+    // Without DISTINCT we get one row per transaction (5 total).
+    let all_rows = execute_query(
+        r"SELECT COALESCE(payee, narration) AS payee FROM transactions ORDER BY payee",
+        &directives,
+    );
+
+    // With DISTINCT the duplicate "Grocery Store" rows should be collapsed.
+    let distinct_rows = execute_query(
+        r"SELECT DISTINCT(COALESCE(payee, narration)) AS payee FROM transactions ORDER BY payee",
+        &directives,
+    );
+
+    // Verify deduplication: distinct result must have fewer rows.
+    assert!(
+        distinct_rows.len() < all_rows.len(),
+        "DISTINCT should produce fewer rows than the full result set ({} vs {})",
+        distinct_rows.len(),
+        all_rows.len(),
+    );
+
+    // Verify no duplicate values remain in the distinct result.
+    let values: Vec<&Value> = distinct_rows.rows.iter().map(|row| &row[0]).collect();
+    let unique: std::collections::HashSet<String> =
+        values.iter().map(|v| format!("{v:?}")).collect();
+    assert_eq!(
+        values.len(),
+        unique.len(),
+        "DISTINCT result should contain no duplicate values"
+    );
+}
+
 // ============================================================================
 // Real-World Query Scenarios
 // ============================================================================
@@ -3709,6 +3747,97 @@ fn make_chained_price_directives() -> Vec<Directive> {
                 .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-400), "EUR"))),
         ),
     ]
+}
+
+// ============================================================================
+// VALUE() returns as-is when no target currency (Issue #641)
+// ============================================================================
+
+#[test]
+fn test_value_no_currency_returns_as_is() {
+    // Regression test for issue #641:
+    // VALUE() with no explicit currency and no cost basis should return the
+    // value as-is (the units themselves), matching Python beancount behavior.
+    // Previously this errored with "no target currency set".
+
+    // Create directives with positions that have NO cost basis
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Grocery store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+
+    // VALUE(position) on a position without cost basis and no explicit currency
+    // should return the units as-is instead of erroring
+    let result = execute_query(
+        r#"SELECT account, value(position) as val
+           WHERE account = "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    if let Value::Amount(a) = &result.rows[0][1] {
+        assert_eq!(a.number, dec!(50));
+        assert_eq!(a.currency, "USD");
+    } else {
+        panic!(
+            "Expected Amount value when VALUE() has no target currency, got {:?}",
+            result.rows[0][1]
+        );
+    }
+}
+
+#[test]
+fn test_value_no_currency_aggregated_returns_as_is() {
+    // Regression test for issue #641:
+    // VALUE(SUM(position)) with no explicit currency and no cost basis should
+    // return the inventory as-is, matching Python beancount behavior.
+
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Grocery store")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 2, 10), "Restaurant")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(30), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-30), "USD"))),
+        ),
+    ];
+
+    // VALUE(SUM(position)) with no currency should not error
+    let result = execute_query(
+        r#"SELECT account, value(sum(position)) as val
+           GROUP BY account
+           HAVING account = "Expenses:Food""#,
+        &directives,
+    );
+
+    assert_eq!(result.len(), 1);
+    // The result should be an inventory returned as-is (not converted)
+    // or an amount if the inventory collapses to a single currency.
+    // Either way, the value must be 80 USD (50 + 30).
+    let expected = Amount::new(dec!(80), "USD");
+    match &result.rows[0][1] {
+        Value::Amount(a) => {
+            assert_eq!(*a, expected, "Expected 80 USD amount");
+        }
+        Value::Inventory(inv) => {
+            let positions = inv.positions();
+            assert_eq!(positions.len(), 1, "Expected single-currency inventory");
+            assert_eq!(positions[0].units, expected, "Expected 80 USD in inventory");
+        }
+        other => panic!(
+            "Expected Inventory or Amount when VALUE() has no target currency, got {other:?}",
+        ),
+    }
 }
 
 // ============================================================================

@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.11.0) - 2026-04-02
+
+### Bug Fixes
+
+- *(plugin)* generate Open directives in currency_accounts plugin
+- *(plugin)* use weight currency (cost/price) in currency_accounts
+- *(plugin)* skip Open generation for pre-existing accounts
+- *(plugin)* coherent_cost should allow cost+price on same posting
+
+### Documentation
+
+- fix currency_accounts plugin description
+- fix CLI command documentation accuracy
+
+### Features
+
+- add rustledger-plugin-types crate for WASM plugin compatibility
+
+### Performance
+
+- *(plugin)* reduce iterations in currency_accounts plugin
+- use references to avoid string cloning
+
 ## [0.10.1](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.10.1) - 2026-03-12
 
 ### Bug Fixes

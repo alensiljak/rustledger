@@ -149,7 +149,7 @@ fn select_query<'a>() -> impl Parser<'a, ParserInput<'a>, SelectQuery, ParserExt
             .ignore_then(ws1())
             .ignore_then(
                 kw("DISTINCT")
-                    .then_ignore(ws1())
+                    .then_ignore(ws())
                     .or_not()
                     .map(|d| d.is_some()),
             )
@@ -1003,6 +1003,31 @@ mod tests {
     #[test]
     fn test_select_distinct() {
         let query = parse("SELECT DISTINCT account").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert!(sel.distinct);
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_no_space() {
+        // Issue #640: DISTINCT(expr) without space should not be parsed as a function call
+        let query = parse("SELECT DISTINCT(account) FROM postings").unwrap();
+        match query {
+            Query::Select(sel) => {
+                assert!(sel.distinct);
+            }
+            _ => panic!("Expected SELECT query"),
+        }
+    }
+
+    #[test]
+    fn test_select_distinct_coalesce_no_space() {
+        // Issue #640: DISTINCT(COALESCE(payee, narration)) should work
+        let query = parse("SELECT DISTINCT(COALESCE(payee, narration)) as payee FROM transactions")
+            .unwrap();
         match query {
             Query::Select(sel) => {
                 assert!(sel.distinct);

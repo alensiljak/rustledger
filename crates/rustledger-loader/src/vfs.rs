@@ -37,6 +37,16 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// For disk filesystems, this makes paths absolute.
     /// For virtual filesystems, this just cleans up the path.
     fn normalize(&self, path: &Path) -> PathBuf;
+
+    /// Expand a glob pattern and return matching paths.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error string if the pattern is invalid.
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        let _ = pattern;
+        Err("glob is not supported by this filesystem".to_string())
+    }
 }
 
 /// Default filesystem that reads from disk.
@@ -116,6 +126,16 @@ impl FileSystem for DiskFileSystem {
             // Last resort: just return the path as-is
             path.to_path_buf()
         }
+    }
+
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        let entries = glob::glob(pattern).map_err(|e| e.to_string())?;
+        // Skip entries that error (e.g., permission denied) rather than
+        // failing the entire glob. The loader will catch missing/unreadable
+        // files later when it tries to read them.
+        let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
+        matched.sort();
+        Ok(matched)
     }
 }
 
@@ -221,6 +241,22 @@ impl FileSystem for VirtualFileSystem {
     fn normalize(&self, path: &Path) -> PathBuf {
         // For virtual filesystem, just clean up the path without making it absolute
         normalize_vfs_path(path)
+    }
+
+    fn glob(&self, pattern: &str) -> Result<Vec<PathBuf>, String> {
+        // Normalize the pattern the same way stored keys are normalized,
+        // so that backslashes or leading "./" in the pattern still match.
+        let normalized = pattern.replace('\\', "/");
+        let normalized = normalized.strip_prefix("./").unwrap_or(&normalized);
+        let glob_pattern = glob::Pattern::new(normalized).map_err(|e| e.to_string())?;
+        let mut matched: Vec<PathBuf> = self
+            .files
+            .keys()
+            .filter(|path| glob_pattern.matches_path(path))
+            .cloned()
+            .collect();
+        matched.sort();
+        Ok(matched)
     }
 }
 

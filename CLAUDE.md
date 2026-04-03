@@ -232,6 +232,44 @@ cargo fmt --all -- --check                 # Format check
 cargo deny check                           # Security audit
 ```
 
+## Headless / Automated Issue Resolution
+
+When running in headless mode (`claude -p`) or via Agent Orchestrator (`ao`), follow this exact workflow:
+
+### 1. Understand the Issue
+- Read the full GitHub issue including all comments
+- Identify acceptance criteria — what does "done" look like?
+- If the issue is ambiguous, make reasonable assumptions and document them in the PR description
+
+### 2. Plan Before Coding
+- Identify which crates are affected
+- Check existing tests for the area you're changing
+- If it's a parser or booking change, check Beancount compatibility test suite
+
+### 3. Implement
+- Work in a git worktree (ao handles this automatically)
+- Make minimal, focused changes — one issue per PR
+- Follow existing patterns in the crate you're modifying
+- Add tests for every code path you change or add
+
+### 4. Verify Before PR
+Run the commands from the **Build Commands** section above in order, and fix any failures before proceeding.
+
+### 5. Create the PR
+- Title: `fix: <description>` or `feat: <description>` (conventional commits)
+- Body must include: what changed, why, how to test, and `Closes #<issue>`
+- Request review if the change touches parser, booking, or public API
+- If CI fails, read the error and fix it — do not open the PR with failing CI
+
+### 6. Self-Review Checklist
+Before marking the PR as ready:
+- [ ] Changes are minimal and focused on the issue
+- [ ] All new code has tests
+- [ ] No `.unwrap()` in library code
+- [ ] Error messages include file location context
+- [ ] Public APIs have doc comments
+- [ ] No unrelated formatting or refactoring changes
+
 ## Known Limitations & TODOs
 
 ### Decimal Precision (1 compat test failure)
