@@ -373,9 +373,14 @@ jobs:
         uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: packages/vscode/package-lock.json
       - name: Build and package extension
         working-directory: packages/vscode
         run: |
+          # Sync extension version with release tag
+          VERSION=${RELEASE_TAG#v}
+          npm pkg set version="$VERSION"
           npm ci
           npm run package
       - name: Create checksum

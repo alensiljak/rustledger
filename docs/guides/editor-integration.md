@@ -9,6 +9,23 @@ Set up your editor for beancount editing with syntax highlighting, completion, a
 
 ## VS Code
 
+The VS Code extension is a thin wrapper that connects to `rledger-lsp`. **All features require `rledger-lsp` to be installed.**
+
+### 1. Install rledger-lsp
+
+```bash
+# macOS
+brew install rustledger
+
+# Arch Linux
+yay -S rustledger-bin
+
+# Cargo
+cargo install rustledger-lsp
+```
+
+### 2. Install the extension
+
 Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest) and install:
 
 ```bash
@@ -16,8 +33,6 @@ code --install-extension rustledger-vscode.vsix
 ```
 
 Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select the downloaded file.
-
-The extension provides syntax highlighting out of the box. For full language features (completions, diagnostics, hover, formatting, etc.), you also need `rledger-lsp` installed — the extension will prompt you if it's missing.
 
 ### Optional: Enable format on save
 
@@ -48,9 +63,9 @@ You can also manually check via: `Ctrl+Shift+P` → "rustledger: Check for Updat
 
 ### Features
 
-Once `rledger-lsp` is installed, you get:
+All features are provided by `rledger-lsp`:
 
-- Syntax highlighting
+- Semantic highlighting
 - Real-time error diagnostics
 - Account, payee, and tag completion
 - Go to definition (accounts, commodities)

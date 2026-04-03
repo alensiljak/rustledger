@@ -1,6 +1,21 @@
 # rustledger for VS Code
 
-Beancount language support powered by [rustledger](https://github.com/rustledger/rustledger) — a fast, Rust-based Beancount implementation.
+Thin VS Code client for `rledger-lsp` — all language features are provided by the LSP server.
+
+## Requirements
+
+**`rledger-lsp` is required.** This extension is a thin wrapper that connects VS Code to the LSP server. Without it, no features will work.
+
+```bash
+# macOS
+brew install rustledger
+
+# Arch Linux
+yay -S rustledger-bin
+
+# Cargo
+cargo install rustledger-lsp
+```
 
 ## Installation
 
@@ -14,6 +29,9 @@ Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select 
 
 ## Features
 
+All features are provided by `rledger-lsp`:
+
+- **Semantic Highlighting** — rich syntax coloring
 - **Diagnostics** — real-time syntax and validation errors
 - **Completion** — accounts, currencies, payees, tags, links
 - **Hover** — account balances, metadata, directive info
@@ -24,22 +42,6 @@ Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select 
 - **Document Symbols** — outline view
 - **Code Actions** — quick fixes for common issues
 - **Inlay Hints** — inline balance and cost annotations
-- **Semantic Highlighting** — rich syntax coloring
-
-## Requirements
-
-Install `rledger-lsp` (included with rustledger):
-
-```bash
-# macOS
-brew install rustledger
-
-# Arch Linux
-yay -S rustledger-bin
-
-# Cargo
-cargo install rustledger-lsp
-```
 
 ## Extension Settings
 

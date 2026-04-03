@@ -51,7 +51,11 @@ You review and merge PR
 release-plz creates git tag (v0.9.0)
      │
      ▼
-release-build.yml builds binaries
+release-build.yml builds:
+  • Native binaries (8 platforms)
+  • WASM package
+  • FFI-WASI binary
+  • VS Code extension (.vsix)
      │
      ▼
 release-publish.yml distributes to:
@@ -143,6 +147,14 @@ The release takes ~30-45 minutes to build all platforms.
 | macOS ARM64 | `aarch64-apple-darwin` |
 | Windows x64 | `x86_64-pc-windows-msvc` |
 | Windows ARM64 | `aarch64-pc-windows-msvc` |
+
+### VS Code Extension
+
+The VS Code extension (`rustledger-vscode.vsix`) is built and attached to the GitHub Release. The extension version is automatically synced from the release tag (e.g., `v0.11.0` → extension version `0.11.0`).
+
+The extension is distributed via GitHub Releases only (not the VS Code Marketplace). Users can:
+- Download manually from the [releases page](https://github.com/rustledger/rustledger/releases)
+- Use the extension's built-in auto-update feature
 
 ### Package Managers
 

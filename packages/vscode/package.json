@@ -45,13 +45,6 @@
         "configuration": "./language-configuration.json"
       }
     ],
-    "grammars": [
-      {
-        "language": "beancount",
-        "scopeName": "source.beancount",
-        "path": "./syntaxes/beancount.tmLanguage.json"
-      }
-    ],
     "commands": [
       {
         "command": "rustledger.restartServer",

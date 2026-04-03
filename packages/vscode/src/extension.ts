@@ -56,7 +56,13 @@ async function fetchJson<T>(url: string): Promise<T> {
       }
       let data = "";
       res.on("data", (chunk) => (data += chunk));
-      res.on("end", () => resolve(JSON.parse(data)));
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data));
+        } catch (e) {
+          reject(new Error(`Invalid JSON response: ${e}`));
+        }
+      });
       res.on("error", reject);
     }).on("error", reject);
   });
@@ -195,7 +201,7 @@ async function startClient(context: vscode.ExtensionContext): Promise<boolean> {
   );
 
   await client.start();
-  outputChannel.appendLine(`Started rledger-lsp: ${command}`);
+  outputChannel?.appendLine(`Started rledger-lsp: ${command}`);
   return true;
 }
 
