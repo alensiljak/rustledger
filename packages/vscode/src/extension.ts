@@ -242,8 +242,11 @@ export async function activate(
     });
   }
 
-  // Check for updates in background (don't await)
-  checkForUpdates(context);
+  // Check for updates in background (don't await) if enabled
+  const config = vscode.workspace.getConfiguration("rustledger");
+  if (config.get<boolean>("checkForUpdates", true)) {
+    checkForUpdates(context);
+  }
 }
 
 export async function deactivate(): Promise<void> {
