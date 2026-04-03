@@ -48,7 +48,7 @@
     },
 
     "currency": {
-      "match": "\\b[A-Z][A-Z0-9'._{-}]{0,23}\\b",
+      "match": "\\b[A-Z][A-Z0-9'._{}\\-]{0,23}\\b",
       "name": "support.type.currency.beancount"
     },
 

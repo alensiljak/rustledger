@@ -28,7 +28,8 @@ export async function activate(
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "beancount" }],
     synchronize: {
-      fileEvents: vscode.workspace.createFileSystemWatcher("**/*.beancount"),
+      fileEvents:
+        vscode.workspace.createFileSystemWatcher("**/*.{beancount,bean}"),
     },
     initializationOptions,
   };
