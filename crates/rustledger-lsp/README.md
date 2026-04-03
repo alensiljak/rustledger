@@ -49,13 +49,13 @@ rledger-lsp --version
 
 ### VS Code
 
-Install the [rustledger extension](https://marketplace.visualstudio.com/items?itemName=rustledger.rustledger):
+Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest) and install:
 
 ```bash
-code --install-extension rustledger.rustledger
+code --install-extension rustledger-vscode.vsix
 ```
 
-The extension provides syntax highlighting, and automatically connects to `rledger-lsp` for completions, diagnostics, hover, and more. If `rledger-lsp` is not installed, it will prompt you to install it.
+The extension provides syntax highlighting and automatically connects to `rledger-lsp` for completions, diagnostics, hover, and more. If `rledger-lsp` is not installed, it will prompt you to install it.
 
 ### Neovim (nvim-lspconfig)
 

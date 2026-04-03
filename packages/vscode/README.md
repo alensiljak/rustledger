@@ -2,6 +2,16 @@
 
 Beancount language support powered by [rustledger](https://github.com/rustledger/rustledger) — a fast, Rust-based Beancount implementation.
 
+## Installation
+
+Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest), then install:
+
+```bash
+code --install-extension rustledger-vscode.vsix
+```
+
+Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select the downloaded file.
+
 ## Features
 
 - **Diagnostics** — real-time syntax and validation errors

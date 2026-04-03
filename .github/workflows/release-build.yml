@@ -361,9 +361,37 @@ jobs:
             rustledger-ffi-wasi-*.wasm
             rustledger-ffi-wasi-*.sha256
 
+  build-vscode:
+    name: Build VS Code Extension
+    needs: validate-version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+      - name: Setup Node.js
+        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4
+        with:
+          node-version: '20'
+      - name: Build and package extension
+        working-directory: packages/vscode
+        run: |
+          npm ci
+          npm run package
+      - name: Create checksum
+        working-directory: packages/vscode
+        run: shasum -a 256 rustledger-vscode.vsix > rustledger-vscode.vsix.sha256
+      - name: Upload VS Code extension artifact
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v6
+        with:
+          name: vscode-extension
+          path: |
+            packages/vscode/rustledger-vscode.vsix
+            packages/vscode/rustledger-vscode.vsix.sha256
+
   release:
     name: Create Release
-    needs: [build, build-wasm, build-ffi-wasi]
+    needs: [build, build-wasm, build-ffi-wasi, build-vscode]
     runs-on: ubuntu-latest
     steps:
       - name: Generate GitHub App token
@@ -416,6 +444,7 @@ jobs:
             artifacts/*.tar.gz
             artifacts/*.zip
             artifacts/*.wasm
+            artifacts/*.vsix
             artifacts/*.sha256
         env:
           # Use GitHub App token instead of GITHUB_TOKEN to trigger release-publish.yml workflow

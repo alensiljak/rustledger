@@ -9,11 +9,13 @@ Set up your editor for beancount editing with syntax highlighting, completion, a
 
 ## VS Code
 
-Install the [rustledger extension](https://marketplace.visualstudio.com/items?itemName=rustledger.rustledger) from the marketplace:
+Download `rustledger-vscode.vsix` from the [latest release](https://github.com/rustledger/rustledger/releases/latest) and install:
 
 ```bash
-code --install-extension rustledger.rustledger
+code --install-extension rustledger-vscode.vsix
 ```
+
+Or in VS Code: `Ctrl+Shift+P` → "Extensions: Install from VSIX..." → select the downloaded file.
 
 The extension provides syntax highlighting out of the box. For full language features (completions, diagnostics, hover, formatting, etc.), you also need `rledger-lsp` installed — the extension will prompt you if it's missing.
 
