@@ -48,6 +48,7 @@ cargo install rustledger-lsp
 | `rustledger.server.path` | `rledger-lsp` | Path to the rledger-lsp binary |
 | `rustledger.server.extraArgs` | `[]` | Extra arguments passed to rledger-lsp |
 | `rustledger.journalFile` | `""` | Root journal file (auto-discovered if empty) |
+| `rustledger.checkForUpdates` | `true` | Check for extension updates on startup |
 
 ## Commands
 
