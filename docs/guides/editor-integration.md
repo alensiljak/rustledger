@@ -38,6 +38,13 @@ Add to your `.vscode/settings.json`:
 | `rustledger.server.path` | `rledger-lsp` | Path to the rledger-lsp binary |
 | `rustledger.server.extraArgs` | `[]` | Extra arguments passed to rledger-lsp |
 | `rustledger.journalFile` | `""` | Root journal file (auto-discovered if empty) |
+| `rustledger.checkForUpdates` | `true` | Check for extension updates on startup |
+
+### Auto-Update
+
+The extension automatically checks for updates on startup and notifies you when a new version is available. Updates are downloaded directly from GitHub Releases. To disable, set `rustledger.checkForUpdates` to `false`.
+
+You can also manually check via: `Ctrl+Shift+P` → "rustledger: Check for Updates"
 
 ### Features
 
