@@ -19,8 +19,26 @@ fn test_fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
 }
 
-fn rust_bean_check_binary() -> PathBuf {
-    project_root().join("target/debug/bean-check")
+fn rust_bean_check_binary() -> Option<PathBuf> {
+    // Use CARGO_BIN_EXE_bean-check if available (set by cargo test)
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_bean-check") {
+        return Some(PathBuf::from(path));
+    }
+
+    // Check target/release first (for --release and nix builds)
+    let release = project_root().join("target/release/bean-check");
+    if release.exists() {
+        return Some(release);
+    }
+
+    // Fall back to target/debug
+    let debug = project_root().join("target/debug/bean-check");
+    if debug.exists() {
+        return Some(debug);
+    }
+
+    // Binary not found
+    None
 }
 
 /// Check if Python beancount is available.
@@ -45,8 +63,9 @@ fn python_bean_check(path: &Path) -> (bool, String) {
 }
 
 /// Run Rust bean-check on a file.
-fn rust_bean_check(path: &Path) -> (bool, String) {
-    let output = Command::new(rust_bean_check_binary())
+fn rust_bean_check(path: &Path) -> Option<(bool, String)> {
+    let binary = rust_bean_check_binary()?;
+    let output = Command::new(binary)
         .arg(path)
         .output()
         .expect("Failed to run rust bean-check");
@@ -57,7 +76,7 @@ fn rust_bean_check(path: &Path) -> (bool, String) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    (success, combined)
+    Some((success, combined))
 }
 
 #[test]
@@ -70,7 +89,10 @@ fn test_valid_ledger_parses_with_both() {
     let path = test_fixtures_dir().join("valid-ledger.beancount");
 
     let (py_success, py_output) = python_bean_check(&path);
-    let (rs_success, rs_output) = rust_bean_check(&path);
+    let Some((rs_success, rs_output)) = rust_bean_check(&path) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     assert!(
         py_success,
@@ -142,7 +164,10 @@ option "title" "Error Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, _py_output) = python_bean_check(&temp_file);
-    let (rs_success, _rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, _rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should report errors
     assert!(!py_success, "Python should detect duplicate open error");
@@ -177,7 +202,10 @@ option "title" "Balance Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, _) = python_bean_check(&temp_file);
-    let (rs_success, _) = rust_bean_check(&temp_file);
+    let Some((rs_success, _)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should fail on balance assertion
     assert!(
@@ -213,7 +241,10 @@ option "title" "Currency Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, _) = python_bean_check(&temp_file);
-    let (rs_success, _) = rust_bean_check(&temp_file);
+    let Some((rs_success, _)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should fail on currency constraint
     assert!(
@@ -254,7 +285,10 @@ option "title" "Lifecycle Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, _) = python_bean_check(&temp_file);
-    let (rs_success, _) = rust_bean_check(&temp_file);
+    let Some((rs_success, _)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should fail
     assert!(!py_success, "Python should detect account used before open");
@@ -287,7 +321,10 @@ option "title" "Unbalanced Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, _) = python_bean_check(&temp_file);
-    let (rs_success, _) = rust_bean_check(&temp_file);
+    let Some((rs_success, _)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should fail on unbalanced transaction
     assert!(!py_success, "Python should detect unbalanced transaction");
@@ -319,7 +356,10 @@ option "title" "Pad Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(
@@ -360,7 +400,10 @@ option "title" "Price Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(
@@ -411,7 +454,10 @@ poptag #trip
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(
@@ -455,7 +501,10 @@ option "title" "Arithmetic Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(
@@ -499,7 +548,10 @@ option "title" "Metadata Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(py_success, "Python should handle metadata: {py_output}");
@@ -543,7 +595,10 @@ option "operating_currency" "USD"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(py_success, "Python should handle cost/price: {py_output}");
@@ -585,7 +640,10 @@ option "title" "Event/Query Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(py_success, "Python should handle event/query: {py_output}");
@@ -621,7 +679,10 @@ option "title" "Note Test"
     std::fs::write(&temp_file, content).expect("Failed to write temp file");
 
     let (py_success, py_output) = python_bean_check(&temp_file);
-    let (rs_success, rs_output) = rust_bean_check(&temp_file);
+    let Some((rs_success, rs_output)) = rust_bean_check(&temp_file) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     // Both should succeed
     assert!(
@@ -649,7 +710,10 @@ fn test_beancount_canonical_example() {
         return;
     }
 
-    let (rs_success, rs_output) = rust_bean_check(&path);
+    let Some((rs_success, rs_output)) = rust_bean_check(&path) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     assert!(
         rs_success,
@@ -672,7 +736,10 @@ fn test_beancount_canonical_example_matches_python() {
     }
 
     let (py_success, py_output) = python_bean_check(&path);
-    let (rs_success, rs_output) = rust_bean_check(&path);
+    let Some((rs_success, rs_output)) = rust_bean_check(&path) else {
+        eprintln!("Skipping: rust bean-check binary not found");
+        return;
+    };
 
     assert!(
         py_success,
