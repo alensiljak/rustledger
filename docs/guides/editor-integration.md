@@ -9,44 +9,39 @@ Set up your editor for beancount editing with syntax highlighting, completion, a
 
 ## VS Code
 
-VS Code requires two extensions: one for syntax highlighting and one to connect to the LSP server.
-
-### Step 1: Install Syntax Highlighting
-
-Install the Beancount extension for syntax highlighting:
+Install the [rustledger extension](https://marketplace.visualstudio.com/items?itemName=rustledger.rustledger) from the marketplace:
 
 ```bash
-code --install-extension Lencerf.beancount
+code --install-extension rustledger.rustledger
 ```
 
-### Step 2: Install Generic LSP Client
+The extension provides syntax highlighting out of the box. For full language features (completions, diagnostics, hover, formatting, etc.), you also need `rledger-lsp` installed — the extension will prompt you if it's missing.
 
-Install the Generic LSP Client (v2) extension:
+### Optional: Enable format on save
 
-```bash
-code --install-extension zsol.vscode-glspc
-```
-
-### Step 3: Configure LSP
-
-Add to your `.vscode/settings.json` (workspace) or user settings:
+Add to your `.vscode/settings.json`:
 
 ```json
 {
-  "glspc.server.command": "rledger-lsp",
-  "glspc.server.commandArguments": [],
-  "glspc.server.languageId": ["beancount"],
   "[beancount]": {
     "editor.formatOnSave": true
   }
 }
 ```
 
+### Settings
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `rustledger.server.path` | `rledger-lsp` | Path to the rledger-lsp binary |
+| `rustledger.server.extraArgs` | `[]` | Extra arguments passed to rledger-lsp |
+| `rustledger.journalFile` | `""` | Root journal file (auto-discovered if empty) |
+
 ### Features
 
-Once configured, you get:
+Once `rledger-lsp` is installed, you get:
 
-- Syntax highlighting (from Lencerf.beancount)
+- Syntax highlighting
 - Real-time error diagnostics
 - Account, payee, and tag completion
 - Go to definition (accounts, commodities)
@@ -55,17 +50,18 @@ Once configured, you get:
 - Document symbols / outline
 - Code formatting
 - Rename refactoring
+- Inlay hints and code lens
 
 ### Troubleshooting VS Code
 
-If the LSP isn't working:
+If LSP features aren't working:
 
 1. Ensure `rledger-lsp` is in your PATH:
    ```bash
    which rledger-lsp
    ```
 
-2. Check the Output panel (`View > Output`) and select "Generic LSP Client" from the dropdown
+2. Check the Output panel (`View > Output`) and select "rustledger" from the dropdown
 
 3. If you installed via a package manager, you may need to restart VS Code after installation
 
