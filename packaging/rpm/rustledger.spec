@@ -1,7 +1,7 @@
 %global debug_package %{nil}
 
 Name:           rustledger
-Version:        0.10.0
+Version: 0.11.0
 Release:        1%{?dist}
 Summary:        Fast, pure Rust implementation of Beancount double-entry accounting
 
