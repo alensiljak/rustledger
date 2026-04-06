@@ -171,9 +171,6 @@ pub struct OutputConfig {
 
     /// Pager command (e.g., "less -R").
     pub pager: Option<String>,
-
-    /// Sort order for output.
-    pub sort: Option<String>,
 }
 
 /// Profile configuration (inherits from default and overrides).
@@ -354,10 +351,6 @@ impl Config {
         if other.output.pager.is_some() {
             self.output.pager = other.output.pager;
         }
-        if other.output.sort.is_some() {
-            self.output.sort = other.output.sort;
-        }
-
         // Merge profiles (other's profiles override)
         for (name, profile) in other.profiles {
             self.profiles.insert(name, profile);
@@ -486,9 +479,6 @@ impl OutputConfig {
         }
         if other.pager.is_some() {
             self.pager = other.pager;
-        }
-        if other.sort.is_some() {
-            self.sort = other.sort;
         }
         self
     }
@@ -922,13 +912,11 @@ indent = 4
 format = "json"
 color = false
 pager = "less -R"
-sort = "date"
 "#;
         let config: Config = toml::from_str(content).unwrap();
         assert_eq!(config.output.format, Some("json".to_string()));
         assert_eq!(config.output.color, Some(false));
         assert_eq!(config.output.pager, Some("less -R".to_string()));
-        assert_eq!(config.output.sort, Some("date".to_string()));
     }
 
     #[test]
@@ -1042,14 +1030,12 @@ indent = 4
             format: Some("text".to_string()),
             color: Some(true),
             pager: Some("less".to_string()),
-            sort: None,
         };
 
         let override_cfg = OutputConfig {
             format: Some("csv".to_string()),
             color: None,
             pager: None,
-            sort: Some("amount".to_string()),
         };
 
         let merged = base.merge(override_cfg);
@@ -1057,7 +1043,6 @@ indent = 4
         assert_eq!(merged.format, Some("csv".to_string())); // overridden
         assert_eq!(merged.color, Some(true)); // kept from base
         assert_eq!(merged.pager, Some("less".to_string())); // kept from base
-        assert_eq!(merged.sort, Some("amount".to_string())); // new from override
     }
 
     #[test]

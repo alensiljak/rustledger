@@ -24,7 +24,7 @@
 //! - `query.execute`, `query.executeFile`, `query.batch`, `query.batchFile`
 //! - `format.source`, `format.file`, `format.entry`, `format.entries`
 //! - `entry.create`, `entry.createBatch`, `entry.filter`, `entry.clamp`
-//! - `util.version`, `util.types`, `util.schema`, `util.isEncrypted`, `util.getAccountType`
+//! - `util.version`, `util.types`, `util.isEncrypted`, `util.getAccountType`
 
 mod commands;
 mod convert;

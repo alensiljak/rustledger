@@ -70,7 +70,6 @@ echo '[
 |--------|-------------|
 | `util.version` | Get API and package version |
 | `util.types` | Get supported directive types, booking methods |
-| `util.schema` | Get JSON Schema for API types |
 | `util.isEncrypted` | Check if a file path is encrypted |
 | `util.getAccountType` | Get account type from account name |
 
