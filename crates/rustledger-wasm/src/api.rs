@@ -499,6 +499,7 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
 #[wasm_bindgen(js_name = "validateMultiFile")]
 pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
     use rustledger_booking::BookingEngine;
+    use rustledger_core::BookingMethod;
     use rustledger_loader::{Loader, VirtualFileSystem};
     use rustledger_validate::validate as validate_ledger;
 
@@ -538,7 +539,7 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
     // Collect load errors with detailed parse error info
     let mut errors = load_errors_to_errors(&load_result);
 
-    // Extract and interpolate directives
+    // Extract directives and sort by date+priority to match CLI pipeline
     let mut directives: Vec<Directive> = load_result
         .directives
         .into_iter()
@@ -547,7 +548,12 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
 
     // Book and interpolate transactions
     if errors.is_empty() {
-        let mut engine = BookingEngine::new();
+        directives.sort_by(|a, b| {
+            a.date()
+                .cmp(&b.date())
+                .then_with(|| a.priority().cmp(&b.priority()))
+        });
+        let mut engine = BookingEngine::with_method(BookingMethod::default());
         for directive in &mut directives {
             if let Directive::Transaction(txn) = directive {
                 match engine.book_and_interpolate(txn) {
@@ -591,6 +597,7 @@ pub fn query_multi_file(
     query_str: &str,
 ) -> Result<JsValue, JsError> {
     use rustledger_booking::BookingEngine;
+    use rustledger_core::BookingMethod;
     use rustledger_loader::{Loader, VirtualFileSystem};
     use rustledger_query::{Executor, parse as parse_query};
 
@@ -640,15 +647,21 @@ pub fn query_multi_file(
         return to_js(&result);
     }
 
-    // Extract, book, and interpolate directives
+    // Extract directives and sort by date+priority to match CLI pipeline
     let mut directives: Vec<Directive> = load_result
         .directives
         .into_iter()
         .map(|s| s.value)
         .collect();
 
+    directives.sort_by(|a, b| {
+        a.date()
+            .cmp(&b.date())
+            .then_with(|| a.priority().cmp(&b.priority()))
+    });
+
     let mut booking_errors: Vec<Error> = Vec::new();
-    let mut engine = BookingEngine::new();
+    let mut engine = BookingEngine::with_method(BookingMethod::default());
     for directive in &mut directives {
         if let Directive::Transaction(txn) = directive {
             match engine.book_and_interpolate(txn) {

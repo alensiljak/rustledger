@@ -628,31 +628,37 @@ include "accounts.beancount"
         assert!(load.errors.is_empty(), "errors: {:?}", load.errors);
 
         // Find the transaction and check that cost has number_per set
-        for directive in &load.directives {
-            if let Directive::Transaction(txn) = directive {
-                let prop_posting = txn
-                    .postings
-                    .iter()
-                    .find(|p| {
-                        p.units
-                            .as_ref()
-                            .map_or(false, |u| u.currency() == Some("PROP"))
-                    })
-                    .expect("should have PROP posting");
+        let txn = load
+            .directives
+            .iter()
+            .find_map(|d| match d {
+                Directive::Transaction(txn) => Some(txn),
+                _ => None,
+            })
+            .expect("should have at least one transaction");
 
-                let cost = prop_posting.cost.as_ref().expect("should have cost");
-                assert!(
-                    cost.number_per.is_some(),
-                    "total cost {{}} should be converted to per-unit cost, but number_per is None"
-                );
+        let prop_posting = txn
+            .postings
+            .iter()
+            .find(|p| {
+                p.units
+                    .as_ref()
+                    .map_or(false, |u| u.currency() == Some("PROP"))
+            })
+            .expect("should have PROP posting");
 
-                let per_unit = cost.number_per.unwrap();
-                // 150.00 / 273.22 ≈ 0.5490
-                assert!(
-                    per_unit > rustledger_core::Decimal::ZERO,
-                    "per-unit cost should be positive, got {per_unit}"
-                );
-            }
-        }
+        let cost = prop_posting.cost.as_ref().expect("should have cost");
+        let per_unit = cost
+            .number_per
+            .expect("total cost {{}} should be converted to per-unit cost, but number_per is None");
+
+        // 150.00 / 273.2200 ≈ 0.5490
+        use std::str::FromStr;
+        let expected = rustledger_core::Decimal::from_str("0.5490").unwrap();
+        let diff = (per_unit - expected).abs();
+        assert!(
+            diff < rustledger_core::Decimal::from_str("0.001").unwrap(),
+            "per-unit cost should be ~0.5490, got {per_unit}"
+        );
     }
 }

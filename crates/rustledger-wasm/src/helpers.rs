@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
 use rustledger_booking::BookingEngine;
-use rustledger_core::Directive;
+use rustledger_core::{BookingMethod, Directive};
 use rustledger_parser::{ParseResult as ParserResult, parse as parse_beancount};
 use rustledger_validate::validate as validate_ledger;
 
@@ -45,10 +45,25 @@ pub fn load_and_book(source: &str) -> LoadResult {
         .map(|s| s.value.clone())
         .collect();
 
-    // Book and interpolate transactions (fill in missing amounts, convert total costs)
+    // Sort by date and priority to match CLI pipeline
+    // Build index to preserve original→sorted mapping for error line lookup
     if errors.is_empty() {
-        let mut engine = BookingEngine::new();
-        for (i, directive) in directives.iter_mut().enumerate() {
+        let mut indices: Vec<usize> = (0..directives.len()).collect();
+        indices.sort_by(|&a, &b| {
+            directives[a]
+                .date()
+                .cmp(&directives[b].date())
+                .then_with(|| directives[a].priority().cmp(&directives[b].priority()))
+        });
+
+        // Reorder directives into sorted order
+        let sorted_directives: Vec<_> = indices.iter().map(|&i| directives[i].clone()).collect();
+        let sorted_indices = indices;
+        directives = sorted_directives;
+
+        // Book and interpolate transactions (fill in missing amounts, convert total costs)
+        let mut engine = BookingEngine::with_method(BookingMethod::default());
+        for (sorted_pos, directive) in directives.iter_mut().enumerate() {
             if let Directive::Transaction(txn) = directive {
                 match engine.book_and_interpolate(txn) {
                     Ok(result) => {
@@ -56,7 +71,9 @@ pub fn load_and_book(source: &str) -> LoadResult {
                         *txn = result.transaction;
                     }
                     Err(e) => {
-                        let line = lookup.byte_to_line(parse_result.directives[i].span.start);
+                        let orig_idx = sorted_indices[sorted_pos];
+                        let line =
+                            lookup.byte_to_line(parse_result.directives[orig_idx].span.start);
                         errors.push(Error::with_line(e.to_string(), line));
                     }
                 }
