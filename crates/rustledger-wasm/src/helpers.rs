@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
 
-use rustledger_booking::interpolate;
+use rustledger_booking::BookingEngine;
 use rustledger_core::Directive;
 use rustledger_parser::{ParseResult as ParserResult, parse as parse_beancount};
 use rustledger_validate::validate as validate_ledger;
@@ -44,12 +44,14 @@ pub fn load_and_interpolate(source: &str) -> LoadResult {
         .map(|s| s.value.clone())
         .collect();
 
-    // Interpolate transactions (fill in missing amounts)
+    // Book and interpolate transactions (fill in missing amounts, convert total costs)
     if errors.is_empty() {
+        let mut engine = BookingEngine::new();
         for (i, directive) in directives.iter_mut().enumerate() {
             if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
+                match engine.book_and_interpolate(txn) {
                     Ok(result) => {
+                        engine.apply(&result.transaction);
                         *txn = result.transaction;
                     }
                     Err(e) => {

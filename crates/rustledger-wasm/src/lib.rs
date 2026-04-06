@@ -560,7 +560,7 @@ include "expenses.beancount"
 
     #[test]
     fn test_multi_file_validation() {
-        use rustledger_booking::interpolate;
+        use rustledger_booking::BookingEngine;
         use rustledger_core::Directive;
         use rustledger_loader::{Loader, VirtualFileSystem};
         use std::path::Path;
@@ -589,11 +589,13 @@ include "accounts.beancount"
 
         assert!(result.errors.is_empty());
 
-        // Extract directives and interpolate transactions
+        // Extract directives and book transactions
         let mut directives: Vec<_> = result.directives.into_iter().map(|s| s.value).collect();
+        let mut engine = BookingEngine::new();
         for directive in &mut directives {
             if let Directive::Transaction(txn) = directive {
-                if let Ok(result) = interpolate(txn) {
+                if let Ok(result) = engine.book_and_interpolate(txn) {
+                    engine.apply(&result.transaction);
                     *txn = result.transaction;
                 }
             }
@@ -606,5 +608,51 @@ include "accounts.beancount"
             "ledger should be valid, but got: {:?}",
             validation_errors
         );
+    }
+
+    /// Regression test for #659: total cost `{{ }}` syntax must produce per-unit cost.
+    #[test]
+    fn test_total_cost_produces_per_unit_cost() {
+        use helpers::load_and_interpolate;
+        use rustledger_core::Directive;
+
+        let source = r#"
+2020-01-01 open Assets:Investments:PROP PROP
+2020-01-01 open Assets:Bank AUD
+
+2020-01-16 * "Buy PROP"
+  Assets:Investments:PROP  273.2200 PROP {{150.00 AUD}}
+  Assets:Bank              -150.00 AUD
+"#;
+        let load = load_and_interpolate(source);
+        assert!(load.errors.is_empty(), "errors: {:?}", load.errors);
+
+        // Find the transaction and check that cost has number_per set
+        for directive in &load.directives {
+            if let Directive::Transaction(txn) = directive {
+                let prop_posting = txn
+                    .postings
+                    .iter()
+                    .find(|p| {
+                        p.units
+                            .as_ref()
+                            .map_or(false, |u| u.currency() == Some("PROP"))
+                    })
+                    .expect("should have PROP posting");
+
+                let cost = prop_posting.cost.as_ref().expect("should have cost");
+                assert!(
+                    cost.number_per.is_some(),
+                    "total cost {{}} should be converted to per-unit cost, but number_per is None"
+                );
+
+                let per_unit = cost.number_per.unwrap();
+                // 150.00 / 273.22 ≈ 0.5490
+                assert!(
+                    per_unit > rustledger_core::Decimal::ZERO,
+                    "per-unit cost should be positive, got {per_unit}"
+                );
+            }
+        }
     }
 }

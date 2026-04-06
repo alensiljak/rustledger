@@ -498,7 +498,7 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
 /// Returns a `ValidationResult` indicating whether the ledger is valid.
 #[wasm_bindgen(js_name = "validateMultiFile")]
 pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
-    use rustledger_booking::interpolate;
+    use rustledger_booking::BookingEngine;
     use rustledger_loader::{Loader, VirtualFileSystem};
     use rustledger_validate::validate as validate_ledger;
 
@@ -545,12 +545,14 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         .map(|s| s.value)
         .collect();
 
-    // Interpolate transactions
+    // Book and interpolate transactions
     if errors.is_empty() {
+        let mut engine = BookingEngine::new();
         for directive in &mut directives {
             if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
+                match engine.book_and_interpolate(txn) {
                     Ok(result) => {
+                        engine.apply(&result.transaction);
                         *txn = result.transaction;
                     }
                     Err(e) => {
@@ -561,7 +563,7 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         }
     }
 
-    // Run validation if no parse/interpolation errors
+    // Run validation if no parse/booking errors
     if errors.is_empty() {
         let validation_errors = validate_ledger(&directives);
         for err in validation_errors {
@@ -588,7 +590,7 @@ pub fn query_multi_file(
     entry_point: &str,
     query_str: &str,
 ) -> Result<JsValue, JsError> {
-    use rustledger_booking::interpolate;
+    use rustledger_booking::BookingEngine;
     use rustledger_loader::{Loader, VirtualFileSystem};
     use rustledger_query::{Executor, parse as parse_query};
 
@@ -638,32 +640,34 @@ pub fn query_multi_file(
         return to_js(&result);
     }
 
-    // Extract and interpolate directives
+    // Extract, book, and interpolate directives
     let mut directives: Vec<Directive> = load_result
         .directives
         .into_iter()
         .map(|s| s.value)
         .collect();
 
-    let mut interpolation_errors: Vec<Error> = Vec::new();
+    let mut booking_errors: Vec<Error> = Vec::new();
+    let mut engine = BookingEngine::new();
     for directive in &mut directives {
         if let Directive::Transaction(txn) = directive {
-            match interpolate(txn) {
+            match engine.book_and_interpolate(txn) {
                 Ok(result) => {
+                    engine.apply(&result.transaction);
                     *txn = result.transaction;
                 }
                 Err(e) => {
-                    interpolation_errors.push(Error::new(e.to_string()));
+                    booking_errors.push(Error::new(e.to_string()));
                 }
             }
         }
     }
 
-    if !interpolation_errors.is_empty() {
+    if !booking_errors.is_empty() {
         let result = QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
-            errors: interpolation_errors,
+            errors: booking_errors,
         };
         return to_js(&result);
     }
