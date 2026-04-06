@@ -154,9 +154,9 @@ if (result.errors.length === 0) {
 }
 ```
 
-### Stateful API
+### Single-file Stateful API
 
-For multiple operations on the same ledger, use `ParsedLedger`:
+For multiple operations on the same source, use `ParsedLedger` to avoid re-parsing:
 
 ```javascript
 import { ParsedLedger } from '@rustledger/wasm';
@@ -176,10 +176,32 @@ if (ledger.isValid()) {
 ledger.free(); // Release WASM memory
 ```
 
+### Multi-file Stateful API
+
+For ledgers spanning multiple files with `include` directives, use `Ledger`:
+
+```javascript
+import { Ledger } from '@rustledger/wasm';
+
+const ledger = Ledger.fromFiles({
+    "main.beancount": 'include "accounts.beancount"\n...',
+    "accounts.beancount": "2024-01-01 open Assets:Bank USD\n..."
+}, "main.beancount");
+
+if (ledger.isValid()) {
+    const balances = ledger.query("BALANCES");
+
+    // Cross-file completions (pass the file being edited)
+    const completions = ledger.getCompletions(currentFileSource, line, char);
+}
+
+ledger.free();
+```
+
 ### Available Functions
 
-| Function | Description |
-|----------|-------------|
+| Function / Class | Description |
+|------------------|-------------|
 | `parse()` | Parse Beancount source to JSON |
 | `validateSource()` | Validate ledger with error reporting |
 | `query()` | Run BQL queries |
@@ -187,6 +209,11 @@ ledger.free(); // Release WASM memory
 | `expandPads()` | Expand pad directives |
 | `runPlugin()` | Run native plugins (requires `plugins` feature) |
 | `bqlCompletions()` | BQL query completions (requires `completions` feature) |
+| `ParsedLedger` | Single-file stateful class with editor features |
+| `Ledger` | Multi-file stateful class for queries and cross-file completions |
+| `parseMultiFile()` | Parse multiple files with include resolution |
+| `validateMultiFile()` | Validate across multiple files |
+| `queryMultiFile()` | Query across multiple files |
 
 ## WASI FFI (JSON-RPC)
 
