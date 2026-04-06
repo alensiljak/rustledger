@@ -143,8 +143,13 @@ impl ParsedLedger {
 
         match process(load_result, &load_options) {
             Ok(ledger) => {
-                let directives = ledger.directives.into_iter().map(|s| s.value).collect();
+                let directives: Vec<Directive> =
+                    ledger.directives.into_iter().map(|s| s.value).collect();
                 let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+
+                // Build completions cache from booked directives (accounts,
+                // currencies, payees across all files)
+                let editor_cache = editor::EditorCache::from_directives(&directives);
 
                 // Store as validation_errors (not parse_errors) so queries still
                 // work on multi-file ledgers with validation issues, matching
@@ -157,7 +162,7 @@ impl ParsedLedger {
                     options,
                     parse_errors: Vec::new(),
                     validation_errors: errors,
-                    editor_cache: None,
+                    editor_cache: Some(editor_cache),
                 })
             }
             Err(e) => Ok(Self {
@@ -427,13 +432,32 @@ impl ParsedLedger {
     /// Get completions at the given position.
     ///
     /// Returns context-aware completions for accounts, currencies, directives, etc.
-    /// Only available for single-file ledgers.
+    /// For single-file ledgers, uses the stored source. For multi-file, use
+    /// `getCompletionsForSource()` instead.
     #[wasm_bindgen(js_name = "getCompletions")]
     pub fn get_completions(&self, line: u32, character: u32) -> Result<JsValue, JsError> {
         let (Some(source), Some(cache)) = (&self.source, &self.editor_cache) else {
             return Err(JsError::new(
-                "getCompletions() is only available for single-file ledgers",
+                "getCompletions() requires single-file ledger; use getCompletionsForSource() for multi-file",
             ));
+        };
+        let result = editor::get_completions_cached(source, line, character, cache);
+        to_js(&result)
+    }
+
+    /// Get completions for a specific source string.
+    ///
+    /// Use this for multi-file ledgers where you're editing one file but want
+    /// completions from all files (accounts, currencies, payees).
+    #[wasm_bindgen(js_name = "getCompletionsForSource")]
+    pub fn get_completions_for_source(
+        &self,
+        source: &str,
+        line: u32,
+        character: u32,
+    ) -> Result<JsValue, JsError> {
+        let Some(cache) = &self.editor_cache else {
+            return Err(JsError::new("Editor cache not available"));
         };
         let result = editor::get_completions_cached(source, line, character, cache);
         to_js(&result)

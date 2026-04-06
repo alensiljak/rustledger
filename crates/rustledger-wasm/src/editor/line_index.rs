@@ -1,8 +1,12 @@
 //! Line index and editor cache for efficient position lookups.
 
+use rustledger_core::Directive;
 use rustledger_parser::ParseResult;
 
-use super::helpers::{extract_accounts, extract_currencies, extract_payees};
+use super::helpers::{
+    extract_accounts, extract_accounts_from_directives, extract_currencies,
+    extract_currencies_from_directives, extract_payees, extract_payees_from_directives,
+};
 
 /// Cached data for editor features to avoid repeated extraction.
 ///
@@ -30,6 +34,20 @@ impl EditorCache {
             line_index: LineIndex::new(source),
         }
     }
+
+    /// Build a completions-only editor cache from booked directives.
+    ///
+    /// This provides account, currency, and payee data for completions
+    /// on multi-file ledgers where raw parse results aren't available.
+    /// The `LineIndex` is empty since position-based features aren't supported.
+    pub fn from_directives(directives: &[Directive]) -> Self {
+        Self {
+            accounts: extract_accounts_from_directives(directives),
+            currencies: extract_currencies_from_directives(directives),
+            payees: extract_payees_from_directives(directives),
+            line_index: LineIndex::empty(),
+        }
+    }
 }
 
 /// Line index for efficient offset-to-position conversion.
@@ -45,6 +63,14 @@ pub struct LineIndex {
 
 impl LineIndex {
     /// Build a line index from source text.
+    /// Create an empty line index (for multi-file where position lookups aren't used).
+    pub fn empty() -> Self {
+        Self {
+            line_starts: vec![0],
+            len: 0,
+        }
+    }
+
     pub fn new(source: &str) -> Self {
         let mut line_starts = vec![0];
         for (i, ch) in source.char_indices() {
