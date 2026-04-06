@@ -459,8 +459,8 @@ mod tests {
     }
 
     #[test]
-    fn test_load_and_interpolate() {
-        use helpers::load_and_interpolate;
+    fn test_load_and_book() {
+        use helpers::load_and_book;
 
         // Valid ledger
         let source = r#"
@@ -471,7 +471,7 @@ mod tests {
   Expenses:Food  5.00 USD
   Assets:Bank   -5.00 USD
 "#;
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         assert!(load.errors.is_empty());
         assert_eq!(load.directives.len(), 3);
 
@@ -483,7 +483,7 @@ mod tests {
   Expenses:Food  5.00 USD
   Assets:Bank   -5.00 USD
 "#;
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         assert!(load.errors.is_empty()); // Parse succeeds
         let validation_errors = validate_ledger(&load.directives);
         assert!(
@@ -560,7 +560,7 @@ include "expenses.beancount"
 
     #[test]
     fn test_multi_file_validation() {
-        use rustledger_booking::interpolate;
+        use rustledger_booking::BookingEngine;
         use rustledger_core::Directive;
         use rustledger_loader::{Loader, VirtualFileSystem};
         use std::path::Path;
@@ -589,11 +589,13 @@ include "accounts.beancount"
 
         assert!(result.errors.is_empty());
 
-        // Extract directives and interpolate transactions
+        // Extract directives and book transactions
         let mut directives: Vec<_> = result.directives.into_iter().map(|s| s.value).collect();
+        let mut engine = BookingEngine::new();
         for directive in &mut directives {
             if let Directive::Transaction(txn) = directive {
-                if let Ok(result) = interpolate(txn) {
+                if let Ok(result) = engine.book_and_interpolate(txn) {
+                    engine.apply(&result.transaction);
                     *txn = result.transaction;
                 }
             }
@@ -605,6 +607,230 @@ include "accounts.beancount"
             validation_errors.is_empty(),
             "ledger should be valid, but got: {:?}",
             validation_errors
+        );
+    }
+
+    /// Regression test for #659: total cost `{{ }}` syntax must produce per-unit cost.
+    #[test]
+    fn test_total_cost_produces_per_unit_cost() {
+        use helpers::load_and_book;
+        use rustledger_core::Directive;
+
+        let source = r#"
+2020-01-01 open Assets:Investments:PROP PROP
+2020-01-01 open Assets:Bank AUD
+
+2020-01-16 * "Buy PROP"
+  Assets:Investments:PROP  273.2200 PROP {{150.00 AUD}}
+  Assets:Bank              -150.00 AUD
+"#;
+        let load = load_and_book(source);
+        assert!(load.errors.is_empty(), "errors: {:?}", load.errors);
+
+        // Find the transaction and check that cost has number_per set
+        let txn = load
+            .directives
+            .iter()
+            .find_map(|d| match d {
+                Directive::Transaction(txn) => Some(txn),
+                _ => None,
+            })
+            .expect("should have at least one transaction");
+
+        let prop_posting = txn
+            .postings
+            .iter()
+            .find(|p| {
+                p.units
+                    .as_ref()
+                    .map_or(false, |u| u.currency() == Some("PROP"))
+            })
+            .expect("should have PROP posting");
+
+        let cost = prop_posting.cost.as_ref().expect("should have cost");
+        let per_unit = cost
+            .number_per
+            .expect("total cost {{}} should be converted to per-unit cost, but number_per is None");
+
+        // 150.00 / 273.2200 ≈ 0.5490
+        use std::str::FromStr;
+        let expected = rustledger_core::Decimal::from_str("0.5490").unwrap();
+        let diff = (per_unit - expected).abs();
+        assert!(
+            diff < rustledger_core::Decimal::from_str("0.001").unwrap(),
+            "per-unit cost should be ~0.5490, got {per_unit}"
+        );
+    }
+
+    // =========================================================================
+    // Pipeline parity tests: verify WASM produces same results as CLI
+    // =========================================================================
+
+    /// Helper: process source through CLI pipeline and return directives.
+    fn cli_process(source: &str) -> Vec<rustledger_core::Directive> {
+        use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
+        use std::path::Path;
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file("test.beancount", source);
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+        let raw = loader.load(Path::new("test.beancount")).unwrap();
+        let options = LoadOptions {
+            validate: false,
+            ..Default::default()
+        };
+        let ledger = process(raw, &options).unwrap();
+        ledger.directives.into_iter().map(|s| s.value).collect()
+    }
+
+    /// Helper: process source through WASM pipeline and return directives.
+    fn wasm_process(source: &str) -> Vec<rustledger_core::Directive> {
+        let load = helpers::load_and_book(source);
+        assert!(load.errors.is_empty(), "WASM errors: {:?}", load.errors);
+        load.directives
+    }
+
+    /// Parity: out-of-order transactions should be sorted by date.
+    #[test]
+    fn test_parity_sorting() {
+        use rustledger_core::Directive;
+
+        let source = r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+
+2024-03-01 * "March"
+  Expenses:Food  30 USD
+  Assets:Bank
+
+2024-01-15 * "January"
+  Expenses:Food  10 USD
+  Assets:Bank
+
+2024-02-15 * "February"
+  Expenses:Food  20 USD
+  Assets:Bank
+"#;
+        let cli = cli_process(source);
+        let wasm = wasm_process(source);
+
+        // Both should have same directive count
+        assert_eq!(cli.len(), wasm.len(), "directive count mismatch");
+
+        // Both should be sorted by date
+        let cli_dates: Vec<_> = cli.iter().map(rustledger_core::Directive::date).collect();
+        let wasm_dates: Vec<_> = wasm.iter().map(rustledger_core::Directive::date).collect();
+        assert_eq!(cli_dates, wasm_dates, "date order mismatch");
+
+        // Verify transactions are in chronological order
+        let txn_dates: Vec<_> = wasm
+            .iter()
+            .filter_map(|d| match d {
+                Directive::Transaction(t) => Some(t.date),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            txn_dates.windows(2).all(|w| w[0] <= w[1]),
+            "transactions not sorted: {txn_dates:?}"
+        );
+    }
+
+    /// Parity: total cost `{{ }}` produces identical per-unit costs.
+    #[test]
+    fn test_parity_total_cost() {
+        let source = r#"
+2020-01-01 open Assets:Investments PROP
+2020-01-01 open Assets:Bank AUD
+
+2020-01-16 * "Buy"
+  Assets:Investments  273.2200 PROP {{150.00 AUD}}
+  Assets:Bank         -150.00 AUD
+"#;
+        let cli = cli_process(source);
+        let wasm = wasm_process(source);
+
+        fn get_cost_per_unit(
+            directives: &[rustledger_core::Directive],
+        ) -> rustledger_core::Decimal {
+            directives
+                .iter()
+                .find_map(|d| match d {
+                    rustledger_core::Directive::Transaction(t) => t
+                        .postings
+                        .iter()
+                        .find_map(|p| p.cost.as_ref().and_then(|c| c.number_per)),
+                    _ => None,
+                })
+                .expect("should have a cost")
+        }
+
+        assert_eq!(
+            get_cost_per_unit(&cli),
+            get_cost_per_unit(&wasm),
+            "per-unit cost differs between CLI and WASM"
+        );
+    }
+
+    /// Parity: interpolation fills in missing amounts identically.
+    #[test]
+    fn test_parity_interpolation() {
+        let source = r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+
+2024-01-15 * "Coffee"
+  Expenses:Food  5.00 USD
+  Assets:Bank
+"#;
+        let cli = cli_process(source);
+        let wasm = wasm_process(source);
+
+        fn get_bank_amount(directives: &[rustledger_core::Directive]) -> rustledger_core::Decimal {
+            directives
+                .iter()
+                .find_map(|d| match d {
+                    rustledger_core::Directive::Transaction(t) => t.postings.iter().find_map(|p| {
+                        if p.account.as_str().contains("Bank") {
+                            p.units.as_ref().and_then(|u| u.number())
+                        } else {
+                            None
+                        }
+                    }),
+                    _ => None,
+                })
+                .expect("should have bank posting with amount")
+        }
+
+        assert_eq!(
+            get_bank_amount(&cli),
+            get_bank_amount(&wasm),
+            "interpolated amount differs"
+        );
+    }
+
+    /// Parity: pad directives produce correct padding transactions.
+    #[test]
+    fn test_parity_pad_expansion() {
+        use rustledger_booking::expand_pads;
+
+        let source = r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Equity:Opening USD
+
+2024-01-01 pad Assets:Bank Equity:Opening
+2024-01-15 balance Assets:Bank 1000 USD
+"#;
+        let cli = cli_process(source);
+        let wasm = wasm_process(source);
+
+        let cli_expanded = expand_pads(&cli);
+        let wasm_expanded = expand_pads(&wasm);
+
+        assert_eq!(
+            cli_expanded.len(),
+            wasm_expanded.len(),
+            "expanded directive count differs"
         );
     }
 }

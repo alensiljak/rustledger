@@ -1,82 +1,117 @@
 //! Internal helper functions for WASM bindings.
 
-use std::collections::HashMap;
+use std::path::Path;
 use wasm_bindgen::prelude::*;
 
-use rustledger_booking::interpolate;
 use rustledger_core::Directive;
+use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
 use rustledger_parser::{ParseResult as ParserResult, parse as parse_beancount};
-use rustledger_validate::validate as validate_ledger;
 
 use crate::types::{Error, LedgerOptions, Severity};
 use crate::utils::LineLookup;
 
-/// Result of loading and interpolating a source file.
-pub struct LoadResult {
+/// Result of loading and processing a source file.
+pub struct ProcessedLedger {
     pub directives: Vec<Directive>,
     pub options: LedgerOptions,
     pub errors: Vec<Error>,
-    pub lookup: LineLookup,
+    /// Raw parse result, needed by editor features and `ParsedLedger`.
     pub parse_result: ParserResult,
+    pub lookup: LineLookup,
 }
 
-/// Parse and interpolate a Beancount source string.
+/// Parse, book, and process a Beancount source string.
 ///
 /// This is the common entry point for all processing functions.
-pub fn load_and_interpolate(source: &str) -> LoadResult {
+/// Uses the shared `process()` pipeline for sorting, booking, and plugins,
+/// but skips validation — callers that need it should call `run_validation()`.
+pub fn load_and_book(source: &str) -> ProcessedLedger {
+    // Keep raw parse result for editor features
     let parse_result = parse_beancount(source);
     let lookup = LineLookup::new(source);
 
-    // Collect parse errors
-    let mut errors: Vec<Error> = parse_result
-        .errors
-        .iter()
-        .map(|e| Error::with_line(e.to_string(), lookup.byte_to_line(e.span().0)))
-        .collect();
+    // If there are parse errors, return early without processing
+    if !parse_result.errors.is_empty() {
+        let errors: Vec<Error> = parse_result
+            .errors
+            .iter()
+            .map(|e| Error::with_line(e.to_string(), lookup.byte_to_line(e.span().0)))
+            .collect();
 
-    // Extract options
-    let options = extract_options(&parse_result.options);
+        let options = extract_options(&parse_result.options);
 
-    // Extract directives
-    let mut directives: Vec<_> = parse_result
-        .directives
-        .iter()
-        .map(|s| s.value.clone())
-        .collect();
-
-    // Interpolate transactions (fill in missing amounts)
-    if errors.is_empty() {
-        for (i, directive) in directives.iter_mut().enumerate() {
-            if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
-                    Ok(result) => {
-                        *txn = result.transaction;
-                    }
-                    Err(e) => {
-                        let line = lookup.byte_to_line(parse_result.directives[i].span.start);
-                        errors.push(Error::with_line(e.to_string(), line));
-                    }
-                }
-            }
-        }
+        return ProcessedLedger {
+            directives: Vec::new(),
+            options,
+            errors,
+            parse_result,
+            lookup,
+        };
     }
 
-    LoadResult {
-        directives,
-        options,
-        errors,
-        lookup,
-        parse_result,
+    // Use Loader with a single-file VFS to produce a LoadResult
+    let mut vfs = VirtualFileSystem::new();
+    vfs.add_file("input.beancount", source);
+    let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+
+    let raw = match loader.load(Path::new("input.beancount")) {
+        Ok(raw) => raw,
+        Err(e) => {
+            let options = extract_options(&parse_result.options);
+            return ProcessedLedger {
+                directives: Vec::new(),
+                options,
+                errors: vec![Error::new(format!("Load error: {e}"))],
+                parse_result,
+                lookup,
+            };
+        }
+    };
+
+    // Extract options before process() consumes raw
+    let options = extract_loader_options(&raw.options);
+
+    // Run the shared processing pipeline: sort → book → plugins
+    // Skip validation here - callers that need it will call run_validation()
+    let load_options = LoadOptions {
+        validate: false,
+        ..Default::default()
+    };
+
+    match process(raw, &load_options) {
+        Ok(ledger) => {
+            let directives = ledger.directives.into_iter().map(|s| s.value).collect();
+
+            let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+
+            ProcessedLedger {
+                directives,
+                options,
+                errors,
+                parse_result,
+                lookup,
+            }
+        }
+        Err(e) => ProcessedLedger {
+            directives: Vec::new(),
+            options,
+            errors: vec![Error::new(format!("Processing error: {e}"))],
+            parse_result,
+            lookup,
+        },
     }
 }
 
 /// Run validation on a loaded ledger and return validation errors.
-pub fn run_validation(load: &LoadResult) -> Vec<Error> {
+pub fn run_validation(load: &ProcessedLedger) -> Vec<Error> {
+    use rustledger_validate::validate as validate_ledger;
+
     if !load.errors.is_empty() {
         return Vec::new();
     }
 
-    let mut date_to_line: HashMap<String, u32> = HashMap::new();
+    // Build date→line mapping from parse result for error locations
+    let mut date_to_line: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
     for spanned in &load.parse_result.directives {
         let line = load.lookup.byte_to_line(spanned.span.start);
         let date = spanned.value.date().to_string();
@@ -109,7 +144,7 @@ pub fn to_js<T: serde::Serialize>(value: &T) -> Result<JsValue, JsError> {
         .map_err(|e| JsError::new(&e.to_string()))
 }
 
-/// Extract [`LedgerOptions`] from parsed option directives.
+/// Extract [`LedgerOptions`] from parsed option directives (parser format).
 pub fn extract_options(options: &[(String, String, rustledger_parser::Span)]) -> LedgerOptions {
     let mut ledger_options = LedgerOptions::default();
 
@@ -119,9 +154,17 @@ pub fn extract_options(options: &[(String, String, rustledger_parser::Span)]) ->
             "operating_currency" => {
                 ledger_options.operating_currencies.push(value.clone());
             }
-            _ => {} // Ignore other options for now
+            _ => {}
         }
     }
 
     ledger_options
+}
+
+/// Extract [`LedgerOptions`] from loader's [`Options`] struct.
+fn extract_loader_options(options: &rustledger_loader::Options) -> LedgerOptions {
+    LedgerOptions {
+        title: options.title.clone(),
+        operating_currencies: options.operating_currency.clone(),
+    }
 }

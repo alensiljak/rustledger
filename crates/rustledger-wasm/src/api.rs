@@ -11,11 +11,11 @@ use rustledger_loader::{FileSystem, LoadError, LoadResult};
 use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
-use crate::helpers::{extract_options, load_and_interpolate, run_validation, to_js};
+use crate::helpers::{extract_options, load_and_book, run_validation, to_js};
 #[cfg(feature = "completions")]
 use crate::types::{CompletionJson, CompletionResultJson};
 use crate::types::{
-    Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, ValidationResult,
+    Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, Severity, ValidationResult,
 };
 #[cfg(feature = "plugins")]
 use crate::types::{PluginInfo, PluginResult};
@@ -96,7 +96,7 @@ pub fn parse(source: &str) -> Result<JsValue, JsError> {
 /// Returns a `ValidationResult` indicating whether the ledger is valid.
 #[wasm_bindgen(js_name = "validateSource")]
 pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
     let validation_errors = run_validation(&load);
     let mut errors = load.errors;
     errors.extend(validation_errors);
@@ -116,7 +116,7 @@ pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
 pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
     use rustledger_query::{Executor, parse as parse_query};
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {
@@ -221,7 +221,7 @@ pub fn format(source: &str) -> Result<JsValue, JsError> {
 pub fn expand_pads(source: &str) -> Result<JsValue, JsError> {
     use rustledger_booking::process_pads;
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {
@@ -267,7 +267,7 @@ pub fn run_plugin(source: &str, plugin_name: &str) -> Result<JsValue, JsError> {
         wrappers_to_directives,
     };
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {
@@ -498,9 +498,7 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
 /// Returns a `ValidationResult` indicating whether the ledger is valid.
 #[wasm_bindgen(js_name = "validateMultiFile")]
 pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
-    use rustledger_booking::interpolate;
-    use rustledger_loader::{Loader, VirtualFileSystem};
-    use rustledger_validate::validate as validate_ledger;
+    use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
 
     // Parse the JavaScript object to a HashMap
     let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
@@ -535,39 +533,34 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         }
     };
 
-    // Collect load errors with detailed parse error info
-    let mut errors = load_errors_to_errors(&load_result);
-
-    // Extract and interpolate directives
-    let mut directives: Vec<Directive> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
-
-    // Interpolate transactions
-    if errors.is_empty() {
-        for directive in &mut directives {
-            if let Directive::Transaction(txn) = directive {
-                match interpolate(txn) {
-                    Ok(result) => {
-                        *txn = result.transaction;
-                    }
-                    Err(e) => {
-                        errors.push(Error::new(e.to_string()));
-                    }
-                }
-            }
-        }
+    // Check for parse errors first (preserves detailed per-error line info)
+    let parse_errors = load_errors_to_errors(&load_result);
+    if !parse_errors.is_empty() {
+        let result = ValidationResult {
+            valid: false,
+            errors: parse_errors,
+        };
+        return to_js(&result);
     }
 
-    // Run validation if no parse/interpolation errors
-    if errors.is_empty() {
-        let validation_errors = validate_ledger(&directives);
-        for err in validation_errors {
-            errors.push(Error::new(err.message));
+    // Run the shared processing pipeline: sort → book → plugins → validate
+    let options = LoadOptions {
+        validate: true,
+        ..Default::default()
+    };
+
+    let ledger = match process(load_result, &options) {
+        Ok(ledger) => ledger,
+        Err(e) => {
+            let result = ValidationResult {
+                valid: false,
+                errors: vec![Error::new(format!("Processing error: {e}"))],
+            };
+            return to_js(&result);
         }
-    }
+    };
+
+    let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
 
     let result = ValidationResult {
         valid: errors.is_empty(),
@@ -588,8 +581,8 @@ pub fn query_multi_file(
     entry_point: &str,
     query_str: &str,
 ) -> Result<JsValue, JsError> {
-    use rustledger_booking::interpolate;
-    use rustledger_loader::{Loader, VirtualFileSystem};
+    use rustledger_booking::expand_pads;
+    use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
     use rustledger_query::{Executor, parse as parse_query};
 
     // Parse the JavaScript object to a HashMap
@@ -626,10 +619,39 @@ pub fn query_multi_file(
         }
     };
 
-    // Collect load errors with detailed parse error info
-    let errors = load_errors_to_errors(&load_result);
+    // Check for parse errors first (preserves detailed per-error line info)
+    let parse_errors = load_errors_to_errors(&load_result);
+    if !parse_errors.is_empty() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            errors: parse_errors,
+        };
+        return to_js(&result);
+    }
 
-    if !errors.is_empty() {
+    // Run the shared processing pipeline: sort → book → plugins (no validation for queries)
+    let options = LoadOptions {
+        validate: false,
+        ..Default::default()
+    };
+
+    let ledger = match process(load_result, &options) {
+        Ok(ledger) => ledger,
+        Err(e) => {
+            let result = QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                errors: vec![Error::new(format!("Processing error: {e}"))],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Only abort on actual errors, not warnings (matching CLI query behavior)
+    let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+    let has_errors = errors.iter().any(|e| e.severity == Severity::Error);
+    if has_errors {
         let result = QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
@@ -638,35 +660,9 @@ pub fn query_multi_file(
         return to_js(&result);
     }
 
-    // Extract and interpolate directives
-    let mut directives: Vec<Directive> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
-
-    let mut interpolation_errors: Vec<Error> = Vec::new();
-    for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive {
-            match interpolate(txn) {
-                Ok(result) => {
-                    *txn = result.transaction;
-                }
-                Err(e) => {
-                    interpolation_errors.push(Error::new(e.to_string()));
-                }
-            }
-        }
-    }
-
-    if !interpolation_errors.is_empty() {
-        let result = QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            errors: interpolation_errors,
-        };
-        return to_js(&result);
-    }
+    // Expand pads into synthetic transactions (matching CLI query pipeline)
+    let booked_directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
+    let directives = expand_pads(&booked_directives);
 
     // Parse the query
     let query = match parse_query(query_str) {
