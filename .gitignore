@@ -62,5 +62,6 @@ book/
 .bench-tools/
 tests/compatibility/synthetic/
 .playwright*
+.opencode/
 .venv-plugins/
 packaging/arch/rustledger/.SRCINFO
