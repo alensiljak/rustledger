@@ -13,7 +13,11 @@ WebAssembly bindings for rustledger, enabling Beancount functionality in JavaScr
 | `expandPads()` | Expand pad directives |
 | `runPlugin()` | Run native plugins (with `plugins` feature) |
 | `bqlCompletions()` | BQL query completions (with `completions` feature) |
-| `ParsedLedger` | Stateful class with LSP-like editor features |
+| `ParsedLedger` | Single-file stateful class with editor features |
+| `Ledger` | Multi-file stateful class for queries |
+| `parseMultiFile()` | Parse multiple files with include resolution |
+| `validateMultiFile()` | Validate across multiple files |
+| `queryMultiFile()` | Query across multiple files |
 
 ## Example
 
@@ -41,7 +45,9 @@ if (result.errors.length === 0) {
 
 ## Stateful API
 
-For multiple operations on the same source, use `ParsedLedger` to avoid re-parsing:
+### Single-file: `ParsedLedger`
+
+For multiple operations on the same source, with full editor features:
 
 ```javascript
 import { ParsedLedger } from '@rustledger/wasm';
@@ -59,6 +65,28 @@ if (ledger.isValid()) {
 }
 
 ledger.free(); // Release WASM memory
+```
+
+### Multi-file: `Ledger`
+
+For ledgers spanning multiple files with `include` directives:
+
+```javascript
+import { Ledger } from '@rustledger/wasm';
+
+const ledger = Ledger.fromFiles({
+    "main.beancount": 'include "accounts.beancount"\n2024-01-15 * "Coffee"\n  Expenses:Food  5 USD\n  Assets:Bank',
+    "accounts.beancount": "2024-01-01 open Assets:Bank USD\n2024-01-01 open Expenses:Food USD"
+}, "main.beancount");
+
+if (ledger.isValid()) {
+    const balances = ledger.query("BALANCES");
+
+    // Cross-file completions (pass the file being edited)
+    const completions = ledger.getCompletions(currentFileSource, line, char);
+}
+
+ledger.free();
 ```
 
 ## Cargo Features

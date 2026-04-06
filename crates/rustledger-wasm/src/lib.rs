@@ -4,10 +4,12 @@
 //!
 //! # Features
 //!
-//! - Parse Beancount files
+//! - Parse Beancount files (single and multi-file with includes)
 //! - Validate ledgers
 //! - Run BQL queries
 //! - Format directives
+//! - [`ParsedLedger`] — cached single-file with editor features (completions, hover, etc.)
+//! - [`Ledger`] — cached multi-file with queries and cross-file completions
 //!
 //! # Example (JavaScript)
 //!
