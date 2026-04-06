@@ -3,10 +3,7 @@
 use rustledger_core::Directive;
 use rustledger_parser::ParseResult;
 
-use super::helpers::{
-    extract_accounts, extract_accounts_from_directives, extract_currencies,
-    extract_currencies_from_directives, extract_payees, extract_payees_from_directives,
-};
+use super::helpers::{extract_accounts, extract_currencies, extract_payees};
 
 /// Cached data for editor features to avoid repeated extraction.
 ///
@@ -42,9 +39,9 @@ impl EditorCache {
     /// The `LineIndex` is empty since position-based features aren't supported.
     pub fn from_directives(directives: &[Directive]) -> Self {
         Self {
-            accounts: extract_accounts_from_directives(directives),
-            currencies: extract_currencies_from_directives(directives),
-            payees: extract_payees_from_directives(directives),
+            accounts: rustledger_core::extract_accounts(directives),
+            currencies: rustledger_core::extract_currencies(directives),
+            payees: rustledger_core::extract_payees(directives),
             line_index: LineIndex::empty(),
         }
     }
