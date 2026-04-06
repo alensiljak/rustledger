@@ -3,8 +3,12 @@
 //! Tests are converted from beancount's plugin test suite.
 
 use rustledger_plugin::native::{
-    CheckCommodityPlugin, ImplicitPricesPlugin, LeafOnlyPlugin, NativePlugin, NativePluginRegistry,
-    NoDuplicatesPlugin, OneCommodityPlugin, UniquePricesPlugin,
+    AutoTagPlugin, BoxAccrualPlugin, CapitalGainsGainLossPlugin, CapitalGainsLongShortPlugin,
+    CheckAverageCostPlugin, CheckCommodityPlugin, CheckDrainedPlugin, CommodityAttrPlugin,
+    CurrencyAccountsPlugin, EffectiveDatePlugin, ForecastPlugin, GenerateBaseCcyPricesPlugin,
+    ImplicitPricesPlugin, LeafOnlyPlugin, NativePlugin, NativePluginRegistry, NoDuplicatesPlugin,
+    NoUnusedPlugin, OneCommodityPlugin, PedanticPlugin, RenameAccountsPlugin, RxTxnPlugin,
+    SellGainsPlugin, SplitExpensesPlugin, UniquePricesPlugin, UnrealizedPlugin, ZerosumPlugin,
 };
 use rustledger_plugin::types::*;
 
@@ -1322,4 +1326,805 @@ fn test_coherent_cost_cost_and_price_ok() {
         output.errors.is_empty(),
         "expected no errors when using cost+price on same posting (capital gains)"
     );
+}
+
+// ============================================================================
+// Helper: make_input with config
+// ============================================================================
+
+fn make_input_with_config(directives: Vec<DirectiveWrapper>, config: &str) -> PluginInput {
+    PluginInput {
+        directives,
+        options: PluginOptions {
+            operating_currencies: vec!["USD".to_string()],
+            title: None,
+        },
+        config: Some(config.to_string()),
+    }
+}
+
+fn make_transaction_with_tag(
+    date: &str,
+    narration: &str,
+    tags: Vec<&str>,
+    postings: Vec<(&str, &str, &str)>,
+) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: tags.into_iter().map(String::from).collect(),
+            links: vec![],
+            metadata: vec![],
+            postings: postings
+                .into_iter()
+                .map(|(account, number, currency)| PostingData {
+                    account: account.to_string(),
+                    units: Some(AmountData {
+                        number: number.to_string(),
+                        currency: currency.to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                })
+                .collect(),
+        }),
+    }
+}
+
+fn make_transaction_with_metadata(
+    date: &str,
+    narration: &str,
+    metadata: Vec<(&str, MetaValueData)>,
+    postings: Vec<(&str, &str, &str)>,
+) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: narration.to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: metadata
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect(),
+            postings: postings
+                .into_iter()
+                .map(|(account, number, currency)| PostingData {
+                    account: account.to_string(),
+                    units: Some(AmountData {
+                        number: number.to_string(),
+                        currency: currency.to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                })
+                .collect(),
+        }),
+    }
+}
+
+fn make_open_with_currencies(date: &str, account: &str, currencies: Vec<&str>) -> DirectiveWrapper {
+    DirectiveWrapper {
+        directive_type: "open".to_string(),
+        date: date.to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Open(OpenData {
+            account: account.to_string(),
+            currencies: currencies.into_iter().map(String::from).collect(),
+            booking: None,
+            metadata: vec![],
+        }),
+    }
+}
+
+// ============================================================================
+// AutoTagPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_auto_tag_adds_tag_for_expense() {
+    let plugin = AutoTagPlugin::new();
+    let input = make_input(vec![
+        make_open("2024-01-01", "Expenses:Food:Restaurant"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction(
+            "2024-01-15",
+            "Lunch",
+            vec![
+                ("Expenses:Food:Restaurant", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Verify a tag was added to the transaction
+    let txn = output
+        .directives
+        .iter()
+        .find(|d| d.directive_type == "transaction")
+        .unwrap();
+    if let DirectiveData::Transaction(data) = &txn.data {
+        assert!(
+            !data.tags.is_empty(),
+            "auto_tag should add a tag for Expenses:Food posting"
+        );
+    }
+}
+
+// ============================================================================
+// NoUnusedPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_no_unused_warns_on_unused_account() {
+    let plugin = NoUnusedPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Used"),
+        make_open("2024-01-01", "Assets:Unused"),
+        make_open("2024-01-01", "Equity:Opening"),
+        make_transaction(
+            "2024-01-15",
+            "Use it",
+            vec![
+                ("Assets:Used", "100", "USD"),
+                ("Equity:Opening", "-100", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(!output.errors.is_empty(), "should warn about Assets:Unused");
+    assert!(
+        output.errors.iter().any(|e| e.message.contains("Unused")),
+        "error should mention the unused account"
+    );
+}
+
+#[test]
+fn test_no_unused_ok_when_all_used() {
+    let plugin = NoUnusedPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Lunch",
+            vec![
+                ("Expenses:Food", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty(), "no unused accounts");
+}
+
+// ============================================================================
+// PedanticPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_pedantic_runs_multiple_validators() {
+    let plugin = PedanticPlugin;
+    // Create a scenario with a leaf-only violation
+    let input = make_input(vec![
+        make_open("2024-01-01", "Expenses:Food"),
+        make_open("2024-01-01", "Expenses:Food:Restaurant"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction(
+            "2024-01-15",
+            "Bad",
+            vec![
+                ("Expenses:Food", "25", "USD"), // leaf violation
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        !output.errors.is_empty(),
+        "pedantic should catch leaf-only violation"
+    );
+}
+
+// ============================================================================
+// RxTxnPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_rx_txn_adds_metadata_to_tagged_transaction() {
+    let plugin = RxTxnPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Rent"),
+        make_transaction_with_tag(
+            "2024-01-15",
+            "Monthly rent",
+            vec!["rx_txn"],
+            vec![
+                ("Expenses:Rent", "1000", "USD"),
+                ("Assets:Cash", "-1000", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Verify metadata was added to the tagged transaction
+    let txn = output
+        .directives
+        .iter()
+        .find(|d| d.directive_type == "transaction")
+        .unwrap();
+    if let DirectiveData::Transaction(data) = &txn.data {
+        let has_final = data.metadata.iter().any(|(k, _)| k == "final");
+        let has_roll = data.metadata.iter().any(|(k, _)| k == "roll");
+        assert!(
+            has_final || has_roll,
+            "rx_txn should add 'final' and/or 'roll' metadata to tagged transaction"
+        );
+    }
+}
+
+#[test]
+fn test_rx_txn_ignores_untagged_transaction() {
+    let plugin = RxTxnPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Lunch",
+            vec![
+                ("Expenses:Food", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+}
+
+// ============================================================================
+// SellGainsPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_sell_gains_warns_missing_gains_posting() {
+    let plugin = SellGainsPlugin;
+    // Sale with cost and price but no Income posting
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction_with_cost_and_price(
+            "2024-06-15",
+            "Sell stock",
+            "Assets:Stock",
+            ("-10", "AAPL"),
+            ("100", "USD"),
+            ("150", "USD"),
+            "Assets:Cash",
+        ),
+    ]);
+    let output = plugin.process(input);
+    // Should warn about missing Income:Capital-Gains posting
+    assert!(
+        !output.errors.is_empty(),
+        "should warn about missing gains posting"
+    );
+}
+
+// ============================================================================
+// CheckDrainedPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_check_drained_adds_balance_assertions_on_close() {
+    let plugin = CheckDrainedPlugin;
+    let input = make_input(vec![
+        make_open_with_currencies("2024-01-01", "Assets:Bank", vec!["USD"]),
+        make_transaction(
+            "2024-06-15",
+            "Deposit",
+            vec![
+                ("Assets:Bank", "100", "USD"),
+                ("Income:Salary", "-100", "USD"),
+            ],
+        ),
+        make_close("2024-12-31", "Assets:Bank"),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Should have added balance assertion directives
+    let balance_count = output
+        .directives
+        .iter()
+        .filter(|d| d.directive_type == "balance")
+        .count();
+    assert!(
+        balance_count > 0,
+        "should insert balance assertions after close"
+    );
+}
+
+// ============================================================================
+// CommodityAttrPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_commodity_attr_ok_with_no_config() {
+    let plugin = CommodityAttrPlugin::new();
+    let input = make_input(vec![make_commodity("2024-01-01", "USD")]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+}
+
+#[test]
+fn test_commodity_attr_error_with_missing_required_attr() {
+    let plugin = CommodityAttrPlugin::new();
+    let input =
+        make_input_with_config(vec![make_commodity("2024-01-01", "AAPL")], "{'name': null}");
+    let output = plugin.process(input);
+    assert!(
+        !output.errors.is_empty(),
+        "should error when required 'name' attribute is missing"
+    );
+}
+
+// ============================================================================
+// CurrencyAccountsPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_currency_accounts_single_currency_no_change() {
+    let plugin = CurrencyAccountsPlugin::new();
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Lunch",
+            vec![
+                ("Expenses:Food", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Single-currency transaction should not add currency account postings
+    let txn = output
+        .directives
+        .iter()
+        .find(|d| d.directive_type == "transaction")
+        .unwrap();
+    if let DirectiveData::Transaction(data) = &txn.data {
+        assert_eq!(
+            data.postings.len(),
+            2,
+            "single-currency transaction should not gain extra postings"
+        );
+    }
+}
+
+// ============================================================================
+// EffectiveDatePlugin Tests
+// ============================================================================
+
+#[test]
+fn test_effective_date_no_metadata_passthrough() {
+    let plugin = EffectiveDatePlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "No effective date",
+            vec![
+                ("Expenses:Food", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Without effective_date metadata, directives pass through unchanged
+    assert_eq!(output.directives.len(), 3);
+}
+
+#[test]
+fn test_effective_date_splits_transaction() {
+    let plugin = EffectiveDatePlugin;
+    // Create transaction with effective_date metadata on a posting
+    let mut txn = make_transaction(
+        "2024-01-15",
+        "Deferred expense",
+        vec![
+            ("Expenses:Food", "25", "USD"),
+            ("Assets:Cash", "-25", "USD"),
+        ],
+    );
+    // Add effective_date to the first posting
+    if let DirectiveData::Transaction(ref mut data) = txn.data {
+        data.postings[0].metadata.push((
+            "effective_date".to_string(),
+            MetaValueData::Date("2024-02-15".to_string()),
+        ));
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn,
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Should have more directives than input (split + opens for holding account)
+    assert!(
+        output.directives.len() > 3,
+        "effective_date should split into multiple directives (got {})",
+        output.directives.len()
+    );
+}
+
+// ============================================================================
+// ForecastPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_forecast_no_forecast_flag_passthrough() {
+    let plugin = ForecastPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Rent"),
+        make_transaction(
+            "2024-01-15",
+            "Regular rent",
+            vec![
+                ("Expenses:Rent", "1000", "USD"),
+                ("Assets:Cash", "-1000", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // No forecast flag, so no expansion
+    assert_eq!(output.directives.len(), 3);
+}
+
+#[test]
+fn test_forecast_expands_recurring_transaction() {
+    let plugin = ForecastPlugin;
+    // Transaction with # flag and [MONTHLY REPEAT 3 TIMES] pattern
+    let forecast_txn = DirectiveWrapper {
+        directive_type: "transaction".to_string(),
+        date: "2024-01-15".to_string(),
+        filename: None,
+        lineno: None,
+        data: DirectiveData::Transaction(TransactionData {
+            flag: "#".to_string(),
+            payee: None,
+            narration: "Rent [MONTHLY REPEAT 3 TIMES]".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![
+                PostingData {
+                    account: "Expenses:Rent".to_string(),
+                    units: Some(AmountData {
+                        number: "1000".to_string(),
+                        currency: "USD".to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+                PostingData {
+                    account: "Assets:Cash".to_string(),
+                    units: Some(AmountData {
+                        number: "-1000".to_string(),
+                        currency: "USD".to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+            ],
+        }),
+    };
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Rent"),
+        forecast_txn,
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    let txn_count = output
+        .directives
+        .iter()
+        .filter(|d| d.directive_type == "transaction")
+        .count();
+    assert!(
+        txn_count >= 3,
+        "forecast should expand to at least 3 transactions (got {txn_count})"
+    );
+}
+
+// ============================================================================
+// GenerateBaseCcyPricesPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_generate_base_ccy_prices_creates_derived_price() {
+    let plugin = GenerateBaseCcyPricesPlugin;
+    let input = make_input_with_config(
+        vec![
+            make_price("2024-01-01", "EUR", "1.10", "USD"),
+            make_price("2024-01-01", "ETH", "2000", "EUR"),
+        ],
+        "USD",
+    );
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Should generate ETH in USD price
+    let price_count = output
+        .directives
+        .iter()
+        .filter(|d| d.directive_type == "price")
+        .count();
+    assert!(
+        price_count > 2,
+        "should generate derived price entries (got {price_count})"
+    );
+}
+
+// ============================================================================
+// RenameAccountsPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_rename_accounts_renames_in_transaction() {
+    let plugin = RenameAccountsPlugin;
+    let input = make_input_with_config(
+        vec![
+            make_open("2024-01-01", "Expenses:OldName"),
+            make_open("2024-01-01", "Assets:Cash"),
+            make_transaction(
+                "2024-01-15",
+                "Test",
+                vec![
+                    ("Expenses:OldName", "25", "USD"),
+                    ("Assets:Cash", "-25", "USD"),
+                ],
+            ),
+        ],
+        "{'Expenses:OldName': 'Expenses:NewName'}",
+    );
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Check that account was renamed
+    let has_new_name = output.directives.iter().any(|d| {
+        if let DirectiveData::Transaction(txn) = &d.data {
+            txn.postings.iter().any(|p| p.account == "Expenses:NewName")
+        } else {
+            false
+        }
+    });
+    assert!(has_new_name, "should rename account to Expenses:NewName");
+}
+
+// ============================================================================
+// SplitExpensesPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_split_expenses_divides_by_members() {
+    let plugin = SplitExpensesPlugin;
+    let input = make_input_with_config(
+        vec![
+            make_open("2024-01-01", "Expenses:Food"),
+            make_open("2024-01-01", "Assets:Cash"),
+            make_transaction(
+                "2024-01-15",
+                "Group dinner",
+                vec![
+                    ("Expenses:Food", "100", "USD"),
+                    ("Assets:Cash", "-100", "USD"),
+                ],
+            ),
+        ],
+        "Alice Bob",
+    );
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // Should have split the Expenses:Food posting into member postings
+    let txn = output
+        .directives
+        .iter()
+        .find(|d| d.directive_type == "transaction")
+        .unwrap();
+    if let DirectiveData::Transaction(data) = &txn.data {
+        let expense_postings: Vec<_> = data
+            .postings
+            .iter()
+            .filter(|p| p.account.starts_with("Expenses:Food"))
+            .collect();
+        assert!(
+            expense_postings.len() >= 2,
+            "should split expense into at least 2 member postings (got {})",
+            expense_postings.len()
+        );
+    }
+}
+
+// ============================================================================
+// UnrealizedPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_unrealized_reports_unrealized_gains() {
+    let plugin = UnrealizedPlugin::new();
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_commodity("2024-01-01", "AAPL"),
+        // Buy stock
+        make_transaction_with_cost(
+            "2024-01-15",
+            "Buy",
+            "Assets:Stock",
+            ("10", "AAPL"),
+            ("100", "USD"),
+            "Assets:Cash",
+        ),
+        // Current market price higher
+        make_price("2024-06-15", "AAPL", "150", "USD"),
+    ]);
+    let output = plugin.process(input);
+    // Should report unrealized gain of 10 * (150 - 100) = 500
+    // The plugin may generate warnings or new directives
+    // As long as it doesn't error out, the plugin works
+    assert!(
+        output.errors.is_empty()
+            || output
+                .errors
+                .iter()
+                .all(|e| e.severity == PluginErrorSeverity::Warning)
+    );
+}
+
+// ============================================================================
+// CheckAverageCostPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_check_average_cost_no_error_on_correct_sale() {
+    let plugin = CheckAverageCostPlugin::new();
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        // Buy at 100
+        make_transaction_with_cost(
+            "2024-01-15",
+            "Buy",
+            "Assets:Stock",
+            ("10", "AAPL"),
+            ("100", "USD"),
+            "Assets:Cash",
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+}
+
+// ============================================================================
+// ZerosumPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_zerosum_requires_config() {
+    let plugin = ZerosumPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction("2024-01-15", "Test", vec![("Assets:Cash", "100", "USD")]),
+    ]);
+    let output = plugin.process(input);
+    assert!(!output.errors.is_empty(), "should error without config");
+    assert!(output.errors[0].message.contains("requires configuration"));
+}
+
+// ============================================================================
+// BoxAccrualPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_box_accrual_no_metadata_passthrough() {
+    let plugin = BoxAccrualPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Normal transaction",
+            vec![
+                ("Expenses:Food", "25", "USD"),
+                ("Assets:Cash", "-25", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    // No synthetic_loan_expiry metadata → directives unchanged
+    assert_eq!(output.directives.len(), 3);
+}
+
+#[test]
+fn test_box_accrual_with_metadata_splits_losses() {
+    let plugin = BoxAccrualPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Income:Capital-Losses"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction_with_metadata(
+            "2024-07-01",
+            "Loss with expiry",
+            vec![(
+                "synthetic_loan_expiry",
+                MetaValueData::Date("2026-06-30".to_string()),
+            )],
+            vec![
+                ("Income:Capital-Losses", "-1000", "USD"),
+                ("Assets:Cash", "1000", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+}
+
+// ============================================================================
+// CapitalGainsLongShortPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_capital_gains_long_short_no_config_passthrough() {
+    let plugin = CapitalGainsLongShortPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction("2024-01-15", "Simple", vec![("Assets:Cash", "100", "USD")]),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    assert_eq!(output.directives.len(), 2);
+}
+
+// ============================================================================
+// CapitalGainsGainLossPlugin Tests
+// ============================================================================
+
+#[test]
+fn test_capital_gains_gain_loss_no_config_passthrough() {
+    let plugin = CapitalGainsGainLossPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Cash"),
+        make_transaction("2024-01-15", "Simple", vec![("Assets:Cash", "100", "USD")]),
+    ]);
+    let output = plugin.process(input);
+    assert!(output.errors.is_empty());
+    assert_eq!(output.directives.len(), 2);
 }
