@@ -3,6 +3,8 @@
 //! Provides a cached, parsed representation of a Beancount ledger for efficient
 //! multiple operations without re-parsing.
 
+use std::collections::HashMap;
+use std::path::Path;
 use wasm_bindgen::prelude::*;
 
 use rustledger_core::Directive;
@@ -19,40 +21,49 @@ use crate::types::{Error, FormatResult, LedgerOptions, PadResult, QueryResult};
 /// A parsed and validated ledger that caches the parse result.
 ///
 /// Use this class when you need to perform multiple operations on the same
-/// source without re-parsing each time.
+/// source without re-parsing each time. Supports both single-file and
+/// multi-file ledgers.
 ///
 /// # Example (JavaScript)
 ///
 /// ```javascript
+/// // Single file
 /// const ledger = new ParsedLedger(source);
+///
+/// // Multi-file (with include resolution)
+/// const ledger = ParsedLedger.fromFiles({
+///     "main.beancount": 'include "accounts.beancount"\n...',
+///     "accounts.beancount": "2024-01-01 open Assets:Bank USD\n..."
+/// }, "main.beancount");
+///
 /// if (ledger.isValid()) {
 ///     const balances = ledger.query("BALANCES");
-///     const formatted = ledger.format();
 /// }
 /// ```
 #[wasm_bindgen(skip_typescript)]
 pub struct ParsedLedger {
-    /// The original source text.
-    source: String,
-    /// The raw parse result (for editor features).
-    parse_result: ParserResult,
-    /// The interpolated directives.
+    /// The original source text (single-file only).
+    source: Option<String>,
+    /// The raw parse result (single-file only, for editor features).
+    parse_result: Option<ParserResult>,
+    /// The booked directives.
     directives: Vec<Directive>,
     /// Ledger options.
     options: LedgerOptions,
-    /// Parse errors.
+    /// Parse/processing errors.
     parse_errors: Vec<Error>,
     /// Validation errors.
     validation_errors: Vec<Error>,
-    /// Cached editor data (accounts, currencies, payees, line index).
-    editor_cache: editor::EditorCache,
+    /// Cached editor data (single-file only).
+    editor_cache: Option<editor::EditorCache>,
 }
 
 #[wasm_bindgen]
 impl ParsedLedger {
-    /// Create a new `ParsedLedger` from source text.
+    /// Create a new `ParsedLedger` from a single source string.
     ///
-    /// Parses, interpolates, and validates the source. Call `isValid()` to check for errors.
+    /// Parses, books, and validates the source. Call `isValid()` to check for errors.
+    /// Editor features (completions, hover, etc.) are available with this constructor.
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Self {
         let load = load_and_book(source);
@@ -62,13 +73,98 @@ impl ParsedLedger {
         let editor_cache = editor::EditorCache::new(source, &load.parse_result);
 
         Self {
-            source: source.to_string(),
-            parse_result: load.parse_result,
+            source: Some(source.to_string()),
+            parse_result: Some(load.parse_result),
             directives: load.directives,
             options: load.options,
             parse_errors: load.errors,
             validation_errors,
-            editor_cache,
+            editor_cache: Some(editor_cache),
+        }
+    }
+
+    /// Create a `ParsedLedger` from multiple files with include resolution.
+    ///
+    /// This is the multi-file equivalent of the constructor, useful for ledgers
+    /// that span multiple files with `include` directives.
+    ///
+    /// Editor features (completions, hover, definition, etc.) are not available
+    /// on multi-file ledgers — use the single-file constructor for editor integration.
+    ///
+    /// # Arguments
+    ///
+    /// * `files` - A JavaScript object mapping file paths to their contents.
+    /// * `entry_point` - The main file to start loading from (must exist in `files`).
+    #[wasm_bindgen(js_name = "fromFiles")]
+    pub fn from_files(files: JsValue, entry_point: &str) -> Result<Self, JsError> {
+        use rustledger_loader::{FileSystem, LoadOptions, Loader, VirtualFileSystem, process};
+
+        let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
+            .map_err(|e| JsError::new(&format!("Invalid files object: {e}")))?;
+
+        if file_map.is_empty() {
+            return Err(JsError::new("Files map cannot be empty"));
+        }
+
+        let vfs = VirtualFileSystem::from_files(file_map);
+
+        if !vfs.exists(Path::new(entry_point)) {
+            return Err(JsError::new(&format!(
+                "Entry point '{entry_point}' not found in files map"
+            )));
+        }
+
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+
+        let load_result = match loader.load(Path::new(entry_point)) {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(Self {
+                    source: None,
+                    parse_result: None,
+                    directives: Vec::new(),
+                    options: LedgerOptions::default(),
+                    parse_errors: vec![Error::new(format!("Load error: {e}"))],
+                    validation_errors: Vec::new(),
+                    editor_cache: None,
+                });
+            }
+        };
+
+        let options = LedgerOptions {
+            title: load_result.options.title.clone(),
+            operating_currencies: load_result.options.operating_currency.clone(),
+        };
+
+        let load_options = LoadOptions {
+            validate: true,
+            ..Default::default()
+        };
+
+        match process(load_result, &load_options) {
+            Ok(ledger) => {
+                let directives = ledger.directives.into_iter().map(|s| s.value).collect();
+                let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+
+                Ok(Self {
+                    source: None,
+                    parse_result: None,
+                    directives,
+                    options,
+                    parse_errors: errors,
+                    validation_errors: Vec::new(),
+                    editor_cache: None,
+                })
+            }
+            Err(e) => Ok(Self {
+                source: None,
+                parse_result: None,
+                directives: Vec::new(),
+                options,
+                parse_errors: vec![Error::new(format!("Processing error: {e}"))],
+                validation_errors: Vec::new(),
+                editor_cache: None,
+            }),
         }
     }
 
@@ -175,9 +271,21 @@ impl ParsedLedger {
     }
 
     /// Format the ledger source.
+    ///
+    /// Only available for single-file ledgers.
     #[wasm_bindgen]
     pub fn format(&self) -> Result<JsValue, JsError> {
         use rustledger_core::{FormatConfig, format_directive};
+
+        if self.source.is_none() {
+            let result = FormatResult {
+                formatted: None,
+                errors: vec![Error::new(
+                    "format() is only available for single-file ledgers",
+                )],
+            };
+            return to_js(&result);
+        }
 
         if !self.parse_errors.is_empty() {
             let result = FormatResult {
@@ -304,71 +412,92 @@ impl ParsedLedger {
     // Editor Integration (LSP-like features)
     // =========================================================================
 
+    /// Check if this is a multi-file ledger.
+    ///
+    /// Multi-file ledgers do not support editor features (completions, hover, etc.).
+    #[wasm_bindgen(js_name = "isMultiFile")]
+    pub fn is_multi_file(&self) -> bool {
+        self.source.is_none()
+    }
+
     /// Get completions at the given position.
     ///
     /// Returns context-aware completions for accounts, currencies, directives, etc.
-    /// Uses cached account/currency/payee data for efficiency.
+    /// Only available for single-file ledgers.
     #[wasm_bindgen(js_name = "getCompletions")]
     pub fn get_completions(&self, line: u32, character: u32) -> Result<JsValue, JsError> {
-        let result =
-            editor::get_completions_cached(&self.source, line, character, &self.editor_cache);
+        let (Some(source), Some(cache)) = (&self.source, &self.editor_cache) else {
+            return Err(JsError::new(
+                "getCompletions() is only available for single-file ledgers",
+            ));
+        };
+        let result = editor::get_completions_cached(source, line, character, cache);
         to_js(&result)
     }
 
     /// Get hover information at the given position.
     ///
     /// Returns documentation for accounts, currencies, and directive keywords.
+    /// Only available for single-file ledgers.
     #[wasm_bindgen(js_name = "getHoverInfo")]
     pub fn get_hover_info(&self, line: u32, character: u32) -> Result<JsValue, JsError> {
-        let result = editor::get_hover_info_cached(
-            &self.source,
-            line,
-            character,
-            &self.parse_result,
-            &self.editor_cache,
-        );
+        let (Some(source), Some(parse_result), Some(cache)) =
+            (&self.source, &self.parse_result, &self.editor_cache)
+        else {
+            return Err(JsError::new(
+                "getHoverInfo() is only available for single-file ledgers",
+            ));
+        };
+        let result = editor::get_hover_info_cached(source, line, character, parse_result, cache);
         to_js(&result)
     }
 
     /// Get the definition location for the symbol at the given position.
     ///
     /// Returns the location of the `open` or `commodity` directive for accounts/currencies.
-    /// Uses cached `LineIndex` for O(log n) position lookups.
+    /// Only available for single-file ledgers.
     #[wasm_bindgen(js_name = "getDefinition")]
     pub fn get_definition(&self, line: u32, character: u32) -> Result<JsValue, JsError> {
-        let result = editor::get_definition_cached(
-            &self.source,
-            line,
-            character,
-            &self.parse_result,
-            &self.editor_cache,
-        );
+        let (Some(source), Some(parse_result), Some(cache)) =
+            (&self.source, &self.parse_result, &self.editor_cache)
+        else {
+            return Err(JsError::new(
+                "getDefinition() is only available for single-file ledgers",
+            ));
+        };
+        let result = editor::get_definition_cached(source, line, character, parse_result, cache);
         to_js(&result)
     }
 
     /// Get all document symbols for the outline view.
     ///
     /// Returns a hierarchical list of all directives with their positions.
-    /// Uses cached `LineIndex` for O(log n) position lookups.
+    /// Only available for single-file ledgers.
     #[wasm_bindgen(js_name = "getDocumentSymbols")]
     pub fn get_document_symbols(&self) -> Result<JsValue, JsError> {
-        let result = editor::get_document_symbols_cached(&self.parse_result, &self.editor_cache);
+        let (Some(parse_result), Some(cache)) = (&self.parse_result, &self.editor_cache) else {
+            return Err(JsError::new(
+                "getDocumentSymbols() is only available for single-file ledgers",
+            ));
+        };
+        let result = editor::get_document_symbols_cached(parse_result, cache);
         to_js(&result)
     }
 
     /// Find all references to the symbol at the given position.
     ///
     /// Returns all occurrences of accounts, currencies, or payees in the document.
-    /// Uses cached data for efficient lookup.
+    /// Only available for single-file ledgers.
     #[wasm_bindgen(js_name = "getReferences")]
     pub fn get_references(&self, line: u32, character: u32) -> Result<JsValue, JsError> {
-        let result = editor::get_references_cached(
-            &self.source,
-            line,
-            character,
-            &self.parse_result,
-            &self.editor_cache,
-        );
+        let (Some(source), Some(parse_result), Some(cache)) =
+            (&self.source, &self.parse_result, &self.editor_cache)
+        else {
+            return Err(JsError::new(
+                "getReferences() is only available for single-file ledgers",
+            ));
+        };
+        let result = editor::get_references_cached(source, line, character, parse_result, cache);
         to_js(&result)
     }
 }
