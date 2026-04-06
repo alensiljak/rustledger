@@ -459,8 +459,8 @@ mod tests {
     }
 
     #[test]
-    fn test_load_and_interpolate() {
-        use helpers::load_and_interpolate;
+    fn test_load_and_book() {
+        use helpers::load_and_book;
 
         // Valid ledger
         let source = r#"
@@ -471,7 +471,7 @@ mod tests {
   Expenses:Food  5.00 USD
   Assets:Bank   -5.00 USD
 "#;
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         assert!(load.errors.is_empty());
         assert_eq!(load.directives.len(), 3);
 
@@ -483,7 +483,7 @@ mod tests {
   Expenses:Food  5.00 USD
   Assets:Bank   -5.00 USD
 "#;
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         assert!(load.errors.is_empty()); // Parse succeeds
         let validation_errors = validate_ledger(&load.directives);
         assert!(
@@ -613,7 +613,7 @@ include "accounts.beancount"
     /// Regression test for #659: total cost `{{ }}` syntax must produce per-unit cost.
     #[test]
     fn test_total_cost_produces_per_unit_cost() {
-        use helpers::load_and_interpolate;
+        use helpers::load_and_book;
         use rustledger_core::Directive;
 
         let source = r#"
@@ -624,7 +624,7 @@ include "accounts.beancount"
   Assets:Investments:PROP  273.2200 PROP {{150.00 AUD}}
   Assets:Bank              -150.00 AUD
 "#;
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         assert!(load.errors.is_empty(), "errors: {:?}", load.errors);
 
         // Find the transaction and check that cost has number_per set

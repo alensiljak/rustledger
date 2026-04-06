@@ -11,7 +11,7 @@ use rustledger_loader::{FileSystem, LoadError, LoadResult};
 use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
-use crate::helpers::{extract_options, load_and_interpolate, run_validation, to_js};
+use crate::helpers::{extract_options, load_and_book, run_validation, to_js};
 #[cfg(feature = "completions")]
 use crate::types::{CompletionJson, CompletionResultJson};
 use crate::types::{
@@ -96,7 +96,7 @@ pub fn parse(source: &str) -> Result<JsValue, JsError> {
 /// Returns a `ValidationResult` indicating whether the ledger is valid.
 #[wasm_bindgen(js_name = "validateSource")]
 pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
     let validation_errors = run_validation(&load);
     let mut errors = load.errors;
     errors.extend(validation_errors);
@@ -116,7 +116,7 @@ pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
 pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
     use rustledger_query::{Executor, parse as parse_query};
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {
@@ -221,7 +221,7 @@ pub fn format(source: &str) -> Result<JsValue, JsError> {
 pub fn expand_pads(source: &str) -> Result<JsValue, JsError> {
     use rustledger_booking::process_pads;
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {
@@ -267,7 +267,7 @@ pub fn run_plugin(source: &str, plugin_name: &str) -> Result<JsValue, JsError> {
         wrappers_to_directives,
     };
 
-    let load = load_and_interpolate(source);
+    let load = load_and_book(source);
 
     // Return early if there were parse/interpolation errors
     if !load.errors.is_empty() {

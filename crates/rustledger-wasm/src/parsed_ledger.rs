@@ -11,7 +11,7 @@ use rustledger_query::{Executor, parse as parse_query};
 
 use crate::convert::{directive_to_json, value_to_cell};
 use crate::editor;
-use crate::helpers::{load_and_interpolate, run_validation, to_js};
+use crate::helpers::{load_and_book, run_validation, to_js};
 #[cfg(feature = "plugins")]
 use crate::types::PluginResult;
 use crate::types::{Error, FormatResult, LedgerOptions, PadResult, QueryResult};
@@ -55,7 +55,7 @@ impl ParsedLedger {
     /// Parses, interpolates, and validates the source. Call `isValid()` to check for errors.
     #[wasm_bindgen(constructor)]
     pub fn new(source: &str) -> Self {
-        let load = load_and_interpolate(source);
+        let load = load_and_book(source);
         let validation_errors = run_validation(&load);
 
         // Build editor cache once for efficient editor operations

@@ -20,10 +20,11 @@ pub struct LoadResult {
     pub parse_result: ParserResult,
 }
 
-/// Parse and interpolate a Beancount source string.
+/// Parse and book a Beancount source string.
 ///
 /// This is the common entry point for all processing functions.
-pub fn load_and_interpolate(source: &str) -> LoadResult {
+/// Runs the full booking engine (interpolation + cost conversion + inventory tracking).
+pub fn load_and_book(source: &str) -> LoadResult {
     let parse_result = parse_beancount(source);
     let lookup = LineLookup::new(source);
 
