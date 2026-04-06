@@ -73,6 +73,14 @@ pub struct PriceArgs {
     /// List configured sources and exit.
     #[arg(long)]
     list_sources: bool,
+
+    /// Disable the price cache for this run.
+    #[arg(long)]
+    no_cache: bool,
+
+    /// Clear the price cache before fetching.
+    #[arg(long)]
+    clear_cache: bool,
 }
 
 /// Main entry point with custom binary name (for bean-price compatibility).
@@ -105,8 +113,28 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
 
 /// Run the price command.
 pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
+    use crate::cmd::price::cache::{PriceCache, cache_key};
+
     // Create the registry with config
     let registry = PriceSourceRegistry::new(price_config);
+
+    // Handle --clear-cache (works even with --no-cache or cache_ttl=0)
+    let cache_ttl = price_config.effective_cache_ttl();
+    if args.clear_cache {
+        let mut c = PriceCache::load(cache_ttl);
+        c.clear();
+        if args.verbose {
+            eprintln!("Price cache cleared");
+        }
+    }
+
+    // Initialize cache (if enabled)
+    let cache_enabled = cache_ttl > 0 && !args.no_cache;
+    let mut cache = if cache_enabled {
+        Some(PriceCache::load(cache_ttl))
+    } else {
+        None
+    };
 
     // Handle --list-sources
     if args.list_sources {
@@ -182,28 +210,44 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
     let mut handle = stdout.lock();
 
     // Fetch prices
+    let source_name_for_cache = args
+        .source
+        .as_deref()
+        .unwrap_or(price_config.effective_default_source());
+
     for symbol in &symbols_to_fetch {
+        // Check cache first
+        let key = cache_key(source_name_for_cache, symbol, &args.currency, date);
+        if let Some(ref c) = cache
+            && let Some(cached) = c.get(&key)
+        {
+            if args.verbose {
+                eprintln!("{symbol}: cached (source: {})", cached.source);
+            }
+            write_price(&mut handle, symbol, &cached, args.beancount)?;
+            continue;
+        }
+
+        // Fetch from network
         let result = if let Some(source_name) = &args.source {
-            // Use explicit source
             fetch_with_source(&registry, source_name, symbol, &args.currency, date)
         } else {
-            // Use mapping/default
             registry.fetch_price(symbol, &args.currency, date, &combined_mapping)
         };
 
         match result {
             Ok(response) => {
-                if args.beancount {
-                    // Output as beancount price directive
-                    let date_str = response.date.format("%Y-%m-%d");
-                    writeln!(
-                        handle,
-                        "{date_str} price {symbol} {} {}",
-                        response.price, response.currency
-                    )?;
-                } else {
-                    writeln!(handle, "{symbol}: {} {}", response.price, response.currency)?;
+                if let Some(ref mut c) = cache {
+                    // Use the actual source that responded (may differ from
+                    // default due to fallback chains)
+                    let actual_key = cache_key(&response.source, symbol, &args.currency, date);
+                    c.insert(&actual_key, &response);
+                    // Also store under the default source key for fast lookup
+                    if actual_key != key {
+                        c.insert(&key, &response);
+                    }
                 }
+                write_price(&mut handle, symbol, &response, args.beancount)?;
             }
             Err(e) => {
                 if args.verbose {
@@ -213,6 +257,11 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
                 }
             }
         }
+    }
+
+    // Save cache to disk
+    if let Some(ref mut c) = cache {
+        c.save();
     }
 
     Ok(())
@@ -237,6 +286,26 @@ fn fetch_with_source(
     };
 
     source.fetch_price(&request)
+}
+
+/// Write a price response to the output.
+fn write_price(
+    handle: &mut impl Write,
+    symbol: &str,
+    response: &crate::cmd::price::PriceResponse,
+    beancount: bool,
+) -> Result<()> {
+    if beancount {
+        let date_str = response.date.format("%Y-%m-%d");
+        writeln!(
+            handle,
+            "{date_str} price {symbol} {} {}",
+            response.price, response.currency
+        )?;
+    } else {
+        writeln!(handle, "{symbol}: {} {}", response.price, response.currency)?;
+    }
+    Ok(())
 }
 
 /// Run with an ad-hoc external command.
@@ -383,5 +452,26 @@ mod tests {
     fn test_price_args_list_sources() {
         let args = Args::parse_from(["price", "--list-sources"]);
         assert!(args.price_args.list_sources);
+    }
+
+    #[test]
+    fn test_price_args_no_cache() {
+        let args = Args::parse_from(["price", "--no-cache", "AAPL"]);
+        assert!(args.price_args.no_cache);
+        assert!(!args.price_args.clear_cache);
+    }
+
+    #[test]
+    fn test_price_args_clear_cache() {
+        let args = Args::parse_from(["price", "--clear-cache", "AAPL"]);
+        assert!(args.price_args.clear_cache);
+        assert!(!args.price_args.no_cache);
+    }
+
+    #[test]
+    fn test_price_args_clear_and_no_cache_together() {
+        let args = Args::parse_from(["price", "--clear-cache", "--no-cache", "AAPL"]);
+        assert!(args.price_args.clear_cache);
+        assert!(args.price_args.no_cache);
     }
 }
