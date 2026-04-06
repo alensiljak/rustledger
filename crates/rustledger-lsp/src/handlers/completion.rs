@@ -10,14 +10,10 @@ use crate::ledger_state::LedgerState;
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionParams, CompletionResponse, Position,
 };
-use rustledger_core::Directive;
 use rustledger_parser::ParseResult;
 
 /// Standard Beancount account types.
 const ACCOUNT_TYPES: &[&str] = &["Assets", "Liabilities", "Equity", "Income", "Expenses"];
-
-/// Default currencies to suggest when no currencies are found in the document.
-const DEFAULT_CURRENCIES: &[&str] = &["USD", "EUR", "GBP"];
 
 /// Standard Beancount directives.
 const DIRECTIVES: &[&str] = &[
@@ -436,92 +432,17 @@ fn get_all_payees(parse_result: &ParseResult, ledger_state: Option<&LedgerState>
 
 /// Extract all account names from parse result.
 fn extract_accounts(parse_result: &ParseResult) -> Vec<String> {
-    let mut accounts = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        match &spanned_directive.value {
-            Directive::Open(open) => {
-                accounts.push(open.account.to_string());
-            }
-            Directive::Close(close) => {
-                accounts.push(close.account.to_string());
-            }
-            Directive::Balance(bal) => {
-                accounts.push(bal.account.to_string());
-            }
-            Directive::Pad(pad) => {
-                accounts.push(pad.account.to_string());
-                accounts.push(pad.source_account.to_string());
-            }
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    accounts.push(posting.account.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    accounts.sort();
-    accounts.dedup();
-    accounts
+    rustledger_core::extract_accounts_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 /// Extract all currencies from parse result.
 fn extract_currencies(parse_result: &ParseResult) -> Vec<String> {
-    let mut currencies = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        match &spanned_directive.value {
-            Directive::Open(open) => {
-                for currency in &open.currencies {
-                    currencies.push(currency.to_string());
-                }
-            }
-            Directive::Commodity(comm) => {
-                currencies.push(comm.currency.to_string());
-            }
-            Directive::Balance(bal) => {
-                currencies.push(bal.amount.currency.to_string());
-            }
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    if let Some(ref units) = posting.units
-                        && let Some(currency) = units.currency()
-                    {
-                        currencies.push(currency.to_string());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Add common defaults
-    for currency in DEFAULT_CURRENCIES {
-        currencies.push((*currency).to_string());
-    }
-
-    currencies.sort();
-    currencies.dedup();
-    currencies
+    rustledger_core::extract_currencies_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 /// Extract payees from transactions.
 fn extract_payees(parse_result: &ParseResult) -> Vec<String> {
-    let mut payees = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned_directive.value
-            && let Some(ref payee) = txn.payee
-        {
-            payees.push(payee.to_string());
-        }
-    }
-
-    payees.sort();
-    payees.dedup();
-    payees
+    rustledger_core::extract_payees_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 #[cfg(test)]

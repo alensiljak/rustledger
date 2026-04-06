@@ -99,163 +99,19 @@ pub fn is_currency_like(s: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
-/// Extract all account names from directives.
-pub fn extract_accounts_from_directives(directives: &[Directive]) -> Vec<String> {
-    let mut accounts = Vec::new();
-
-    for directive in directives {
-        match directive {
-            Directive::Open(open) => accounts.push(open.account.to_string()),
-            Directive::Close(close) => accounts.push(close.account.to_string()),
-            Directive::Balance(bal) => accounts.push(bal.account.to_string()),
-            Directive::Pad(pad) => {
-                accounts.push(pad.account.to_string());
-                accounts.push(pad.source_account.to_string());
-            }
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    accounts.push(posting.account.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    accounts.sort();
-    accounts.dedup();
-    accounts
-}
-
 /// Extract all account names from parse result.
 pub fn extract_accounts(parse_result: &ParseResult) -> Vec<String> {
-    let mut accounts = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        match &spanned_directive.value {
-            Directive::Open(open) => accounts.push(open.account.to_string()),
-            Directive::Close(close) => accounts.push(close.account.to_string()),
-            Directive::Balance(bal) => accounts.push(bal.account.to_string()),
-            Directive::Pad(pad) => {
-                accounts.push(pad.account.to_string());
-                accounts.push(pad.source_account.to_string());
-            }
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    accounts.push(posting.account.to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-
-    accounts.sort();
-    accounts.dedup();
-    accounts
-}
-
-/// Extract all currencies from directives.
-pub fn extract_currencies_from_directives(directives: &[Directive]) -> Vec<String> {
-    let mut currencies = Vec::new();
-
-    for directive in directives {
-        match directive {
-            Directive::Open(open) => {
-                for currency in &open.currencies {
-                    currencies.push(currency.to_string());
-                }
-            }
-            Directive::Commodity(comm) => currencies.push(comm.currency.to_string()),
-            Directive::Balance(bal) => currencies.push(bal.amount.currency.to_string()),
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    if let Some(ref units) = posting.units
-                        && let Some(currency) = units.currency()
-                    {
-                        currencies.push(currency.to_string());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    currencies.push("USD".to_string());
-    currencies.push("EUR".to_string());
-    currencies.push("GBP".to_string());
-
-    currencies.sort();
-    currencies.dedup();
-    currencies
+    rustledger_core::extract_accounts_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 /// Extract all currencies from parse result.
 pub fn extract_currencies(parse_result: &ParseResult) -> Vec<String> {
-    let mut currencies = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        match &spanned_directive.value {
-            Directive::Open(open) => {
-                for currency in &open.currencies {
-                    currencies.push(currency.to_string());
-                }
-            }
-            Directive::Commodity(comm) => currencies.push(comm.currency.to_string()),
-            Directive::Balance(bal) => currencies.push(bal.amount.currency.to_string()),
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    if let Some(ref units) = posting.units
-                        && let Some(currency) = units.currency()
-                    {
-                        currencies.push(currency.to_string());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    // Add common defaults
-    currencies.push("USD".to_string());
-    currencies.push("EUR".to_string());
-    currencies.push("GBP".to_string());
-
-    currencies.sort();
-    currencies.dedup();
-    currencies
+    rustledger_core::extract_currencies_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
-/// Extract payees from directives.
-pub fn extract_payees_from_directives(directives: &[Directive]) -> Vec<String> {
-    let mut payees = Vec::new();
-
-    for directive in directives {
-        if let Directive::Transaction(txn) = directive
-            && let Some(ref payee) = txn.payee
-        {
-            payees.push(payee.to_string());
-        }
-    }
-
-    payees.sort();
-    payees.dedup();
-    payees
-}
-
-/// Extract payees from transactions.
+/// Extract payees from parse result.
 pub fn extract_payees(parse_result: &ParseResult) -> Vec<String> {
-    let mut payees = Vec::new();
-
-    for spanned_directive in &parse_result.directives {
-        if let Directive::Transaction(txn) = &spanned_directive.value
-            && let Some(ref payee) = txn.payee
-        {
-            payees.push(payee.to_string());
-        }
-    }
-
-    payees.sort();
-    payees.dedup();
-    payees
+    rustledger_core::extract_payees_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 /// Count how many times an account is used in postings.
