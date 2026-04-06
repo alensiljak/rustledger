@@ -4,10 +4,12 @@
 //!
 //! # Features
 //!
-//! - Parse Beancount files
+//! - Parse Beancount files (single and multi-file with includes)
 //! - Validate ledgers
 //! - Run BQL queries
 //! - Format directives
+//! - [`ParsedLedger`] — cached single-file with editor features (completions, hover, etc.)
+//! - [`Ledger`] — cached multi-file with queries and cross-file completions
 //!
 //! # Example (JavaScript)
 //!
@@ -59,7 +61,7 @@ pub use api::bql_completions;
 pub use api::{list_plugins, run_plugin};
 
 pub use api::expand_pads;
-pub use parsed_ledger::ParsedLedger;
+pub use parsed_ledger::{Ledger, ParsedLedger};
 
 use wasm_bindgen::prelude::*;
 
@@ -371,6 +373,48 @@ export class ParsedLedger {
     getReferences(line: number, character: number): EditorReferencesResult | null;
 }
 
+/**
+ * A fully processed multi-file ledger for queries and validation.
+ * Use this class for ledgers spanning multiple files with include directives.
+ * For single-file ledgers with editor features, use ParsedLedger instead.
+ */
+export class Ledger {
+    free(): void;
+
+    /** Create from multiple files with include resolution. */
+    static fromFiles(files: FileMap, entryPoint: string): Ledger;
+
+    /** Check if the ledger is valid (no errors). */
+    isValid(): boolean;
+
+    /** Get all errors. */
+    getErrors(): BeancountError[];
+
+    /** Get the parsed directives. */
+    getDirectives(): Directive[];
+
+    /** Get the ledger options. */
+    getOptions(): LedgerOptions;
+
+    /** Get the number of directives. */
+    directiveCount(): number;
+
+    /** Run a BQL query on this ledger. */
+    query(queryStr: string): QueryResult;
+
+    /** Get account balances (shorthand for query("BALANCES")). */
+    balances(): QueryResult;
+
+    /** Expand pad directives. */
+    expandPads(): PadResult;
+
+    /** Run a native plugin on this ledger. */
+    runPlugin(pluginName: string): PluginResult;
+
+    /** Get completions using cross-file data. Pass the source of the file being edited. */
+    getCompletions(source: string, line: number, character: number): EditorCompletionResult;
+}
+
 // =============================================================================
 // Multi-File API (for WASM environments without filesystem access)
 // =============================================================================
@@ -608,6 +652,75 @@ include "accounts.beancount"
             "ledger should be valid, but got: {:?}",
             validation_errors
         );
+    }
+
+    /// Test ParsedLedger multi-file construction via process() pipeline.
+    #[test]
+    fn test_parsed_ledger_multi_file_via_process() {
+        use rustledger_core::Directive;
+        use rustledger_loader::{FileSystem, LoadOptions, Loader, VirtualFileSystem, process};
+        use std::path::Path;
+
+        let mut vfs = VirtualFileSystem::new();
+        vfs.add_file(
+            "main.beancount",
+            r#"
+include "accounts.beancount"
+
+2024-01-15 * "Coffee"
+  Expenses:Food  5.00 USD
+  Assets:Bank
+"#,
+        );
+        vfs.add_file(
+            "accounts.beancount",
+            r#"
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+"#,
+        );
+
+        assert!(vfs.exists(Path::new("main.beancount")));
+
+        let mut loader = Loader::new().with_filesystem(Box::new(vfs));
+        let raw = loader.load(Path::new("main.beancount")).unwrap();
+
+        let options = LoadOptions {
+            validate: true,
+            ..Default::default()
+        };
+
+        let ledger = process(raw, &options).unwrap();
+        let directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
+
+        // Should have 2 opens + 1 transaction = 3 directives
+        assert_eq!(directives.len(), 3);
+
+        // Should be sorted by date
+        let dates: Vec<_> = directives.iter().map(|d| d.date()).collect();
+        assert!(dates.windows(2).all(|w| w[0] <= w[1]));
+
+        // Transaction should have interpolated bank amount
+        let txn = directives
+            .iter()
+            .find_map(|d| match d {
+                Directive::Transaction(t) => Some(t),
+                _ => None,
+            })
+            .expect("should have transaction");
+
+        let bank = txn
+            .postings
+            .iter()
+            .find(|p| p.account.as_str().contains("Bank"))
+            .expect("should have bank posting");
+        assert!(
+            bank.units.as_ref().and_then(|u| u.number()).is_some(),
+            "bank amount should be interpolated"
+        );
+
+        // No errors
+        assert!(ledger.errors.is_empty(), "errors: {:?}", ledger.errors);
     }
 
     /// Regression test for #659: total cost `{{ }}` syntax must produce per-unit cost.
