@@ -23,8 +23,8 @@ pub struct ProcessedLedger {
 /// Parse, book, and process a Beancount source string.
 ///
 /// This is the common entry point for all processing functions.
-/// Uses the shared `process()` pipeline (sort → book → plugins → validate)
-/// to ensure parity with the CLI.
+/// Uses the shared `process()` pipeline for sorting, booking, and plugins,
+/// but skips validation — callers that need it should call `run_validation()`.
 pub fn load_and_book(source: &str) -> ProcessedLedger {
     // Keep raw parse result for editor features
     let parse_result = parse_beancount(source);

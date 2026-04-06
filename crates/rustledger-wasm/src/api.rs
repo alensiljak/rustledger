@@ -15,7 +15,7 @@ use crate::helpers::{extract_options, load_and_book, run_validation, to_js};
 #[cfg(feature = "completions")]
 use crate::types::{CompletionJson, CompletionResultJson};
 use crate::types::{
-    Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, ValidationResult,
+    Error, FormatResult, Ledger, PadResult, ParseResult, QueryResult, Severity, ValidationResult,
 };
 #[cfg(feature = "plugins")]
 use crate::types::{PluginInfo, PluginResult};
@@ -533,6 +533,16 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         }
     };
 
+    // Check for parse errors first (preserves detailed per-error line info)
+    let parse_errors = load_errors_to_errors(&load_result);
+    if !parse_errors.is_empty() {
+        let result = ValidationResult {
+            valid: false,
+            errors: parse_errors,
+        };
+        return to_js(&result);
+    }
+
     // Run the shared processing pipeline: sort → book → plugins → validate
     let options = LoadOptions {
         validate: true,
@@ -609,6 +619,17 @@ pub fn query_multi_file(
         }
     };
 
+    // Check for parse errors first (preserves detailed per-error line info)
+    let parse_errors = load_errors_to_errors(&load_result);
+    if !parse_errors.is_empty() {
+        let result = QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            errors: parse_errors,
+        };
+        return to_js(&result);
+    }
+
     // Run the shared processing pipeline: sort → book → plugins (no validation for queries)
     let options = LoadOptions {
         validate: false,
@@ -627,9 +648,10 @@ pub fn query_multi_file(
         }
     };
 
-    // Check for processing errors
+    // Only abort on actual errors, not warnings (matching CLI query behavior)
     let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
-    if !errors.is_empty() {
+    let has_errors = errors.iter().any(|e| e.severity == Severity::Error);
+    if has_errors {
         let result = QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
