@@ -498,10 +498,7 @@ pub fn parse_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, Js
 /// Returns a `ValidationResult` indicating whether the ledger is valid.
 #[wasm_bindgen(js_name = "validateMultiFile")]
 pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue, JsError> {
-    use rustledger_booking::BookingEngine;
-    use rustledger_core::BookingMethod;
-    use rustledger_loader::{Loader, VirtualFileSystem};
-    use rustledger_validate::validate as validate_ledger;
+    use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
 
     // Parse the JavaScript object to a HashMap
     let file_map: HashMap<String, String> = serde_wasm_bindgen::from_value(files)
@@ -536,46 +533,24 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
         }
     };
 
-    // Collect load errors with detailed parse error info
-    let mut errors = load_errors_to_errors(&load_result);
+    // Run the shared processing pipeline: sort → book → plugins → validate
+    let options = LoadOptions {
+        validate: true,
+        ..Default::default()
+    };
 
-    // Extract directives and sort by date+priority to match CLI pipeline
-    let mut directives: Vec<Directive> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
-
-    // Book and interpolate transactions
-    if errors.is_empty() {
-        directives.sort_by(|a, b| {
-            a.date()
-                .cmp(&b.date())
-                .then_with(|| a.priority().cmp(&b.priority()))
-        });
-        let mut engine = BookingEngine::with_method(BookingMethod::default());
-        for directive in &mut directives {
-            if let Directive::Transaction(txn) = directive {
-                match engine.book_and_interpolate(txn) {
-                    Ok(result) => {
-                        engine.apply(&result.transaction);
-                        *txn = result.transaction;
-                    }
-                    Err(e) => {
-                        errors.push(Error::new(e.to_string()));
-                    }
-                }
-            }
+    let ledger = match process(load_result, &options) {
+        Ok(ledger) => ledger,
+        Err(e) => {
+            let result = ValidationResult {
+                valid: false,
+                errors: vec![Error::new(format!("Processing error: {e}"))],
+            };
+            return to_js(&result);
         }
-    }
+    };
 
-    // Run validation if no parse/booking errors
-    if errors.is_empty() {
-        let validation_errors = validate_ledger(&directives);
-        for err in validation_errors {
-            errors.push(Error::new(err.message));
-        }
-    }
+    let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
 
     let result = ValidationResult {
         valid: errors.is_empty(),
@@ -596,9 +571,8 @@ pub fn query_multi_file(
     entry_point: &str,
     query_str: &str,
 ) -> Result<JsValue, JsError> {
-    use rustledger_booking::BookingEngine;
-    use rustledger_core::BookingMethod;
-    use rustledger_loader::{Loader, VirtualFileSystem};
+    use rustledger_booking::expand_pads;
+    use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
     use rustledger_query::{Executor, parse as parse_query};
 
     // Parse the JavaScript object to a HashMap
@@ -635,9 +609,26 @@ pub fn query_multi_file(
         }
     };
 
-    // Collect load errors with detailed parse error info
-    let errors = load_errors_to_errors(&load_result);
+    // Run the shared processing pipeline: sort → book → plugins (no validation for queries)
+    let options = LoadOptions {
+        validate: false,
+        ..Default::default()
+    };
 
+    let ledger = match process(load_result, &options) {
+        Ok(ledger) => ledger,
+        Err(e) => {
+            let result = QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                errors: vec![Error::new(format!("Processing error: {e}"))],
+            };
+            return to_js(&result);
+        }
+    };
+
+    // Check for processing errors
+    let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
     if !errors.is_empty() {
         let result = QueryResult {
             columns: Vec::new(),
@@ -647,43 +638,9 @@ pub fn query_multi_file(
         return to_js(&result);
     }
 
-    // Extract directives and sort by date+priority to match CLI pipeline
-    let mut directives: Vec<Directive> = load_result
-        .directives
-        .into_iter()
-        .map(|s| s.value)
-        .collect();
-
-    directives.sort_by(|a, b| {
-        a.date()
-            .cmp(&b.date())
-            .then_with(|| a.priority().cmp(&b.priority()))
-    });
-
-    let mut booking_errors: Vec<Error> = Vec::new();
-    let mut engine = BookingEngine::with_method(BookingMethod::default());
-    for directive in &mut directives {
-        if let Directive::Transaction(txn) = directive {
-            match engine.book_and_interpolate(txn) {
-                Ok(result) => {
-                    engine.apply(&result.transaction);
-                    *txn = result.transaction;
-                }
-                Err(e) => {
-                    booking_errors.push(Error::new(e.to_string()));
-                }
-            }
-        }
-    }
-
-    if !booking_errors.is_empty() {
-        let result = QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            errors: booking_errors,
-        };
-        return to_js(&result);
-    }
+    // Expand pads into synthetic transactions (matching CLI query pipeline)
+    let booked_directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
+    let directives = expand_pads(&booked_directives);
 
     // Parse the query
     let query = match parse_query(query_str) {

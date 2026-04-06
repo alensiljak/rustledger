@@ -208,6 +208,20 @@ impl Error {
     }
 }
 
+impl From<rustledger_loader::LedgerError> for Error {
+    fn from(e: rustledger_loader::LedgerError) -> Self {
+        Self {
+            message: e.message,
+            line: e.location.as_ref().map(|loc| loc.line as u32),
+            column: e.location.as_ref().map(|loc| loc.column as u32),
+            severity: match e.severity {
+                rustledger_loader::ErrorSeverity::Error => Severity::Error,
+                rustledger_loader::ErrorSeverity::Warning => Severity::Warning,
+            },
+        }
+    }
+}
+
 /// Result of validation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidationResult {
