@@ -207,7 +207,7 @@ rledger check ledger.beancount             # Use cache (default)
 ### 6.1 Logos Lexer + Winnow Parser ✅ DONE
 - Using [Logos](https://github.com/maciejhirsz/logos) for SIMD-accelerated tokenization
 - Using [Winnow](https://github.com/winnow-rs/winnow) for manual recursive descent parsing
-- Replaced Chumsky parser combinators (kept as `parse_chumsky()` for benchmarking)
+- Replaced Chumsky parser combinators (legacy parser removed)
 - Zero-copy token stream - no allocations during lexing
 - Implemented in `logos_lexer.rs` and `winnow_parser.rs`
 
@@ -365,7 +365,7 @@ cargo bench --bench pipeline_bench
 ### Parser Performance
 - [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated DFA
 - [Winnow](https://github.com/winnow-rs/winnow) - current parser, manual recursive descent
-- [Chumsky](https://github.com/zesterer/chumsky) - legacy parser (kept as `parse_chumsky()` for benchmarking)
+- [Chumsky](https://github.com/zesterer/chumsky) - former parser, replaced by Winnow (removed)
 
 ### Serialization
 - [rkyv](https://github.com/rkyv/rkyv) - zero-copy deserialization, [faster than bincode](https://david.kolo.ski/blog/rkyv-is-faster-than/)
