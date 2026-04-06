@@ -59,7 +59,7 @@ pub use api::bql_completions;
 pub use api::{list_plugins, run_plugin};
 
 pub use api::expand_pads;
-pub use parsed_ledger::ParsedLedger;
+pub use parsed_ledger::{Ledger, ParsedLedger};
 
 use wasm_bindgen::prelude::*;
 
@@ -369,6 +369,48 @@ export class ParsedLedger {
 
     /** Find all references to the symbol at the given position. */
     getReferences(line: number, character: number): EditorReferencesResult | null;
+}
+
+/**
+ * A fully processed multi-file ledger for queries and validation.
+ * Use this class for ledgers spanning multiple files with include directives.
+ * For single-file ledgers with editor features, use ParsedLedger instead.
+ */
+export class Ledger {
+    free(): void;
+
+    /** Create from multiple files with include resolution. */
+    static fromFiles(files: FileMap, entryPoint: string): Ledger;
+
+    /** Check if the ledger is valid (no errors). */
+    isValid(): boolean;
+
+    /** Get all errors. */
+    getErrors(): BeancountError[];
+
+    /** Get the parsed directives. */
+    getDirectives(): Directive[];
+
+    /** Get the ledger options. */
+    getOptions(): LedgerOptions;
+
+    /** Get the number of directives. */
+    directiveCount(): number;
+
+    /** Run a BQL query on this ledger. */
+    query(queryStr: string): QueryResult;
+
+    /** Get account balances (shorthand for query("BALANCES")). */
+    balances(): QueryResult;
+
+    /** Expand pad directives. */
+    expandPads(): PadResult;
+
+    /** Run a native plugin on this ledger. */
+    runPlugin(pluginName: string): PluginResult;
+
+    /** Get completions using cross-file data. Pass the source of the file being edited. */
+    getCompletions(source: string, line: number, character: number): EditorCompletionResult;
 }
 
 // =============================================================================
