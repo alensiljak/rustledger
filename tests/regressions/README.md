@@ -75,3 +75,4 @@ When adding a test from a new issue:
 | [#520](https://github.com/rustledger/rustledger/issues/520) | currency_accounts missing Open directives | Fixed |
 | [#521](https://github.com/rustledger/rustledger/issues/521) | currency_accounts should use cost/price currency | Fixed |
 | [#532](https://github.com/rustledger/rustledger/issues/532) | BQL regex case-insensitive matching | Fixed |
+| [#593](https://github.com/rustledger/rustledger/issues/593) | BQL cost() and value() functions | Fixed |
