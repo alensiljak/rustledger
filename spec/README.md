@@ -48,13 +48,13 @@ This directory contains the specification documents for implementing rustledger,
 | [tla/DoubleEntry.tla](tla/DoubleEntry.tla) | Double-entry bookkeeping invariants |
 | [tla/FIFOCorrect.tla](tla/FIFOCorrect.tla) | FIFO lot selection correctness |
 
-### Test Fixtures (`fixtures/`)
+### Test Fixtures (`tests/fixtures/`)
 
 | File | Description |
 |------|-------------|
-| [fixtures/syntax-edge-cases.beancount](fixtures/syntax-edge-cases.beancount) | Parser edge cases |
-| [fixtures/booking-scenarios.beancount](fixtures/booking-scenarios.beancount) | Booking algorithm scenarios |
-| [fixtures/validation-errors.beancount](fixtures/validation-errors.beancount) | Intentional errors for testing |
+| [syntax-edge-cases.beancount](../tests/fixtures/syntax-edge-cases.beancount) | Parser edge cases |
+| [booking-scenarios.beancount](../tests/fixtures/booking-scenarios.beancount) | Booking algorithm scenarios |
+| [validation-errors.beancount](../tests/fixtures/validation-errors.beancount) | Intentional errors for testing |
 
 ## Architecture Overview
 

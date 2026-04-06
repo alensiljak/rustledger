@@ -236,6 +236,10 @@ impl CacheHeader {
 }
 
 /// Compute a hash of the given files and their modification times.
+///
+/// Files whose metadata cannot be read (e.g., deleted between load and cache)
+/// contribute only their path to the hash. This is intentional — the resulting
+/// hash mismatch will cause a cache miss on next load.
 fn compute_hash(files: &[&Path]) -> [u8; 32] {
     let mut hasher = Sha256::new();
 
@@ -243,7 +247,7 @@ fn compute_hash(files: &[&Path]) -> [u8; 32] {
         // Hash the file path
         hasher.update(file.to_string_lossy().as_bytes());
 
-        // Hash the modification time
+        // Hash the modification time (skip silently if inaccessible)
         if let Ok(metadata) = fs::metadata(file) {
             if let Ok(mtime) = metadata.modified()
                 && let Ok(duration) = mtime.duration_since(std::time::UNIX_EPOCH)

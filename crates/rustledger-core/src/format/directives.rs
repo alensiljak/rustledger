@@ -14,7 +14,8 @@ fn format_metadata(meta: &Metadata, indent: &str, out: &mut String) {
 
     for key in keys {
         let value = &meta[key];
-        writeln!(out, "{indent}{}: {}", key, format_meta_value(value)).unwrap();
+        writeln!(out, "{indent}{}: {}", key, format_meta_value(value))
+            .expect("write to String is infallible");
     }
 }
 
@@ -27,7 +28,7 @@ pub fn format_balance(bal: &Balance, config: &FormatConfig) -> String {
         format_amount(&bal.amount)
     );
     if let Some(tol) = &bal.tolerance {
-        write!(out, " ~ {tol}").unwrap();
+        write!(out, " ~ {tol}").expect("write to String is infallible");
     }
     out.push('\n');
     format_metadata(&bal.meta, &config.indent, &mut out);
@@ -38,10 +39,10 @@ pub fn format_balance(bal: &Balance, config: &FormatConfig) -> String {
 pub fn format_open(open: &Open, config: &FormatConfig) -> String {
     let mut out = format!("{} open {}", open.date, open.account);
     if !open.currencies.is_empty() {
-        write!(out, " {}", open.currencies.join(",")).unwrap();
+        write!(out, " {}", open.currencies.join(",")).expect("write to String is infallible");
     }
     if let Some(booking) = &open.booking {
-        write!(out, " \"{booking}\"").unwrap();
+        write!(out, " \"{booking}\"").expect("write to String is infallible");
     }
     out.push('\n');
     format_metadata(&open.meta, &config.indent, &mut out);
@@ -137,7 +138,7 @@ pub fn format_custom(custom: &Custom, config: &FormatConfig) -> String {
         escape_string(&custom.custom_type)
     );
     for value in &custom.values {
-        write!(out, " {}", format_meta_value(value)).unwrap();
+        write!(out, " {}", format_meta_value(value)).expect("write to String is infallible");
     }
     out.push('\n');
     format_metadata(&custom.meta, &config.indent, &mut out);

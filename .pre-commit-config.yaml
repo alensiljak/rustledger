@@ -53,15 +53,7 @@ repos:
 
       # === Pre-push hooks (fast checks only - heavy checks run in CI) ===
 
-      # Branch name validation
-      - id: branch-name
-        name: branch-name
-        entry: ./scripts/check-branch-name.sh
-        language: system
-        stages: [pre-push]
-        pass_filenames: false
-        always_run: true
-
+      # NOTE: Branch name validation runs in CI (branch-name.yml).
       # NOTE: clippy, cargo-test, and cargo-doc are intentionally NOT run
       # as pre-push hooks because they take too long (10-30 minutes for full
       # workspace). These checks run in CI instead where they can be parallelized

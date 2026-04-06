@@ -83,7 +83,6 @@ fn dispatch(method: &str, params: &serde_json::Value) -> Result<serde_json::Valu
         // Utility operations
         "util.version" => handle_version(),
         "util.types" => handle_types(),
-        "util.schema" => handle_schema(),
         "util.isEncrypted" => handle_is_encrypted(params),
         "util.getAccountType" => handle_get_account_type(params),
 
@@ -648,16 +647,6 @@ fn handle_types() -> Result<serde_json::Value, RpcError> {
     };
 
     serde_json::to_value(output).map_err(|e| RpcError::internal_error(e.to_string()))
-}
-
-fn handle_schema() -> Result<serde_json::Value, RpcError> {
-    // Generate JSON schema for the types
-    // For now, return a placeholder
-    Ok(serde_json::json!({
-        "$schema": "http://json-schema.org/draft-07/schema#",
-        "title": "Rustledger FFI Types",
-        "description": "JSON Schema for Rustledger FFI-WASI API types"
-    }))
 }
 
 fn handle_is_encrypted(params: &serde_json::Value) -> Result<serde_json::Value, RpcError> {

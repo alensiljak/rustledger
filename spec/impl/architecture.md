@@ -144,8 +144,8 @@ Source Text
     ▼
 ┌─────────────────┐
 │     Lexer       │  Produces tokens with spans
-│  (chumsky/      │
-│   winnow)       │
+│  (logos/winnow) │
+│                 │
 └────────┬────────┘
          │
          ▼

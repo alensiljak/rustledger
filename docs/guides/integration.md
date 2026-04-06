@@ -276,7 +276,6 @@ echo '{"jsonrpc":"2.0","method":"ledger.validate","params":{"source":"2024-01-01
 |--------|-------------|
 | `util.version` | Get API and package version |
 | `util.types` | Get supported directive types, booking methods |
-| `util.schema` | Get JSON Schema for API types |
 
 ### Example: Python with wasmtime-py
 
