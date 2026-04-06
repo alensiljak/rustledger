@@ -6,6 +6,7 @@
 //! - Configurable commodity-to-source mappings
 //! - Fallback chains for reliability
 
+pub mod cache;
 pub mod external;
 pub mod sources;
 

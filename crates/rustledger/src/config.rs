@@ -80,10 +80,11 @@ pub struct PriceConfig {
     /// timeout handling in the future.
     pub timeout: Option<u64>,
 
-    /// Cache TTL in seconds (0 = disabled).
+    /// Cache TTL in seconds (0 = disabled, default: 1800 = 30 minutes).
     ///
-    /// TODO: Caching is not yet implemented. This field is reserved for
-    /// future use to cache price responses and reduce API calls.
+    /// Cached prices are stored in the platform cache directory
+    /// (e.g., `~/.cache/rledger/prices.json` on Linux).
+    /// Use `--no-cache` to bypass or `--clear-cache` to reset.
     pub cache_ttl: Option<u64>,
 
     /// Custom price source definitions.
@@ -551,6 +552,13 @@ impl PriceConfig {
     /// Get the effective timeout in seconds.
     pub fn effective_timeout(&self) -> u64 {
         self.timeout.unwrap_or(30)
+    }
+
+    /// Get the effective cache TTL in seconds (0 = disabled).
+    ///
+    /// Default: 1800 seconds (30 minutes), matching Python bean-price.
+    pub fn effective_cache_ttl(&self) -> u64 {
+        self.cache_ttl.unwrap_or(1800)
     }
 }
 
