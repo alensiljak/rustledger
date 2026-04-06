@@ -146,13 +146,17 @@ impl ParsedLedger {
                 let directives = ledger.directives.into_iter().map(|s| s.value).collect();
                 let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
 
+                // Store as validation_errors (not parse_errors) so queries still
+                // work on multi-file ledgers with validation issues, matching
+                // single-file behavior where parse_errors blocks queries but
+                // validation_errors don't.
                 Ok(Self {
                     source: None,
                     parse_result: None,
                     directives,
                     options,
-                    parse_errors: errors,
-                    validation_errors: Vec::new(),
+                    parse_errors: Vec::new(),
+                    validation_errors: errors,
                     editor_cache: None,
                 })
             }
