@@ -40,7 +40,7 @@ rledger price [OPTIONS] [SYMBOL]...
 Prices are cached to disk to reduce API calls. By default, cached prices expire after **30 minutes** (matching Python `bean-price` behavior).
 
 - **Latest prices** (no `--date`) expire after the configured TTL
-- **Historical prices** (with `--date`) never expire (they don't change)
+- **Historical prices** (with `--date`) don't expire via TTL, but are pruned after 7 days of inactivity
 - Cache file location: platform cache directory (e.g., `~/.cache/rledger/prices.json` on Linux)
 
 ### Configuration
@@ -107,7 +107,7 @@ Use any external script or program as a price source:
 rledger price AAPL --source-cmd "my-price-fetcher"
 ```
 
-The command receives the ticker as the first argument and should output in one of:
+The command receives the ticker as the first argument, plus `--currency <CURRENCY>` and (when provided) `--date <YYYY-MM-DD>` flags. It should output in one of:
 - Simple format: `150.00 USD`
 - Beancount format: `2024-01-15 price AAPL 150.00 USD`
 - JSON format: `{"price": "150.00", "currency": "USD"}`
@@ -134,6 +134,11 @@ ticker = "ETH"
 # Fallback chain
 [price.mapping.VTI]
 source = ["yahoo", "alphavantage"]
+
+# Custom external command source
+[price.sources.mybank]
+type = "command"
+command = ["python3", "/path/to/mybank-prices.py"]
 ```
 
 ## Examples
