@@ -31,8 +31,7 @@ impl Executor<'_> {
             }
         }
 
-        // Find ORDER BY expressions that are in GROUP BY but not in SELECT.
-        // These need to be added as hidden columns for sorting.
+        // Find ORDER BY expressions not in SELECT and add as hidden columns.
         let hidden_targets = self.find_hidden_order_by_targets(query);
         let num_hidden = hidden_targets.len();
 
@@ -203,34 +202,35 @@ impl Executor<'_> {
         Ok(result)
     }
 
-    /// Find ORDER BY expressions that are in GROUP BY but not in SELECT.
+    /// Find ORDER BY expressions not already in SELECT.
     ///
-    /// These expressions need to be added as hidden columns so sorting can work.
-    /// Returns targets with aliases set to the full expression string for matching.
+    /// These are added as hidden columns for sorting, then stripped from the final output.
+    /// For aggregate queries with explicit GROUP BY, only expressions in GROUP BY or
+    /// aggregate expressions are allowed. Returns targets with aliases set to the full
+    /// expression string for column-name matching in `sort_results`.
     fn find_hidden_order_by_targets(&self, query: &SelectQuery) -> Vec<Target> {
         let Some(order_by) = &query.order_by else {
-            return Vec::new();
-        };
-        let Some(group_by) = &query.group_by else {
             return Vec::new();
         };
 
         let mut hidden = Vec::new();
         for spec in order_by {
-            // Check if this ORDER BY expression is in GROUP BY
-            let in_group_by = group_by.contains(&spec.expr);
-            if !in_group_by {
-                continue;
+            // For aggregate queries, only allow ORDER BY on expressions that are
+            // in GROUP BY or are themselves aggregates.
+            if let Some(group_by) = &query.group_by {
+                let in_group_by = group_by.contains(&spec.expr);
+                let is_aggregate = Self::is_aggregate_expr(&spec.expr);
+                if !in_group_by && !is_aggregate {
+                    continue;
+                }
             }
 
             // Check if it's already in SELECT (by expression or by alias)
             let expr_str = spec.expr.to_string();
             let in_select = query.targets.iter().any(|t| {
-                // Check if expression matches (Expr derives PartialEq)
                 if t.expr == spec.expr {
                     return true;
                 }
-                // Check if alias matches the expression string
                 if let Some(alias) = &t.alias
                     && alias == &expr_str
                 {
@@ -240,7 +240,6 @@ impl Executor<'_> {
             });
 
             if !in_select {
-                // Add as hidden target with alias = full expression string for matching
                 hidden.push(Target {
                     expr: spec.expr.clone(),
                     alias: Some(expr_str),
@@ -370,8 +369,14 @@ impl Executor<'_> {
             return self.execute_aggregate_from_table(query, table, &column_map);
         }
 
-        // Determine column names for the result
-        let column_names = self.resolve_subquery_column_names(&query.targets, &table.columns)?;
+        // Find ORDER BY expressions not in SELECT and add as hidden columns.
+        let hidden_targets = self.find_hidden_order_by_targets(query);
+        let num_hidden = hidden_targets.len();
+        let mut extended_targets = query.targets.clone();
+        extended_targets.extend(hidden_targets);
+
+        // Determine column names for the result (including hidden columns)
+        let column_names = self.resolve_subquery_column_names(&extended_targets, &table.columns)?;
         let mut result = QueryResult::new(column_names);
 
         // Use FxHashSet for O(1) DISTINCT deduplication
@@ -390,12 +395,19 @@ impl Executor<'_> {
                 continue;
             }
 
-            // Evaluate targets
-            let result_row = self.evaluate_subquery_row(&query.targets, row, &column_map)?;
+            // Evaluate targets (including hidden columns)
+            let result_row = self.evaluate_subquery_row(&extended_targets, row, &column_map)?;
 
             if query.distinct {
-                // O(1) hash-based deduplication
-                let row_hash = hash_row(&result_row);
+                // DISTINCT should only consider visible columns, not hidden sort columns.
+                let visible: Vec<Value>;
+                let hash_target = if num_hidden > 0 {
+                    visible = result_row[..result_row.len() - num_hidden].to_vec();
+                    &visible
+                } else {
+                    &result_row
+                };
+                let row_hash = hash_row(hash_target);
                 if seen_hashes.insert(row_hash) {
                     result.add_row(result_row);
                 }
@@ -407,6 +419,15 @@ impl Executor<'_> {
         // Apply ORDER BY
         if let Some(order_by) = &query.order_by {
             self.sort_results(&mut result, order_by)?;
+        }
+
+        // Remove hidden columns after sorting
+        if num_hidden > 0 {
+            let visible_count = result.columns.len() - num_hidden;
+            result.columns.truncate(visible_count);
+            for row in &mut result.rows {
+                row.truncate(visible_count);
+            }
         }
 
         // Apply LIMIT
