@@ -219,7 +219,7 @@ impl Options {
         if !is_known {
             self.warnings.push(OptionWarning {
                 code: "E7001",
-                message: format!("Unknown option \"{key}\""),
+                message: format!("Invalid option \"{key}\""),
                 option: key.to_string(),
                 value: value.to_string(),
             });
@@ -641,7 +641,7 @@ mod tests {
 
         assert_eq!(opts.warnings.len(), 1);
         assert_eq!(opts.warnings[0].code, "E7001");
-        assert!(opts.warnings[0].message.contains("Unknown option"));
+        assert!(opts.warnings[0].message.contains("Invalid option"));
     }
 
     #[test]

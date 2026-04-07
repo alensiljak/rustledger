@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Error returned when parsing a BQL query fails.
 #[derive(Debug, Error)]
-#[error("parse error at position {position}: {kind}")]
+#[error("syntax error at position {position}: {kind}")]
 pub struct ParseError {
     /// The kind of error.
     pub kind: ParseErrorKind,
@@ -40,10 +40,10 @@ pub enum QueryError {
     #[error("type error: {0}")]
     Type(String),
     /// Unknown column name.
-    #[error("unknown column: {0}")]
+    #[error("column '{0}' not found")]
     UnknownColumn(String),
     /// Unknown function name.
-    #[error("unknown function: {0}")]
+    #[error("no function matches \"{0}\"")]
     UnknownFunction(String),
     /// Invalid function arguments.
     #[error("invalid arguments for function {0}: {1}")]

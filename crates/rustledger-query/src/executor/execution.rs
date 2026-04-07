@@ -447,7 +447,7 @@ impl Executor<'_> {
                     Ok(row.get(idx).cloned().unwrap_or(Value::Null))
                 } else {
                     Err(QueryError::Evaluation(format!(
-                        "Unknown column '{name}' in subquery result"
+                        "column '{name}' not found in subquery result"
                     )))
                 }
             }
