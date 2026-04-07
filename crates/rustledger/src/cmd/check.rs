@@ -1215,3 +1215,49 @@ pub fn main_with_name(bin_name: &str) -> ExitCode {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_json_diagnostic_phase_field_serializes() {
+        let diag = JsonDiagnostic {
+            file: "test.beancount".to_string(),
+            line: 1,
+            column: 1,
+            end_line: 1,
+            end_column: 1,
+            severity: "error".to_string(),
+            phase: "parse".to_string(),
+            code: "P0001".to_string(),
+            message: "test error".to_string(),
+            hint: None,
+            context: None,
+        };
+        let json = serde_json::to_value(&diag).unwrap();
+        assert_eq!(json["phase"], "parse");
+
+        let diag_validate = JsonDiagnostic {
+            phase: "validate".to_string(),
+            ..diag
+        };
+        let json = serde_json::to_value(&diag_validate).unwrap();
+        assert_eq!(json["phase"], "validate");
+    }
+
+    #[test]
+    fn test_json_output_includes_phase_counts() {
+        let output = JsonOutput {
+            diagnostics: vec![],
+            error_count: 3,
+            warning_count: 0,
+            parse_error_count: 1,
+            validate_error_count: 2,
+        };
+        let json = serde_json::to_value(&output).unwrap();
+        assert_eq!(json["parse_error_count"], 1);
+        assert_eq!(json["validate_error_count"], 2);
+        assert_eq!(json["error_count"], 3);
+    }
+}

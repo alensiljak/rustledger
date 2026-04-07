@@ -417,3 +417,48 @@ pub struct BatchOutput {
     pub load: LoadOutput,
     pub queries: Vec<QueryOutput>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_default_phase_is_parse() {
+        let err = Error::new("test");
+        assert_eq!(err.phase, "parse");
+    }
+
+    #[test]
+    fn test_error_validate_phase() {
+        let err = Error::new("test").validate_phase();
+        assert_eq!(err.phase, "validate");
+    }
+
+    #[test]
+    fn test_error_phase_serializes() {
+        let err = Error::new("test");
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["phase"], "parse");
+
+        let err = Error::new("test").validate_phase();
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["phase"], "validate");
+    }
+
+    #[test]
+    fn test_validate_output_includes_phase_counts() {
+        let output = ValidateOutput {
+            api_version: "1",
+            valid: false,
+            errors: vec![
+                Error::new("parse err"),
+                Error::new("validate err").validate_phase(),
+            ],
+            parse_error_count: 1,
+            validate_error_count: 1,
+        };
+        let json = serde_json::to_value(&output).unwrap();
+        assert_eq!(json["parse_error_count"], 1);
+        assert_eq!(json["validate_error_count"], 1);
+    }
+}
