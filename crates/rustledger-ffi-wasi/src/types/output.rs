@@ -62,7 +62,14 @@ pub struct Error {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_index: Option<usize>,
     pub severity: String,
-    /// Processing phase: "parse" or "validate"
+    /// Processing phase that produced this error.
+    ///
+    /// Known values:
+    /// - `"parse"` — syntax/load errors (default when constructed via `Error::new()`)
+    /// - `"validate"` — semantic validation errors (set via `.validate_phase()`)
+    ///
+    /// Non-ledger contexts (e.g., query parsing) reuse the default `"parse"` value,
+    /// which is acceptable since those errors are also syntactic in nature.
     pub phase: String,
 }
 
