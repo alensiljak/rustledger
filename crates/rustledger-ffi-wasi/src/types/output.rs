@@ -62,6 +62,15 @@ pub struct Error {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry_index: Option<usize>,
     pub severity: String,
+    /// Processing phase that produced this error.
+    ///
+    /// Known values:
+    /// - `"parse"` — syntax/load errors (default when constructed via `Error::new()`)
+    /// - `"validate"` — semantic validation errors (set via `.validate_phase()`)
+    ///
+    /// Non-ledger contexts (e.g., query parsing) reuse the default `"parse"` value,
+    /// which is acceptable since those errors are also syntactic in nature.
+    pub phase: String,
 }
 
 impl Error {
@@ -73,6 +82,7 @@ impl Error {
             field: None,
             entry_index: None,
             severity: "error".to_string(),
+            phase: "parse".to_string(),
         }
     }
 
@@ -90,6 +100,11 @@ impl Error {
     #[allow(dead_code)]
     pub fn warning(mut self) -> Self {
         self.severity = "warning".to_string();
+        self
+    }
+
+    pub fn validate_phase(mut self) -> Self {
+        self.phase = "validate".to_string();
         self
     }
 }
@@ -382,6 +397,10 @@ pub struct ValidateOutput {
     pub api_version: &'static str,
     pub valid: bool,
     pub errors: Vec<Error>,
+    /// Number of parse-phase errors (syntactic)
+    pub parse_error_count: usize,
+    /// Number of validate-phase errors (semantic)
+    pub validate_error_count: usize,
 }
 
 #[derive(Serialize)]
@@ -404,4 +423,49 @@ pub struct BatchOutput {
     pub api_version: &'static str,
     pub load: LoadOutput,
     pub queries: Vec<QueryOutput>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_error_default_phase_is_parse() {
+        let err = Error::new("test");
+        assert_eq!(err.phase, "parse");
+    }
+
+    #[test]
+    fn test_error_validate_phase() {
+        let err = Error::new("test").validate_phase();
+        assert_eq!(err.phase, "validate");
+    }
+
+    #[test]
+    fn test_error_phase_serializes() {
+        let err = Error::new("test");
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["phase"], "parse");
+
+        let err = Error::new("test").validate_phase();
+        let json = serde_json::to_value(&err).unwrap();
+        assert_eq!(json["phase"], "validate");
+    }
+
+    #[test]
+    fn test_validate_output_includes_phase_counts() {
+        let output = ValidateOutput {
+            api_version: "1",
+            valid: false,
+            errors: vec![
+                Error::new("parse err"),
+                Error::new("validate err").validate_phase(),
+            ],
+            parse_error_count: 1,
+            validate_error_count: 1,
+        };
+        let json = serde_json::to_value(&output).unwrap();
+        assert_eq!(json["parse_error_count"], 1);
+        assert_eq!(json["validate_error_count"], 1);
+    }
 }
