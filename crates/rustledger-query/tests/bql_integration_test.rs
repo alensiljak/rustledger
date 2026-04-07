@@ -6660,7 +6660,7 @@ fn test_order_by_expression_not_in_select() {
     assert_eq!(result.columns.len(), 1, "hidden column should be stripped");
     assert_eq!(result.columns[0], "account");
 
-    // Accounts should be sorted by type: Assets(0) < Expenses(4) < Income(3)
+    // Accounts should be sorted by type: Assets(0) < Income(3) < Expenses(4)
     // account_sortkey produces "0-Assets:Cash", "3-Income:Salary", "4-Expenses:Food"
     let accounts: Vec<&str> = result
         .rows
@@ -6671,10 +6671,18 @@ fn test_order_by_expression_not_in_select() {
         })
         .collect();
 
-    // Assets should come before Expenses and Income
-    let first_assets = accounts.iter().position(|a| a.starts_with("Assets"));
-    let first_expenses = accounts.iter().position(|a| a.starts_with("Expenses"));
-    let first_income = accounts.iter().position(|a| a.starts_with("Income"));
+    let first_assets = accounts
+        .iter()
+        .position(|a| a.starts_with("Assets"))
+        .expect("expected an Assets account in query results");
+    let first_expenses = accounts
+        .iter()
+        .position(|a| a.starts_with("Expenses"))
+        .expect("expected an Expenses account in query results");
+    let first_income = accounts
+        .iter()
+        .position(|a| a.starts_with("Income"))
+        .expect("expected an Income account in query results");
     assert!(
         first_assets < first_income && first_income < first_expenses,
         "accounts should be sorted by type via account_sortkey: got {accounts:?}"
@@ -6705,4 +6713,20 @@ fn test_order_by_function_not_in_select_simple() {
 
     assert!(!result.rows.is_empty());
     assert_eq!(result.columns.len(), 1, "hidden column should be stripped");
+
+    // Verify rows are actually sorted by length
+    let accounts: Vec<&str> = result
+        .rows
+        .iter()
+        .filter_map(|r| match &r[0] {
+            Value::String(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        accounts
+            .windows(2)
+            .all(|pair| pair[0].len() <= pair[1].len()),
+        "accounts should be sorted by ascending length: got {accounts:?}"
+    );
 }

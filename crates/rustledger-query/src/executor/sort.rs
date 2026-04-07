@@ -50,9 +50,17 @@ impl Executor<'_> {
                         })?
                 }
                 _ => {
-                    return Err(QueryError::Evaluation(
-                        "ORDER BY expression must reference a selected column".to_string(),
-                    ));
+                    // For other expression kinds (binary ops, literals, etc.),
+                    // look up by string representation (matches hidden column aliases).
+                    let expr_str = spec.expr.to_string();
+                    column_indices
+                        .get(expr_str.as_str())
+                        .copied()
+                        .ok_or_else(|| {
+                            QueryError::Evaluation(format!(
+                                "ORDER BY expression not found in SELECT: {expr_str}"
+                            ))
+                        })?
                 }
             };
             let ascending = spec.direction != SortDirection::Desc;
