@@ -296,13 +296,18 @@ fn handle_validate(params: &serde_json::Value) -> Result<serde_json::Value, RpcE
         .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
 
     let load = load_source(&params.source);
+    // Separate parse errors from booking/interpolation errors (both come from load_source).
+    // Parse errors are tagged phase="parse"; booking errors are tagged phase="validate".
+    let parse_error_count = load.errors.iter().filter(|e| e.phase == "parse").count();
     let mut errors = load.errors;
 
-    if errors.is_empty() {
+    // Only run semantic validation when there are no syntactic (parse) errors.
+    // Booking errors are semantic and don't prevent validation from running.
+    if parse_error_count == 0 {
         let validation_errors =
             validate_spanned_with_options(&load.spanned_directives, ValidationOptions::default());
         for err in validation_errors {
-            let mut e = Error::new(&err.message);
+            let mut e = Error::new(&err.message).validate_phase();
             if let Some(span) = err.span {
                 e = e.with_line(load.line_lookup.byte_to_line(span.start));
             }
@@ -310,10 +315,15 @@ fn handle_validate(params: &serde_json::Value) -> Result<serde_json::Value, RpcE
         }
     }
 
+    // Count validate-phase errors after all errors have been collected.
+    let validate_error_count = errors.iter().filter(|e| e.phase == "validate").count();
+
     let output = ValidateOutput {
         api_version: API_VERSION,
         valid: errors.is_empty(),
         errors,
+        parse_error_count,
+        validate_error_count,
     };
 
     serde_json::to_value(output).map_err(|e| RpcError::internal_error(e.to_string()))
