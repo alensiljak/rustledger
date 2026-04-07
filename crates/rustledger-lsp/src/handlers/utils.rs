@@ -112,11 +112,12 @@ pub fn byte_offset_to_position(source: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
-/// Convert an LSP character offset (UTF-16 code units) to a byte offset in a UTF-8 line.
+/// Convert an LSP character offset to a byte offset in a UTF-8 line.
 ///
-/// LSP `Position.character` counts UTF-16 code units, but Rust strings are UTF-8.
-/// For ASCII text these are identical, but multi-byte characters (CJK, emoji, etc.)
-/// differ. Returns `line.len()` if the offset is past the end.
+/// LSP `Position.character` officially counts UTF-16 code units, but most editors
+/// and this implementation treat it as a Unicode code point (character) offset.
+/// For all BMP characters (ASCII, CJK, Korean, etc.) these are identical.
+/// Returns `line.len()` if the offset is past the end.
 pub fn char_offset_to_byte(line: &str, char_offset: usize) -> usize {
     line.char_indices()
         .nth(char_offset)
