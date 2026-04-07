@@ -1205,6 +1205,121 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
+            // Date: DATE_DIFF for wrapping aggregates like DATE_DIFF(MAX(date), MIN(date))
+            "DATE_DIFF" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                match (&args[0], &args[1]) {
+                    (Value::Date(d1), Value::Date(d2)) => {
+                        Ok(Value::Integer(d1.signed_duration_since(*d2).num_days()))
+                    }
+                    _ => Err(QueryError::Type("DATE_DIFF expects two dates".to_string())),
+                }
+            }
+            // String: regex functions for wrapping aggregates
+            "GREP" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                match (&args[0], &args[1]) {
+                    (Value::String(pattern), Value::String(s)) => {
+                        let re = regex::Regex::new(pattern).map_err(|e| {
+                            QueryError::Type(format!("GREP: invalid regex '{pattern}': {e}"))
+                        })?;
+                        match re.find(s) {
+                            Some(m) => Ok(Value::String(m.as_str().to_string())),
+                            None => Ok(Value::Null),
+                        }
+                    }
+                    _ => Err(QueryError::Type("GREP expects two strings".to_string())),
+                }
+            }
+            "GREPN" => {
+                Self::require_args_count(&name_upper, args, 3)?;
+                let n = match &args[2] {
+                    Value::Integer(i) => (*i).max(0) as usize,
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        n.to_usize().unwrap_or(0)
+                    }
+                    _ => {
+                        return Err(QueryError::Type(
+                            "GREPN: third argument must be an integer".to_string(),
+                        ));
+                    }
+                };
+                match (&args[0], &args[1]) {
+                    (Value::String(pattern), Value::String(s)) => {
+                        let re = regex::Regex::new(pattern).map_err(|e| {
+                            QueryError::Type(format!("GREPN: invalid regex '{pattern}': {e}"))
+                        })?;
+                        match re.captures(s) {
+                            Some(caps) => match caps.get(n) {
+                                Some(m) => Ok(Value::String(m.as_str().to_string())),
+                                None => Ok(Value::Null),
+                            },
+                            None => Ok(Value::Null),
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "GREPN expects (pattern, string, int)".to_string(),
+                    )),
+                }
+            }
+            "SUBST" => {
+                Self::require_args_count(&name_upper, args, 3)?;
+                match (&args[0], &args[1], &args[2]) {
+                    (Value::String(pattern), Value::String(replacement), Value::String(s)) => {
+                        let re = regex::Regex::new(pattern).map_err(|e| {
+                            QueryError::Type(format!("SUBST: invalid regex '{pattern}': {e}"))
+                        })?;
+                        Ok(Value::String(
+                            re.replace_all(s, replacement.as_str()).to_string(),
+                        ))
+                    }
+                    _ => Err(QueryError::Type(
+                        "SUBST expects (pattern, replacement, string)".to_string(),
+                    )),
+                }
+            }
+            "SPLITCOMP" => {
+                Self::require_args_count(&name_upper, args, 3)?;
+                let n = match &args[2] {
+                    Value::Integer(i) => (*i).max(0) as usize,
+                    Value::Number(n) => {
+                        use rust_decimal::prelude::ToPrimitive;
+                        n.to_usize().unwrap_or(0)
+                    }
+                    _ => {
+                        return Err(QueryError::Type(
+                            "SPLITCOMP: third argument must be an integer".to_string(),
+                        ));
+                    }
+                };
+                match (&args[0], &args[1]) {
+                    (Value::String(s), Value::String(delim)) => {
+                        let parts: Vec<&str> = s.split(delim.as_str()).collect();
+                        match parts.get(n) {
+                            Some(part) => Ok(Value::String((*part).to_string())),
+                            None => Ok(Value::Null),
+                        }
+                    }
+                    _ => Err(QueryError::Type(
+                        "SPLITCOMP expects (string, delimiter, int)".to_string(),
+                    )),
+                }
+            }
+            "JOINSTR" => {
+                let mut parts = Vec::new();
+                for v in args {
+                    match v {
+                        Value::String(s) => parts.push(s.clone()),
+                        Value::StringSet(ss) => parts.extend(ss.iter().cloned()),
+                        Value::Integer(i) => parts.push(i.to_string()),
+                        Value::Number(n) => parts.push(n.to_string()),
+                        Value::Null => {}
+                        _ => {}
+                    }
+                }
+                Ok(Value::String(parts.join(",")))
+            }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
             _ => Err(QueryError::UnknownFunction(name.to_string())),
