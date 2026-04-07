@@ -63,6 +63,41 @@ pub fn validate_transaction_structure(
         ));
     }
 
+    // Check for negative cost amounts
+    for posting in &txn.postings {
+        if let Some(cost) = &posting.cost {
+            let units_str = posting.amount().map_or_else(
+                || "?".to_string(),
+                |a| format!("{} {}", a.number, a.currency),
+            );
+            let cost_currency = cost.currency.as_ref().map_or("?", |c| c.as_str());
+            if let Some(per) = cost.number_per
+                && per < Decimal::ZERO
+            {
+                errors.push(ValidationError::new(
+                    ErrorCode::NegativeCost,
+                    format!(
+                        "Cost per unit is negative ({per} {cost_currency}) for {units_str} in posting to {}; cost must be non-negative",
+                        posting.account
+                    ),
+                    txn.date,
+                ));
+            }
+            if let Some(total) = cost.number_total
+                && total < Decimal::ZERO
+            {
+                errors.push(ValidationError::new(
+                    ErrorCode::NegativeCost,
+                    format!(
+                        "Total cost is negative ({total} {cost_currency}) for {units_str} in posting to {}; cost must be non-negative",
+                        posting.account
+                    ),
+                    txn.date,
+                ));
+            }
+        }
+    }
+
     true
 }
 
