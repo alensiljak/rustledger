@@ -94,12 +94,12 @@ fn handle_space_formatting(source: &str, position: Position) -> Option<Vec<TextE
     }
 
     // Check if we just typed a space after an account name
-    let col = position.character as usize;
-    if col < 2 || col > line.len() {
+    let byte_col = super::utils::char_offset_to_byte(line, position.character as usize);
+    if byte_col < 2 {
         return None;
     }
 
-    let before_cursor = &line[..col];
+    let before_cursor = &line[..byte_col];
 
     // Look for pattern: "  Account:Name "
     // If the user just typed a space after an account, we can help align
@@ -112,7 +112,7 @@ fn handle_space_formatting(source: &str, position: Position) -> Option<Vec<TextE
         // add another space for the typical 2-space gap
         if trailing_spaces == 1 {
             // Check if what follows looks like it could be an amount
-            let after_cursor = &line[col..];
+            let after_cursor = &line[byte_col..];
             if after_cursor
                 .trim_start()
                 .starts_with(|c: char| c == '-' || c.is_ascii_digit())

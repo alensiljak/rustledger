@@ -48,7 +48,7 @@ fn compute_selection_range(
     let line = lines.get(position.line as usize)?;
     let col = position.character as usize;
 
-    // First, find the word at cursor
+    // First, find the word at cursor (col is a char offset, matching get_word_range's usage)
     let word_range = get_word_range(line, col, position.line);
 
     // Find the containing directive
@@ -164,11 +164,10 @@ fn build_hierarchy(ranges: Vec<Option<Range>>) -> SelectionRange {
 
 /// Get the range of the word at a position.
 fn get_word_range(line: &str, col: usize, line_num: u32) -> Option<Range> {
-    if col > line.len() {
+    let chars: Vec<char> = line.chars().collect();
+    if col > chars.len() {
         return None;
     }
-
-    let chars: Vec<char> = line.chars().collect();
 
     // Find word start
     let mut start = col;

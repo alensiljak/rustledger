@@ -112,16 +112,27 @@ pub fn byte_offset_to_position(source: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
+/// Convert an LSP character offset (UTF-16 code units) to a byte offset in a UTF-8 line.
+///
+/// LSP `Position.character` counts UTF-16 code units, but Rust strings are UTF-8.
+/// For ASCII text these are identical, but multi-byte characters (CJK, emoji, etc.)
+/// differ. Returns `line.len()` if the offset is past the end.
+pub fn char_offset_to_byte(line: &str, char_offset: usize) -> usize {
+    line.char_indices()
+        .nth(char_offset)
+        .map(|(i, _)| i)
+        .unwrap_or(line.len())
+}
+
 /// Get the word at a given column position in a line.
 ///
 /// Returns the word, its start column, and end column (0-based).
 /// Words include alphanumeric characters, colons, hyphens, and underscores.
 pub fn get_word_at_position(line: &str, col: usize) -> Option<(String, usize, usize)> {
-    if col > line.len() {
+    let chars: Vec<char> = line.chars().collect();
+    if col > chars.len() {
         return None;
     }
-
-    let chars: Vec<char> = line.chars().collect();
 
     // Find word start
     let mut start = col;
