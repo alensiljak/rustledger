@@ -86,9 +86,9 @@ option "operating_currency" "EUR"  ; Multiple operating currencies
   Assets:Bank:Checking  1000 USD
   Assets:Bank:Savings  -1000 USD
 
-2020-02-04 * "Leading decimal"
-  Assets:Bank:Checking  .50 USD
-  Assets:Bank:Savings  -.50 USD
+2020-02-04 * "Leading decimal (with explicit zero)"
+  Assets:Bank:Checking  0.50 USD
+  Assets:Bank:Savings  -0.50 USD
 
 2020-02-05 * "Many decimal places"
   Assets:Bank:Checking  0.123456789 BTC

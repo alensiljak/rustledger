@@ -76,6 +76,7 @@ impl ParseError {
             ParseErrorKind::InvalidPopmeta(_) => 22,
             ParseErrorKind::UnclosedPushmeta(_) => 23,
             ParseErrorKind::DeprecatedPipeSymbol => 24,
+            ParseErrorKind::InvalidBookingMethod(_) => 25,
         }
     }
 
@@ -113,6 +114,7 @@ impl ParseError {
             ParseErrorKind::InvalidPopmeta(_) => "invalid popmeta",
             ParseErrorKind::UnclosedPushmeta(_) => "unclosed pushmeta",
             ParseErrorKind::DeprecatedPipeSymbol => "deprecated pipe symbol",
+            ParseErrorKind::InvalidBookingMethod(_) => "invalid booking method",
         }
     }
 }
@@ -180,6 +182,8 @@ pub enum ParseErrorKind {
     UnclosedPushmeta(String),
     /// Deprecated pipe symbol in transaction.
     DeprecatedPipeSymbol,
+    /// Invalid booking method (must be uppercase: FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE).
+    InvalidBookingMethod(String),
 }
 
 impl fmt::Display for ParseErrorKind {
@@ -220,6 +224,12 @@ impl fmt::Display for ParseErrorKind {
             }
             Self::DeprecatedPipeSymbol => {
                 write!(f, "Pipe symbol is deprecated")
+            }
+            Self::InvalidBookingMethod(m) => {
+                write!(
+                    f,
+                    "invalid booking method '{m}': must be one of FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE"
+                )
             }
         }
     }
@@ -286,6 +296,12 @@ mod tests {
                 18,
             ),
             (ParseErrorKind::MissingDirective, 19),
+            (ParseErrorKind::InvalidPoptag("bad".to_string()), 20),
+            (ParseErrorKind::UnclosedPushtag("tag".to_string()), 21),
+            (ParseErrorKind::InvalidPopmeta("key".to_string()), 22),
+            (ParseErrorKind::UnclosedPushmeta("key".to_string()), 23),
+            (ParseErrorKind::DeprecatedPipeSymbol, 24),
+            (ParseErrorKind::InvalidBookingMethod("BAD".to_string()), 25),
         ];
 
         for (kind, expected_code) in kinds {
@@ -317,6 +333,12 @@ mod tests {
             ParseErrorKind::MissingCurrency,
             ParseErrorKind::InvalidAccountFormat("Assets".to_string()),
             ParseErrorKind::MissingDirective,
+            ParseErrorKind::InvalidPoptag("bad".to_string()),
+            ParseErrorKind::UnclosedPushtag("tag".to_string()),
+            ParseErrorKind::InvalidPopmeta("key".to_string()),
+            ParseErrorKind::UnclosedPushmeta("key".to_string()),
+            ParseErrorKind::DeprecatedPipeSymbol,
+            ParseErrorKind::InvalidBookingMethod("BAD".to_string()),
         ];
 
         for kind in kinds {
@@ -383,6 +405,30 @@ mod tests {
             (
                 ParseErrorKind::MissingDirective,
                 "expected directive after date",
+            ),
+            (
+                ParseErrorKind::InvalidPoptag("bad".to_string()),
+                "poptag attempted on tag 'bad'",
+            ),
+            (
+                ParseErrorKind::UnclosedPushtag("tag".to_string()),
+                "pushtag 'tag' was never popped",
+            ),
+            (
+                ParseErrorKind::InvalidPopmeta("key".to_string()),
+                "popmeta attempted on key 'key'",
+            ),
+            (
+                ParseErrorKind::UnclosedPushmeta("key".to_string()),
+                "pushmeta 'key' was never popped",
+            ),
+            (
+                ParseErrorKind::DeprecatedPipeSymbol,
+                "Pipe symbol is deprecated",
+            ),
+            (
+                ParseErrorKind::InvalidBookingMethod("BAD".to_string()),
+                "invalid booking method 'BAD'",
             ),
         ];
 
