@@ -12,6 +12,8 @@
 //! We use a manual token stream approach rather than implementing winnow's Stream
 //! trait, as it provides simpler code and good performance.
 
+use std::borrow::Cow;
+
 use chrono::NaiveDate;
 use rust_decimal::Decimal;
 use std::str::FromStr;
@@ -129,15 +131,21 @@ fn parse_date(stream: &mut TokenStream<'_>) -> ParseRes<NaiveDate> {
 }
 
 /// Zero-pad single-digit month/day and normalize '/' separators to '-'.
-fn normalize_date_str(s: &str) -> String {
+/// Returns the original string as-is when already in canonical `YYYY-MM-DD` form
+/// to avoid unnecessary allocation on the hot path.
+fn normalize_date_str(s: &str) -> Cow<'_, str> {
+    // Fast path: already canonical (no '/', month+day are 2 digits → length is 10).
+    if !s.contains('/') && s.len() == 10 {
+        return Cow::Borrowed(s);
+    }
     // Separator can be '-' or '/'; the regex guarantees three parts.
     let s = s.replace('/', "-");
     if let Some((year, rest)) = s.split_once('-')
         && let Some((month, day)) = rest.split_once('-')
     {
-        return format!("{year}-{month:0>2}-{day:0>2}");
+        return Cow::Owned(format!("{year}-{month:0>2}-{day:0>2}"));
     }
-    s
+    Cow::Owned(s)
 }
 
 /// Build a human-readable reason why a date string is invalid.
