@@ -6623,3 +6623,86 @@ fn test_issue_632_user_table_takes_precedence_over_alias() {
         panic!("Expected String value for name column");
     }
 }
+
+#[test]
+fn test_order_by_expression_not_in_select() {
+    // Issue #684: ORDER BY on an expression not in SELECT should work
+    // by adding a hidden column for sorting, then stripping it from output.
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Salary")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Lunch")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-10), "USD"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 20), "Pay")
+                .with_posting(Posting::new(
+                    "Income:Salary",
+                    Amount::new(dec!(-1000), "USD"),
+                ))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(1000), "USD"))),
+        ),
+    ];
+
+    // ORDER BY account_sortkey(account) — not in SELECT
+    let result = execute_query(
+        "SELECT account FROM #postings ORDER BY account_sortkey(account)",
+        &directives,
+    );
+
+    // Should succeed without error
+    assert!(!result.rows.is_empty(), "should return rows");
+
+    // Result should only have 1 column (account), not the hidden sortkey
+    assert_eq!(result.columns.len(), 1, "hidden column should be stripped");
+    assert_eq!(result.columns[0], "account");
+
+    // Accounts should be sorted by type: Assets(0) < Expenses(4) < Income(3)
+    // account_sortkey produces "0-Assets:Cash", "3-Income:Salary", "4-Expenses:Food"
+    let accounts: Vec<&str> = result
+        .rows
+        .iter()
+        .filter_map(|r| match &r[0] {
+            Value::String(s) => Some(s.as_str()),
+            _ => None,
+        })
+        .collect();
+
+    // Assets should come before Expenses and Income
+    let first_assets = accounts.iter().position(|a| a.starts_with("Assets"));
+    let first_expenses = accounts.iter().position(|a| a.starts_with("Expenses"));
+    let first_income = accounts.iter().position(|a| a.starts_with("Income"));
+    assert!(
+        first_assets < first_income && first_income < first_expenses,
+        "accounts should be sorted by type via account_sortkey: got {accounts:?}"
+    );
+}
+
+#[test]
+fn test_order_by_function_not_in_select_simple() {
+    // Simpler case: ORDER BY length(account) — function not in SELECT
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:A")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:FoodAndDrink")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "t1")
+                .with_posting(Posting::new(
+                    "Expenses:FoodAndDrink",
+                    Amount::new(dec!(10), "USD"),
+                ))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-10), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT account FROM #postings ORDER BY length(account)",
+        &directives,
+    );
+
+    assert!(!result.rows.is_empty());
+    assert_eq!(result.columns.len(), 1, "hidden column should be stripped");
+}
