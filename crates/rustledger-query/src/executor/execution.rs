@@ -47,11 +47,15 @@ impl Executor<'_> {
         // Collect matching postings
         let postings = self.collect_postings(query.from.as_ref(), query.where_clause.as_ref())?;
 
-        // Check if this is an aggregate query
+        // Check if this is an aggregate query.
+        // A query is aggregate if any SELECT target contains an aggregate function,
+        // or if it has an explicit GROUP BY or HAVING clause.
         let is_aggregate = query
             .targets
             .iter()
-            .any(|t| Self::is_aggregate_expr(&t.expr));
+            .any(|t| Self::is_aggregate_expr(&t.expr))
+            || query.group_by.is_some()
+            || query.having.is_some();
 
         // Track whether grouping is applied (explicit or implicit) for fallback sort
         let mut has_grouping = false;
@@ -353,10 +357,14 @@ impl Executor<'_> {
             .collect();
 
         // Check if this is an aggregate query; if so, use the grouping path.
+        // A query is aggregate if any SELECT target contains an aggregate function,
+        // or if it has an explicit GROUP BY or HAVING clause.
         let is_aggregate = query
             .targets
             .iter()
-            .any(|t| Self::is_aggregate_expr(&t.expr));
+            .any(|t| Self::is_aggregate_expr(&t.expr))
+            || query.group_by.is_some()
+            || query.having.is_some();
 
         if is_aggregate {
             return self.execute_aggregate_from_table(query, table, &column_map);
@@ -440,12 +448,13 @@ impl Executor<'_> {
             let resolved = exprs
                 .iter()
                 .map(|expr| {
-                    if let Expr::Column(name) = expr {
-                        if let Some(target_expr) = alias_expr_map.get(&name.to_uppercase()) {
-                            return target_expr.clone();
-                        }
+                    if let Expr::Column(name) = expr
+                        && let Some(target_expr) = alias_expr_map.get(&name.to_uppercase())
+                    {
+                        target_expr.clone()
+                    } else {
+                        expr.clone()
                     }
-                    expr.clone()
                 })
                 .collect();
             Some(resolved)
@@ -459,7 +468,9 @@ impl Executor<'_> {
         };
 
         // Group table rows by GROUP BY key.
+        // Maintain a Vec of keys in insertion order for deterministic results.
         let mut group_map: HashMap<String, (Vec<Value>, Vec<&Row>)> = HashMap::new();
+        let mut key_order: Vec<String> = Vec::new();
 
         for row in &table.rows {
             // Apply WHERE clause if present
@@ -479,15 +490,20 @@ impl Executor<'_> {
             };
 
             let key = Self::make_group_key(&key_values);
-            group_map
-                .entry(key)
-                .or_insert_with(|| (key_values, Vec::new()))
-                .1
-                .push(row);
+            let entry = group_map.entry(key.clone()).or_insert_with(|| {
+                key_order.push(key);
+                (key_values, Vec::new())
+            });
+            entry.1.push(row);
         }
 
-        // A pure aggregate with no matching rows produces no result rows.
-        if group_map.is_empty() {
+        // For pure aggregates (no GROUP BY), always produce one row even if no
+        // rows matched: COUNT(*) should return 0, SUM/AVG return NULL.
+        if group_map.is_empty() && group_by_exprs.is_none() {
+            let empty_key = String::new();
+            group_map.insert(empty_key.clone(), (vec![], vec![]));
+            key_order.push(empty_key);
+        } else if group_map.is_empty() {
             return Ok(result);
         }
 
@@ -505,7 +521,9 @@ impl Executor<'_> {
             .collect();
 
         // Evaluate aggregate expressions per group and apply HAVING.
-        for (_, (_, group_rows)) in group_map {
+        // Iterate in insertion order for deterministic results.
+        for key in key_order {
+            let (_, group_rows) = group_map.remove(&key).expect("key must exist in group_map");
             let mut row = Vec::new();
             for target in &query.targets {
                 let val =
@@ -604,16 +622,22 @@ impl Executor<'_> {
             }
             Expr::Literal(lit) => self.evaluate_literal(lit),
             Expr::Function(func) => {
+                // Wildcard (*) in a function argument is only valid for COUNT.
+                let has_wildcard = func.args.iter().any(|a| matches!(a, Expr::Wildcard));
+                if has_wildcard && func.name.to_uppercase() != "COUNT" {
+                    return Err(QueryError::InvalidArguments(
+                        func.name.clone(),
+                        "wildcard (*) is only allowed with COUNT".to_string(),
+                    ));
+                }
                 // Evaluate function arguments.
-                // Wildcard in a function argument (e.g., count(*)) is treated as a no-value
-                // marker for aggregate functions evaluated in row-level context.
+                // Wildcard in COUNT(*) is treated as a no-value marker;
+                // aggregate functions already return Null in row-level context.
                 let args: Vec<Value> = func
                     .args
                     .iter()
                     .map(|a| {
                         if matches!(a, Expr::Wildcard) {
-                            // count(*) and similar: wildcard arg is meaningless at row level;
-                            // aggregate functions already return Null in row-level context.
                             Ok(Value::Null)
                         } else {
                             self.evaluate_subquery_expr(a, row, column_map)

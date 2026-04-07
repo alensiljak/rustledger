@@ -145,9 +145,11 @@ impl<'a> Executor<'a> {
         group_by: Option<&Vec<Expr>>,
     ) -> Result<Vec<(Vec<Value>, Vec<&'b PostingContext<'a>>)>, QueryError> {
         if let Some(group_exprs) = group_by {
-            // Use HashMap for O(1) grouping
+            // Use HashMap for O(1) grouping, with a Vec to preserve insertion order
+            // so results without ORDER BY are deterministic across runs.
             let mut group_map: HashMap<String, (Vec<Value>, Vec<&PostingContext<'a>>)> =
                 HashMap::new();
+            let mut key_order: Vec<String> = Vec::new();
 
             for ctx in postings {
                 let mut key_values = Vec::with_capacity(group_exprs.len());
@@ -156,22 +158,23 @@ impl<'a> Executor<'a> {
                 }
                 let hash_key = Self::make_group_key(&key_values);
 
-                group_map
-                    .entry(hash_key)
-                    .or_insert_with(|| (key_values, Vec::new()))
-                    .1
-                    .push(ctx);
+                let entry = group_map.entry(hash_key.clone()).or_insert_with(|| {
+                    key_order.push(hash_key);
+                    (key_values, Vec::new())
+                });
+                entry.1.push(ctx);
             }
 
-            Ok(group_map.into_values().collect())
+            // Return groups in insertion order for deterministic results
+            Ok(key_order
+                .into_iter()
+                .filter_map(|k| group_map.remove(&k))
+                .collect())
         } else {
-            // No GROUP BY - all postings in one group
-            // But if there are no postings, return no groups (matching Python beancount)
-            if postings.is_empty() {
-                Ok(vec![])
-            } else {
-                Ok(vec![(Vec::new(), postings.iter().collect())])
-            }
+            // No GROUP BY — pure aggregate. Always return exactly one group
+            // so that COUNT(*) returns 0 and SUM/AVG return NULL on empty input,
+            // rather than producing an empty result set.
+            Ok(vec![(Vec::new(), postings.iter().collect())])
         }
     }
     pub(super) fn evaluate_aggregate_row(
@@ -194,7 +197,13 @@ impl<'a> Executor<'a> {
             Expr::Function(func) => {
                 match func.name.to_uppercase().as_str() {
                     "COUNT" => {
-                        // COUNT(*) counts all rows
+                        // COUNT(*) or COUNT(expr) — validate argument count
+                        if func.args.len() > 1 {
+                            return Err(QueryError::InvalidArguments(
+                                "COUNT".to_string(),
+                                "expected 0 or 1 argument".to_string(),
+                            ));
+                        }
                         Ok(Value::Integer(group.len() as i64))
                     }
                     "SUM" => {
@@ -373,6 +382,14 @@ impl<'a> Executor<'a> {
                         }
                     }
                     _ => {
+                        // Wildcard (*) is only valid as an argument to COUNT;
+                        // reject it for any other function.
+                        if func.args.iter().any(|a| matches!(a, Expr::Wildcard)) {
+                            return Err(QueryError::InvalidArguments(
+                                func.name.clone(),
+                                "wildcard (*) is only allowed with COUNT".to_string(),
+                            ));
+                        }
                         // Non-aggregate function — check if any argument contains
                         // an aggregate (SUM, COUNT, etc.). If not, evaluate the whole
                         // expression with the first posting context, which preserves
@@ -568,10 +585,13 @@ impl<'a> Executor<'a> {
             Expr::Function(func) => {
                 match func.name.to_uppercase().as_str() {
                     "COUNT" => {
-                        // COUNT(*) or COUNT(col) – count all rows in the group.
-                        // Note: like the existing evaluate_aggregate_expr, this counts all rows
-                        // regardless of whether the argument is null. This is consistent with
-                        // Python beancount's BQL behavior where COUNT always counts rows.
+                        // COUNT(*) or COUNT(col) — validate argument count
+                        if func.args.len() > 1 {
+                            return Err(QueryError::InvalidArguments(
+                                "COUNT".to_string(),
+                                "expected 0 or 1 argument".to_string(),
+                            ));
+                        }
                         Ok(Value::Integer(group.len() as i64))
                     }
                     "SUM" => {
@@ -745,6 +765,14 @@ impl<'a> Executor<'a> {
                         }
                     }
                     _ => {
+                        // Wildcard (*) is only valid as an argument to COUNT;
+                        // reject it for any other function.
+                        if func.args.iter().any(|a| matches!(a, Expr::Wildcard)) {
+                            return Err(QueryError::InvalidArguments(
+                                func.name.clone(),
+                                "wildcard (*) is only allowed with COUNT".to_string(),
+                            ));
+                        }
                         // Non-aggregate function: recursively evaluate args in aggregate mode
                         let mut evaluated_args = Vec::with_capacity(func.args.len());
                         for arg in &func.args {
