@@ -506,4 +506,16 @@ mod tests {
         // Must not panic
         let _ctx = detect_context(source, pos);
     }
+
+    #[test]
+    fn test_detect_context_emoji_narration_utf16_offset() {
+        // Non-BMP emoji uses two UTF-16 code units in LSP positions.
+        // Validates surrogate-pair handling in char_offset_to_byte.
+        let source = "2024-01-15 * \"🍣\"\n";
+        // UTF-16 offsets: "2024-01-15 * \"" = 14 units, "🍣" = 2 units, "\"" = 1 unit
+        // Position 17 is after the closing quote
+        let pos = Position::new(0, 17);
+        // Must not panic
+        let _ctx = detect_context(source, pos);
+    }
 }

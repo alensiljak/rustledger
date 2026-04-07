@@ -112,17 +112,21 @@ pub fn byte_offset_to_position(source: &str, offset: usize) -> (u32, u32) {
     (line, col)
 }
 
-/// Convert an LSP character offset to a byte offset in a UTF-8 line.
+/// Convert an LSP character offset (UTF-16 code units) to a byte offset in a UTF-8 line.
 ///
-/// LSP `Position.character` officially counts UTF-16 code units, but most editors
-/// and this implementation treat it as a Unicode code point (character) offset.
-/// For all BMP characters (ASCII, CJK, Korean, etc.) these are identical.
+/// LSP `Position.character` counts UTF-16 code units. For BMP characters (ASCII,
+/// CJK, Korean, Cyrillic, etc.) one code point = one UTF-16 unit, but non-BMP
+/// characters (many emoji) use two UTF-16 units (a surrogate pair).
 /// Returns `line.len()` if the offset is past the end.
-pub fn char_offset_to_byte(line: &str, char_offset: usize) -> usize {
-    line.char_indices()
-        .nth(char_offset)
-        .map(|(i, _)| i)
-        .unwrap_or(line.len())
+pub fn char_offset_to_byte(line: &str, utf16_offset: usize) -> usize {
+    let mut utf16_count = 0usize;
+    for (byte_offset, ch) in line.char_indices() {
+        if utf16_count >= utf16_offset {
+            return byte_offset;
+        }
+        utf16_count += ch.len_utf16();
+    }
+    line.len()
 }
 
 /// Get the word at a given column position in a line.
