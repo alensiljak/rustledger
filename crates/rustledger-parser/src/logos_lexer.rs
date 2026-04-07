@@ -517,11 +517,15 @@ mod tests {
         // letters, digits, and hyphens. Unicode characters in account names are
         // rejected and should NOT tokenize as Account tokens.
 
-        // Emoji after valid account prefix - tokenizes as Account("Assets") + error tokens
+        // Emoji after valid account prefix - tokenizes as partial Account + error tokens
         let tokens = tokenize("Assets:CORP✨");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:CORP✨")),
             "Unicode emoji in account name should not tokenize as a valid Account"
+        );
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
+            "Unicode emoji should produce at least one Error token"
         );
 
         // CJK characters - should not tokenize as Account
@@ -530,12 +534,20 @@ mod tests {
             !matches!(tokens[0].0, Token::Account("Assets:沪深300")),
             "CJK characters in account name should not tokenize as a valid Account"
         );
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
+            "CJK characters should produce at least one Error token"
+        );
 
         // Full CJK component - should not tokenize as Account
         let tokens = tokenize("Assets:日本銀行");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:日本銀行")),
             "CJK account component should not tokenize as a valid Account"
+        );
+        assert!(
+            tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
+            "CJK account component should produce at least one Error token"
         );
     }
 

@@ -1085,6 +1085,9 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
             let span = stream.span_from(start_pos);
             let err = ParseError::new(ParseErrorKind::InvalidBookingMethod(s), span);
             stream.skip_to_newline();
+            // Consume any indented metadata lines so error recovery lands
+            // on the next top-level entry cleanly.
+            parse_metadata_with_comments(stream);
             return Ok(ParsedItem::DirectiveError(err, span));
         }
         Some(s)

@@ -611,5 +611,18 @@ option "name_equity" "Капитал"
             !result.errors.is_empty(),
             "Unicode account names should produce parse errors per the beancount v3 spec"
         );
+
+        // Verify the diagnostics layer produces ERROR diagnostics (not just parse errors).
+        let diagnostics = parse_errors_to_diagnostics(&result, source);
+        assert!(
+            !diagnostics.is_empty(),
+            "Unicode account name errors should produce LSP diagnostics"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
+            "At least one diagnostic should be ERROR severity"
+        );
     }
 }

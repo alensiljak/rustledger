@@ -296,6 +296,12 @@ mod tests {
                 18,
             ),
             (ParseErrorKind::MissingDirective, 19),
+            (ParseErrorKind::InvalidPoptag("bad".to_string()), 20),
+            (ParseErrorKind::UnclosedPushtag("tag".to_string()), 21),
+            (ParseErrorKind::InvalidPopmeta("key".to_string()), 22),
+            (ParseErrorKind::UnclosedPushmeta("key".to_string()), 23),
+            (ParseErrorKind::DeprecatedPipeSymbol, 24),
+            (ParseErrorKind::InvalidBookingMethod("BAD".to_string()), 25),
         ];
 
         for (kind, expected_code) in kinds {
@@ -327,6 +333,12 @@ mod tests {
             ParseErrorKind::MissingCurrency,
             ParseErrorKind::InvalidAccountFormat("Assets".to_string()),
             ParseErrorKind::MissingDirective,
+            ParseErrorKind::InvalidPoptag("bad".to_string()),
+            ParseErrorKind::UnclosedPushtag("tag".to_string()),
+            ParseErrorKind::InvalidPopmeta("key".to_string()),
+            ParseErrorKind::UnclosedPushmeta("key".to_string()),
+            ParseErrorKind::DeprecatedPipeSymbol,
+            ParseErrorKind::InvalidBookingMethod("BAD".to_string()),
         ];
 
         for kind in kinds {
@@ -393,6 +405,30 @@ mod tests {
             (
                 ParseErrorKind::MissingDirective,
                 "expected directive after date",
+            ),
+            (
+                ParseErrorKind::InvalidPoptag("bad".to_string()),
+                "poptag attempted on tag 'bad'",
+            ),
+            (
+                ParseErrorKind::UnclosedPushtag("tag".to_string()),
+                "pushtag 'tag' was never popped",
+            ),
+            (
+                ParseErrorKind::InvalidPopmeta("key".to_string()),
+                "popmeta attempted on key 'key'",
+            ),
+            (
+                ParseErrorKind::UnclosedPushmeta("key".to_string()),
+                "pushmeta 'key' was never popped",
+            ),
+            (
+                ParseErrorKind::DeprecatedPipeSymbol,
+                "Pipe symbol is deprecated",
+            ),
+            (
+                ParseErrorKind::InvalidBookingMethod("BAD".to_string()),
+                "invalid booking method 'BAD'",
             ),
         ];
 
