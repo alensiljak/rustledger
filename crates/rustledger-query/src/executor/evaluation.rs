@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use chrono::Datelike;
-use rustledger_core::{Amount, Cost, Position, Transaction};
+use rustledger_core::{Amount, Position, Transaction};
 
 use crate::ast::{Expr, Literal, Target};
 use crate::error::QueryError;
@@ -233,22 +233,19 @@ impl Executor<'_> {
                     .collect(),
             )),
             "position" => {
-                // Position includes both units and cost
+                // Position includes both units and cost.
+                // Uses resolve() to handle both per-unit and total cost syntax.
                 if let Some(units) = posting.amount() {
                     if let Some(cost_spec) = &posting.cost
-                        && let (Some(number_per), Some(currency)) =
-                            (&cost_spec.number_per, &cost_spec.currency)
+                        && let Some(cost) = cost_spec.resolve(units.number, ctx.transaction.date)
                     {
-                        // Use Cost::new() to auto-quantize the cost number
-                        let cost = Cost::new(*number_per, currency.clone())
-                            .with_date_opt(cost_spec.date)
-                            .with_label_opt(cost_spec.label.clone());
-                        return Ok(Value::Position(Box::new(Position::with_cost(
+                        Ok(Value::Position(Box::new(Position::with_cost(
                             units.clone(),
                             cost,
-                        ))));
+                        ))))
+                    } else {
+                        Ok(Value::Position(Box::new(Position::simple(units.clone()))))
                     }
-                    Ok(Value::Position(Box::new(Position::simple(units.clone()))))
                 } else {
                     Ok(Value::Null)
                 }
