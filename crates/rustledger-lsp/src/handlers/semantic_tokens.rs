@@ -184,6 +184,69 @@ fn collect_lexer_tokens(source: &str) -> Vec<RawToken> {
     raw_tokens
 }
 
+/// Collect raw tokens from the lexer, restricted to a line range.
+///
+/// Runs the full lexer (Logos doesn't support partial input) but only builds
+/// `RawToken`s for tokens within the requested range, skipping the UTF-16
+/// column computation for out-of-range tokens.
+fn collect_lexer_tokens_in_range(source: &str, range: &Range) -> Vec<RawToken> {
+    let lexer_tokens = tokenize(source);
+
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+
+    // Convert range lines to byte offsets for fast filtering.
+    let range_start_byte = line_starts
+        .get(range.start.line as usize)
+        .copied()
+        .unwrap_or(0);
+    let range_end_byte = line_starts
+        .get(range.end.line as usize + 1)
+        .copied()
+        .unwrap_or(source.len());
+
+    let mut raw_tokens = Vec::new();
+
+    for (token, span) in &lexer_tokens {
+        // Skip tokens entirely before or after the range.
+        if span.end <= range_start_byte || span.start >= range_end_byte {
+            continue;
+        }
+
+        if let Some(tt) = lexer_token_type(token) {
+            let line_idx = line_starts.partition_point(|&start| start <= span.start) - 1;
+            let line = line_idx as u32;
+            let line_start = line_starts[line_idx];
+            let line_bytes = &source[line_start..span.start];
+            let col = line_bytes
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum::<u32>();
+            let token_bytes = &source[span.start..span.end];
+            let length = token_bytes
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum::<u32>();
+
+            let raw = RawToken {
+                line,
+                start: col,
+                length,
+                token_type: tt,
+                modifiers: 0,
+                byte_offset: span.start,
+            };
+
+            if is_token_in_range(&raw, range) {
+                raw_tokens.push(raw);
+            }
+        }
+    }
+
+    raw_tokens
+}
+
 /// Apply directive-level semantic modifiers to raw tokens.
 ///
 /// Walks parsed directives and sets modifiers on matching tokens:
@@ -356,6 +419,10 @@ fn tokens_equal(a: &[SemanticToken], b: &[SemanticToken]) -> bool {
 }
 
 /// Handle a semantic tokens range request.
+///
+/// Only builds `RawToken`s for lexer tokens whose byte offset falls within
+/// the requested line range, avoiding UTF-16 column computation for tokens
+/// outside the visible area.
 pub fn handle_semantic_tokens_range(
     params: &SemanticTokensRangeParams,
     source: &str,
@@ -363,16 +430,10 @@ pub fn handle_semantic_tokens_range(
 ) -> Option<SemanticTokensRangeResult> {
     let range = params.range;
 
-    let mut raw_tokens = collect_lexer_tokens(source);
+    let mut raw_tokens = collect_lexer_tokens_in_range(source, &range);
     apply_directive_modifiers(&mut raw_tokens, source, parse_result);
 
-    // Filter to tokens within the requested range
-    let filtered: Vec<_> = raw_tokens
-        .into_iter()
-        .filter(|t| is_token_in_range(t, &range))
-        .collect();
-
-    let tokens = encode_tokens(&filtered);
+    let tokens = encode_tokens(&raw_tokens);
 
     if tokens.is_empty() {
         None
