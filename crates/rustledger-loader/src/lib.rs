@@ -39,7 +39,7 @@ mod vfs;
 #[cfg(feature = "cache")]
 pub use cache::{
     CacheEntry, CachedOptions, CachedPlugin, invalidate_cache, load_cache_entry,
-    reintern_directives, save_cache_entry,
+    reintern_directives, reintern_plain_directives, save_cache_entry,
 };
 pub use options::Options;
 pub use source_map::{SourceFile, SourceMap};

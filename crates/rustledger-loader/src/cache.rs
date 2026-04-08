@@ -372,133 +372,152 @@ pub fn invalidate_cache(main_file: &Path) {
 /// Returns the number of strings that were deduplicated (i.e., strings that
 /// were found to already exist in the interner).
 pub fn reintern_directives(directives: &mut [Spanned<Directive>]) -> usize {
+    let mut interner = StringInterner::with_capacity(1024);
+    let mut dedup_count = 0;
+    for spanned in directives.iter_mut() {
+        dedup_count += reintern_directive(&mut spanned.value, &mut interner);
+    }
+    dedup_count
+}
+
+/// Re-intern strings in a slice of plain directives (without `Spanned` wrapper).
+///
+/// This is useful for WASM caching where `Spanned<Directive>` is not used.
+pub fn reintern_plain_directives(directives: &mut [Directive]) -> usize {
+    let mut interner = StringInterner::with_capacity(1024);
+    let mut dedup_count = 0;
+    for directive in directives.iter_mut() {
+        dedup_count += reintern_directive(directive, &mut interner);
+    }
+    dedup_count
+}
+
+/// Re-intern all `InternedStr` fields in a single directive, deduplicating
+/// identical strings to share a single `Arc<str>` allocation.
+fn reintern_directive(directive: &mut Directive, interner: &mut StringInterner) -> usize {
     use rustledger_core::intern::InternedStr;
     use rustledger_core::{IncompleteAmount, PriceAnnotation};
 
-    // Intern a single string (defined before use to satisfy clippy)
     fn do_intern(s: &mut InternedStr, interner: &mut StringInterner) -> bool {
         let already_exists = interner.contains(s.as_str());
         *s = interner.intern(s.as_str());
         already_exists
     }
 
-    let mut interner = StringInterner::with_capacity(1024);
     let mut dedup_count = 0;
 
-    for spanned in directives.iter_mut() {
-        match &mut spanned.value {
-            Directive::Transaction(txn) => {
-                for posting in &mut txn.postings {
-                    if do_intern(&mut posting.account, &mut interner) {
-                        dedup_count += 1;
+    match directive {
+        Directive::Transaction(txn) => {
+            for posting in &mut txn.postings {
+                if do_intern(&mut posting.account, interner) {
+                    dedup_count += 1;
+                }
+                // Units
+                if let Some(ref mut units) = posting.units {
+                    match units {
+                        IncompleteAmount::Complete(amt) => {
+                            if do_intern(&mut amt.currency, interner) {
+                                dedup_count += 1;
+                            }
+                        }
+                        IncompleteAmount::CurrencyOnly(cur) => {
+                            if do_intern(cur, interner) {
+                                dedup_count += 1;
+                            }
+                        }
+                        IncompleteAmount::NumberOnly(_) => {}
                     }
-                    // Units
-                    if let Some(ref mut units) = posting.units {
-                        match units {
+                }
+                // Cost spec
+                if let Some(ref mut cost) = posting.cost
+                    && let Some(ref mut cur) = cost.currency
+                    && do_intern(cur, interner)
+                {
+                    dedup_count += 1;
+                }
+                // Price annotation
+                if let Some(ref mut price) = posting.price {
+                    match price {
+                        PriceAnnotation::Unit(amt) | PriceAnnotation::Total(amt) => {
+                            if do_intern(&mut amt.currency, interner) {
+                                dedup_count += 1;
+                            }
+                        }
+                        PriceAnnotation::UnitIncomplete(inc)
+                        | PriceAnnotation::TotalIncomplete(inc) => match inc {
                             IncompleteAmount::Complete(amt) => {
-                                if do_intern(&mut amt.currency, &mut interner) {
+                                if do_intern(&mut amt.currency, interner) {
                                     dedup_count += 1;
                                 }
                             }
                             IncompleteAmount::CurrencyOnly(cur) => {
-                                if do_intern(cur, &mut interner) {
+                                if do_intern(cur, interner) {
                                     dedup_count += 1;
                                 }
                             }
                             IncompleteAmount::NumberOnly(_) => {}
-                        }
-                    }
-                    // Cost spec
-                    if let Some(ref mut cost) = posting.cost
-                        && let Some(ref mut cur) = cost.currency
-                        && do_intern(cur, &mut interner)
-                    {
-                        dedup_count += 1;
-                    }
-                    // Price annotation
-                    if let Some(ref mut price) = posting.price {
-                        match price {
-                            PriceAnnotation::Unit(amt) | PriceAnnotation::Total(amt) => {
-                                if do_intern(&mut amt.currency, &mut interner) {
-                                    dedup_count += 1;
-                                }
-                            }
-                            PriceAnnotation::UnitIncomplete(inc)
-                            | PriceAnnotation::TotalIncomplete(inc) => match inc {
-                                IncompleteAmount::Complete(amt) => {
-                                    if do_intern(&mut amt.currency, &mut interner) {
-                                        dedup_count += 1;
-                                    }
-                                }
-                                IncompleteAmount::CurrencyOnly(cur) => {
-                                    if do_intern(cur, &mut interner) {
-                                        dedup_count += 1;
-                                    }
-                                }
-                                IncompleteAmount::NumberOnly(_) => {}
-                            },
-                            PriceAnnotation::UnitEmpty | PriceAnnotation::TotalEmpty => {}
-                        }
+                        },
+                        PriceAnnotation::UnitEmpty | PriceAnnotation::TotalEmpty => {}
                     }
                 }
             }
-            Directive::Balance(bal) => {
-                if do_intern(&mut bal.account, &mut interner) {
-                    dedup_count += 1;
-                }
-                if do_intern(&mut bal.amount.currency, &mut interner) {
+        }
+        Directive::Balance(bal) => {
+            if do_intern(&mut bal.account, interner) {
+                dedup_count += 1;
+            }
+            if do_intern(&mut bal.amount.currency, interner) {
+                dedup_count += 1;
+            }
+        }
+        Directive::Open(open) => {
+            if do_intern(&mut open.account, interner) {
+                dedup_count += 1;
+            }
+            for cur in &mut open.currencies {
+                if do_intern(cur, interner) {
                     dedup_count += 1;
                 }
             }
-            Directive::Open(open) => {
-                if do_intern(&mut open.account, &mut interner) {
-                    dedup_count += 1;
-                }
-                for cur in &mut open.currencies {
-                    if do_intern(cur, &mut interner) {
-                        dedup_count += 1;
-                    }
-                }
+        }
+        Directive::Close(close) => {
+            if do_intern(&mut close.account, interner) {
+                dedup_count += 1;
             }
-            Directive::Close(close) => {
-                if do_intern(&mut close.account, &mut interner) {
-                    dedup_count += 1;
-                }
+        }
+        Directive::Commodity(comm) => {
+            if do_intern(&mut comm.currency, interner) {
+                dedup_count += 1;
             }
-            Directive::Commodity(comm) => {
-                if do_intern(&mut comm.currency, &mut interner) {
-                    dedup_count += 1;
-                }
+        }
+        Directive::Pad(pad) => {
+            if do_intern(&mut pad.account, interner) {
+                dedup_count += 1;
             }
-            Directive::Pad(pad) => {
-                if do_intern(&mut pad.account, &mut interner) {
-                    dedup_count += 1;
-                }
-                if do_intern(&mut pad.source_account, &mut interner) {
-                    dedup_count += 1;
-                }
+            if do_intern(&mut pad.source_account, interner) {
+                dedup_count += 1;
             }
-            Directive::Note(note) => {
-                if do_intern(&mut note.account, &mut interner) {
-                    dedup_count += 1;
-                }
+        }
+        Directive::Note(note) => {
+            if do_intern(&mut note.account, interner) {
+                dedup_count += 1;
             }
-            Directive::Document(doc) => {
-                if do_intern(&mut doc.account, &mut interner) {
-                    dedup_count += 1;
-                }
+        }
+        Directive::Document(doc) => {
+            if do_intern(&mut doc.account, interner) {
+                dedup_count += 1;
             }
-            Directive::Price(price) => {
-                if do_intern(&mut price.currency, &mut interner) {
-                    dedup_count += 1;
-                }
-                if do_intern(&mut price.amount.currency, &mut interner) {
-                    dedup_count += 1;
-                }
+        }
+        Directive::Price(price) => {
+            if do_intern(&mut price.currency, interner) {
+                dedup_count += 1;
             }
-            Directive::Event(_) | Directive::Query(_) | Directive::Custom(_) => {
-                // These don't contain InternedStr fields
+            if do_intern(&mut price.amount.currency, interner) {
+                dedup_count += 1;
             }
+        }
+        Directive::Event(_) | Directive::Query(_) | Directive::Custom(_) => {
+            // These don't contain InternedStr fields
         }
     }
 
