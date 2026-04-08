@@ -1629,10 +1629,24 @@ pub fn parse(source: &str) -> ParseResult {
             if let Some(err) = stream.deferred_error.take() {
                 errors.push(err);
             } else {
-                errors.push(ParseError::new(
-                    ParseErrorKind::SyntaxError("unexpected input".to_string()),
-                    span,
-                ));
+                // Produce specific error messages for known patterns
+                let error_text = &source[span.start..span.end.min(source.len())];
+                let kind = if error_text.starts_with('\u{FEFF}') {
+                    // UTF-8 BOM (byte order mark)
+                    ParseErrorKind::SyntaxError("Invalid token: UTF-8 BOM detected; remove the BOM from the beginning of the file".to_string())
+                } else if looks_like_unicode_account(error_text) {
+                    // Non-ASCII characters in what looks like an account name
+                    ParseErrorKind::InvalidAccount(
+                        error_text
+                            .split_whitespace()
+                            .next()
+                            .unwrap_or(error_text)
+                            .to_string(),
+                    )
+                } else {
+                    ParseErrorKind::SyntaxError("unexpected input".to_string())
+                };
+                errors.push(ParseError::new(kind, span));
             }
         }
     }
@@ -1662,6 +1676,25 @@ pub fn parse(source: &str) -> ParseResult {
         errors,
         warnings: Vec::new(),
     }
+}
+
+/// Check if text looks like a Unicode account name (e.g., "Активы:Банк").
+/// An account name starts with an uppercase letter and contains a colon,
+/// but the regex for valid accounts only allows ASCII. If we see non-ASCII
+/// characters in an account-like pattern, it's a Unicode account error.
+fn looks_like_unicode_account(text: &str) -> bool {
+    let first_token = text.split_whitespace().next().unwrap_or("");
+    // Must contain a colon (account separator)
+    if !first_token.contains(':') {
+        return false;
+    }
+    // Must start with an uppercase letter (ASCII or Unicode)
+    let first_char = first_token.chars().next().unwrap_or(' ');
+    if !first_char.is_uppercase() {
+        return false;
+    }
+    // Must contain non-ASCII characters (otherwise it would have lexed as Account)
+    !first_token.is_ascii()
 }
 
 #[cfg(test)]

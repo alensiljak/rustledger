@@ -197,7 +197,7 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
             )
         } else {
             format!(
-                "Balance assertion failed for {}: expected {} {}, got {} {}",
+                "Balance failed for {}: expected {} {}, got {} {}",
                 bal.account, expected, bal.amount.currency, actual, bal.amount.currency
             )
         };
