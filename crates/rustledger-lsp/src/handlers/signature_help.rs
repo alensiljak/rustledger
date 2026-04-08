@@ -16,17 +16,12 @@ pub const TRIGGER_CHARACTERS: &[&str] = &[" ", "*", "!"];
 pub fn handle_signature_help(params: &SignatureHelpParams, source: &str) -> Option<SignatureHelp> {
     let position = params.text_document_position_params.position;
     let line_idx = position.line as usize;
-    let col = position.character as usize;
-
     let lines: Vec<&str> = source.lines().collect();
     let line = lines.get(line_idx)?;
 
-    // Get text up to cursor
-    let text_before = if col <= line.len() {
-        &line[..col]
-    } else {
-        line
-    };
+    // Get text up to cursor (convert UTF-16 offset to byte offset)
+    let byte_col = super::utils::char_offset_to_byte(line, position.character as usize);
+    let text_before = &line[..byte_col];
 
     // Detect what kind of signature help to show
     detect_signature_context(text_before)
