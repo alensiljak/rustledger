@@ -100,13 +100,9 @@ pub fn handle_completion(
 fn detect_context(source: &str, position: Position) -> CompletionContext {
     let line = get_line(source, position.line as usize);
 
-    // Get text before cursor
-    let col = position.character as usize;
-    let before_cursor = if col <= line.len() {
-        &line[..col]
-    } else {
-        line
-    };
+    // Get text before cursor (convert UTF-16 offset to byte offset)
+    let byte_col = super::utils::char_offset_to_byte(line, position.character as usize);
+    let before_cursor = &line[..byte_col];
 
     let trimmed = before_cursor.trim_start();
 
@@ -489,5 +485,37 @@ mod tests {
                 prefix: "Assets:".to_string()
             }
         );
+    }
+
+    #[test]
+    fn test_detect_context_multibyte_inline_comment_no_panic() {
+        // Issue #699: cursor inside inline comment with Korean text should not panic.
+        // "소" is U+C18C = 3 bytes in UTF-8, so byte offset != char offset.
+        let source = "1970-01-01 open Assets:Cash:PettyCash KRW ; 소\n";
+        // Position at char offset 45 — inside "소" if treated as byte index
+        let pos = Position::new(0, 45);
+        // Must not panic (the actual context value doesn't matter)
+        let _ctx = detect_context(source, pos);
+    }
+
+    #[test]
+    fn test_detect_context_cjk_narration() {
+        // CJK text in narration — cursor after multi-byte characters
+        let source = "2024-01-15 * \"午餐\" \"中華料理\"\n  Expenses:Food  100 CNY\n";
+        let pos = Position::new(0, 20);
+        // Must not panic
+        let _ctx = detect_context(source, pos);
+    }
+
+    #[test]
+    fn test_detect_context_emoji_narration_utf16_offset() {
+        // Non-BMP emoji uses two UTF-16 code units in LSP positions.
+        // Validates surrogate-pair handling in char_offset_to_byte.
+        let source = "2024-01-15 * \"🍣\"\n";
+        // UTF-16 offsets: "2024-01-15 * \"" = 14 units, "🍣" = 2 units, "\"" = 1 unit
+        // Position 17 is after the closing quote
+        let pos = Position::new(0, 17);
+        // Must not panic
+        let _ctx = detect_context(source, pos);
     }
 }
