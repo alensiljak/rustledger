@@ -7,7 +7,7 @@ use crate::{
 use std::fmt::Write;
 
 /// Format metadata entries in deterministic (sorted) order.
-fn format_metadata(meta: &Metadata, indent: &str, out: &mut String) {
+pub(super) fn format_metadata(meta: &Metadata, indent: &str, out: &mut String) {
     // Sort keys for deterministic output order
     let mut keys: Vec<_> = meta.keys().collect();
     keys.sort();

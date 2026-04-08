@@ -1,5 +1,6 @@
 //! Transaction and posting formatting.
 
+use super::directives::format_metadata;
 use super::{
     FormatConfig, format_amount, format_cost_spec, format_meta_value, format_price_annotation,
 };
@@ -61,6 +62,11 @@ pub fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
         // Output any additional trailing comments on their own lines
         for trailing in posting.trailing_comments.iter().skip(1) {
             writeln!(out, "{}{}", &config.indent, trailing).unwrap();
+        }
+        // Posting-level metadata (indented one level deeper than the posting)
+        if !posting.meta.is_empty() {
+            let meta_indent = format!("{}{}", &config.indent, &config.indent);
+            format_metadata(&posting.meta, &meta_indent, &mut out);
         }
     }
 
