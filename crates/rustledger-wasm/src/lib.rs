@@ -38,6 +38,7 @@
 #![allow(clippy::missing_const_for_fn)]
 
 // Internal modules
+mod cache;
 mod convert;
 mod editor;
 mod helpers;
@@ -52,7 +53,7 @@ mod parsed_ledger;
 
 // Re-export public API
 pub use api::{balances, format, parse, query, validate_source, version};
-pub use api::{parse_multi_file, query_multi_file, validate_multi_file};
+pub use api::{hash_sources, parse_multi_file, query_multi_file, validate_multi_file};
 
 #[cfg(feature = "completions")]
 pub use api::bql_completions;
@@ -371,6 +372,16 @@ export class ParsedLedger {
 
     /** Find all references to the symbol at the given position. */
     getReferences(line: number, character: number): EditorReferencesResult | null;
+
+    /** Serialize this ledger to a compact binary blob for caching. */
+    serialize(): Uint8Array;
+
+    /**
+     * Restore a ParsedLedger from cached bytes.
+     * The source must be the same text used when the cache was created.
+     * Throws if the bytes are invalid or from a different library version.
+     */
+    static fromCache(bytes: Uint8Array, source: string): ParsedLedger;
 }
 
 /**
@@ -413,6 +424,15 @@ export class Ledger {
 
     /** Get completions using cross-file data. Pass the source of the file being edited. */
     getCompletions(source: string, line: number, character: number): EditorCompletionResult;
+
+    /** Serialize this ledger to a compact binary blob for caching. */
+    serialize(): Uint8Array;
+
+    /**
+     * Restore a Ledger from cached bytes.
+     * Throws if the bytes are invalid or from a different library version.
+     */
+    static fromCache(bytes: Uint8Array): Ledger;
 }
 
 // =============================================================================
@@ -455,6 +475,17 @@ export function validateMultiFile(files: FileMap, entryPoint: string): Validatio
  * @returns QueryResult with columns, rows, and any errors
  */
 export function queryMultiFile(files: FileMap, entryPoint: string, query: string): QueryResult;
+
+/**
+ * Compute a SHA-256 fingerprint of one or more source strings.
+ *
+ * Returns a lowercase hex string. Store alongside serialized ledger bytes
+ * and compare on next load; if the fingerprint changed, discard the cache.
+ *
+ * @param sources - Array of source strings
+ * @returns Lowercase hex SHA-256 hash
+ */
+export function hashSources(sources: string[]): string;
 "#;
 
 // =============================================================================

@@ -11,6 +11,7 @@ use wasm_bindgen::prelude::*;
 use rustledger_core::Directive;
 use rustledger_parser::ParseResult as ParserResult;
 
+use crate::cache;
 use crate::convert::directive_to_json;
 use crate::editor;
 use crate::helpers::{load_and_book, run_validation, to_js};
@@ -380,6 +381,54 @@ impl ParsedLedger {
         );
         to_js(&result)
     }
+
+    // =========================================================================
+    // Serialization / Caching
+    // =========================================================================
+
+    /// Serialize this ledger to a compact binary blob (rkyv).
+    ///
+    /// Store the bytes in OPFS or `IndexedDB` alongside a source fingerprint
+    /// (see [`hash_sources`]) and restore later with [`ParsedLedger::from_cache`].
+    #[wasm_bindgen]
+    pub fn serialize(&self) -> Result<Vec<u8>, JsError> {
+        let payload = cache::ParsedLedgerPayload {
+            directives: self.directives.clone(),
+            options: self.options.clone(),
+            parse_errors: self.parse_errors.clone(),
+            validation_errors: self.validation_errors.clone(),
+        };
+        cache::serialize_parsed(&payload).map_err(|e| JsError::new(&e))
+    }
+
+    /// Restore a `ParsedLedger` from bytes produced by [`ParsedLedger::serialize`].
+    ///
+    /// The `source` parameter must be the same source text used when the cache
+    /// was created; it is re-parsed (but not re-booked or re-validated) so that
+    /// editor features continue to work.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes are invalid or were produced by a different
+    /// library version.
+    #[wasm_bindgen(js_name = "fromCache")]
+    pub fn from_cache(bytes: &[u8], source: &str) -> Result<Self, JsError> {
+        let payload = cache::deserialize_parsed(bytes).map_err(|e| JsError::new(&e))?;
+
+        // Re-parse source for editor spans (cheap; booking is the expensive part).
+        let parse_result = rustledger_parser::parse(source);
+        let editor_cache = editor::EditorCache::new(source, &parse_result);
+
+        Ok(Self {
+            source: source.to_string(),
+            parse_result,
+            directives: payload.directives,
+            options: payload.options,
+            parse_errors: payload.parse_errors,
+            validation_errors: payload.validation_errors,
+            editor_cache,
+        })
+    }
 }
 
 // =============================================================================
@@ -564,5 +613,43 @@ impl Ledger {
     ) -> Result<JsValue, JsError> {
         let result = editor::get_completions_cached(source, line, character, &self.editor_cache);
         to_js(&result)
+    }
+
+    // =========================================================================
+    // Serialization / Caching
+    // =========================================================================
+
+    /// Serialize this ledger to a compact binary blob (rkyv).
+    ///
+    /// Store the bytes in OPFS or `IndexedDB` alongside a source fingerprint
+    /// (see [`hash_sources`]) and restore later with [`Ledger::from_cache`].
+    #[wasm_bindgen]
+    pub fn serialize(&self) -> Result<Vec<u8>, JsError> {
+        let payload = cache::LedgerPayload {
+            directives: self.directives.clone(),
+            options: self.options.clone(),
+            errors: self.errors.clone(),
+        };
+        cache::serialize_ledger(&payload).map_err(|e| JsError::new(&e))
+    }
+
+    /// Restore a `Ledger` from bytes produced by [`Ledger::serialize`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes are invalid or were produced by a different
+    /// library version.
+    #[wasm_bindgen(js_name = "fromCache")]
+    pub fn from_cache(bytes: &[u8]) -> Result<Self, JsError> {
+        let payload = cache::deserialize_ledger(bytes).map_err(|e| JsError::new(&e))?;
+
+        let editor_cache = editor::EditorCache::from_directives(&payload.directives);
+
+        Ok(Self {
+            directives: payload.directives,
+            options: payload.options,
+            errors: payload.errors,
+            editor_cache,
+        })
     }
 }
