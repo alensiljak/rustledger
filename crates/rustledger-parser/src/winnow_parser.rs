@@ -1634,15 +1634,9 @@ pub fn parse(source: &str) -> ParseResult {
                 let kind = if error_text.starts_with('\u{FEFF}') {
                     // UTF-8 BOM (byte order mark)
                     ParseErrorKind::SyntaxError("Invalid token: UTF-8 BOM detected; remove the BOM from the beginning of the file".to_string())
-                } else if looks_like_unicode_account(error_text) {
+                } else if let Some(account) = find_unicode_account(error_text) {
                     // Non-ASCII characters in what looks like an account name
-                    ParseErrorKind::InvalidAccount(
-                        error_text
-                            .split_whitespace()
-                            .next()
-                            .unwrap_or(error_text)
-                            .to_string(),
-                    )
+                    ParseErrorKind::InvalidAccount(account.to_string())
                 } else {
                     ParseErrorKind::SyntaxError("unexpected input".to_string())
                 };
@@ -1678,23 +1672,25 @@ pub fn parse(source: &str) -> ParseResult {
     }
 }
 
-/// Check if text looks like a Unicode account name (e.g., "Активы:Банк").
-/// An account name starts with an uppercase letter and contains a colon,
-/// but the regex for valid accounts only allows ASCII. If we see non-ASCII
-/// characters in an account-like pattern, it's a Unicode account error.
-fn looks_like_unicode_account(text: &str) -> bool {
-    let first_token = text.split_whitespace().next().unwrap_or("");
-    // Must contain a colon (account separator)
-    if !first_token.contains(':') {
-        return false;
+/// Find a Unicode account name in the error text, if any.
+///
+/// Scans all whitespace-delimited tokens in the text for a pattern that looks
+/// like an account name (uppercase start + colon) but contains non-ASCII.
+/// Returns the matching token, or `None`.
+fn find_unicode_account(text: &str) -> Option<&str> {
+    for token in text.split_whitespace() {
+        if !token.contains(':') {
+            continue;
+        }
+        let first_char = token.chars().next().unwrap_or(' ');
+        if !first_char.is_uppercase() {
+            continue;
+        }
+        if !token.is_ascii() {
+            return Some(token);
+        }
     }
-    // Must start with an uppercase letter (ASCII or Unicode)
-    let first_char = first_token.chars().next().unwrap_or(' ');
-    if !first_char.is_uppercase() {
-        return false;
-    }
-    // Must contain non-ASCII characters (otherwise it would have lexed as Account)
-    !first_token.is_ascii()
+    None
 }
 
 #[cfg(test)]
@@ -1991,5 +1987,35 @@ mod tests {
                 "Directive {i} should have non-empty span"
             );
         }
+    }
+
+    #[test]
+    fn test_bom_produces_invalid_token_error() {
+        let source = "\u{FEFF}2024-01-01 open Assets:Bank USD\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "BOM should produce a parse error"
+        );
+        let msg = result.errors[0].message();
+        assert!(
+            msg.contains("Invalid token"),
+            "BOM error should contain 'Invalid token', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_unicode_account_produces_invalid_account_error() {
+        let source = "2024-01-01 open Активы:Банк\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "Unicode account should produce a parse error"
+        );
+        let msg = result.errors[0].message();
+        assert!(
+            msg.contains("Invalid account"),
+            "Unicode account error should contain 'Invalid account', got: {msg}"
+        );
     }
 }
