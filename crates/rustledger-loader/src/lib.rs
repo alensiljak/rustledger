@@ -584,12 +584,9 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
                     {
                         ctx.update(number, currency.as_str());
                     }
-                    // Price (PriceAnnotation)
-                    if let Some(ref price) = posting.price
-                        && let Some(amount) = price.amount()
-                    {
-                        ctx.update(amount.number, amount.currency.as_str());
-                    }
+                    // Price annotations excluded — like Price directives, they
+                    // can have high-precision computed exchange rates that would
+                    // inflate the display precision of the target currency.
                 }
             }
             Directive::Balance(bal) => {
