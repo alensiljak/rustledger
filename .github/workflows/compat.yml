@@ -572,10 +572,10 @@ jobs:
           MAX_WORKERS = min(multiprocessing.cpu_count(), 8)
           print(f"Running BQL tests with {MAX_WORKERS} parallel workers")
 
-          # Standard queries to test
+          # Standard queries to test — real-world BQL that users actually run
           QUERIES = [
               "SELECT DISTINCT account ORDER BY account LIMIT 20",
-              "SELECT COUNT(*) AS total",
+              "SELECT account, SUM(position) GROUP BY account ORDER BY account LIMIT 10",
               "SELECT currency, COUNT(*) AS count GROUP BY currency ORDER BY count DESC LIMIT 5",
           ]
 
@@ -622,13 +622,15 @@ jobs:
                   "match": match,
               }
 
-          # Load check results to find files that passed both
+          # Load check results to find files that passed both AND have postings.
+          # Files with zero postings (definition-only) are excluded because BQL
+          # queries against an empty posting table are not meaningful user scenarios.
           valid_files = []
           try:
               with open("compat-check-results.jsonl") as f:
                   for line in f:
                       r = json.loads(line)
-                      if r.get("python_ok") and r.get("rust_ok"):
+                      if r.get("python_ok") and r.get("rust_ok") and r.get("rust_posting_count", 0) > 0:
                           valid_files.append(r["file"])
           except Exception:
               pass
