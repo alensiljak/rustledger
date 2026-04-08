@@ -694,7 +694,6 @@ mod tests {
     #[test]
     fn test_semantic_tokens_multibyte_positions() {
         // CJK narration — token positions must use UTF-16 code units, not bytes.
-        // "午餐" is 2 chars, each 3 bytes UTF-8 but 1 UTF-16 code unit.
         let source = "2024-01-15 * \"午餐\"\n  Expenses:Food  10 USD\n";
         let result = parse(source);
 
@@ -709,8 +708,6 @@ mod tests {
         let response = handle_semantic_tokens(&params, source, &result);
         assert!(response.is_some(), "should produce tokens for CJK source");
 
-        // Must not panic — that's the main check.
-        // Also verify account token on line 1 has correct position.
         if let Some(SemanticTokensResult::Tokens(tokens)) = response {
             let account_tokens: Vec<_> = tokens
                 .data
@@ -720,6 +717,63 @@ mod tests {
             assert!(
                 !account_tokens.is_empty(),
                 "should have account tokens even with CJK narration"
+            );
+        }
+    }
+
+    #[test]
+    fn test_semantic_tokens_emoji_utf16_positions() {
+        // Non-BMP emoji: 😀 is 4 bytes UTF-8 but 2 UTF-16 code units.
+        // Verify token positions are in UTF-16 code units, not bytes.
+        let source = "; 😀 comment\n2024-01-15 * \"😀\" #tag\n";
+        let result = parse(source);
+
+        let params = SemanticTokensParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let response = handle_semantic_tokens(&params, source, &result);
+        assert!(response.is_some());
+
+        if let Some(SemanticTokensResult::Tokens(tokens)) = response {
+            // Reconstruct absolute positions from delta encoding
+            let mut absolute = Vec::new();
+            let mut line = 0u32;
+            let mut start = 0u32;
+            for t in &tokens.data {
+                line += t.delta_line;
+                start = if t.delta_line == 0 {
+                    start + t.delta_start
+                } else {
+                    t.delta_start
+                };
+                absolute.push((line, start, t.length, t.token_type));
+            }
+
+            // Comment on line 0: "; 😀 comment" = 12 UTF-16 code units
+            let comment = absolute
+                .iter()
+                .find(|t| t.0 == 0 && t.3 == token_type::COMMENT);
+            assert!(comment.is_some(), "should have comment token");
+            assert_eq!(
+                comment.unwrap().2,
+                "; 😀 comment".encode_utf16().count() as u32,
+                "comment length should be in UTF-16 code units"
+            );
+
+            // Tag on line 1: starts after "2024-01-15 * \"😀\" "
+            let tag = absolute
+                .iter()
+                .find(|t| t.0 == 1 && t.3 == token_type::DECORATOR);
+            assert!(tag.is_some(), "should have tag token");
+            assert_eq!(
+                tag.unwrap().1,
+                "2024-01-15 * \"😀\" ".encode_utf16().count() as u32,
+                "tag start should be in UTF-16 code units"
             );
         }
     }
