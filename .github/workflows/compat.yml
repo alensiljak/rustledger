@@ -616,11 +616,23 @@ jobs:
               rs_data = extract_data(rs_out)
               match = (py_data == rs_data)
 
-              return {
+              result = {
                   "file": filename,
                   "query": query[:50],
                   "match": match,
               }
+              if not match:
+                  # Log first diff for debugging
+                  for i, (p, r) in enumerate(zip(py_data, rs_data)):
+                      if p != r:
+                          result["diff_line"] = i
+                          result["py_sample"] = p[:100]
+                          result["rs_sample"] = r[:100]
+                          break
+                  if len(py_data) != len(rs_data):
+                      result["py_rows"] = len(py_data)
+                      result["rs_rows"] = len(rs_data)
+              return result
 
           # Load check results to find files that passed both AND have postings.
           # Files with zero postings (definition-only) are excluded because BQL
@@ -670,6 +682,16 @@ jobs:
 
           print(f"BQL queries tested: {total_queries}")
           print(f"BQL queries matching: {matching_queries} ({bql_pct}%)")
+
+          # Log mismatches for debugging
+          for r in results:
+              if not r["match"]:
+                  diff_info = ""
+                  if "py_sample" in r:
+                      diff_info = f" py=[{r['py_sample']}] rs=[{r['rs_sample']}]"
+                  elif "py_rows" in r:
+                      diff_info = f" py_rows={r['py_rows']} rs_rows={r['rs_rows']}"
+                  print(f"  MISMATCH: {r['file']} | {r['query']}{diff_info}")
 
           # Write outputs
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
