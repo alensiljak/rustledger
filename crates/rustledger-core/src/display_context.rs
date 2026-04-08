@@ -62,8 +62,20 @@ impl DisplayContext {
     ///
     /// This records the decimal precision of the number (number of digits after
     /// the decimal point) and updates the maximum precision seen for that currency.
+    /// Maximum display precision tracked per currency.
+    ///
+    /// Booking computations can produce numbers with up to 28 decimal places
+    /// (`rust_decimal` maximum). Values like `0.0400` have explicit scale 4 in
+    /// the source, but interpolated amounts can have much higher scale. Capping
+    /// prevents computed values from inflating the display precision.
+    const MAX_DISPLAY_PRECISION: u32 = 8;
+
+    /// Update the display context with a number for a currency.
+    ///
+    /// Records the decimal precision (capped at [`Self::MAX_DISPLAY_PRECISION`])
+    /// and updates the maximum precision seen for that currency.
     pub fn update(&mut self, number: Decimal, currency: &str) {
-        let precision = Self::decimal_precision(number);
+        let precision = Self::decimal_precision(number).min(Self::MAX_DISPLAY_PRECISION);
         let entry = self.precisions.entry(currency.to_string()).or_insert(0);
         *entry = (*entry).max(precision);
     }
