@@ -1052,4 +1052,42 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_format_posting_metadata_issue_701() {
+        // Issue #701: posting-level metadata should not be lost on format
+        let mut posting_meta = Metadata::default();
+        posting_meta.insert(
+            "note".to_string(),
+            MetaValue::String("this note is lost".to_string()),
+        );
+
+        let mut posting = Posting::new("Expenses:Expense", Amount::new(dec!(10), "USD"));
+        posting.meta = posting_meta;
+
+        let txn = Transaction {
+            date: date(2026, 4, 7),
+            flag: '*',
+            payee: None,
+            narration: "my expense".into(),
+            tags: vec![],
+            links: vec![],
+            postings: vec![posting, Posting::auto("Assets:Wallet")],
+            meta: Metadata::default(),
+            trailing_comments: Vec::new(),
+        };
+
+        let config = FormatConfig::default();
+        let formatted = format_transaction(&txn, &config);
+
+        assert!(
+            formatted.contains("note: \"this note is lost\""),
+            "posting metadata should be preserved in formatted output, got:\n{formatted}"
+        );
+        // Metadata should be indented deeper than the posting
+        assert!(
+            formatted.contains("    note:"),
+            "posting metadata should have double indent (4 spaces), got:\n{formatted}"
+        );
+    }
 }
