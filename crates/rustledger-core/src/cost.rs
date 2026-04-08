@@ -131,7 +131,6 @@ impl Cost {
 
 impl fmt::Display for Cost {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Display number as-is - precision is preserved from input
         write!(f, "{{{} {}", self.number, self.currency)?;
         if let Some(date) = self.date {
             write!(f, ", {date}")?;

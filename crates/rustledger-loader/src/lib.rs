@@ -584,12 +584,9 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
                     {
                         ctx.update(number, currency.as_str());
                     }
-                    // Price (PriceAnnotation)
-                    if let Some(ref price) = posting.price
-                        && let Some(amount) = price.amount()
-                    {
-                        ctx.update(amount.number, amount.currency.as_str());
-                    }
+                    // Price annotations excluded — like Price directives, they
+                    // can have high-precision computed exchange rates that would
+                    // inflate the display precision of the target currency.
                 }
             }
             Directive::Balance(bal) => {
@@ -598,8 +595,11 @@ fn build_display_context(directives: &[Spanned<Directive>], options: &Options) -
                     ctx.update(tol, bal.amount.currency.as_str());
                 }
             }
-            Directive::Price(price) => {
-                ctx.update(price.amount.number, price.amount.currency.as_str());
+            Directive::Price(_) => {
+                // Price amounts are excluded from display precision tracking.
+                // Price directives can have very high precision (e.g., computed
+                // exchange rates) which would inflate the display precision of
+                // the target currency for all other amounts.
             }
             Directive::Pad(_)
             | Directive::Open(_)

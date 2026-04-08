@@ -62,6 +62,10 @@ impl DisplayContext {
     ///
     /// This records the decimal precision of the number (number of digits after
     /// the decimal point) and updates the maximum precision seen for that currency.
+    /// Update the display context with a number for a currency.
+    ///
+    /// This records the decimal precision of the number (number of digits after
+    /// the decimal point) and updates the maximum precision seen for that currency.
     pub fn update(&mut self, number: Decimal, currency: &str) {
         let precision = Self::decimal_precision(number);
         let entry = self.precisions.entry(currency.to_string()).or_insert(0);
@@ -108,6 +112,19 @@ impl DisplayContext {
             return Some(precision);
         }
         self.precisions.get(currency).copied()
+    }
+
+    /// Quantize a number to the tracked precision for a currency.
+    ///
+    /// Rounds the number to the maximum decimal places seen for the currency.
+    /// If the currency has no tracked precision, returns the number unchanged.
+    #[must_use]
+    pub fn quantize(&self, number: Decimal, currency: &str) -> Decimal {
+        if let Some(dp) = self.get_precision(currency) {
+            number.round_dp(dp)
+        } else {
+            number
+        }
     }
 
     /// Format a decimal number for a currency using the tracked precision.
