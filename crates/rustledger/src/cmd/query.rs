@@ -474,8 +474,9 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
             } else {
                 let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                 if let Some(ref cost) = p.cost {
+                    // Space after { matches Python beanquery: { 79.22 USD}
                     s.push_str(&format!(
-                        " {{{}}}",
+                        " {{ {}}}",
                         ctx.format_amount(cost.number, cost.currency.as_str())
                     ));
                 }
@@ -559,7 +560,7 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
                         let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                         if let Some(ref cost) = p.cost {
                             s.push_str(&format!(
-                                " {{{}}}",
+                                " {{ {}}}",
                                 ctx.format_amount(cost.number, cost.currency.as_str())
                             ));
                         }
