@@ -62,20 +62,19 @@ impl DisplayContext {
     ///
     /// This records the decimal precision of the number (number of digits after
     /// the decimal point) and updates the maximum precision seen for that currency.
-    /// Maximum display precision tracked per currency.
-    ///
-    /// Booking computations can produce numbers with up to 28 decimal places
-    /// (`rust_decimal` maximum). Values like `0.0400` have explicit scale 4 in
-    /// the source, but interpolated amounts can have much higher scale. Capping
-    /// prevents computed values from inflating the display precision.
-    const MAX_DISPLAY_PRECISION: u32 = 8;
-
     /// Update the display context with a number for a currency.
     ///
-    /// Records the decimal precision (capped at [`Self::MAX_DISPLAY_PRECISION`])
-    /// and updates the maximum precision seen for that currency.
+    /// Records the decimal precision and updates the maximum precision seen
+    /// for that currency. Uses the normalized number's scale to avoid
+    /// inflated precision from booking computations (e.g., `2.940000...`
+    /// normalizes to scale 2, not 28).
     pub fn update(&mut self, number: Decimal, currency: &str) {
-        let precision = Self::decimal_precision(number).min(Self::MAX_DISPLAY_PRECISION);
+        // Normalize strips trailing zeros from computed values while
+        // preserving meaningful precision (e.g., 111.11 stays scale 2,
+        // but 2.9400000000 becomes scale 2). Numbers like 10.00 normalize
+        // to scale 0, but that's fine — they contribute 0 dp which won't
+        // reduce the tracked max from other numbers with real fractional parts.
+        let precision = Self::decimal_precision(number.normalize());
         let entry = self.precisions.entry(currency.to_string()).or_insert(0);
         *entry = (*entry).max(precision);
     }
