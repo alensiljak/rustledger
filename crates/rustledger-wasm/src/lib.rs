@@ -977,4 +977,132 @@ include "accounts.beancount"
             "expanded directive count differs"
         );
     }
+
+    // =========================================================================
+    // Serialization / Caching roundtrip tests
+    // =========================================================================
+
+    #[test]
+    fn test_parsed_ledger_serialize_roundtrip() {
+        use crate::cache;
+        use crate::helpers::load_and_book;
+
+        let source = r#"
+option "title" "Cache Test"
+option "operating_currency" "USD"
+
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+
+2024-01-15 * "Coffee" "Morning latte"
+  Expenses:Food  5.00 USD
+  Assets:Bank   -5.00 USD
+
+2024-01-20 * "Groceries"
+  Expenses:Food  42.50 USD
+  Assets:Bank   -42.50 USD
+"#;
+
+        // Build the payload the same way ParsedLedger.serialize() does
+        let processed = load_and_book(source);
+        let payload = cache::ParsedLedgerPayload {
+            directives: processed.directives.clone(),
+            options: processed.options.clone(),
+            parse_errors: Vec::new(),
+            validation_errors: Vec::new(),
+        };
+
+        let bytes = cache::serialize_parsed(&payload).expect("serialize");
+        let restored = cache::deserialize_parsed(&bytes).expect("deserialize");
+
+        assert_eq!(
+            restored.directives.len(),
+            processed.directives.len(),
+            "directive count should match after roundtrip"
+        );
+        assert_eq!(
+            restored.options.title.as_deref(),
+            Some("Cache Test"),
+            "title preserved"
+        );
+        assert_eq!(
+            restored.options.operating_currencies,
+            ["USD"],
+            "operating currencies preserved"
+        );
+
+        // Verify the from_cache path works (re-parses source for editor features)
+        use crate::editor::EditorCache;
+        let parse_result = rustledger_parser::parse(source);
+        let editor_cache = EditorCache::new(source, &parse_result);
+        assert!(
+            !editor_cache.accounts.is_empty(),
+            "editor cache should have accounts after re-parse"
+        );
+    }
+
+    #[test]
+    fn test_ledger_serialize_roundtrip() {
+        use crate::cache;
+        use crate::helpers::load_and_book;
+
+        let source = r#"
+option "title" "Multi Cache"
+option "operating_currency" "EUR"
+
+2024-01-01 open Assets:Bank EUR
+2024-01-01 open Expenses:Rent EUR
+
+2024-02-01 * "Rent"
+  Expenses:Rent  800 EUR
+  Assets:Bank   -800 EUR
+"#;
+
+        let processed = load_and_book(source);
+        let payload = cache::LedgerPayload {
+            directives: processed.directives.clone(),
+            options: processed.options.clone(),
+            errors: Vec::new(),
+        };
+
+        let bytes = cache::serialize_ledger(&payload).expect("serialize");
+        let restored = cache::deserialize_ledger(&bytes).expect("deserialize");
+
+        assert_eq!(
+            restored.directives.len(),
+            processed.directives.len(),
+            "directive count should match after roundtrip"
+        );
+        assert_eq!(restored.options.title.as_deref(), Some("Multi Cache"));
+
+        // Verify EditorCache can be rebuilt from restored directives
+        let editor_cache = crate::editor::EditorCache::from_directives(&restored.directives);
+        assert!(
+            !editor_cache.accounts.is_empty(),
+            "editor cache should have accounts from restored directives"
+        );
+    }
+
+    #[test]
+    fn test_serialize_rejects_corrupted_bytes() {
+        use crate::cache;
+
+        // Bad magic
+        assert!(cache::deserialize_ledger(b"GARBAGE_DATA_HERE").is_err());
+        assert!(cache::deserialize_parsed(b"GARBAGE_DATA_HERE").is_err());
+
+        // Too short
+        assert!(cache::deserialize_ledger(b"short").is_err());
+    }
+
+    #[test]
+    fn test_hash_sources_api() {
+        let h1 = hash_sources(vec!["source v1".to_string()]);
+        let h2 = hash_sources(vec!["source v1".to_string()]);
+        let h3 = hash_sources(vec!["source v2".to_string()]);
+
+        assert_eq!(h1, h2, "same content → same hash");
+        assert_ne!(h1, h3, "different content → different hash");
+        assert_eq!(h1.len(), 64, "SHA-256 produces 64 hex chars");
+    }
 }
