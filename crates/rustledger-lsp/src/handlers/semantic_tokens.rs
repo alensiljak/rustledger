@@ -95,6 +95,8 @@ struct RawToken {
     length: u32,
     token_type: u32,
     modifiers: u32,
+    /// Byte offset in source (used for modifier overlay matching).
+    byte_offset: usize,
 }
 
 /// Map a lexer token to a semantic token type, if applicable.
@@ -146,9 +148,17 @@ fn collect_lexer_tokens(source: &str) -> Vec<RawToken> {
     let lexer_tokens = tokenize(source);
     let mut raw_tokens = Vec::with_capacity(lexer_tokens.len());
 
+    // Build line start offsets for O(1) byte-to-line/col conversion.
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(source.match_indices('\n').map(|(i, _)| i + 1))
+        .collect();
+
     for (token, span) in &lexer_tokens {
         if let Some(tt) = lexer_token_type(token) {
-            let (line, col) = byte_offset_to_position(source, span.start);
+            // Binary search for the line containing this byte offset.
+            let line_idx = line_starts.partition_point(|&start| start <= span.start) - 1;
+            let line = line_idx as u32;
+            let col = (span.start - line_starts[line_idx]) as u32;
             let length = (span.end - span.start) as u32;
             raw_tokens.push(RawToken {
                 line,
@@ -156,6 +166,7 @@ fn collect_lexer_tokens(source: &str) -> Vec<RawToken> {
                 length,
                 token_type: tt,
                 modifiers: 0,
+                byte_offset: span.start,
             });
         }
     }
@@ -223,22 +234,7 @@ fn apply_directive_modifiers(
 
 /// Check if a raw token's source text matches a given string.
 fn source_slice_matches(source: &str, token: &RawToken, expected: &str) -> bool {
-    // Convert line/col back to approximate byte offset for comparison.
-    // This is O(n) per call but only used for modifier overlay (few directives).
-    let mut line = 0u32;
-    let mut col = 0u32;
-    for (i, ch) in source.char_indices() {
-        if line == token.line && col == token.start {
-            return source[i..].starts_with(expected);
-        }
-        if ch == '\n' {
-            line += 1;
-            col = 0;
-        } else {
-            col += 1;
-        }
-    }
-    false
+    source[token.byte_offset..].starts_with(expected)
 }
 
 /// Convert raw tokens to delta-encoded semantic tokens.
@@ -646,6 +642,7 @@ mod tests {
             length: 5,
             token_type: 0,
             modifiers: 0,
+            byte_offset: 0,
         };
 
         let range = Range {
