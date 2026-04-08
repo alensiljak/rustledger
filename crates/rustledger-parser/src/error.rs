@@ -194,7 +194,7 @@ impl fmt::Display for ParseErrorKind {
             Self::Expected(what) => write!(f, "expected {what}"),
             Self::InvalidDate(s) => write!(f, "invalid date '{s}'"),
             Self::InvalidNumber(s) => write!(f, "invalid number '{s}'"),
-            Self::InvalidAccount(s) => write!(f, "invalid account '{s}'"),
+            Self::InvalidAccount(s) => write!(f, "Invalid account '{s}'"),
             Self::InvalidCurrency(s) => write!(f, "invalid currency '{s}'"),
             Self::UnclosedString => write!(f, "unclosed string literal"),
             Self::InvalidEscape(c) => write!(f, "invalid escape sequence '\\{c}'"),
@@ -367,7 +367,7 @@ mod tests {
             ),
             (
                 ParseErrorKind::InvalidAccount("bad".to_string()),
-                "invalid account 'bad'",
+                "Invalid account 'bad'",
             ),
             (
                 ParseErrorKind::InvalidCurrency("???".to_string()),

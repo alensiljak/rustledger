@@ -1629,10 +1629,18 @@ pub fn parse(source: &str) -> ParseResult {
             if let Some(err) = stream.deferred_error.take() {
                 errors.push(err);
             } else {
-                errors.push(ParseError::new(
-                    ParseErrorKind::SyntaxError("unexpected input".to_string()),
-                    span,
-                ));
+                // Produce specific error messages for known patterns
+                let error_text = &source[span.start..span.end.min(source.len())];
+                let kind = if error_text.starts_with('\u{FEFF}') {
+                    // UTF-8 BOM (byte order mark)
+                    ParseErrorKind::SyntaxError("Invalid token: UTF-8 BOM detected; remove the BOM from the beginning of the file".to_string())
+                } else if let Some(account) = find_unicode_account(error_text) {
+                    // Non-ASCII characters in what looks like an account name
+                    ParseErrorKind::InvalidAccount(account.to_string())
+                } else {
+                    ParseErrorKind::SyntaxError("unexpected input".to_string())
+                };
+                errors.push(ParseError::new(kind, span));
             }
         }
     }
@@ -1662,6 +1670,27 @@ pub fn parse(source: &str) -> ParseResult {
         errors,
         warnings: Vec::new(),
     }
+}
+
+/// Find a Unicode account name in the error text, if any.
+///
+/// Scans all whitespace-delimited tokens in the text for a pattern that looks
+/// like an account name (uppercase start + colon) but contains non-ASCII.
+/// Returns the matching token, or `None`.
+fn find_unicode_account(text: &str) -> Option<&str> {
+    for token in text.split_whitespace() {
+        if !token.contains(':') {
+            continue;
+        }
+        let first_char = token.chars().next().unwrap_or(' ');
+        if !first_char.is_uppercase() {
+            continue;
+        }
+        if !token.is_ascii() {
+            return Some(token);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -1958,5 +1987,35 @@ mod tests {
                 "Directive {i} should have non-empty span"
             );
         }
+    }
+
+    #[test]
+    fn test_bom_produces_invalid_token_error() {
+        let source = "\u{FEFF}2024-01-01 open Assets:Bank USD\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "BOM should produce a parse error"
+        );
+        let msg = result.errors[0].message();
+        assert!(
+            msg.contains("Invalid token"),
+            "BOM error should contain 'Invalid token', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_unicode_account_produces_invalid_account_error() {
+        let source = "2024-01-01 open Активы:Банк\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "Unicode account should produce a parse error"
+        );
+        let msg = result.errors[0].message();
+        assert!(
+            msg.contains("Invalid account"),
+            "Unicode account error should contain 'Invalid account', got: {msg}"
+        );
     }
 }

@@ -77,7 +77,7 @@ pub fn validate_transaction_structure(
                 errors.push(ValidationError::new(
                     ErrorCode::NegativeCost,
                     format!(
-                        "Cost per unit is negative ({per} {cost_currency}) for {units_str} in posting to {}; cost must be non-negative",
+                        "Cost is negative: per-unit cost ({per} {cost_currency}) for {units_str} in posting to {}",
                         posting.account
                     ),
                     txn.date,
@@ -89,7 +89,7 @@ pub fn validate_transaction_structure(
                 errors.push(ValidationError::new(
                     ErrorCode::NegativeCost,
                     format!(
-                        "Total cost is negative ({total} {cost_currency}) for {units_str} in posting to {}; cost must be non-negative",
+                        "Cost is negative: total cost ({total} {cost_currency}) for {units_str} in posting to {}",
                         posting.account
                     ),
                     txn.date,
@@ -148,7 +148,7 @@ pub fn validate_account_lifecycle(
         errors.push(ValidationError::new(
             ErrorCode::AccountClosed,
             format!(
-                "Account {} used on {} but was closed on {}",
+                "Posting to inactive account {} on {} (closed on {})",
                 posting.account, txn.date, closed
             ),
             txn.date,
@@ -173,7 +173,7 @@ pub fn validate_posting_currency(
         errors.push(ValidationError::new(
             ErrorCode::CurrencyNotAllowed,
             format!(
-                "Currency {} not allowed in account {}",
+                "Invalid currency {} not allowed in account {}",
                 units.currency, posting.account
             ),
             txn.date,
@@ -431,7 +431,7 @@ pub fn process_inventory_reduction(
                 ValidationError::new(
                     ErrorCode::InsufficientUnits,
                     format!(
-                        "Insufficient units in {}: requested {}, available {}",
+                        "Not enough units in {}: requested {}, available {}; not enough to reduce",
                         posting.account, requested, available
                     ),
                     txn.date,
