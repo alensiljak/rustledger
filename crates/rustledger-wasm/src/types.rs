@@ -24,7 +24,9 @@ pub struct Ledger {
 }
 
 /// Ledger options.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Default, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct LedgerOptions {
     /// Operating currencies.
     pub operating_currencies: Vec<String>,
@@ -154,7 +156,18 @@ pub struct PostingCostJson {
 }
 
 /// Error severity level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    rkyv::Archive,
+    rkyv::Serialize,
+    rkyv::Deserialize,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     /// An error that prevents processing.
@@ -164,7 +177,9 @@ pub enum Severity {
 }
 
 /// An error with source location.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Serialize, Deserialize, rkyv::Archive, rkyv::Serialize, rkyv::Deserialize,
+)]
 pub struct Error {
     /// Error message.
     pub message: String,

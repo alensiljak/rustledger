@@ -38,6 +38,7 @@
 #![allow(clippy::missing_const_for_fn)]
 
 // Internal modules
+mod cache;
 mod convert;
 mod editor;
 mod helpers;
@@ -52,7 +53,7 @@ mod parsed_ledger;
 
 // Re-export public API
 pub use api::{balances, format, parse, query, validate_source, version};
-pub use api::{parse_multi_file, query_multi_file, validate_multi_file};
+pub use api::{hash_sources, parse_multi_file, query_multi_file, validate_multi_file};
 
 #[cfg(feature = "completions")]
 pub use api::bql_completions;
@@ -371,6 +372,16 @@ export class ParsedLedger {
 
     /** Find all references to the symbol at the given position. */
     getReferences(line: number, character: number): EditorReferencesResult | null;
+
+    /** Serialize this ledger to a compact binary blob for caching. */
+    serialize(): Uint8Array;
+
+    /**
+     * Restore a ParsedLedger from cached bytes.
+     * The source must be the same text used when the cache was created.
+     * Throws if the bytes are invalid or from a different library version.
+     */
+    static fromCache(bytes: Uint8Array, source: string): ParsedLedger;
 }
 
 /**
@@ -413,6 +424,15 @@ export class Ledger {
 
     /** Get completions using cross-file data. Pass the source of the file being edited. */
     getCompletions(source: string, line: number, character: number): EditorCompletionResult;
+
+    /** Serialize this ledger to a compact binary blob for caching. */
+    serialize(): Uint8Array;
+
+    /**
+     * Restore a Ledger from cached bytes.
+     * Throws if the bytes are invalid or from a different library version.
+     */
+    static fromCache(bytes: Uint8Array): Ledger;
 }
 
 // =============================================================================
@@ -455,6 +475,17 @@ export function validateMultiFile(files: FileMap, entryPoint: string): Validatio
  * @returns QueryResult with columns, rows, and any errors
  */
 export function queryMultiFile(files: FileMap, entryPoint: string, query: string): QueryResult;
+
+/**
+ * Compute a SHA-256 fingerprint of one or more source strings.
+ *
+ * Returns a lowercase hex string. Store alongside serialized ledger bytes
+ * and compare on next load; if the fingerprint changed, discard the cache.
+ *
+ * @param sources - Array of source strings
+ * @returns Lowercase hex SHA-256 hash
+ */
+export function hashSources(sources: string[]): string;
 "#;
 
 // =============================================================================
@@ -945,5 +976,133 @@ include "accounts.beancount"
             wasm_expanded.len(),
             "expanded directive count differs"
         );
+    }
+
+    // =========================================================================
+    // Serialization / Caching roundtrip tests
+    // =========================================================================
+
+    #[test]
+    fn test_parsed_ledger_serialize_roundtrip() {
+        use crate::cache;
+        use crate::helpers::load_and_book;
+
+        let source = r#"
+option "title" "Cache Test"
+option "operating_currency" "USD"
+
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+
+2024-01-15 * "Coffee" "Morning latte"
+  Expenses:Food  5.00 USD
+  Assets:Bank   -5.00 USD
+
+2024-01-20 * "Groceries"
+  Expenses:Food  42.50 USD
+  Assets:Bank   -42.50 USD
+"#;
+
+        // Build the payload the same way ParsedLedger.serialize() does
+        let processed = load_and_book(source);
+        let payload = cache::ParsedLedgerPayload {
+            directives: processed.directives.clone(),
+            options: processed.options.clone(),
+            parse_errors: Vec::new(),
+            validation_errors: Vec::new(),
+        };
+
+        let bytes = cache::serialize_parsed(&payload).expect("serialize");
+        let restored = cache::deserialize_parsed(&bytes).expect("deserialize");
+
+        assert_eq!(
+            restored.directives.len(),
+            processed.directives.len(),
+            "directive count should match after roundtrip"
+        );
+        assert_eq!(
+            restored.options.title.as_deref(),
+            Some("Cache Test"),
+            "title preserved"
+        );
+        assert_eq!(
+            restored.options.operating_currencies,
+            ["USD"],
+            "operating currencies preserved"
+        );
+
+        // Verify the from_cache path works (re-parses source for editor features)
+        use crate::editor::EditorCache;
+        let parse_result = rustledger_parser::parse(source);
+        let editor_cache = EditorCache::new(source, &parse_result);
+        assert!(
+            !editor_cache.accounts.is_empty(),
+            "editor cache should have accounts after re-parse"
+        );
+    }
+
+    #[test]
+    fn test_ledger_serialize_roundtrip() {
+        use crate::cache;
+        use crate::helpers::load_and_book;
+
+        let source = r#"
+option "title" "Multi Cache"
+option "operating_currency" "EUR"
+
+2024-01-01 open Assets:Bank EUR
+2024-01-01 open Expenses:Rent EUR
+
+2024-02-01 * "Rent"
+  Expenses:Rent  800 EUR
+  Assets:Bank   -800 EUR
+"#;
+
+        let processed = load_and_book(source);
+        let payload = cache::LedgerPayload {
+            directives: processed.directives.clone(),
+            options: processed.options.clone(),
+            errors: Vec::new(),
+        };
+
+        let bytes = cache::serialize_ledger(&payload).expect("serialize");
+        let restored = cache::deserialize_ledger(&bytes).expect("deserialize");
+
+        assert_eq!(
+            restored.directives.len(),
+            processed.directives.len(),
+            "directive count should match after roundtrip"
+        );
+        assert_eq!(restored.options.title.as_deref(), Some("Multi Cache"));
+
+        // Verify EditorCache can be rebuilt from restored directives
+        let editor_cache = crate::editor::EditorCache::from_directives(&restored.directives);
+        assert!(
+            !editor_cache.accounts.is_empty(),
+            "editor cache should have accounts from restored directives"
+        );
+    }
+
+    #[test]
+    fn test_serialize_rejects_corrupted_bytes() {
+        use crate::cache;
+
+        // Bad magic
+        assert!(cache::deserialize_ledger(b"GARBAGE_DATA_HERE").is_err());
+        assert!(cache::deserialize_parsed(b"GARBAGE_DATA_HERE").is_err());
+
+        // Too short
+        assert!(cache::deserialize_ledger(b"short").is_err());
+    }
+
+    #[test]
+    fn test_hash_sources_api() {
+        let h1 = hash_sources(vec!["source v1".to_string()]);
+        let h2 = hash_sources(vec!["source v1".to_string()]);
+        let h3 = hash_sources(vec!["source v2".to_string()]);
+
+        assert_eq!(h1, h2, "same content → same hash");
+        assert_ne!(h1, h3, "different content → different hash");
+        assert_eq!(h1.len(), 64, "SHA-256 produces 64 hex chars");
     }
 }

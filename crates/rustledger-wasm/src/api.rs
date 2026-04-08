@@ -704,3 +704,22 @@ pub fn query_multi_file(
         }
     }
 }
+
+/// Compute a SHA-256 fingerprint of one or more source strings.
+///
+/// Returns the fingerprint as a lowercase hex string. Store this value
+/// alongside serialized ledger bytes and compare on subsequent loads to
+/// detect whether the source has changed.
+///
+/// Each string is separated by a NUL byte before hashing so that
+/// `["ab", "c"]` produces a different fingerprint from `["a", "bc"]`.
+///
+/// The fingerprint is order-sensitive: `["a", "b"]` hashes differently
+/// from `["b", "a"]`. Callers using an unordered collection should sort
+/// by filename first for deterministic results.
+#[wasm_bindgen(js_name = "hashSources")]
+#[allow(clippy::needless_pass_by_value)] // wasm-bindgen requires owned Vec<String>
+pub fn hash_sources(sources: Vec<String>) -> String {
+    let refs: Vec<&str> = sources.iter().map(String::as_str).collect();
+    crate::cache::hash_sources(&refs)
+}
