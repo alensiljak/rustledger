@@ -121,11 +121,7 @@ impl DisplayContext {
     #[must_use]
     pub fn quantize(&self, number: Decimal, currency: &str) -> Decimal {
         if let Some(dp) = self.get_precision(currency) {
-            // Normalize after rounding to strip trailing zeros.
-            // round_dp(4) on 29672.250000000 gives 29672.2500 (scale 4);
-            // normalize gives 29672.25 (scale 2) which is what we want
-            // for per-column display context tracking.
-            number.round_dp(dp).normalize()
+            number.round_dp(dp)
         } else {
             number
         }

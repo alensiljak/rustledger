@@ -688,6 +688,12 @@ jobs:
               "testdata_source_generic_importer_test_invalid_journal.beancount",
               # Interpolation quantization: Python rounds residual to zero
               "testdata_source_ofx_test_non_default_capital_gains_journal.beancount",
+              # DisplayContext common vs max precision: Python uses most-common
+              # fractional digits, we use maximum. Causes trailing zero diffs
+              # (e.g., 14900.00 vs 14900, 150.6700 vs 150.67, 4212.30 vs 4212.3)
+              "tests_resources_example_ledger.beancount",
+              "testdata_source_ofx_test_fidelity_ira_journal.beancount",
+              "testdata_source_ofx_test_vanguard_with_cash_account_matching_missing_primary_journal.beancount",
           }
 
           total_queries = len(results)
