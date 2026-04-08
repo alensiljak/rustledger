@@ -267,7 +267,22 @@ fn write_text<W: Write>(
         return Ok(());
     }
 
-    // Calculate column widths
+    // Build per-column display contexts by scanning all values.
+    // This matches Python beanquery's two-pass approach:
+    // 1. Quantize values using the ledger-wide context (rounds to input precision)
+    // 2. Build a column-local context from the quantized values (for formatting)
+    // This ensures each column only uses the precision needed by its own values,
+    // rather than the max precision seen anywhere in the ledger.
+    let mut col_contexts: Vec<DisplayContext> = vec![DisplayContext::new(); result.columns.len()];
+    for row in &result.rows {
+        for (i, value) in row.iter().enumerate() {
+            if i < col_contexts.len() {
+                update_column_context(&mut col_contexts[i], value, ctx);
+            }
+        }
+    }
+
+    // Calculate column widths using per-column contexts
     let mut widths: Vec<usize> = result
         .columns
         .iter()
@@ -276,7 +291,8 @@ fn write_text<W: Write>(
 
     for row in &result.rows {
         for (i, value) in row.iter().enumerate() {
-            let len = format_value(value, numberify, ctx).len();
+            let col_ctx = col_contexts.get(i).unwrap_or(ctx);
+            let len = format_value(value, numberify, col_ctx).len();
             if i < widths.len() && len > widths[i] {
                 widths[i] = len;
             }
@@ -315,13 +331,14 @@ fn write_text<W: Write>(
     }
     writeln!(writer)?;
 
-    // Print rows
+    // Print rows using per-column display contexts
     for row in &result.rows {
         for (i, value) in row.iter().enumerate() {
             if i > 0 {
                 write!(writer, "  ")?;
             }
-            let formatted = format_value(value, numberify, ctx);
+            let col_ctx = col_contexts.get(i).unwrap_or(ctx);
+            let formatted = format_value(value, numberify, col_ctx);
             if i < widths.len() {
                 // Right-align numeric columns to match Python beancount
                 if i < is_numeric_col.len() && is_numeric_col[i] {
@@ -403,6 +420,40 @@ fn write_beancount<W: Write>(
 }
 
 /// Format a value for display using the display context for precision.
+/// Update a per-column display context with the amounts in a value.
+///
+/// Uses the ledger-wide context to quantize numbers first (round to the
+/// currency's input precision), then feeds the quantized values into the
+/// column context. This way each column's display precision is based only
+/// on the values that appear in it, matching Python beanquery's behavior.
+fn update_column_context(col_ctx: &mut DisplayContext, value: &Value, ledger_ctx: &DisplayContext) {
+    match value {
+        Value::Amount(a) => {
+            let quantized = ledger_ctx.quantize(a.number, a.currency.as_str());
+            col_ctx.update(quantized, a.currency.as_str());
+        }
+        Value::Position(p) => {
+            let quantized = ledger_ctx.quantize(p.units.number, p.units.currency.as_str());
+            col_ctx.update(quantized, p.units.currency.as_str());
+            if let Some(ref cost) = p.cost {
+                let quantized = ledger_ctx.quantize(cost.number, cost.currency.as_str());
+                col_ctx.update(quantized, cost.currency.as_str());
+            }
+        }
+        Value::Inventory(inv) => {
+            for pos in inv.positions() {
+                let quantized = ledger_ctx.quantize(pos.units.number, pos.units.currency.as_str());
+                col_ctx.update(quantized, pos.units.currency.as_str());
+                if let Some(ref cost) = pos.cost {
+                    let quantized = ledger_ctx.quantize(cost.number, cost.currency.as_str());
+                    col_ctx.update(quantized, cost.currency.as_str());
+                }
+            }
+        }
+        _ => {} // Non-numeric types don't affect display precision
+    }
+}
+
 fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -423,9 +474,9 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
             } else {
                 let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                 if let Some(ref cost) = p.cost {
-                    // Cost uses its own currency's precision
+                    // Space after { matches Python beanquery: { 79.22 USD}
                     s.push_str(&format!(
-                        " {{{}}}",
+                        " {{ {}}}",
                         ctx.format_amount(cost.number, cost.currency.as_str())
                     ));
                 }
@@ -508,10 +559,8 @@ fn format_value(value: &Value, numberify: bool, ctx: &DisplayContext) -> String 
                     } else {
                         let mut s = ctx.format_amount(p.units.number, p.units.currency.as_str());
                         if let Some(ref cost) = p.cost {
-                            // Cost uses its own currency's precision
-                            // Don't include date in display (matches Python beancount behavior)
                             s.push_str(&format!(
-                                " {{{}}}",
+                                " {{ {}}}",
                                 ctx.format_amount(cost.number, cost.currency.as_str())
                             ));
                         }
