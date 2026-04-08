@@ -44,6 +44,9 @@ pub fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
         .unwrap();
     }
 
+    // Double indent for posting-level metadata
+    let meta_indent = format!("{}{}", &config.indent, &config.indent);
+
     // Postings
     for posting in &txn.postings {
         // Output comments that appear before this posting
@@ -65,7 +68,6 @@ pub fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
         }
         // Posting-level metadata (indented one level deeper than the posting)
         if !posting.meta.is_empty() {
-            let meta_indent = format!("{}{}", &config.indent, &config.indent);
             format_metadata(&posting.meta, &meta_indent, &mut out);
         }
     }
