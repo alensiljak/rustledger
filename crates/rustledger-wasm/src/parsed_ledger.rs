@@ -413,7 +413,10 @@ impl ParsedLedger {
     /// library version.
     #[wasm_bindgen(js_name = "fromCache")]
     pub fn from_cache(bytes: &[u8], source: &str) -> Result<Self, JsError> {
-        let payload = cache::deserialize_parsed(bytes).map_err(|e| JsError::new(&e))?;
+        let mut payload = cache::deserialize_parsed(bytes).map_err(|e| JsError::new(&e))?;
+
+        // Re-intern strings to deduplicate identical Arc<str> allocations.
+        rustledger_loader::reintern_plain_directives(&mut payload.directives);
 
         // Re-parse source for editor spans (cheap; booking is the expensive part).
         let parse_result = rustledger_parser::parse(source);
@@ -659,7 +662,10 @@ impl Ledger {
     /// library version.
     #[wasm_bindgen(js_name = "fromCache")]
     pub fn from_cache(bytes: &[u8]) -> Result<Self, JsError> {
-        let payload = cache::deserialize_ledger(bytes).map_err(|e| JsError::new(&e))?;
+        let mut payload = cache::deserialize_ledger(bytes).map_err(|e| JsError::new(&e))?;
+
+        // Re-intern strings to deduplicate identical Arc<str> allocations.
+        rustledger_loader::reintern_plain_directives(&mut payload.directives);
 
         let editor_cache = editor::EditorCache::from_directives(&payload.directives);
 
