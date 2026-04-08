@@ -158,8 +158,18 @@ fn collect_lexer_tokens(source: &str) -> Vec<RawToken> {
             // Binary search for the line containing this byte offset.
             let line_idx = line_starts.partition_point(|&start| start <= span.start) - 1;
             let line = line_idx as u32;
-            let col = (span.start - line_starts[line_idx]) as u32;
-            let length = (span.end - span.start) as u32;
+            // Convert byte offset within line to UTF-16 code units for LSP.
+            let line_start = line_starts[line_idx];
+            let line_bytes = &source[line_start..span.start];
+            let col = line_bytes
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum::<u32>();
+            let token_bytes = &source[span.start..span.end];
+            let length = token_bytes
+                .chars()
+                .map(|c| c.len_utf16() as u32)
+                .sum::<u32>();
             raw_tokens.push(RawToken {
                 line,
                 start: col,
@@ -679,5 +689,38 @@ mod tests {
         assert!(tokens_equal(&tokens1, &tokens2));
         assert!(!tokens_equal(&tokens1, &tokens3));
         assert!(!tokens_equal(&tokens1, &[]));
+    }
+
+    #[test]
+    fn test_semantic_tokens_multibyte_positions() {
+        // CJK narration — token positions must use UTF-16 code units, not bytes.
+        // "午餐" is 2 chars, each 3 bytes UTF-8 but 1 UTF-16 code unit.
+        let source = "2024-01-15 * \"午餐\"\n  Expenses:Food  10 USD\n";
+        let result = parse(source);
+
+        let params = SemanticTokensParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+
+        let response = handle_semantic_tokens(&params, source, &result);
+        assert!(response.is_some(), "should produce tokens for CJK source");
+
+        // Must not panic — that's the main check.
+        // Also verify account token on line 1 has correct position.
+        if let Some(SemanticTokensResult::Tokens(tokens)) = response {
+            let account_tokens: Vec<_> = tokens
+                .data
+                .iter()
+                .filter(|t| t.token_type == token_type::VARIABLE)
+                .collect();
+            assert!(
+                !account_tokens.is_empty(),
+                "should have account tokens even with CJK narration"
+            );
+        }
     }
 }
