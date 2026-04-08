@@ -1,9 +1,7 @@
 //! Transaction and posting formatting.
 
 use super::directives::format_metadata;
-use super::{
-    FormatConfig, format_amount, format_cost_spec, format_meta_value, format_price_annotation,
-};
+use super::{FormatConfig, format_amount, format_cost_spec, format_price_annotation};
 use crate::{Amount, CostSpec, IncompleteAmount, Posting, PriceAnnotation, Transaction};
 use std::fmt::Write;
 
@@ -32,17 +30,8 @@ pub fn format_transaction(txn: &Transaction, config: &FormatConfig) -> String {
 
     out.push('\n');
 
-    // Transaction-level metadata (same indentation as postings)
-    for (key, value) in &txn.meta {
-        writeln!(
-            out,
-            "{}{}: {}",
-            &config.indent,
-            key,
-            format_meta_value(value)
-        )
-        .unwrap();
-    }
+    // Transaction-level metadata (deterministic sorted order)
+    format_metadata(&txn.meta, &config.indent, &mut out);
 
     // Double indent for posting-level metadata
     let meta_indent = format!("{}{}", &config.indent, &config.indent);
