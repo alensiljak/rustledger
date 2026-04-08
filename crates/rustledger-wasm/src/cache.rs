@@ -1,8 +1,13 @@
 //! Binary serialization for WASM ledger caching.
 //!
 //! Provides rkyv-based serialization of parsed ledgers, enabling storage in
-//! browser OPFS or `IndexedDB` and fast cache restores without re-parsing and
-//! re-booking.
+//! browser OPFS or `IndexedDB` and fast cache restores.
+//!
+//! Restoring a [`super::parsed_ledger::Ledger`] from cache avoids all
+//! re-parsing, booking, and validation. Restoring a
+//! [`super::parsed_ledger::ParsedLedger`] re-parses source text to rebuild
+//! editor spans, but skips the expensive booking and validation phases by
+//! reusing cached directives, options, and errors.
 //!
 //! # Cache format
 //!
@@ -22,8 +27,11 @@ use crate::types::{Error, LedgerOptions};
 /// Current cache format version. Increment when the serialized format changes.
 pub const CACHE_VERSION: u32 = 1;
 
-/// Magic bytes prepended to every cache blob.
-pub const CACHE_MAGIC: &[u8; 8] = b"WLEDGER\0";
+/// Magic bytes for [`ParsedLedgerPayload`] cache blobs.
+pub const MAGIC_PARSED: &[u8; 8] = b"WLPARSED";
+
+/// Magic bytes for [`LedgerPayload`] cache blobs.
+pub const MAGIC_LEDGER: &[u8; 8] = b"WLLEDGER";
 
 /// Header size: 8 (magic) + 4 (version).
 const HEADER_SIZE: usize = 12;
@@ -53,14 +61,14 @@ pub struct LedgerPayload {
 // Encode / decode
 // =============================================================================
 
-/// Validate and strip the cache header, returning the payload data slice.
-fn strip_header(bytes: &[u8]) -> Result<&[u8], String> {
+/// Validate and strip the cache header, checking the expected magic bytes.
+fn strip_header(bytes: &[u8], expected_magic: [u8; 8]) -> Result<&[u8], String> {
     if bytes.len() < HEADER_SIZE {
         return Err("Invalid cache: data too short".to_string());
     }
     let (header, data) = bytes.split_at(HEADER_SIZE);
-    if &header[..8] != CACHE_MAGIC {
-        return Err("Invalid cache: unrecognized magic bytes".to_string());
+    if header[..8] != expected_magic {
+        return Err("Invalid cache: wrong payload type or unrecognized magic bytes".to_string());
     }
     let version = u32::from_le_bytes(header[8..12].try_into().unwrap());
     if version != CACHE_VERSION {
@@ -72,9 +80,9 @@ fn strip_header(bytes: &[u8]) -> Result<&[u8], String> {
 }
 
 /// Prepend the cache header to rkyv-serialized data.
-fn prepend_header(data: &[u8]) -> Vec<u8> {
+fn prepend_header(magic: [u8; 8], data: &[u8]) -> Vec<u8> {
     let mut result = Vec::with_capacity(HEADER_SIZE + data.len());
-    result.extend_from_slice(CACHE_MAGIC);
+    result.extend_from_slice(&magic);
     result.extend_from_slice(&CACHE_VERSION.to_le_bytes());
     result.extend_from_slice(data);
     result
@@ -84,12 +92,12 @@ fn prepend_header(data: &[u8]) -> Vec<u8> {
 pub fn serialize_parsed(payload: &ParsedLedgerPayload) -> Result<Vec<u8>, String> {
     let data = rkyv::to_bytes::<rkyv::rancor::Error>(payload)
         .map_err(|e| format!("Serialization failed: {e}"))?;
-    Ok(prepend_header(&data))
+    Ok(prepend_header(*MAGIC_PARSED, &data))
 }
 
 /// Deserialize a [`ParsedLedgerPayload`] from bytes.
 pub fn deserialize_parsed(bytes: &[u8]) -> Result<ParsedLedgerPayload, String> {
-    let data = strip_header(bytes)?;
+    let data = strip_header(bytes, *MAGIC_PARSED)?;
     rkyv::from_bytes::<ParsedLedgerPayload, rkyv::rancor::Error>(data)
         .map_err(|e| format!("Deserialization failed: {e}"))
 }
@@ -98,12 +106,12 @@ pub fn deserialize_parsed(bytes: &[u8]) -> Result<ParsedLedgerPayload, String> {
 pub fn serialize_ledger(payload: &LedgerPayload) -> Result<Vec<u8>, String> {
     let data = rkyv::to_bytes::<rkyv::rancor::Error>(payload)
         .map_err(|e| format!("Serialization failed: {e}"))?;
-    Ok(prepend_header(&data))
+    Ok(prepend_header(*MAGIC_LEDGER, &data))
 }
 
 /// Deserialize a [`LedgerPayload`] from bytes.
 pub fn deserialize_ledger(bytes: &[u8]) -> Result<LedgerPayload, String> {
-    let data = strip_header(bytes)?;
+    let data = strip_header(bytes, *MAGIC_LEDGER)?;
     rkyv::from_bytes::<LedgerPayload, rkyv::rancor::Error>(data)
         .map_err(|e| format!("Deserialization failed: {e}"))
 }
@@ -154,7 +162,7 @@ mod tests {
             errors: vec![Error::new("a warning")],
         };
         let bytes = serialize_ledger(&payload).expect("serialize");
-        assert!(bytes.starts_with(CACHE_MAGIC));
+        assert!(bytes.starts_with(MAGIC_LEDGER));
 
         let restored = deserialize_ledger(&bytes).expect("deserialize");
         assert_eq!(restored.options.operating_currencies, ["USD"]);
@@ -250,5 +258,33 @@ option "operating_currency" "USD"
         let h1 = hash_sources(&["source v1"]);
         let h2 = hash_sources(&["source v2"]);
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn test_cross_type_rejection() {
+        // Serialized Ledger bytes should not deserialize as ParsedLedger
+        let bytes = serialize_ledger(&LedgerPayload {
+            directives: Vec::new(),
+            options: LedgerOptions::default(),
+            errors: Vec::new(),
+        })
+        .unwrap();
+        assert!(
+            deserialize_parsed(&bytes).is_err(),
+            "Ledger bytes should not deserialize as ParsedLedger"
+        );
+
+        // Serialized ParsedLedger bytes should not deserialize as Ledger
+        let bytes = serialize_parsed(&ParsedLedgerPayload {
+            directives: Vec::new(),
+            options: LedgerOptions::default(),
+            parse_errors: Vec::new(),
+            validation_errors: Vec::new(),
+        })
+        .unwrap();
+        assert!(
+            deserialize_ledger(&bytes).is_err(),
+            "ParsedLedger bytes should not deserialize as Ledger"
+        );
     }
 }

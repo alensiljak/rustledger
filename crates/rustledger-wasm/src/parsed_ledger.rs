@@ -389,9 +389,12 @@ impl ParsedLedger {
     /// Serialize this ledger to a compact binary blob (rkyv).
     ///
     /// Store the bytes in OPFS or `IndexedDB` alongside a source fingerprint
-    /// (see [`hash_sources`]) and restore later with [`ParsedLedger::from_cache`].
+    /// (see [`crate::hash_sources`]) and restore later with [`ParsedLedger::from_cache`].
     #[wasm_bindgen]
     pub fn serialize(&self) -> Result<Vec<u8>, JsError> {
+        // Clone fields into the payload. rkyv's Serialize derive requires owned
+        // types; a zero-copy borrowed serializer would add significant complexity
+        // for minimal gain since serialize() is called once per cache write.
         let payload = cache::ParsedLedgerPayload {
             directives: self.directives.clone(),
             options: self.options.clone(),
@@ -643,7 +646,7 @@ impl Ledger {
     /// Serialize this ledger to a compact binary blob (rkyv).
     ///
     /// Store the bytes in OPFS or `IndexedDB` alongside a source fingerprint
-    /// (see [`hash_sources`]) and restore later with [`Ledger::from_cache`].
+    /// (see [`crate::hash_sources`]) and restore later with [`Ledger::from_cache`].
     #[wasm_bindgen]
     pub fn serialize(&self) -> Result<Vec<u8>, JsError> {
         let payload = cache::LedgerPayload {
