@@ -114,6 +114,19 @@ impl DisplayContext {
         self.precisions.get(currency).copied()
     }
 
+    /// Quantize a number to the tracked precision for a currency.
+    ///
+    /// Rounds the number to the maximum decimal places seen for the currency.
+    /// If the currency has no tracked precision, returns the number unchanged.
+    #[must_use]
+    pub fn quantize(&self, number: Decimal, currency: &str) -> Decimal {
+        if let Some(dp) = self.get_precision(currency) {
+            number.round_dp(dp)
+        } else {
+            number
+        }
+    }
+
     /// Format a decimal number for a currency using the tracked precision.
     ///
     /// If the currency has been seen, formats with the maximum precision.
