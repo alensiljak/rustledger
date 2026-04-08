@@ -630,10 +630,11 @@ jobs:
               with open("compat-check-results.jsonl") as f:
                   for line in f:
                       r = json.loads(line)
-                      if r.get("python_ok") and r.get("rust_ok") and r.get("rust_posting_count", 0) > 0:
+                      if r.get("python_ok") and r.get("rust_ok") and r.get("python_posting_count", 0) > 0:
                           valid_files.append(r["file"])
-          except Exception:
-              pass
+          except Exception as e:
+              print(f"Failed to load compat-check-results.jsonl: {e}")
+              raise
 
           valid_files = valid_files[:30]  # Test up to 30 files
           print(f"Testing BQL on {len(valid_files)} valid files with {len(QUERIES)} queries each...")
