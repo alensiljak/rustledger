@@ -55,12 +55,23 @@ pub enum Token<'src> {
     #[regex(r#""([^"\\]|\\.)*""#)]
     String(&'src str),
 
-    /// An account name like Assets:Bank:Checking, Aktiva:Bank:Girokonto, or Ciste-jmeni:Stav.
+    /// An account name like Assets:Bank:Checking, Aktiva:Banque-Épargne, or Assets:Müller.
     /// Must start with a capitalized word (account type prefix) and have at least one sub-account.
-    /// Per the beancount v3 spec, account name segments must use only ASCII letters, digits, and
-    /// hyphens. Unicode characters in account names are rejected.
+    ///
+    /// Per the beancount v3 spec (`formats/beancount/v3/spec/lexical.md`):
+    ///
+    /// ```text
+    /// component = ascii_start (alphanumeric_dash | utf8_char)*
+    /// ```
+    ///
+    /// Each segment must START with an ASCII uppercase letter (or digit, for
+    /// sub-segments), but subsequent characters may include Unicode letters —
+    /// e.g. `Banque-Épargne` (French), `Müller` (German), `CorpJP日本` after an
+    /// ASCII start. Symbols, emoji, and non-letter Unicode are not allowed, and
+    /// segments starting with non-ASCII are still rejected (matching beancount).
+    ///
     /// The account type prefix is validated later against options (`name_assets`, etc.).
-    #[regex(r"[A-Z][A-Za-z0-9-]*(:([A-Z0-9][A-Za-z0-9-]*)+)+")]
+    #[regex(r"[A-Z][\p{L}0-9-]*(:([A-Z0-9][\p{L}0-9-]*)+)+")]
     Account(&'src str),
 
     /// A currency/commodity code like USD, EUR, AAPL, BTC, or single-char tickers like T, V, F.
@@ -550,11 +561,12 @@ mod tests {
 
     #[test]
     fn test_tokenize_account_unicode() {
-        // Per the beancount v3 spec, account name segments must use only ASCII
-        // letters, digits, and hyphens. Unicode characters in account names are
-        // rejected and should NOT tokenize as Account tokens.
+        // Per the beancount v3 spec, account name segments must START with an
+        // ASCII uppercase letter (or digit for sub-segments), but subsequent
+        // characters may include Unicode letters. Symbols/emoji and segments
+        // that start with non-ASCII remain invalid.
 
-        // Emoji after valid account prefix - tokenizes as partial Account + error tokens
+        // Non-letter (emoji) after valid ASCII start - tokenizes as partial Account + Error
         let tokens = tokenize("Assets:CORP✨");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:CORP✨")),
@@ -565,26 +577,52 @@ mod tests {
             "Unicode emoji should produce at least one Error token"
         );
 
-        // CJK characters - should not tokenize as Account
+        // Sub-component starts with non-ASCII (CJK) — should be rejected
         let tokens = tokenize("Assets:沪深300");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:沪深300")),
-            "CJK characters in account name should not tokenize as a valid Account"
+            "CJK characters at the start of a sub-component should not tokenize as a valid Account"
         );
         assert!(
             tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
-            "CJK characters should produce at least one Error token"
+            "CJK start should produce at least one Error token"
         );
 
-        // Full CJK component - should not tokenize as Account
+        // Full CJK component - sub-component starts with non-ASCII, should be rejected
         let tokens = tokenize("Assets:日本銀行");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:日本銀行")),
-            "CJK account component should not tokenize as a valid Account"
+            "CJK sub-component start should not tokenize as a valid Account"
         );
         assert!(
             tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
-            "CJK account component should produce at least one Error token"
+            "CJK sub-component start should produce at least one Error token"
+        );
+    }
+
+    /// Regression for issue #736/#739: Unicode letters AFTER an ASCII start
+    /// in account sub-components are valid per the beancount v3 spec.
+    #[test]
+    fn test_tokenize_account_unicode_letters_after_ascii_start() {
+        // French: É after ASCII start
+        let tokens = tokenize("Assets:Banque-Épargne");
+        assert!(
+            matches!(tokens[0].0, Token::Account("Assets:Banque-Épargne")),
+            "accented Latin letter after ASCII start should tokenize as Account, got: {tokens:?}"
+        );
+
+        // German: ü after ASCII start
+        let tokens = tokenize("Assets:Müller");
+        assert!(
+            matches!(tokens[0].0, Token::Account("Assets:Müller")),
+            "German umlaut after ASCII start should tokenize as Account, got: {tokens:?}"
+        );
+
+        // Mixed CJK after ASCII start — letters are allowed
+        let tokens = tokenize("Assets:CorpJP日本");
+        assert!(
+            matches!(tokens[0].0, Token::Account("Assets:CorpJP日本")),
+            "CJK letters after ASCII start should tokenize as Account, got: {tokens:?}"
         );
     }
 
