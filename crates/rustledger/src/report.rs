@@ -78,27 +78,21 @@ pub fn report_parse_errors<W: Write>(
     let path_str = source_path.display().to_string();
     let error_count = errors.len();
     let handler = build_handler(use_color);
+    let named_source = miette::NamedSource::new(&path_str, source.to_string());
 
     for error in errors {
         let (start, end) = error.span();
-        let len = end.saturating_sub(start);
-
-        let mut labels = vec![LabeledSpan::at(start..start + len, error.label())];
-
-        // Add hint as a help label if present
-        let help = error.hint.as_deref();
 
         let diagnostic = miette::MietteDiagnostic {
             message: error.message(),
             code: Some(format!("P{:04}", error.kind_code())),
             severity: Some(Severity::Error),
-            help: help.map(String::from),
+            help: error.hint.as_ref().map(String::from),
             url: None,
-            labels: Some(std::mem::take(&mut labels)),
+            labels: Some(vec![LabeledSpan::at(start..end, error.label())]),
         };
 
-        let named_source = miette::NamedSource::new(&path_str, source.to_string());
-        let report = miette::Report::new(diagnostic).with_source_code(named_source);
+        let report = miette::Report::new(diagnostic).with_source_code(named_source.clone());
 
         // Render to string then write
         let mut rendered = String::new();
@@ -282,6 +276,28 @@ mod tests {
         assert!(
             output_str.contains("P0012") || output_str.contains("parse error"),
             "Should contain error code or message: {output_str}"
+        );
+    }
+
+    #[test]
+    fn test_report_parse_errors_cjk_no_panic() {
+        use rustledger_parser::parse;
+
+        // CJK characters in narration followed by a parse error.
+        // This must not panic or produce garbled output — the motivation
+        // for migrating from ariadne to miette (#728).
+        let source = "2026-01-04 * \"いろは\"\n  GARBAGE\n";
+        let result = parse(source);
+        assert!(!result.errors.is_empty());
+
+        let mut output = Vec::new();
+        let path = Path::new("test.beancount");
+        report_parse_errors(&result.errors, path, source, &mut output, false).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            !output_str.is_empty(),
+            "Should produce output for CJK source"
         );
     }
 }
