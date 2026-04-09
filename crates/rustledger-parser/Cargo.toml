@@ -24,7 +24,6 @@ rkyv = ["dep:rkyv", "rustledger-core/rkyv"]
 rustledger-core.workspace = true
 chumsky.workspace = true
 winnow.workspace = true
-ariadne.workspace = true
 logos.workspace = true
 logosky.workspace = true
 rust_decimal.workspace = true
