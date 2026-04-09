@@ -1188,6 +1188,54 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_single_posting_zero_cost_no_warning() {
+        // A transaction with a single posting that has {0 USD} cost should not
+        // warn about single posting — the counterpart was removed during
+        // zero-cost interpolation.
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stock")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Grant").with_posting(
+                    Posting::new("Assets:Stock", Amount::new(dec!(100), "AAPL")).with_cost(
+                        rustledger_core::CostSpec::empty()
+                            .with_number_per(dec!(0))
+                            .with_currency("USD"),
+                    ),
+                ),
+            ),
+        ];
+
+        let errors = validate(&directives);
+        assert!(
+            !errors.iter().any(|e| e.code == ErrorCode::SinglePosting),
+            "Should NOT warn for zero-cost single posting: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_single_posting_nonzero_cost_still_warns() {
+        // A single posting with a NON-zero cost should still warn
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Stock")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Buy").with_posting(
+                    Posting::new("Assets:Stock", Amount::new(dec!(100), "AAPL")).with_cost(
+                        rustledger_core::CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD"),
+                    ),
+                ),
+            ),
+        ];
+
+        let errors = validate(&directives);
+        assert!(
+            errors.iter().any(|e| e.code == ErrorCode::SinglePosting),
+            "Should warn for single posting with non-zero cost: {errors:?}"
+        );
+    }
+
+    #[test]
     fn test_validate_pad_without_balance() {
         let directives = vec![
             Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),

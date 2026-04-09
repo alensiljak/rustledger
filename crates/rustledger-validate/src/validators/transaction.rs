@@ -55,10 +55,14 @@ pub fn validate_transaction_structure(
     }
 
     // Warn about single posting (structurally valid but will fail balance check).
-    // Skip if the single posting has a cost spec — this indicates a zero-cost
-    // transaction where the counterpart posting was interpolated to zero and
-    // removed, matching Python beancount behavior.
-    if txn.postings.len() == 1 && txn.postings[0].cost.is_none() {
+    // Skip if the single posting has an explicit zero-cost spec — this indicates
+    // the counterpart was interpolated to zero and removed during booking,
+    // matching Python beancount behavior.
+    let is_zero_cost_single = txn.postings.len() == 1
+        && txn.postings[0].cost.as_ref().is_some_and(|c| {
+            c.number_per.is_some_and(|n| n.is_zero()) || c.number_total.is_some_and(|n| n.is_zero())
+        });
+    if txn.postings.len() == 1 && !is_zero_cost_single {
         errors.push(ValidationError::new(
             ErrorCode::SinglePosting,
             "Transaction has only one posting".to_string(),
