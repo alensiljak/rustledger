@@ -1228,6 +1228,8 @@ impl<'a> Executor<'a> {
                             None => Ok(Value::Null),
                         }
                     }
+                    // Null args → Null (e.g., narration is Null for non-transaction entries)
+                    (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
                     _ => Err(QueryError::Type("GREP expects two strings".to_string())),
                 }
             }
@@ -1258,6 +1260,7 @@ impl<'a> Executor<'a> {
                             None => Ok(Value::Null),
                         }
                     }
+                    (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
                     _ => Err(QueryError::Type(
                         "GREPN expects (pattern, string, int)".to_string(),
                     )),
@@ -1320,10 +1323,77 @@ impl<'a> Executor<'a> {
                 }
                 Ok(Value::String(parts.join(",")))
             }
+            // Account metadata functions — look up open/close info
+            "OPEN_DATE" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(account) => Ok(self
+                        .account_info
+                        .get(account.as_str())
+                        .and_then(|info| info.open_date)
+                        .map_or(Value::Null, Value::Date)),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "OPEN_DATE expects an account string".to_string(),
+                    )),
+                }
+            }
+            "CLOSE_DATE" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(account) => Ok(self
+                        .account_info
+                        .get(account.as_str())
+                        .and_then(|info| info.close_date)
+                        .map_or(Value::Null, Value::Date)),
+                    Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "CLOSE_DATE expects an account string".to_string(),
+                    )),
+                }
+            }
+            "OPEN_META" => {
+                Self::require_args_count(&name_upper, args, 2)?;
+                match (&args[0], &args[1]) {
+                    (Value::String(account), Value::String(key)) => Ok(self
+                        .account_info
+                        .get(account.as_str())
+                        .and_then(|info| info.open_meta.get(key))
+                        .map_or(Value::Null, |mv| Self::meta_value_to_value(Some(mv)))),
+                    (Value::Null, _) | (_, Value::Null) => Ok(Value::Null),
+                    _ => Err(QueryError::Type(
+                        "OPEN_META expects (account_string, key_string)".to_string(),
+                    )),
+                }
+            }
+            // Metadata access — returns Null in evaluate_function_on_values
+            // because metadata is accessed via row context in eval_meta_on_table_row.
+            // This branch handles edge cases where META is called outside table context.
+            "META" | "ENTRY_META" | "ANY_META" | "POSTING_META" => {
+                Self::require_args_count(&name_upper, args, 1)?;
+                match &args[0] {
+                    Value::String(_) | Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(format!(
+                        "{name_upper}: argument must be a string key"
+                    ))),
+                }
+            }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
             _ => Err(QueryError::UnknownFunction(name.to_string())),
         }
+    }
+
+    /// Convert a `Metadata` map to a `Value::Object` for table storage.
+    fn metadata_to_value(meta: &rustledger_core::Metadata) -> Value {
+        if meta.is_empty() {
+            return Value::Null;
+        }
+        let map: std::collections::BTreeMap<String, Value> = meta
+            .iter()
+            .map(|(k, v)| (k.clone(), Self::meta_value_to_value(Some(v))))
+            .collect();
+        Value::Object(Box::new(map))
     }
 
     /// Helper to require a specific number of arguments (for pre-evaluated args).
@@ -2013,7 +2083,7 @@ impl<'a> Executor<'a> {
 
     /// Build the #entries table from all directives.
     ///
-    /// The table has columns: id, type, filename, lineno, date, flag, payee, narration, tags, links, accounts
+    /// The table has columns: id, type, filename, lineno, date, flag, payee, narration, tags, links, accounts, `_entry_meta`
     /// This provides access to all directives with source location information.
     fn build_entries_table(&self) -> Table {
         let columns = vec![
@@ -2028,6 +2098,7 @@ impl<'a> Executor<'a> {
             "tags".to_string(),
             "links".to_string(),
             "accounts".to_string(),
+            "_entry_meta".to_string(),
         ];
         let mut table = Table::new(columns);
 
@@ -2134,6 +2205,8 @@ impl<'a> Executor<'a> {
             tags,
             links,
             accounts,
+            // Hidden metadata column
+            Self::metadata_to_value(directive.meta()),
         ]
     }
 
@@ -2163,6 +2236,9 @@ impl<'a> Executor<'a> {
             "cost_label".to_string(),
             "price".to_string(),
             "balance".to_string(),
+            // Hidden metadata columns for META/ENTRY_META functions
+            "_entry_meta".to_string(),
+            "_posting_meta".to_string(),
         ];
         let mut table = Table::new(columns);
 
@@ -2275,6 +2351,9 @@ impl<'a> Executor<'a> {
                     cost_label,
                     price_val,
                     balance_val,
+                    // Hidden metadata columns
+                    Self::metadata_to_value(&txn.meta),
+                    Self::metadata_to_value(&posting.meta),
                 ];
                 table.add_row(row);
             }

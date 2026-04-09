@@ -651,9 +651,18 @@ impl Executor<'_> {
                         "wildcard (*) is only allowed with COUNT".to_string(),
                     ));
                 }
+
+                // Metadata functions need row context — intercept before
+                // generic evaluate_function_on_values which loses row access.
+                let name_upper = func.name.to_uppercase();
+                if matches!(
+                    name_upper.as_str(),
+                    "META" | "ENTRY_META" | "ANY_META" | "POSTING_META"
+                ) {
+                    return self.eval_meta_on_table_row(&name_upper, func, row, column_map);
+                }
+
                 // Evaluate function arguments.
-                // Wildcard in COUNT(*) is treated as a no-value marker;
-                // aggregate functions already return Null in row-level context.
                 let args: Vec<Value> = func
                     .args
                     .iter()
@@ -1259,5 +1268,60 @@ impl Executor<'_> {
                     .to_string(),
             )),
         }
+    }
+
+    /// Evaluate metadata functions (`META`, `ENTRY_META`, etc.) in table context.
+    ///
+    /// Uses hidden `_entry_meta` and `_posting_meta` columns from the table row
+    /// to look up metadata by key.
+    pub(super) fn eval_meta_on_table_row(
+        &self,
+        name: &str,
+        func: &crate::ast::FunctionCall,
+        row: &[Value],
+        column_map: &FxHashMap<String, usize>,
+    ) -> Result<Value, QueryError> {
+        if func.args.len() != 1 {
+            return Err(QueryError::InvalidArguments(
+                name.to_string(),
+                "expected 1 argument (key)".to_string(),
+            ));
+        }
+
+        let key = match self.evaluate_subquery_expr(&func.args[0], row, column_map)? {
+            Value::String(s) => s,
+            Value::Null => return Ok(Value::Null),
+            _ => {
+                return Err(QueryError::Type(format!(
+                    "{name}: argument must be a string key"
+                )));
+            }
+        };
+
+        // Determine which metadata column to use
+        let meta_col = match name {
+            "POSTING_META" | "META" => "_posting_meta",
+            "ENTRY_META" => "_entry_meta",
+            "ANY_META" => {
+                // Check posting meta first, fall back to entry meta
+                if let Some(&idx) = column_map.get("_posting_meta")
+                    && let Some(Value::Object(meta)) = row.get(idx)
+                    && let Some(val) = meta.get(&key)
+                {
+                    return Ok(val.clone());
+                }
+                "_entry_meta"
+            }
+            _ => "_entry_meta",
+        };
+
+        if let Some(&idx) = column_map.get(meta_col)
+            && let Some(Value::Object(meta)) = row.get(idx)
+            && let Some(val) = meta.get(&key)
+        {
+            return Ok(val.clone());
+        }
+
+        Ok(Value::Null)
     }
 }
