@@ -159,9 +159,14 @@ impl BookingEngine {
                     let is_reduction = inv.is_reduced_by(units);
 
                     if is_reduction {
-                        // Use reduce (not try_reduce) to actually update the working inventory
+                        // Use reduce (not try_reduce) to actually update the working inventory.
                         // This ensures subsequent postings in the same transaction see
-                        // the updated inventory state (e.g., after first posting exhausts a lot)
+                        // the updated inventory state (e.g., after first posting exhausts a lot).
+                        //
+                        // Errors from reduce (ambiguous match, no matching lot, insufficient
+                        // units) are intentionally not surfaced here — the validator runs the
+                        // same lot-matching logic and reports them as E4xxx diagnostics with
+                        // proper context. Surfacing them here would produce duplicate errors.
                         if let Ok(booking_result) =
                             inv.reduce(units, Some(cost_spec), self.booking_method)
                         {

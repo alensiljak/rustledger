@@ -605,7 +605,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_strict_multiple_match_uses_fifo() {
+    fn test_reduce_strict_multiple_match_with_different_costs_is_ambiguous() {
         let mut inv = Inventory::new();
 
         let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
@@ -614,15 +614,59 @@ mod tests {
         inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
         inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
 
-        // Reducing without cost spec in STRICT mode falls back to FIFO
-        // (Python beancount behavior: when multiple lots match, use FIFO order)
+        // Per Python beancount: a wildcard reduction (`-3 AAPL` with no cost
+        // spec) against an inventory with lots at different costs is
+        // genuinely ambiguous and must error. Issue #737.
+        let result = inv.reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict);
+
+        assert!(
+            matches!(result, Err(BookingError::AmbiguousMatch { .. })),
+            "expected AmbiguousMatch, got {result:?}"
+        );
+        // Inventory unchanged after a failed reduction
+        assert_eq!(inv.units("AAPL"), dec!(15));
+    }
+
+    #[test]
+    fn test_reduce_strict_multiple_match_with_identical_costs_uses_fifo() {
+        let mut inv = Inventory::new();
+
+        // Two lots with identical cost — interchangeable, so FIFO is fine.
+        let cost = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost.clone(),
+        ));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost));
+
         let result = inv
             .reduce(&Amount::new(dec!(-3), "AAPL"), None, BookingMethod::Strict)
-            .unwrap();
+            .expect("identical lots should fall back to FIFO without error");
 
-        assert_eq!(inv.units("AAPL"), dec!(12)); // 7 + 5 remaining
-        // Should reduce from first lot (cost1) at 150.00 USD
-        assert_eq!(result.cost_basis.unwrap().number, dec!(450.00)); // 3 * 150
+        assert_eq!(inv.units("AAPL"), dec!(12));
+        assert_eq!(result.cost_basis.unwrap().number, dec!(450.00));
+    }
+
+    #[test]
+    fn test_reduce_strict_multiple_match_total_match_exception() {
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(160.00), "USD").with_date(date(2024, 1, 15));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+
+        // Selling exactly the entire inventory (10 + 5 = 15) is unambiguous
+        // even with mixed costs — the user is liquidating the position.
+        let result = inv
+            .reduce(&Amount::new(dec!(-15), "AAPL"), None, BookingMethod::Strict)
+            .expect("total-match exception should accept a full liquidation");
+
+        assert_eq!(inv.units("AAPL"), dec!(0));
+        // Cost basis = 10*150 + 5*160 = 1500 + 800 = 2300
+        assert_eq!(result.cost_basis.unwrap().number, dec!(2300.00));
     }
 
     #[test]

@@ -9,7 +9,7 @@ use chrono::NaiveDate;
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
-use rustledger_core::{Amount, BookingMethod, Cost, CostSpec, Inventory, Position};
+use rustledger_core::{Amount, BookingError, BookingMethod, Cost, CostSpec, Inventory, Position};
 
 // ============================================================================
 // Test Strategies
@@ -313,18 +313,18 @@ proptest! {
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(50))]
 
-    /// TLA+ STRICTCorrect (Python-compatible):
-    /// STRICT booking falls back to FIFO when multiple lots match.
-    /// This matches Python beancount's behavior where ambiguous matches
-    /// use FIFO order rather than erroring.
+    /// TLA+ STRICTCorrect (Python-compatible, issue #737):
+    /// STRICT booking errors with `AmbiguousMatch` when a wildcard reduction
+    /// targets multiple lots with *different* costs. The user must
+    /// disambiguate by specifying a cost, date, or label.
     #[test]
-    fn prop_strict_uses_fifo_on_ambiguous(
+    fn prop_strict_errors_on_ambiguous_match(
         cost in 100i64..200,
     ) {
         let mut inv = Inventory::new();
         let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
 
-        // Add two lots with same currency (ambiguous match)
+        // Add two lots with the same currency at different costs.
         inv.add(Position::with_cost(
             Amount::new(dec!(10), "AAPL"),
             Cost::new(Decimal::from(cost), "USD").with_date(date),
@@ -334,30 +334,17 @@ proptest! {
             Cost::new(Decimal::from(cost + 10), "USD").with_date(date),
         ));
 
-        // STRICT falls back to FIFO when multiple lots match
         let result = inv.reduce(
             &Amount::new(dec!(-5), "AAPL"),
             None,
             BookingMethod::Strict,
         );
 
-        // Should succeed with FIFO behavior
         prop_assert!(
-            result.is_ok(),
-            "STRICT should fall back to FIFO with multiple matching lots, but got error: {:?}",
-            result.unwrap_err()
+            matches!(result, Err(BookingError::AmbiguousMatch { .. })),
+            "STRICT must error on ambiguous wildcard reduction, got: {:?}",
+            result
         );
-
-        // Should have reduced from the first lot (cost)
-        let booking_result = result.unwrap();
-        if let Some(cost_basis) = booking_result.cost_basis {
-            // 5 units at cost price = 5 * cost
-            prop_assert_eq!(
-                cost_basis.number,
-                Decimal::from(5 * cost),
-                "Cost basis should be from first lot"
-            );
-        }
     }
 
     /// TLA+ STRICTCorrect:
