@@ -243,12 +243,12 @@ with open('/work/output.json', 'w') as f:
         // This is critical - Python needs absolute paths for PYTHONHOME/PYTHONPATH
         wasi_builder
             .preopened_dir(python_root, "/", DirPerms::READ, FilePerms::READ)
-            .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
+            .map_err(PythonError::Wasm)?;
 
         // Set up work directory for script and output (read-write)
         wasi_builder
             .preopened_dir(work_dir.path(), "/work", DirPerms::all(), FilePerms::all())
-            .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
+            .map_err(PythonError::Wasm)?;
 
         // Set environment for Python - use absolute paths from guest perspective
         wasi_builder
@@ -266,8 +266,7 @@ with open('/work/output.json', 'w') as f:
 
         // Create linker and add WASI
         let mut linker: Linker<p1::WasiP1Ctx> = Linker::new(&self.engine);
-        p1::add_to_linker_sync(&mut linker, |ctx| ctx)
-            .map_err(|e: anyhow::Error| PythonError::Wasm(e))?;
+        p1::add_to_linker_sync(&mut linker, |ctx| ctx).map_err(PythonError::Wasm)?;
 
         // Instantiate and run
         let instance = linker

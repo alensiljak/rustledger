@@ -46,13 +46,13 @@ jobs:
 
   # MSRV check - verify minimum supported Rust version
   msrv:
-    name: MSRV (1.90)
+    name: MSRV (1.94)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
-          toolchain: "1.90"
+          toolchain: "1.94"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
       - name: Check MSRV compatibility
         run: cargo check --workspace --all-features

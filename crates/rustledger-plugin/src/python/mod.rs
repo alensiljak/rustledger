@@ -66,7 +66,7 @@ pub enum PythonError {
 
     /// WASM runtime error.
     #[error("WASM runtime error: {0}")]
-    Wasm(#[from] anyhow::Error),
+    Wasm(#[from] wasmtime::Error),
 
     /// Plugin module not found on the system.
     #[error("Python plugin module not found: {0}")]
