@@ -77,8 +77,12 @@ criteria = "safe-to-deploy"
 version = "0.5.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.ariadne]]
-version = "0.6.0"
+[[exemptions.backtrace]]
+version = "0.3.76"
+criteria = "safe-to-deploy"
+
+[[exemptions.backtrace-ext]]
+version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.bigdecimal]]
@@ -366,11 +370,15 @@ version = "2.13.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.insta]]
-version = "1.47.1"
+version = "1.47.2"
 criteria = "safe-to-run"
 
 [[exemptions.ipnet]]
 version = "2.12.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.is_ci]]
+version = "1.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.isolang]]
@@ -457,6 +465,14 @@ criteria = "safe-to-deploy"
 version = "0.3.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.miette]]
+version = "7.6.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.miette-derive]]
+version = "7.6.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.minicov]]
 version = "0.3.8"
 criteria = "safe-to-run"
@@ -466,7 +482,7 @@ version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.mio]]
-version = "1.1.1"
+version = "1.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.munge]]
@@ -495,6 +511,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]
 version = "1.21.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.owo-colors]]
+version = "4.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.parking_lot]]
@@ -745,8 +765,24 @@ criteria = "safe-to-deploy"
 version = "0.4.4"
 criteria = "safe-to-deploy"
 
+[[exemptions.supports-color]]
+version = "3.0.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.supports-hyperlinks]]
+version = "3.2.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.supports-unicode]]
+version = "3.0.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.tempfile]]
 version = "3.27.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.terminal_size]]
+version = "0.4.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.time]]
@@ -762,7 +798,7 @@ version = "1.11.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
-version = "1.50.0"
+version = "1.51.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-stream]]
@@ -933,10 +969,6 @@ criteria = "safe-to-deploy"
 version = "0.5.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.yansi]]
-version = "1.0.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.yoke]]
 version = "0.8.1"
 criteria = "safe-to-deploy"
@@ -958,7 +990,7 @@ version = "0.11.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
-version = "8.4.0"
+version = "8.5.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]
