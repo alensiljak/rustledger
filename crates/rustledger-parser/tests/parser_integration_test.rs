@@ -3,7 +3,7 @@
 //! Tests cover all directive types, error recovery, edge cases, and real-world scenarios.
 
 use rustledger_core::Directive;
-use rustledger_parser::{ParseErrorKind, ParseResult, parse, parse_directives};
+use rustledger_parser::{ParseError, ParseErrorKind, ParseResult, parse, parse_directives};
 
 // ============================================================================
 // Helper Functions
@@ -873,14 +873,36 @@ fn test_reject_unclosed_cost_brace() {
 ";
     let result = parse(source);
     assert!(
-        !result.errors.is_empty(),
-        "expected parse error for unclosed cost brace, got: {:?}",
-        result.errors
+        result
+            .errors
+            .iter()
+            .any(|e| e.message().contains("unclosed cost")),
+        "expected 'unclosed cost' parse error, got: {:?}",
+        result
+            .errors
+            .iter()
+            .map(ParseError::message)
+            .collect::<Vec<_>>()
     );
-    let msg = format!("{:?}", result.errors);
+}
+
+/// Regression: an incomplete final directive at EOF (no trailing newline
+/// and no account name) must produce a parse error, not be silently
+/// dropped by the top-level error-recovery loop. Guards against a Copilot
+/// review finding from PR #740 where an overly-eager early-break on an
+/// empty stream could mask real EOF syntax errors.
+#[test]
+fn test_reject_incomplete_final_directive_at_eof() {
+    let source = "2024-01-01 open";
+    let result = parse(source);
     assert!(
-        msg.contains("unclosed cost"),
-        "expected 'unclosed cost' in error message, got: {msg}"
+        !result.errors.is_empty(),
+        "expected parse error for incomplete open directive at EOF, got: {:?}",
+        result
+            .errors
+            .iter()
+            .map(ParseError::message)
+            .collect::<Vec<_>>()
     );
 }
 
@@ -896,13 +918,15 @@ fn test_reject_unclosed_cost_brace_at_eof() {
   Assets:Stock 10 AAPL {150 USD";
     let result = parse(source);
     assert!(
-        !result.errors.is_empty(),
-        "expected parse error for unclosed cost brace at EOF, got: {:?}",
-        result.errors
-    );
-    let msg = format!("{:?}", result.errors);
-    assert!(
-        msg.contains("unclosed cost"),
-        "expected 'unclosed cost' in error message, got: {msg}"
+        result
+            .errors
+            .iter()
+            .any(|e| e.message().contains("unclosed cost")),
+        "expected 'unclosed cost' parse error at EOF, got: {:?}",
+        result
+            .errors
+            .iter()
+            .map(ParseError::message)
+            .collect::<Vec<_>>()
     );
 }

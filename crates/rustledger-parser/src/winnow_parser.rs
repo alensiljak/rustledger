@@ -1614,6 +1614,14 @@ pub fn parse(source: &str) -> ParseResult {
     let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::new();
 
     while !stream.is_empty() {
+        // Skip any blank lines between directives so `error_start` points at
+        // a real token. Otherwise, if the stream has only trailing newlines
+        // left, we'd capture a newline token's span and then try to emit a
+        // spurious "unexpected input" error for it.
+        skip_newlines(&mut stream);
+        if stream.is_empty() {
+            break;
+        }
         let error_start = stream.pos;
 
         if let Ok(item) = parse_entry(&mut stream) {
@@ -1665,20 +1673,19 @@ pub fn parse(source: &str) -> ParseResult {
                 }
             }
         } else {
-            // If stream is now empty, we just consumed trailing newlines - not an error,
-            // unless an inner parser left a deferred error behind (e.g. an unclosed
-            // cost spec that ran to EOF while consuming tokens).
-            if stream.is_empty() {
-                if let Some(err) = stream.deferred_error.take() {
-                    errors.push(err);
-                }
-                break;
-            }
-            // Error recovery: skip to next newline
+            // parse_entry failed. Because we pre-skipped newlines above,
+            // `error_start` always points at a real token — meaning there
+            // is a genuine parse error to report, whether or not the inner
+            // parser consumed tokens before failing. This also catches
+            // incomplete final directives at EOF (e.g. `2024-01-01 open`
+            // with no account) and unclosed constructs like cost braces.
+            //
+            // Error recovery: skip to next newline (no-op if already at EOF).
             stream.skip_to_newline();
             let span = stream.span_from(error_start);
             // Prefer a deferred error set by an inner parser (e.g., invalid
-            // date value) over the generic "unexpected input" fallback.
+            // date value or unclosed cost spec) over the generic "unexpected
+            // input" fallback.
             if let Some(err) = stream.deferred_error.take() {
                 errors.push(err);
             } else {
