@@ -6798,6 +6798,46 @@ fn test_grep_with_null_narration() {
     }
 }
 
+/// Regression for issue #738: `grep(pattern, text)` returns the matched
+/// substring or NULL, and must be usable directly in a `WHERE` clause via
+/// SQL/beanquery truthiness. Previously failed with "expected boolean".
+#[test]
+fn test_grep_in_where_clause_truthy() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Income:Salary")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Coffee")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 15), "Salary Payment")
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(1000), "USD")))
+                .with_posting(Posting::auto("Income:Salary")),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 16), "Coffee shop")
+                .with_posting(Posting::new("Expenses:Coffee", Amount::new(dec!(5), "USD")))
+                .with_posting(Posting::auto("Assets:Bank")),
+        ),
+    ];
+
+    // The bare grep() call in WHERE must filter to the matching narration.
+    let result = execute_query(
+        "SELECT narration FROM #entries WHERE grep('Salary', narration)",
+        &directives,
+    );
+
+    assert_eq!(
+        result.rows.len(),
+        1,
+        "expected only the Salary transaction, got rows: {:?}",
+        result.rows
+    );
+    if let Value::String(narration) = &result.rows[0][0] {
+        assert!(narration.contains("Salary"), "got narration: {narration}");
+    } else {
+        panic!("expected String narration, got {:?}", result.rows[0][0]);
+    }
+}
+
 #[test]
 fn test_open_meta_from_postings_table() {
     let mut open = Open::new(date(2024, 1, 1), "Assets:Bank");

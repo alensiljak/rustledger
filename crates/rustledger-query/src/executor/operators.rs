@@ -272,13 +272,36 @@ impl Executor<'_> {
         Ok(Value::Number(op(a, b)))
     }
 
-    /// Convert a value to boolean.
+    /// Convert a value to boolean using SQL/beanquery truthiness rules.
+    ///
+    /// Booleans pass through directly. NULL is false. Other types follow
+    /// Python beanquery's implicit truthiness so that functions like
+    /// `grep(pattern, text)` — which return the matched substring on success
+    /// and NULL on failure — work in `WHERE` and as operands of `AND`/`OR`/
+    /// `NOT` without an explicit comparison.
+    ///
+    /// - Strings: non-empty is true.
+    /// - Integers / numbers: non-zero is true.
+    /// - Sets / metadata / objects: non-empty is true.
+    /// - Other structured types (Date, Amount, Position, …): always true.
     pub(super) fn to_bool(&self, val: &Value) -> Result<bool, QueryError> {
-        match val {
-            Value::Boolean(b) => Ok(*b),
-            Value::Null => Ok(false),
-            _ => Err(QueryError::Type("expected boolean".to_string())),
-        }
+        Ok(match val {
+            Value::Boolean(b) => *b,
+            Value::Null => false,
+            Value::String(s) => !s.is_empty(),
+            Value::Integer(i) => *i != 0,
+            Value::Number(n) => !n.is_zero(),
+            Value::StringSet(s) => !s.is_empty(),
+            Value::Set(s) => !s.is_empty(),
+            Value::Metadata(m) => !m.is_empty(),
+            Value::Object(o) => !o.is_empty(),
+            // Date, Amount, Position, Inventory, Interval — present implies truthy.
+            Value::Date(_)
+            | Value::Amount(_)
+            | Value::Position(_)
+            | Value::Inventory(_)
+            | Value::Interval(_) => true,
+        })
     }
 
     /// Apply a binary operator to pre-evaluated values (for subquery context).

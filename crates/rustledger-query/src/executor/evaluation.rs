@@ -137,17 +137,18 @@ impl Executor<'_> {
     }
 
     /// Evaluate a predicate expression in the context of a posting.
+    ///
+    /// Uses SQL/beanquery truthiness via [`Self::to_bool`], so that functions
+    /// such as `grep(pattern, text)` (which return the matched substring or
+    /// NULL) can be used directly in a `WHERE` clause without an explicit
+    /// `IS NOT NULL` comparison.
     pub(super) fn evaluate_predicate(
         &self,
         expr: &Expr,
         ctx: &PostingContext,
     ) -> Result<bool, QueryError> {
         let value = self.evaluate_expr(expr, ctx)?;
-        match value {
-            Value::Boolean(b) => Ok(b),
-            Value::Null => Ok(false),
-            _ => Err(QueryError::Type("expected boolean expression".to_string())),
-        }
+        self.to_bool(&value)
     }
 
     /// Evaluate an expression in the context of a posting.
