@@ -497,6 +497,9 @@ fn parse_incomplete_amount(stream: &mut TokenStream<'_>) -> ParseRes<IncompleteA
 fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
     let is_total;
 
+    // Record opening brace position for error reporting on unclosed braces.
+    let brace_span = stream.peek().map_or((0, 0), |t| t.span);
+
     // Check opening brace type
     if let Some(t) = stream.peek() {
         match &t.token {
@@ -520,9 +523,18 @@ fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
 
     let mut spec = CostSpec::default();
 
-    // Parse cost components
+    // Parse cost components. A cost spec must close with `}` on the same
+    // logical line as the opening `{`; a Newline or EOF before the close
+    // means the brace is unclosed, which is a hard parse error.
+    let set_unclosed_error = |stream: &mut TokenStream<'_>| {
+        stream.deferred_error = Some(ParseError::new(
+            ParseErrorKind::SyntaxError("unclosed cost specification: missing '}'".to_string()),
+            Span::new(brace_span.0, brace_span.1),
+        ));
+    };
+
     loop {
-        // Check for closing brace
+        // Check for closing brace or premature termination.
         if let Some(t) = stream.peek() {
             match &t.token {
                 Token::RBrace | Token::RDoubleBrace => {
@@ -533,9 +545,14 @@ fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
                     stream.advance();
                     continue;
                 }
+                Token::Newline => {
+                    set_unclosed_error(stream);
+                    return Err(());
+                }
                 _ => {}
             }
         } else {
+            set_unclosed_error(stream);
             return Err(());
         }
 
@@ -660,8 +677,17 @@ fn parse_posting(stream: &mut TokenStream<'_>) -> ParseRes<Posting> {
     // Optional amount
     let amount = parse_incomplete_amount(stream).ok();
 
-    // Optional cost
-    let cost = parse_cost_spec(stream).ok();
+    // Optional cost. Peek for an opening brace first so that on non-cost
+    // inputs we don't consume any tokens; once committed, propagate parse
+    // errors (such as an unclosed brace) instead of silently swallowing them.
+    let cost = if matches!(
+        stream.peek_token(),
+        Some(Token::LBrace | Token::LBraceHash | Token::LDoubleBrace)
+    ) {
+        Some(parse_cost_spec(stream)?)
+    } else {
+        None
+    };
 
     // Optional price
     let price = parse_price_annotation(stream).ok();
@@ -1039,6 +1065,13 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
             }
             postings.push(posting);
         } else {
+            // If the posting failed with a deferred error (e.g. an unclosed
+            // cost brace), propagate the failure so the top-level error
+            // recovery emits the deferred error instead of silently building
+            // a truncated transaction.
+            if stream.deferred_error.is_some() {
+                return Err(());
+            }
             break;
         }
     }
@@ -1581,6 +1614,14 @@ pub fn parse(source: &str) -> ParseResult {
     let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::new();
 
     while !stream.is_empty() {
+        // Skip any blank lines between directives so `error_start` points at
+        // a real token. Otherwise, if the stream has only trailing newlines
+        // left, we'd capture a newline token's span and then try to emit a
+        // spurious "unexpected input" error for it.
+        skip_newlines(&mut stream);
+        if stream.is_empty() {
+            break;
+        }
         let error_start = stream.pos;
 
         if let Ok(item) = parse_entry(&mut stream) {
@@ -1632,15 +1673,19 @@ pub fn parse(source: &str) -> ParseResult {
                 }
             }
         } else {
-            // If stream is now empty, we just consumed trailing newlines - not an error
-            if stream.is_empty() {
-                break;
-            }
-            // Error recovery: skip to next newline
+            // parse_entry failed. Because we pre-skipped newlines above,
+            // `error_start` always points at a real token — meaning there
+            // is a genuine parse error to report, whether or not the inner
+            // parser consumed tokens before failing. This also catches
+            // incomplete final directives at EOF (e.g. `2024-01-01 open`
+            // with no account) and unclosed constructs like cost braces.
+            //
+            // Error recovery: skip to next newline (no-op if already at EOF).
             stream.skip_to_newline();
             let span = stream.span_from(error_start);
             // Prefer a deferred error set by an inner parser (e.g., invalid
-            // date value) over the generic "unexpected input" fallback.
+            // date value or unclosed cost spec) over the generic "unexpected
+            // input" fallback.
             if let Some(err) = stream.deferred_error.take() {
                 errors.push(err);
             } else {

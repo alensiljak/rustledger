@@ -119,6 +119,7 @@ impl Plugin {
             std::fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
 
         let module = Module::new(&engine, &wasm_bytes)
+            .map_err(anyhow::Error::from)
             .with_context(|| format!("failed to compile {}", path.display()))?;
 
         Ok(Self {
@@ -176,11 +177,12 @@ impl Plugin {
         // Get memory and allocate space for input
         let memory = instance
             .get_memory(&mut store, "memory")
-            .context("plugin must export 'memory'")?;
+            .ok_or_else(|| anyhow::anyhow!("plugin must export 'memory'"))?;
 
         // Get the alloc function to allocate space in WASM memory
         let alloc = instance
             .get_typed_func::<u32, u32>(&mut store, "alloc")
+            .map_err(anyhow::Error::from)
             .context("plugin must export 'alloc' function")?;
 
         // Allocate space for input
@@ -192,6 +194,7 @@ impl Plugin {
         // Call the process function
         let process = instance
             .get_typed_func::<(u32, u32), u64>(&mut store, "process")
+            .map_err(anyhow::Error::from)
             .context("plugin must export 'process' function")?;
 
         let result = process.call(&mut store, (input_ptr, input_bytes.len() as u32))?;
