@@ -6797,3 +6797,89 @@ fn test_grep_with_null_narration() {
         assert!(narration.contains("Salary"));
     }
 }
+
+#[test]
+fn test_open_meta_from_postings_table() {
+    let mut open = Open::new(date(2024, 1, 1), "Assets:Bank");
+    open.meta.insert(
+        "institution".to_string(),
+        rustledger_core::MetaValue::String("Chase".to_string()),
+    );
+
+    let directives = vec![
+        Directive::Open(open),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 3, 15), "Lunch")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-10), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(
+        "SELECT DISTINCT account, open_meta(account, 'institution') FROM #postings ORDER BY account",
+        &directives,
+    );
+
+    assert_eq!(result.rows.len(), 2);
+    // Assets:Bank has institution metadata
+    assert_eq!(result.rows[0][1], Value::String("Chase".to_string()));
+    // Expenses:Food has no institution metadata
+    assert_eq!(result.rows[1][1], Value::Null);
+}
+
+#[test]
+fn test_entry_meta_from_postings_table() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction({
+            let mut txn = Transaction::new(date(2024, 3, 15), "Lunch");
+            txn.meta.insert(
+                "category".to_string(),
+                rustledger_core::MetaValue::String("dining".to_string()),
+            );
+            txn.postings = vec![
+                Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")),
+                Posting::new("Assets:Bank", Amount::new(dec!(-10), "USD")),
+            ];
+            txn
+        }),
+    ];
+
+    let result = execute_query(
+        "SELECT account, entry_meta('category') FROM #postings",
+        &directives,
+    );
+
+    assert_eq!(result.rows.len(), 2);
+    assert_eq!(result.rows[0][1], Value::String("dining".to_string()));
+    assert_eq!(result.rows[1][1], Value::String("dining".to_string()));
+}
+
+#[test]
+fn test_entry_meta_from_entries_table() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Transaction({
+            let mut txn = Transaction::new(date(2024, 3, 15), "Paycheck");
+            txn.meta.insert(
+                "source".to_string(),
+                rustledger_core::MetaValue::String("employer".to_string()),
+            );
+            txn.postings = vec![
+                Posting::new("Assets:Bank", Amount::new(dec!(1000), "USD")),
+                Posting::auto("Income:Salary"),
+            ];
+            txn
+        }),
+    ];
+
+    let result = execute_query(
+        "SELECT type, entry_meta('source') FROM #entries WHERE type = 'Transaction'",
+        &directives,
+    );
+
+    assert_eq!(result.rows.len(), 1);
+    assert_eq!(result.rows[0][1], Value::String("employer".to_string()));
+}

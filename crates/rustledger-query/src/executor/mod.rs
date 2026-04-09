@@ -1366,11 +1366,17 @@ impl<'a> Executor<'a> {
                     )),
                 }
             }
-            // Metadata access — returns Null in table context (metadata not
-            // available as pre-evaluated values from table rows)
+            // Metadata access — returns Null in evaluate_function_on_values
+            // because metadata is accessed via row context in eval_meta_on_table_row.
+            // This branch handles edge cases where META is called outside table context.
             "META" | "ENTRY_META" | "ANY_META" | "POSTING_META" => {
                 Self::require_args_count(&name_upper, args, 1)?;
-                Ok(Value::Null)
+                match &args[0] {
+                    Value::String(_) | Value::Null => Ok(Value::Null),
+                    _ => Err(QueryError::Type(format!(
+                        "{name_upper}: argument must be a string key"
+                    ))),
+                }
             }
             // Aggregate functions return Null when evaluated on a single row
             "SUM" | "COUNT" | "MIN" | "MAX" | "FIRST" | "LAST" | "AVG" => Ok(Value::Null),
