@@ -41,7 +41,9 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
       - name: Validate tag matches rustledger crate version
         run: |
           # Extract version from tag (strip 'v' prefix)
@@ -112,8 +114,9 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
+          toolchain: stable
           targets: ${{ matrix.target }}
           components: llvm-tools-preview
       - name: Install cross
@@ -313,8 +316,9 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
+          toolchain: stable
           targets: wasm32-unknown-unknown
       - name: Install wasm-pack
         run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
@@ -343,8 +347,9 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
+          toolchain: stable
           targets: wasm32-wasip1
       - name: Build FFI-WASI binary
         run: cargo build --release --target wasm32-wasip1 -p rustledger-ffi-wasi

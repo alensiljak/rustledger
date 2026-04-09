@@ -63,7 +63,9 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
 
       # Debug: Run cargo-semver-checks directly to diagnose issues
       - name: Debug - Run cargo-semver-checks directly
@@ -272,7 +274,9 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
 
       # Check if the release tag already exists (from a previous partial run)
       # If it does, skip release-plz since the tag will have already triggered release-build.yml
