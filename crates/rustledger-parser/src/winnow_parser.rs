@@ -180,6 +180,21 @@ fn parse_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     Err(())
 }
 
+/// Parse a number with optional leading minus sign.
+///
+/// Used in contexts where a full expression isn't expected but negative
+/// numbers should be accepted (e.g., tolerance values, custom directive args).
+fn parse_signed_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
+    let negate = stream
+        .peek()
+        .is_some_and(|t| matches!(t.token, Token::Minus));
+    if negate {
+        stream.advance();
+    }
+    let n = parse_number(stream)?;
+    Ok(if negate { -n } else { n })
+}
+
 fn parse_string(stream: &mut TokenStream<'_>) -> ParseRes<String> {
     if let Some(t) = stream.peek()
         && let Token::String(s) = &t.token
@@ -1084,7 +1099,7 @@ fn parse_balance_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem>
     let tolerance = if let Some(t) = stream.peek() {
         if matches!(t.token, Token::Tilde) {
             stream.advance();
-            parse_number(stream).ok()
+            parse_signed_number(stream).ok()
         } else {
             None
         }
@@ -1383,8 +1398,8 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
             continue;
         }
         stream.pos = save_pos;
-        // Plain number (without currency)
-        if let Ok(n) = parse_number(stream) {
+        // Plain number (without currency), may be negative
+        if let Ok(n) = parse_signed_number(stream) {
             values.push(MetaValue::Number(n));
             continue;
         }
