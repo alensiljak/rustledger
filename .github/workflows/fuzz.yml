@@ -61,7 +61,9 @@ jobs:
             echo "should_run=false" >> $GITHUB_OUTPUT
           fi
 
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # nightly
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
+        with:
+          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly
@@ -160,7 +162,9 @@ jobs:
             echo "should_run=false" >> $GITHUB_OUTPUT
           fi
 
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # nightly
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
+        with:
+          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly

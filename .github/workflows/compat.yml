@@ -40,7 +40,9 @@ jobs:
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
 
-      - uses: dtolnay/rust-toolchain@4be9e76fd7c4901c61fb841f559994984270fce7 # stable
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
+        with:
+          toolchain: stable
 
       # Note: rust-cache intentionally omitted to avoid LGPL-3.0 license check failure.
       # The dependency-review workflow runs from the base branch, so adding LGPL-3.0 to
