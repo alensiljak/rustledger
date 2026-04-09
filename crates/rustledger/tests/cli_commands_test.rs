@@ -153,6 +153,60 @@ fn test_check_json_output() {
     }
 }
 
+/// Regression for issue #736 case 1: an account whose root type is not one
+/// of the configured account names (defaults: Assets/Liabilities/Equity/
+/// Income/Expenses) must be reported as a parse-phase diagnostic in JSON
+/// output. This matches Python beancount, where the lexer itself rejects
+/// such account names, and satisfies the pta-standards conformance harness
+/// which classifies errors by the `phase` field.
+#[test]
+fn test_check_invalid_account_root_is_parse_phase() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(tmp.path(), "2024-01-01 open Savings:Emergency\n").expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--format", "json", "--no-cache"])
+        .arg(tmp.path())
+        .output()
+        .expect("Failed to run rledger check");
+
+    // Skip if this rledger build doesn't support --no-cache or --format json.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("--no-cache") || stderr.contains("--format") {
+            eprintln!("Skipping: required flags not supported");
+            return;
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value =
+        serde_json::from_str(&stdout).expect("check --format json should produce valid JSON");
+
+    let diagnostics = json["diagnostics"]
+        .as_array()
+        .expect("diagnostics array missing");
+    let e1005 = diagnostics
+        .iter()
+        .find(|d| d["code"] == "E1005")
+        .expect("expected E1005 diagnostic for Savings:Emergency");
+
+    assert_eq!(
+        e1005["phase"], "parse",
+        "E1005 must be phase=parse for conformance compatibility, got: {}",
+        e1005
+    );
+    assert_eq!(
+        json["parse_error_count"], 1,
+        "parse_error_count should include E1005; got json: {json}"
+    );
+    assert_eq!(
+        json["validate_error_count"], 0,
+        "validate_error_count should not include E1005; got json: {json}"
+    );
+}
+
 // =============================================================================
 // rledger query tests
 // =============================================================================

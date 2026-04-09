@@ -1116,12 +1116,17 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     if !validation_errors.is_empty() {
         if json_mode {
+            let mut parse_phase_errors = 0usize;
             for err in &validation_errors {
                 let severity = if err.code.is_warning() {
                     "warning"
                 } else {
                     "error"
                 };
+                let is_parse_phase = err.code.is_parse_phase();
+                if is_parse_phase && !err.code.is_warning() {
+                    parse_phase_errors += 1;
+                }
                 diagnostics.push(JsonDiagnostic {
                     file: main_file_str.clone(),
                     line: 1, // Validation errors don't have precise locations yet
@@ -1129,14 +1134,19 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     end_line: 1,
                     end_column: 1,
                     severity: severity.to_string(),
-                    phase: "validate".to_string(),
+                    phase: if is_parse_phase {
+                        "parse".to_string()
+                    } else {
+                        "validate".to_string()
+                    },
                     code: err.code.code().to_string(),
                     message: err.message.clone(),
                     hint: None,
                     context: Some(format!("{}", err.date)),
                 });
             }
-            validate_error_count += local_validation_error_count;
+            parse_error_count += parse_phase_errors;
+            validate_error_count += local_validation_error_count - parse_phase_errors;
         } else if !args.quiet {
             report::report_validation_errors(
                 &validation_errors,
