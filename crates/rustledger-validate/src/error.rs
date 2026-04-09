@@ -158,6 +158,20 @@ impl ErrorCode {
             Severity::Error
         }
     }
+
+    /// Whether this error represents a parse-phase concern rather than a
+    /// semantic/validate-phase concern.
+    ///
+    /// Some checks — notably account-name structure (E1005) — are lexical in
+    /// nature and are conceptually part of parsing, even though rustledger
+    /// currently runs them during validation because the set of valid account
+    /// roots is not known until options have been resolved. Python beancount's
+    /// parser rejects these inputs at parse time, so we tag them as parse-phase
+    /// for consumers that distinguish the two (e.g. the conformance harness).
+    #[must_use]
+    pub const fn is_parse_phase(&self) -> bool {
+        matches!(self, Self::InvalidAccountName)
+    }
 }
 
 /// Severity level for validation messages.
@@ -244,5 +258,32 @@ impl ValidationError {
         self.span = Some(spanned.span);
         self.file_id = Some(spanned.file_id);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_account_name_is_parse_phase() {
+        // E1005 is a lexical/structural account-name check and must be
+        // reported as a parse-phase diagnostic, matching Python beancount.
+        assert!(ErrorCode::InvalidAccountName.is_parse_phase());
+    }
+
+    #[test]
+    fn other_account_errors_are_validate_phase() {
+        // Lifecycle errors remain semantic (validate-phase) concerns.
+        assert!(!ErrorCode::AccountNotOpen.is_parse_phase());
+        assert!(!ErrorCode::AccountAlreadyOpen.is_parse_phase());
+        assert!(!ErrorCode::AccountClosed.is_parse_phase());
+    }
+
+    #[test]
+    fn non_account_errors_are_validate_phase() {
+        assert!(!ErrorCode::TransactionUnbalanced.is_parse_phase());
+        assert!(!ErrorCode::BalanceAssertionFailed.is_parse_phase());
+        assert!(!ErrorCode::UnknownOption.is_parse_phase());
     }
 }
