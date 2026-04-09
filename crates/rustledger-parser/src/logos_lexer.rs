@@ -41,11 +41,13 @@ pub enum Token<'src> {
     #[regex(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}")]
     Date(&'src str),
 
-    /// A number with optional sign, thousands separators, and decimals.
-    /// Examples: 123, -456, 1,234.56, 1234.5678, 1. (trailing decimal)
+    /// A number with optional thousands separators and decimals.
+    /// Examples: 123, 1,234.56, 1234.5678, 1. (trailing decimal)
+    /// Negative numbers are handled as unary minus (`-` token + number)
+    /// to allow subtraction expressions like `3-2` to parse correctly.
     /// Python beancount v3 requires an integer part before the decimal point.
     /// Leading decimals like `.50` are rejected per the beancount v3 spec.
-    #[regex(r"-?(\d{1,3}(,\d{3})*|\d+)(\.\d*)?")]
+    #[regex(r"(\d{1,3}(,\d{3})*|\d+)(\.\d*)?")]
     Number(&'src str),
 
     /// A double-quoted string (handles escape sequences).
@@ -529,9 +531,11 @@ mod tests {
         assert_eq!(tokens.len(), 1);
         assert!(matches!(tokens[0].0, Token::Number("1234.56")));
 
+        // Negative numbers are now Minus + Number (enables subtraction expressions)
         let tokens = tokenize("-1,234.56");
-        assert_eq!(tokens.len(), 1);
-        assert!(matches!(tokens[0].0, Token::Number("-1,234.56")));
+        assert_eq!(tokens.len(), 2);
+        assert!(matches!(tokens[0].0, Token::Minus));
+        assert!(matches!(tokens[1].0, Token::Number("1,234.56")));
     }
 
     #[test]
