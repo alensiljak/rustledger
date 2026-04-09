@@ -60,7 +60,7 @@ regex = "1"
 format_num_pattern = { version = "0.9.4", features = ["rust_decimal"] }
 chumsky = "1.0.0-alpha.7"
 winnow = { version = "1.0", features = ["simd"] }
-ariadne = "0.6"
+miette = { version = "7", features = ["fancy"] }
 logos = "0.16"
 logosky = "0.2"
 

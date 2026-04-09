@@ -1,12 +1,12 @@
 //! Error reporting with beautiful diagnostics.
 //!
-//! Uses ariadne for pretty-printed error messages with source context.
+//! Uses miette for pretty-printed error messages with source context.
 //! Respects TTY detection and `NO_COLOR` environment variable.
 
-use ariadne::{ColorGenerator, Config, Label, Report, ReportKind, Source};
+use miette::{GraphicalReportHandler, GraphicalTheme, LabeledSpan, Severity};
 use rustledger_loader::SourceMap;
 use rustledger_parser::ParseError;
-use rustledger_validate::{ErrorCode, Severity, ValidationError};
+use rustledger_validate::{ErrorCode, ValidationError};
 use std::collections::HashMap;
 use std::io::{IsTerminal, Write};
 use std::path::Path;
@@ -19,17 +19,15 @@ use std::path::Path;
 ///
 /// See <https://no-color.org/> for the `NO_COLOR` standard.
 pub fn should_use_color() -> bool {
-    // Check NO_COLOR environment variable (any value disables color)
     if std::env::var_os("NO_COLOR").is_some() {
         return false;
     }
-    // Check if stdout is a terminal
     std::io::stdout().is_terminal()
 }
 
-/// A source cache for ariadne.
+/// A source cache for error reporting.
 pub struct SourceCache {
-    sources: HashMap<String, Source<String>>,
+    sources: HashMap<String, String>,
 }
 
 impl SourceCache {
@@ -42,19 +40,28 @@ impl SourceCache {
 
     /// Add a source file to the cache.
     pub fn add(&mut self, path: &str, content: String) {
-        self.sources.insert(path.to_string(), Source::from(content));
+        self.sources.insert(path.to_string(), content);
     }
 
     /// Get a source by path.
     #[allow(dead_code)]
-    pub fn get(&self, path: &str) -> Option<&Source<String>> {
-        self.sources.get(path)
+    pub fn get(&self, path: &str) -> Option<&str> {
+        self.sources.get(path).map(String::as_str)
     }
 }
 
 impl Default for SourceCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Build a miette report handler with the given color settings.
+fn build_handler(use_color: bool) -> GraphicalReportHandler {
+    if use_color {
+        GraphicalReportHandler::new()
+    } else {
+        GraphicalReportHandler::new_themed(GraphicalTheme::none())
     }
 }
 
@@ -69,34 +76,30 @@ pub fn report_parse_errors<W: Write>(
     use_color: bool,
 ) -> std::io::Result<usize> {
     let path_str = source_path.display().to_string();
-    let mut colors = ColorGenerator::new();
     let error_count = errors.len();
+    let handler = build_handler(use_color);
+    let named_source = miette::NamedSource::new(&path_str, source.to_string());
 
     for error in errors {
         let (start, end) = error.span();
 
-        let label = Label::new((&path_str, start..end)).with_message(error.label());
-        // Only set label color when colors are enabled
-        let label = if use_color {
-            label.with_color(colors.next())
-        } else {
-            label
+        let diagnostic = miette::MietteDiagnostic {
+            message: error.message(),
+            code: Some(format!("P{:04}", error.kind_code())),
+            severity: Some(Severity::Error),
+            help: error.hint.as_ref().map(String::from),
+            url: None,
+            labels: Some(vec![LabeledSpan::at(start..end, error.label())]),
         };
 
-        let mut report = Report::build(ReportKind::Error, (&path_str, start..end))
-            .with_code(format!("P{:04}", error.kind_code()))
-            .with_message(error.message())
-            .with_label(label)
-            .with_config(Config::default().with_compact(false).with_color(use_color));
+        let report = miette::Report::new(diagnostic).with_source_code(named_source.clone());
 
-        // Add hint if present
-        if let Some(hint) = &error.hint {
-            report = report.with_help(hint);
-        }
-
-        report
-            .finish()
-            .write((&path_str, Source::from(source)), &mut *writer)?;
+        // Render to string then write
+        let mut rendered = String::new();
+        handler
+            .render_report(&mut rendered, report.as_ref())
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        write!(writer, "{rendered}")?;
     }
 
     Ok(error_count)
@@ -118,7 +121,6 @@ pub fn report_validation_errors<W: Write>(
     let error_count = errors.len();
 
     for error in errors {
-        // Format location if available
         let location = if let (Some(span), Some(file_id)) = (error.span, error.file_id) {
             if let Some(source_file) = source_map.get(file_id as usize) {
                 let (line, _col) = source_file.line_col(span.start);
@@ -130,15 +132,13 @@ pub fn report_validation_errors<W: Write>(
             String::new()
         };
 
-        // Use correct severity label based on error code classification
         let severity_label = match error.code.severity() {
-            Severity::Error => "error",
-            Severity::Warning => "warning",
-            Severity::Info => "info",
+            rustledger_validate::Severity::Error => "error",
+            rustledger_validate::Severity::Warning => "warning",
+            rustledger_validate::Severity::Info => "info",
         };
 
         if location.is_empty() {
-            // No location info - use original format
             writeln!(
                 writer,
                 "{}[{}]: {} ({})",
@@ -148,7 +148,6 @@ pub fn report_validation_errors<W: Write>(
                 error.date
             )?;
         } else {
-            // Format: file:line: severity[CODE]: message (date)
             writeln!(
                 writer,
                 "{}: {}[{}]: {} ({})",
@@ -171,7 +170,6 @@ pub fn report_validation_errors<W: Write>(
 
 /// Format an error code for display.
 fn format_error_code(code: ErrorCode) -> String {
-    // Use the built-in code() method
     code.code().to_string()
 }
 
@@ -184,7 +182,6 @@ pub fn print_summary<W: Write>(
     writer: &mut W,
     use_color: bool,
 ) -> std::io::Result<()> {
-    // Color codes
     let (green, red, yellow, reset) = if use_color {
         ("\x1b[32m", "\x1b[31m", "\x1b[33m", "\x1b[0m")
     } else {
@@ -218,7 +215,6 @@ mod tests {
 
     #[test]
     fn test_report_validation_errors_warning_label() {
-        // E1004 (AccountCloseNotEmpty) is classified as a warning
         let warning = ValidationError::new(
             ErrorCode::AccountCloseNotEmpty,
             "Cannot close account with non-zero balance".to_string(),
@@ -244,7 +240,6 @@ mod tests {
 
     #[test]
     fn test_report_validation_errors_error_label() {
-        // E1001 (AccountNotOpen) is classified as an error
         let error = ValidationError::new(
             ErrorCode::AccountNotOpen,
             "Account was never opened".to_string(),
@@ -261,6 +256,48 @@ mod tests {
         assert!(
             output_str.contains("error[E1001]"),
             "Expected 'error[E1001]' but got: {output_str}"
+        );
+    }
+
+    #[test]
+    fn test_report_parse_errors_renders() {
+        use rustledger_parser::parse;
+
+        let source = "INVALID GARBAGE\n";
+        let result = parse(source);
+        assert!(!result.errors.is_empty());
+
+        let mut output = Vec::new();
+        let path = Path::new("test.beancount");
+        report_parse_errors(&result.errors, path, source, &mut output, false).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(!output_str.is_empty(), "Should produce output");
+        assert!(
+            output_str.contains("P0012") || output_str.contains("parse error"),
+            "Should contain error code or message: {output_str}"
+        );
+    }
+
+    #[test]
+    fn test_report_parse_errors_cjk_no_panic() {
+        use rustledger_parser::parse;
+
+        // CJK characters in narration followed by a parse error.
+        // This must not panic or produce garbled output — the motivation
+        // for migrating from ariadne to miette (#728).
+        let source = "2026-01-04 * \"いろは\"\n  GARBAGE\n";
+        let result = parse(source);
+        assert!(!result.errors.is_empty());
+
+        let mut output = Vec::new();
+        let path = Path::new("test.beancount");
+        report_parse_errors(&result.errors, path, source, &mut output, false).unwrap();
+
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(
+            !output_str.is_empty(),
+            "Should produce output for CJK source"
         );
     }
 }
