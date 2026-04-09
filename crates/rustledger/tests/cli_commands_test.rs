@@ -194,8 +194,7 @@ fn test_check_invalid_account_root_is_parse_phase() {
 
     assert_eq!(
         e1005["phase"], "parse",
-        "E1005 must be phase=parse for conformance compatibility, got: {}",
-        e1005
+        "E1005 must be phase=parse for conformance compatibility, got: {e1005}"
     );
     assert_eq!(
         json["parse_error_count"], 1,
