@@ -855,3 +855,54 @@ fn test_reject_unicode_account_name() {
         "expected parse error for Unicode characters in account name"
     );
 }
+
+/// Case: invalid-cost-unclosed (issue #736)
+/// A cost specification must be closed with `}` on the same logical line
+/// as the opening `{`. Hitting a newline before the closing brace is a
+/// parse error — the parser must not silently consume tokens on following
+/// posting lines looking for a close brace.
+#[test]
+fn test_reject_unclosed_cost_brace() {
+    let source = "\
+2024-01-01 open Assets:Stock
+2024-01-01 open Assets:Cash USD
+
+2024-01-15 *
+  Assets:Stock 10 AAPL {150 USD
+  Assets:Cash -1500 USD
+";
+    let result = parse(source);
+    assert!(
+        !result.errors.is_empty(),
+        "expected parse error for unclosed cost brace, got: {:?}",
+        result.errors
+    );
+    let msg = format!("{:?}", result.errors);
+    assert!(
+        msg.contains("unclosed cost"),
+        "expected 'unclosed cost' in error message, got: {msg}"
+    );
+}
+
+/// Regression: an unclosed cost brace followed by EOF (no trailing newline)
+/// should also produce a parse error, not silently drop the cost.
+#[test]
+fn test_reject_unclosed_cost_brace_at_eof() {
+    let source = "\
+2024-01-01 open Assets:Stock
+2024-01-01 open Assets:Cash USD
+
+2024-01-15 *
+  Assets:Stock 10 AAPL {150 USD";
+    let result = parse(source);
+    assert!(
+        !result.errors.is_empty(),
+        "expected parse error for unclosed cost brace at EOF, got: {:?}",
+        result.errors
+    );
+    let msg = format!("{:?}", result.errors);
+    assert!(
+        msg.contains("unclosed cost"),
+        "expected 'unclosed cost' in error message, got: {msg}"
+    );
+}
