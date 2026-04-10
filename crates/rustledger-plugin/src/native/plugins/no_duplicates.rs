@@ -6,9 +6,15 @@
 //! transaction's structural identity: flag, payee, narration, tags, links,
 //! and each posting's account, units, cost, price, and flag. Metadata is
 //! deliberately excluded (beancount's `hash_entry` passes `exclude_meta=True`).
+//!
+//! The hash helpers below use exhaustive struct destructuring so that adding
+//! a field to `TransactionData`, `PostingData`, `CostData`, `AmountData`, or
+//! `PriceAnnotationData` causes a compile error here — forcing whoever adds
+//! the field to explicitly decide whether it contributes to structural
+//! identity (add to the hash) or not (bind with `_` and document why).
 
 use crate::types::{
-    CostData, DirectiveData, PluginError, PluginInput, PluginOutput, PostingData,
+    AmountData, CostData, DirectiveData, PluginError, PluginInput, PluginOutput, PostingData,
     PriceAnnotationData, TransactionData,
 };
 
@@ -31,85 +37,134 @@ impl NativePlugin for NoDuplicatesPlugin {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
 
-        // Hash a cost spec field-by-field so two cost specs with identical
-        // contents but independently allocated `Option`s hash to the same
-        // value.
+        // Sentinel bytes used to discriminate `None` from `Some` before each
+        // optional component. Otherwise `(None, Some(x))` and `(Some(x), None)`
+        // could collide for adjacent fields. Python's tuple hash achieves the
+        // equivalent via `hash(None)` being a distinct fixed value.
+        const ABSENT: u8 = 0;
+        const PRESENT: u8 = 1;
+
+        fn hash_amount<H: Hasher>(amount: &AmountData, hasher: &mut H) {
+            let AmountData { number, currency } = amount;
+            number.hash(hasher);
+            currency.hash(hasher);
+        }
+
         fn hash_cost<H: Hasher>(cost: &CostData, hasher: &mut H) {
-            cost.number_per.hash(hasher);
-            cost.number_total.hash(hasher);
-            cost.currency.hash(hasher);
-            cost.date.hash(hasher);
-            cost.label.hash(hasher);
-            cost.merge.hash(hasher);
+            let CostData {
+                number_per,
+                number_total,
+                currency,
+                date,
+                label,
+                merge,
+            } = cost;
+            number_per.hash(hasher);
+            number_total.hash(hasher);
+            currency.hash(hasher);
+            date.hash(hasher);
+            label.hash(hasher);
+            merge.hash(hasher);
         }
 
         fn hash_price<H: Hasher>(price: &PriceAnnotationData, hasher: &mut H) {
-            price.is_total.hash(hasher);
-            if let Some(amount) = &price.amount {
-                amount.number.hash(hasher);
-                amount.currency.hash(hasher);
+            let PriceAnnotationData {
+                is_total,
+                amount,
+                number,
+                currency,
+            } = price;
+            is_total.hash(hasher);
+            match amount {
+                Some(a) => {
+                    PRESENT.hash(hasher);
+                    hash_amount(a, hasher);
+                }
+                None => ABSENT.hash(hasher),
             }
-            price.number.hash(hasher);
-            price.currency.hash(hasher);
+            number.hash(hasher);
+            currency.hash(hasher);
         }
 
         fn hash_posting<H: Hasher>(posting: &PostingData, hasher: &mut H) {
-            posting.account.hash(hasher);
-            // Discriminate None from Some by hashing a sentinel before each
-            // optional component — otherwise `(None, Some(x))` and
-            // `(Some(x), None)` could collide for adjacent fields. Python's
-            // tuple hash naturally does the equivalent via `hash(None)`.
-            match &posting.units {
-                Some(units) => {
-                    1u8.hash(hasher);
-                    units.number.hash(hasher);
-                    units.currency.hash(hasher);
+            // Destructure so any future field added to `PostingData` causes a
+            // compile error here and the maintainer must explicitly decide
+            // whether it's part of structural identity.
+            let PostingData {
+                account,
+                units,
+                cost,
+                price,
+                flag,
+                // Metadata is intentionally NOT hashed — matches beancount's
+                // hash_entry(exclude_meta=True) default. Bind to `_` so adding
+                // a new field in the future is still a compile error.
+                metadata: _,
+            } = posting;
+
+            account.hash(hasher);
+            match units {
+                Some(u) => {
+                    PRESENT.hash(hasher);
+                    hash_amount(u, hasher);
                 }
-                None => 0u8.hash(hasher),
+                None => ABSENT.hash(hasher),
             }
-            match &posting.cost {
-                Some(cost) => {
-                    1u8.hash(hasher);
-                    hash_cost(cost, hasher);
+            match cost {
+                Some(c) => {
+                    PRESENT.hash(hasher);
+                    hash_cost(c, hasher);
                 }
-                None => 0u8.hash(hasher),
+                None => ABSENT.hash(hasher),
             }
-            match &posting.price {
-                Some(price) => {
-                    1u8.hash(hasher);
-                    hash_price(price, hasher);
+            match price {
+                Some(p) => {
+                    PRESENT.hash(hasher);
+                    hash_price(p, hasher);
                 }
-                None => 0u8.hash(hasher),
+                None => ABSENT.hash(hasher),
             }
-            posting.flag.hash(hasher);
+            flag.hash(hasher);
         }
 
         fn hash_transaction(date: &str, txn: &TransactionData) -> u64 {
+            // Destructure so any future field added to `TransactionData`
+            // causes a compile error here.
+            let TransactionData {
+                flag,
+                payee,
+                narration,
+                tags,
+                links,
+                // Metadata is intentionally NOT hashed — matches beancount's
+                // hash_entry(exclude_meta=True) default.
+                metadata: _,
+                postings,
+            } = txn;
+
             let mut hasher = DefaultHasher::new();
             date.hash(&mut hasher);
-            txn.flag.hash(&mut hasher);
-            txn.payee.hash(&mut hasher);
-            txn.narration.hash(&mut hasher);
+            flag.hash(&mut hasher);
+            payee.hash(&mut hasher);
+            narration.hash(&mut hasher);
 
             // Tags and links are unordered sets in beancount; sort so the
             // hash is stable regardless of the order the parser emitted them.
-            let mut tags: Vec<&String> = txn.tags.iter().collect();
-            tags.sort();
-            for tag in tags {
+            let mut sorted_tags: Vec<&String> = tags.iter().collect();
+            sorted_tags.sort();
+            for tag in sorted_tags {
                 tag.hash(&mut hasher);
             }
-            let mut links: Vec<&String> = txn.links.iter().collect();
-            links.sort();
-            for link in links {
+            let mut sorted_links: Vec<&String> = links.iter().collect();
+            sorted_links.sort();
+            for link in sorted_links {
                 link.hash(&mut hasher);
             }
 
-            for posting in &txn.postings {
+            for posting in postings {
                 hash_posting(posting, &mut hasher);
             }
 
-            // Metadata is intentionally NOT hashed: beancount's hash_entry
-            // defaults to exclude_meta=True for the noduplicates plugin.
             hasher.finish()
         }
 
