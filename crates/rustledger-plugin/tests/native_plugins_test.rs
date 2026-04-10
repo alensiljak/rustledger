@@ -368,6 +368,193 @@ fn test_noduplicates_ok_different_amounts() {
     assert!(output.errors.is_empty(), "expected no errors");
 }
 
+/// Regression for issue #746: transactions that share date, narration, and
+/// postings but have **distinct `^link` values** must not be flagged as
+/// duplicates. This mirrors Python beancount's `hash_entry`, which folds
+/// `links` into the transaction hash, and is the idiomatic beancount way
+/// to disambiguate legitimate identical postings (e.g. two $100 ATM
+/// withdrawals on the same day imported from a bank statement).
+#[test]
+fn test_noduplicates_distinct_links_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-06-11",
+        "ATM Withdrawal",
+        vec![
+            ("Assets:Checking:Test", "-100.00", "USD"),
+            ("Expenses:ATM", "100.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.links = vec!["stmt-2024-06-seq1".to_string()];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-06-11",
+        "ATM Withdrawal",
+        vec![
+            ("Assets:Checking:Test", "-100.00", "USD"),
+            ("Expenses:ATM", "100.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.links = vec!["stmt-2024-06-seq2".to_string()];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Checking:Test"),
+        make_open("2024-01-01", "Expenses:ATM"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct ^link values should disambiguate otherwise-identical transactions, got: {:?}",
+        output.errors
+    );
+}
+
+/// Regression for issue #746: tags are also part of structural identity
+/// per beancount's `hash_entry`, so distinct tags on otherwise-identical
+/// transactions must disambiguate them.
+#[test]
+fn test_noduplicates_distinct_tags_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.tags = vec!["morning".to_string()];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.tags = vec!["afternoon".to_string()];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct tags should disambiguate otherwise-identical transactions, got: {:?}",
+        output.errors
+    );
+}
+
+/// Tags and links are beancount sets — the order the parser emits them
+/// must not influence the duplicate hash.
+#[test]
+fn test_noduplicates_tag_order_independent() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.tags = vec!["morning".to_string(), "caffeine".to_string()];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        // Same tags, reversed order.
+        t.tags = vec!["caffeine".to_string(), "morning".to_string()];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "reordered but identical tag sets should hash equal and be flagged as duplicate, got: {:?}",
+        output.errors
+    );
+}
+
+/// Transactions differing only in flag (`*` vs `!`) are structurally
+/// different and must not collide in the duplicate hash.
+#[test]
+fn test_noduplicates_distinct_flags_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.flag = "*".to_string();
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.flag = "!".to_string();
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct flags should disambiguate otherwise-identical transactions, got: {:?}",
+        output.errors
+    );
+}
+
 // ============================================================================
 // OneCommodityPlugin Tests (from onecommodity_test.py)
 // ============================================================================
