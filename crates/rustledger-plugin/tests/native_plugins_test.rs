@@ -788,6 +788,799 @@ fn test_noduplicates_distinct_flags_are_not_duplicates() {
 }
 
 // ============================================================================
+// NoDuplicatesPlugin — exhaustive edge-case coverage (issue #746)
+// ============================================================================
+//
+// The noduplicates plugin mirrors Python beancount's
+// `beancount.core.compare.hash_entry`. The tests below walk every field
+// that contributes to structural identity (or is deliberately excluded)
+// and pin the expected behavior, so any future change to the hash
+// function is caught immediately.
+
+/// Shorthand: build a simple 2-posting transaction, apply a per-field
+/// mutation via a closure, and return the wrapper. Lets each test
+/// express "identical to baseline except for X" in a single expression.
+fn make_txn_with<F: FnOnce(&mut TransactionData)>(
+    date: &str,
+    narration: &str,
+    postings: Vec<(&str, &str, &str)>,
+    mutate: F,
+) -> DirectiveWrapper {
+    let mut wrapper = make_transaction(date, narration, postings);
+    if let DirectiveData::Transaction(t) = &mut wrapper.data {
+        mutate(t);
+    }
+    wrapper
+}
+
+// ---------- Transaction-level identity ----------
+
+/// Different dates must never collide, even with otherwise-identical
+/// fields.
+#[test]
+fn test_noduplicates_distinct_dates_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction("2024-01-15", "Coffee", postings.clone()),
+        make_transaction("2024-01-16", "Coffee", postings),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "different dates must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Distinct narration text disambiguates duplicates.
+#[test]
+fn test_noduplicates_distinct_narration_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction("2024-01-15", "Coffee", postings.clone()),
+        make_transaction("2024-01-15", "Lunch", postings),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "different narration must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Distinct payees disambiguate duplicates.
+#[test]
+fn test_noduplicates_distinct_payees_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let txn_a = make_txn_with("2024-01-15", "Coffee", postings.clone(), |t| {
+        t.payee = Some("Starbucks".to_string());
+    });
+    let txn_b = make_txn_with("2024-01-15", "Coffee", postings, |t| {
+        t.payee = Some("Blue Bottle".to_string());
+    });
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "different payees must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// `None` payee is distinct from `Some("")` — Rust's derived
+/// `Option::hash` already discriminates them, but pin it so a future
+/// custom hash can't regress.
+#[test]
+fn test_noduplicates_none_vs_empty_payee_differ() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let txn_a = make_txn_with("2024-01-15", "Coffee", postings.clone(), |t| {
+        t.payee = None;
+    });
+    let txn_b = make_txn_with("2024-01-15", "Coffee", postings, |t| {
+        t.payee = Some(String::new());
+    });
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "None payee must not collide with Some(\"\"), got: {:?}",
+        output.errors
+    );
+}
+
+/// Links are a set, just like tags — order-independence test.
+#[test]
+fn test_noduplicates_link_order_independent() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let txn_a = make_txn_with("2024-01-15", "Coffee", postings.clone(), |t| {
+        t.links = vec!["stmt-a".to_string(), "stmt-b".to_string()];
+    });
+    let txn_b = make_txn_with("2024-01-15", "Coffee", postings, |t| {
+        t.links = vec!["stmt-b".to_string(), "stmt-a".to_string()];
+    });
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "reordered link sets should hash equal, got: {:?}",
+        output.errors
+    );
+}
+
+/// Empty tags/links vectors should be indistinguishable from absent
+/// tags/links. Matches beancount frozenset() == frozenset([]).
+#[test]
+fn test_noduplicates_empty_vs_absent_tags_are_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let txn_a = make_transaction("2024-01-15", "Coffee", postings.clone());
+    let txn_b = make_txn_with("2024-01-15", "Coffee", postings, |t| {
+        t.tags = vec![];
+        t.links = vec![];
+    });
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "empty tags/links must hash equal to absent tags/links, got: {:?}",
+        output.errors
+    );
+}
+
+// ---------- Posting-level identity ----------
+
+/// Different account on a posting must disambiguate.
+#[test]
+fn test_noduplicates_distinct_accounts_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Assets:Cash"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Assets:Bank", "-5.00", "USD"),
+                ("Expenses:Food", "5.00", "USD"),
+            ],
+        ),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Assets:Cash", "-5.00", "USD"), // different account
+                ("Expenses:Food", "5.00", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "different account must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Different number of postings must disambiguate.
+#[test]
+fn test_noduplicates_distinct_posting_count_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_open("2024-01-01", "Expenses:Fee"),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Assets:Bank", "-5.00", "USD"),
+                ("Expenses:Food", "5.00", "USD"),
+            ],
+        ),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Assets:Bank", "-5.00", "USD"),
+                ("Expenses:Food", "4.50", "USD"),
+                ("Expenses:Fee", "0.50", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "different posting counts must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Posting order IS part of structural identity per beancount — two
+/// transactions with the same postings in different orders hash
+/// differently. This matches the Python `Posting` tuple being ordered
+/// inside `Transaction.postings: List[Posting]`.
+#[test]
+fn test_noduplicates_reordered_postings_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Assets:Bank", "-5.00", "USD"),
+                ("Expenses:Food", "5.00", "USD"),
+            ],
+        ),
+        make_transaction(
+            "2024-01-15",
+            "Coffee",
+            vec![
+                ("Expenses:Food", "5.00", "USD"),
+                ("Assets:Bank", "-5.00", "USD"),
+            ],
+        ),
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "reordered postings must not collide (postings are an ordered list in \
+         beancount), got: {:?}",
+        output.errors
+    );
+}
+
+/// A posting with `units: None` (auto-balancing) is structurally
+/// different from one with explicit units.
+#[test]
+fn test_noduplicates_none_vs_some_units_differ() {
+    let plugin = NoDuplicatesPlugin;
+    // txn_a: both postings have units
+    let txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    // txn_b: auto-balancing second posting
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.postings[1].units = None;
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "None units must not collide with Some units, got: {:?}",
+        output.errors
+    );
+}
+
+/// A cost with a lot date is structurally different from one without.
+#[test]
+fn test_noduplicates_cost_with_date_differs() {
+    let plugin = NoDuplicatesPlugin;
+    let mut txn_a = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    let mut txn_b = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data
+        && let Some(cost) = &mut t.postings[0].cost
+    {
+        cost.date = Some("2024-01-10".to_string());
+    }
+    // Keep the tests independent of any posting-level expansion logic.
+    let _ = &mut txn_a;
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "cost with date must not collide with cost without date, got: {:?}",
+        output.errors
+    );
+}
+
+/// A cost with a lot label is structurally different from one without.
+#[test]
+fn test_noduplicates_cost_with_label_differs() {
+    let plugin = NoDuplicatesPlugin;
+    let txn_a = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    let mut txn_b = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data
+        && let Some(cost) = &mut t.postings[0].cost
+    {
+        cost.label = Some("lot-42".to_string());
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "cost with label must not collide with cost without label, got: {:?}",
+        output.errors
+    );
+}
+
+/// Total cost (`number_total`) vs per-unit cost (`number_per`) are
+/// structurally different even when the cost spec otherwise matches.
+#[test]
+fn test_noduplicates_total_vs_per_unit_cost_differ() {
+    let plugin = NoDuplicatesPlugin;
+    let txn_a = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"), // per-unit cost
+        "Assets:Cash",
+    );
+    let mut txn_b = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data
+        && let Some(cost) = &mut t.postings[0].cost
+    {
+        // Swap to total cost form
+        cost.number_per = None;
+        cost.number_total = Some("1500.00".to_string());
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "per-unit cost must not collide with total cost, got: {:?}",
+        output.errors
+    );
+}
+
+/// `@` (per-unit price) and `@@` (total price) are structurally
+/// different annotations.
+#[test]
+fn test_noduplicates_unit_vs_total_price_differ() {
+    let plugin = NoDuplicatesPlugin;
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Sell",
+        vec![
+            ("Assets:Stock", "-5", "AAPL"),
+            ("Assets:Cash", "875.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.postings[0].price = Some(PriceAnnotationData {
+            is_total: false,
+            amount: Some(AmountData {
+                number: "175.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            number: None,
+            currency: None,
+        });
+    }
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Sell",
+        vec![
+            ("Assets:Stock", "-5", "AAPL"),
+            ("Assets:Cash", "875.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.postings[0].price = Some(PriceAnnotationData {
+            is_total: true, // @@
+            amount: Some(AmountData {
+                number: "875.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            number: None,
+            currency: None,
+        });
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "`@` and `@@` prices must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// An incomplete price (currency only, no number) is structurally
+/// different from a complete one.
+#[test]
+fn test_noduplicates_incomplete_vs_complete_price_differ() {
+    let plugin = NoDuplicatesPlugin;
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Sell",
+        vec![
+            ("Assets:Stock", "-5", "AAPL"),
+            ("Assets:Cash", "0.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.postings[0].price = Some(PriceAnnotationData {
+            is_total: false,
+            amount: None,
+            number: None,
+            currency: Some("USD".to_string()),
+        });
+    }
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Sell",
+        vec![
+            ("Assets:Stock", "-5", "AAPL"),
+            ("Assets:Cash", "0.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.postings[0].price = Some(PriceAnnotationData {
+            is_total: false,
+            amount: Some(AmountData {
+                number: "175.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            number: None,
+            currency: None,
+        });
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "incomplete and complete prices must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Posting-level flag (`!` on a single posting) is part of structural
+/// identity, matching `Posting.flag` in beancount.
+#[test]
+fn test_noduplicates_distinct_posting_flags_differ() {
+    let plugin = NoDuplicatesPlugin;
+    let txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.postings[0].flag = Some("!".to_string());
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct posting flags must not collide, got: {:?}",
+        output.errors
+    );
+}
+
+/// Posting-level metadata is excluded from the hash, matching
+/// `hash_entry(exclude_meta=True)`.
+#[test]
+fn test_noduplicates_posting_metadata_does_not_disambiguate() {
+    let plugin = NoDuplicatesPlugin;
+    use rustledger_plugin_types::MetaValueData;
+
+    let txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Expenses:Food", "5.00", "USD"),
+            ("Assets:Bank", "-5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.postings[0].metadata =
+            vec![("ref".to_string(), MetaValueData::String("abc".to_string()))];
+    }
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "posting-level metadata must not disambiguate (exclude_meta=True), \
+         got: {:?}",
+        output.errors
+    );
+}
+
+// ---------- Multi-transaction & structural scenarios ----------
+
+/// Three identical transactions produce exactly two duplicate errors
+/// (one per extra occurrence).
+#[test]
+fn test_noduplicates_three_identical_reports_two_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction("2024-01-15", "Coffee", postings.clone()),
+        make_transaction("2024-01-15", "Coffee", postings.clone()),
+        make_transaction("2024-01-15", "Coffee", postings),
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        2,
+        "three identical transactions should produce two duplicate errors, got: {:?}",
+        output.errors
+    );
+}
+
+/// Non-transaction directives (Open, Close, etc.) are ignored by the
+/// plugin — they should never be flagged as duplicates, and their
+/// presence between transactions should not affect duplicate detection.
+#[test]
+fn test_noduplicates_ignores_non_transaction_directives() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let input = make_input(vec![
+        // Two identical opens — not a transaction, must be ignored by
+        // the plugin (validators handle duplicate opens separately).
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction("2024-01-15", "Coffee", postings.clone()),
+        // An Open directive between the two transactions shouldn't
+        // cause any hash collision with either.
+        make_open("2024-02-01", "Assets:Savings"),
+        make_transaction("2024-01-15", "Coffee", postings),
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "only the two real transaction duplicates should be flagged \
+         (non-transaction directives ignored), got: {:?}",
+        output.errors
+    );
+}
+
+/// A transaction with zero postings (edge case) must still be
+/// processed without panicking, and two such transactions hash equal.
+#[test]
+fn test_noduplicates_empty_postings_edge_case() {
+    let plugin = NoDuplicatesPlugin;
+    let txn_a = make_txn_with("2024-01-15", "placeholder", vec![], |_| {});
+    let txn_b = make_txn_with("2024-01-15", "placeholder", vec![], |_| {});
+    let input = make_input(vec![txn_a, txn_b]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "two empty-posting transactions should hash equal and be flagged, got: {:?}",
+        output.errors
+    );
+}
+
+/// Duplicates separated by many unrelated transactions are still
+/// detected — the plugin's HashSet lookup is independent of position.
+#[test]
+fn test_noduplicates_detects_duplicates_across_distance() {
+    let plugin = NoDuplicatesPlugin;
+    let target_postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let mut directives = vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        make_transaction("2024-01-15", "Coffee", target_postings.clone()),
+    ];
+    // Fill with 50 distinct transactions on different dates.
+    for day in 16..=65 {
+        directives.push(make_transaction(
+            &format!("2024-01-{day:02}"),
+            "Distinct",
+            vec![
+                ("Expenses:Food", &format!("{day}.00"), "USD"),
+                ("Assets:Bank", &format!("-{day}.00"), "USD"),
+            ],
+        ));
+    }
+    // Duplicate of the first Coffee transaction, 50 entries later.
+    directives.push(make_transaction("2024-01-15", "Coffee", target_postings));
+    let input = make_input(directives);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "duplicates should be detected regardless of distance in the \
+         directive stream, got: {:?}",
+        output.errors
+    );
+}
+
+/// Two transactions with identical content but different filename/
+/// lineno (source locations) are still duplicates — location is not
+/// part of structural identity.
+#[test]
+fn test_noduplicates_source_location_not_part_of_identity() {
+    let plugin = NoDuplicatesPlugin;
+    let postings = vec![
+        ("Expenses:Food", "5.00", "USD"),
+        ("Assets:Bank", "-5.00", "USD"),
+    ];
+    let mut txn_a = make_transaction("2024-01-15", "Coffee", postings.clone());
+    txn_a.filename = Some("a.beancount".to_string());
+    txn_a.lineno = Some(10);
+    let mut txn_b = make_transaction("2024-01-15", "Coffee", postings);
+    txn_b.filename = Some("b.beancount".to_string());
+    txn_b.lineno = Some(42);
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "source filename/lineno must not influence the hash, got: {:?}",
+        output.errors
+    );
+}
+
+// ============================================================================
 // OneCommodityPlugin Tests (from onecommodity_test.py)
 // ============================================================================
 
