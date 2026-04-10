@@ -463,6 +463,105 @@ fn test_noduplicates_distinct_tags_are_not_duplicates() {
     );
 }
 
+/// Tags and links are beancount `frozenset`s, so a tag that appears twice
+/// in a `Vec<String>` (which the parser could emit) must collapse to a
+/// single member for hashing purposes.
+#[test]
+fn test_noduplicates_duplicate_tags_collapse_to_set() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.tags = vec!["morning".to_string(), "morning".to_string()];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.tags = vec!["morning".to_string()];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "a tag repeated in the Vec must collapse to a set member and hash \
+         equal to a single occurrence, got: {:?}",
+        output.errors
+    );
+}
+
+/// Regression: the tag and link hash streams are separated by length
+/// prefixes so `tags={a,b}, links={}` must NOT collide with
+/// `tags={a}, links={b}`. Without the boundary the concatenated
+/// sort-and-hash approach silently folded these two distinct inputs
+/// together.
+#[test]
+fn test_noduplicates_tag_link_boundary_no_collision() {
+    let plugin = NoDuplicatesPlugin;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.tags = vec!["a".to_string(), "b".to_string()];
+        t.links = vec![];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Coffee",
+        vec![
+            ("Assets:Bank", "-5.00", "USD"),
+            ("Expenses:Food", "5.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.tags = vec!["a".to_string()];
+        t.links = vec!["b".to_string()];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "tags=[a,b] with no links must NOT collide with tags=[a] links=[b], \
+         got: {:?}",
+        output.errors
+    );
+}
+
 /// Tags and links are beancount sets — the order the parser emits them
 /// must not influence the duplicate hash.
 #[test]

@@ -148,19 +148,34 @@ impl NativePlugin for NoDuplicatesPlugin {
             payee.hash(&mut hasher);
             narration.hash(&mut hasher);
 
-            // Tags and links are unordered sets in beancount; sort so the
-            // hash is stable regardless of the order the parser emitted them.
+            // Tags and links are unordered sets in beancount (`frozenset`),
+            // so:
+            //   1. Sort + dedup so the hash is stable regardless of parser
+            //      order and collapses any accidental duplicates the parser
+            //      might emit (matching beancount set semantics).
+            //   2. Each collection is prefixed with its length so the two
+            //      streams can't be merged or swapped without changing the
+            //      resulting hash — e.g. `tags={a,b}, links={}` no longer
+            //      collides with `tags={a}, links={b}`.
             let mut sorted_tags: Vec<&String> = tags.iter().collect();
             sorted_tags.sort();
+            sorted_tags.dedup();
+            sorted_tags.len().hash(&mut hasher);
             for tag in sorted_tags {
                 tag.hash(&mut hasher);
             }
+
             let mut sorted_links: Vec<&String> = links.iter().collect();
             sorted_links.sort();
+            sorted_links.dedup();
+            sorted_links.len().hash(&mut hasher);
             for link in sorted_links {
                 link.hash(&mut hasher);
             }
 
+            // Prefix postings with their count so the posting stream can't
+            // collide with trailing fields of the set streams above.
+            postings.len().hash(&mut hasher);
             for posting in postings {
                 hash_posting(posting, &mut hasher);
             }
