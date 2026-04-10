@@ -136,6 +136,30 @@ impl BookingEngine {
         self.account_methods.insert(account, method);
     }
 
+    /// Scan a sequence of directives and register any per-account booking
+    /// methods found on `open` directives. Open directives whose booking
+    /// method is absent or fails to parse are silently ignored (they fall
+    /// back to the engine-wide default).
+    ///
+    /// This is a convenience wrapper around [`Self::set_account_method`] for
+    /// the common pipeline pattern of scanning all directives once before
+    /// the booking loop. Call this before booking any transactions so the
+    /// engine uses each account's declared method rather than the
+    /// engine-wide default for every account.
+    pub fn register_account_methods<'a, I>(&mut self, directives: I)
+    where
+        I: IntoIterator<Item = &'a rustledger_core::Directive>,
+    {
+        for directive in directives {
+            if let rustledger_core::Directive::Open(open) = directive
+                && let Some(method_str) = &open.booking
+                && let Ok(method) = method_str.parse::<BookingMethod>()
+            {
+                self.set_account_method(open.account.clone(), method);
+            }
+        }
+    }
+
     /// Resolve the booking method for an account, falling back to the
     /// engine-wide default if not registered.
     fn method_for(&self, account: &InternedStr) -> BookingMethod {

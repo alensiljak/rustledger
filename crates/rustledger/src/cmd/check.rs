@@ -672,18 +672,10 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         .parse()
         .unwrap_or(BookingMethod::Strict);
     let mut booking_engine = BookingEngine::with_method(booking_method);
-
     // Register per-account booking methods from Open directives so the
     // booking engine uses the right method for each account (FIFO/LIFO/NONE/
     // STRICT/etc.) instead of the engine-wide default for all accounts.
-    for spanned in &spanned_directives {
-        if let Directive::Open(open) = &spanned.value
-            && let Some(method_str) = &open.booking
-            && let Ok(method) = method_str.parse::<BookingMethod>()
-        {
-            booking_engine.set_account_method(open.account.clone(), method);
-        }
-    }
+    booking_engine.register_account_methods(spanned_directives.iter().map(|s| &s.value));
 
     let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
     // Lot-matching errors raised by the booking layer (ambiguous lot match,

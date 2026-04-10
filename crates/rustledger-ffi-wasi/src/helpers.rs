@@ -201,6 +201,7 @@ pub fn load_source(source: &str) -> LoadResult {
             .parse()
             .unwrap_or(rustledger_core::BookingMethod::Strict);
         let mut booking_engine = BookingEngine::with_method(booking_method);
+        booking_engine.register_account_methods(directives.iter());
 
         for (i, directive) in directives.iter_mut().enumerate() {
             if let Directive::Transaction(txn) = directive {

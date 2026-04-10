@@ -163,6 +163,7 @@ pub fn validation_errors_to_diagnostics(
     // This fills in missing amounts (auto-balancing) so validation sees the complete picture.
     // Use Strict booking method to match rledger check's default behavior.
     let mut booking_engine = BookingEngine::with_method(BookingMethod::Strict);
+    booking_engine.register_account_methods(booked_directives.iter().map(|s| &s.value));
     for spanned in &mut booked_directives {
         if let Directive::Transaction(txn) = &mut spanned.value
             && let Ok(result) = booking_engine.book_and_interpolate(txn)
