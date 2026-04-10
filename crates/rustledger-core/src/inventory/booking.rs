@@ -340,16 +340,21 @@ impl Inventory {
 }
 
 impl Inventory {
-    /// STRICT booking: require exactly one matching lot, or that all matched
-    /// lots are identical (same cost number + currency), in which case the
-    /// choice between them is irrelevant and we fall back to insertion order
-    /// (FIFO).
+    /// STRICT booking: require exactly one matching lot, unless either:
     ///
-    /// If multiple lots with *different* costs match — for example a wildcard
-    /// reduction `-5 AAPL {}` against an inventory holding both `{150 USD}`
-    /// and `{160 USD}` — the reduction is genuinely ambiguous and we return
-    /// `AmbiguousMatch`, matching Python beancount's `AmbiguousMatchError`
-    /// and the formal `STRICTCorrect.tla` specification.
+    /// - all matching lots are identical in cost, in which case the choice
+    ///   between them is irrelevant and we fall back to the same ordering as
+    ///   FIFO (oldest `cost.date` first — see [`Self::reduce_ordered`]), or
+    /// - the reduction exactly matches the total units available across the
+    ///   matching lots (full liquidation), in which case all of them may be
+    ///   drained together without ambiguity.
+    ///
+    /// If multiple lots with *different* costs match and the reduction does
+    /// not qualify for the full-liquidation exception — for example a
+    /// wildcard reduction `-5 AAPL {}` against an inventory holding both
+    /// `{150 USD}` and `{160 USD}` — the reduction is genuinely ambiguous and
+    /// we return `AmbiguousMatch`, matching Python beancount's
+    /// `AmbiguousMatchError` and the formal `STRICTCorrect.tla` specification.
     ///
     /// # The "interchangeable lots" heuristic
     ///
@@ -358,8 +363,8 @@ impl Inventory {
     /// deliberately ignore `cost.date` and `cost.label`: the user's cost spec
     /// could not have constrained those fields without naming them, so two
     /// lots that differ only on date/label could not have been distinguished
-    /// by the spec the user wrote, and FIFO is unambiguous within that
-    /// equivalence class.
+    /// by the spec the user wrote, and the date-ordered fallback is
+    /// unambiguous within that equivalence class.
     ///
     /// A stricter spec-derived check would compare each pair of matched lots
     /// on every cost field the spec did *not* constrain. The simpler
