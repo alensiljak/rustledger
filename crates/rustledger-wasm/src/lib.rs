@@ -667,6 +667,7 @@ include "accounts.beancount"
         // Extract directives and book transactions
         let mut directives: Vec<_> = result.directives.into_iter().map(|s| s.value).collect();
         let mut engine = BookingEngine::new();
+        engine.register_account_methods(directives.iter());
         for directive in &mut directives {
             if let Directive::Transaction(txn) = directive {
                 if let Ok(result) = engine.book_and_interpolate(txn) {

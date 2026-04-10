@@ -234,6 +234,7 @@ fn calculate_balance_at_date(
 
     // Run booking/interpolation to fill in missing amounts
     let mut booking_engine = BookingEngine::with_method(BookingMethod::Strict);
+    booking_engine.register_account_methods(directives.iter().map(|s| &s.value));
     for spanned in &mut directives {
         if let Directive::Transaction(txn) = &mut spanned.value
             && let Ok(result) = booking_engine.book_and_interpolate(txn)

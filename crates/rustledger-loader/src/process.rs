@@ -249,6 +249,7 @@ fn run_booking(
     use rustledger_booking::BookingEngine;
 
     let mut engine = BookingEngine::with_method(options.booking_method);
+    engine.register_account_methods(directives.iter().map(|s| &s.value));
 
     for spanned in directives.iter_mut() {
         if let Directive::Transaction(txn) = &mut spanned.value {

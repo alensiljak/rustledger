@@ -340,8 +340,39 @@ impl Inventory {
 }
 
 impl Inventory {
-    /// STRICT booking: require exactly one matching lot.
-    /// Also allows "total match exception": if reduction equals total inventory, accept.
+    /// STRICT booking: require exactly one matching lot, unless either:
+    ///
+    /// - all matching lots are identical in cost, in which case the choice
+    ///   between them is irrelevant and we fall back to the same ordering as
+    ///   FIFO (oldest `cost.date` first — see [`Self::reduce_ordered`]), or
+    /// - the reduction exactly matches the total units available across the
+    ///   matching lots (full liquidation), in which case all of them may be
+    ///   drained together without ambiguity.
+    ///
+    /// If multiple lots with *different* costs match and the reduction does
+    /// not qualify for the full-liquidation exception — for example a
+    /// wildcard reduction `-5 AAPL {}` against an inventory holding both
+    /// `{150 USD}` and `{160 USD}` — the reduction is genuinely ambiguous and
+    /// we return `AmbiguousMatch`, matching Python beancount's
+    /// `AmbiguousMatchError` and the formal `STRICTCorrect.tla` specification.
+    ///
+    /// # The "interchangeable lots" heuristic
+    ///
+    /// We treat two matched lots as interchangeable when their `(cost.number,
+    /// cost.currency)` agree — the user-visible monetary identity. We
+    /// deliberately ignore `cost.date` and `cost.label`: the user's cost spec
+    /// could not have constrained those fields without naming them, so two
+    /// lots that differ only on date/label could not have been distinguished
+    /// by the spec the user wrote, and the date-ordered fallback is
+    /// unambiguous within that equivalence class.
+    ///
+    /// A stricter spec-derived check would compare each pair of matched lots
+    /// on every cost field the spec did *not* constrain. The simpler
+    /// number+currency check matches Python beancount's behavior for the
+    /// real-world cases we know about (see
+    /// `test_reduce_strict_multiple_match_with_identical_costs_uses_fifo` and
+    /// the `test_validate_multiple_lot_match_uses_fifo` integration test for
+    /// the same-cost-different-date case).
     pub(super) fn reduce_strict(
         &mut self,
         units: &Amount,
@@ -369,12 +400,44 @@ impl Inventory {
                 let idx = matching_indices[0];
                 self.reduce_from_lot(idx, units)
             }
-            _n => {
-                // When multiple lots match the same cost spec, Python beancount falls back to FIFO
-                // order rather than erroring. This is consistent with how beancount handles
-                // identical lots - if the cost spec is specified, it's considered "matched"
-                // and we just pick by insertion order.
-                self.reduce_ordered(units, spec, false)
+            n => {
+                // Are the matched lots financially interchangeable? Two lots
+                // count as identical if they have the same cost number + cost
+                // currency — the user-visible monetary identity. Date and label
+                // differences don't make a reduction ambiguous because the user
+                // could not have observed a different outcome based on the cost
+                // spec they wrote. Beancount falls back to FIFO in that case.
+                let first_key = self.positions[matching_indices[0]]
+                    .cost
+                    .as_ref()
+                    .map(|c| (c.number, c.currency.clone()));
+                let all_same_value = matching_indices.iter().skip(1).all(|&i| {
+                    let key = self.positions[i]
+                        .cost
+                        .as_ref()
+                        .map(|c| (c.number, c.currency.clone()));
+                    key == first_key
+                });
+
+                if all_same_value {
+                    return self.reduce_ordered(units, spec, false);
+                }
+
+                // Total match exception: if the reduction equals the sum of all
+                // matching lots, the user is selling the entire matched
+                // inventory and the lot choice doesn't matter — accept it.
+                let total_units: Decimal = matching_indices
+                    .iter()
+                    .map(|&i| self.positions[i].units.number.abs())
+                    .sum();
+                if total_units == units.number.abs() {
+                    return self.reduce_ordered(units, spec, false);
+                }
+
+                Err(BookingError::AmbiguousMatch {
+                    num_matches: n,
+                    currency: units.currency.clone(),
+                })
             }
         }
     }
