@@ -692,8 +692,9 @@ fn test_noduplicates_distinct_prices_are_not_duplicates() {
 /// must still be flagged as duplicates.
 #[test]
 fn test_noduplicates_metadata_differences_are_still_duplicates() {
-    let plugin = NoDuplicatesPlugin;
     use rustledger_plugin_types::MetaValueData;
+
+    let plugin = NoDuplicatesPlugin;
 
     let mut txn_a = make_transaction(
         "2024-01-15",
@@ -948,7 +949,7 @@ fn test_noduplicates_link_order_independent() {
 }
 
 /// Empty tags/links vectors should be indistinguishable from absent
-/// tags/links. Matches beancount frozenset() == frozenset([]).
+/// tags/links. Matches beancount `frozenset()` == `frozenset([])`.
 #[test]
 fn test_noduplicates_empty_vs_absent_tags_are_duplicates() {
     let plugin = NoDuplicatesPlugin;
@@ -1396,8 +1397,9 @@ fn test_noduplicates_distinct_posting_flags_differ() {
 /// `hash_entry(exclude_meta=True)`.
 #[test]
 fn test_noduplicates_posting_metadata_does_not_disambiguate() {
-    let plugin = NoDuplicatesPlugin;
     use rustledger_plugin_types::MetaValueData;
+
+    let plugin = NoDuplicatesPlugin;
 
     let txn_a = make_transaction(
         "2024-01-15",
@@ -1512,7 +1514,7 @@ fn test_noduplicates_empty_postings_edge_case() {
 }
 
 /// Duplicates separated by many unrelated transactions are still
-/// detected — the plugin's HashSet lookup is independent of position.
+/// detected — the plugin's `HashSet` lookup is independent of position.
 #[test]
 fn test_noduplicates_detects_duplicates_across_distance() {
     let plugin = NoDuplicatesPlugin;
