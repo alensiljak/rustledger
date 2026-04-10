@@ -510,6 +510,139 @@ fn test_noduplicates_tag_order_independent() {
     );
 }
 
+/// Transactions differing only in cost spec must not collide in the
+/// duplicate hash. Cost is part of a posting's structural identity per
+/// beancount's `hash_entry`.
+#[test]
+fn test_noduplicates_distinct_costs_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+
+    let txn_a = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy stock",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("150.00", "USD"),
+        "Assets:Cash",
+    );
+    let txn_b = make_transaction_with_cost(
+        "2024-01-15",
+        "Buy stock",
+        "Assets:Stock",
+        ("10", "AAPL"),
+        ("160.00", "USD"), // different cost
+        "Assets:Cash",
+    );
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct cost specs should disambiguate otherwise-identical transactions, got: {:?}",
+        output.errors
+    );
+}
+
+/// Transactions differing only in price annotation must not collide in
+/// the duplicate hash.
+#[test]
+fn test_noduplicates_distinct_prices_are_not_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+
+    let txn_a = make_transaction_with_price(
+        "2024-01-15",
+        "Sell stock",
+        "Assets:Stock",
+        ("-5", "AAPL"),
+        ("200.00", "USD"),
+        "Assets:Cash",
+    );
+    let txn_b = make_transaction_with_price(
+        "2024-01-15",
+        "Sell stock",
+        "Assets:Stock",
+        ("-5", "AAPL"),
+        ("210.00", "USD"), // different price
+        "Assets:Cash",
+    );
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Stock"),
+        make_open("2024-01-01", "Assets:Cash"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert!(
+        output.errors.is_empty(),
+        "distinct prices should disambiguate otherwise-identical transactions, got: {:?}",
+        output.errors
+    );
+}
+
+/// Metadata is intentionally NOT part of the duplicate hash — matches
+/// Python beancount's `hash_entry(exclude_meta=True)` default for the
+/// noduplicates plugin. Two transactions that differ only on metadata
+/// must still be flagged as duplicates.
+#[test]
+fn test_noduplicates_metadata_differences_are_still_duplicates() {
+    let plugin = NoDuplicatesPlugin;
+    use rustledger_plugin_types::MetaValueData;
+
+    let mut txn_a = make_transaction(
+        "2024-01-15",
+        "Grocery Store",
+        vec![
+            ("Expenses:Food", "50.00", "USD"),
+            ("Assets:Bank", "-50.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_a.data {
+        t.metadata = vec![(
+            "reference".to_string(),
+            MetaValueData::String("A".to_string()),
+        )];
+    }
+
+    let mut txn_b = make_transaction(
+        "2024-01-15",
+        "Grocery Store",
+        vec![
+            ("Expenses:Food", "50.00", "USD"),
+            ("Assets:Bank", "-50.00", "USD"),
+        ],
+    );
+    if let DirectiveData::Transaction(t) = &mut txn_b.data {
+        t.metadata = vec![(
+            "reference".to_string(),
+            MetaValueData::String("B".to_string()),
+        )];
+    }
+
+    let input = make_input(vec![
+        make_open("2024-01-01", "Assets:Bank"),
+        make_open("2024-01-01", "Expenses:Food"),
+        txn_a,
+        txn_b,
+    ]);
+
+    let output = plugin.process(input);
+    assert_eq!(
+        output.errors.len(),
+        1,
+        "metadata-only differences must not disambiguate (matches beancount \
+         exclude_meta=True), got: {:?}",
+        output.errors
+    );
+}
+
 /// Transactions differing only in flag (`*` vs `!`) are structurally
 /// different and must not collide in the duplicate hash.
 #[test]

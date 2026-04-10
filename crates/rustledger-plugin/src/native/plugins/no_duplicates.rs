@@ -55,13 +55,18 @@ impl NativePlugin for NoDuplicatesPlugin {
 
         fn hash_posting<H: Hasher>(posting: &PostingData, hasher: &mut H) {
             posting.account.hash(hasher);
-            if let Some(units) = &posting.units {
-                units.number.hash(hasher);
-                units.currency.hash(hasher);
-            }
             // Discriminate None from Some by hashing a sentinel before each
-            // optional component — otherwise `None, Some(x)` and `Some(x), None`
-            // would collide with each other for adjacent fields.
+            // optional component — otherwise `(None, Some(x))` and
+            // `(Some(x), None)` could collide for adjacent fields. Python's
+            // tuple hash naturally does the equivalent via `hash(None)`.
+            match &posting.units {
+                Some(units) => {
+                    1u8.hash(hasher);
+                    units.number.hash(hasher);
+                    units.currency.hash(hasher);
+                }
+                None => 0u8.hash(hasher),
+            }
             match &posting.cost {
                 Some(cost) => {
                     1u8.hash(hasher);
