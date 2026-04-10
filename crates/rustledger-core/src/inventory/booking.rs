@@ -341,13 +341,33 @@ impl Inventory {
 
 impl Inventory {
     /// STRICT booking: require exactly one matching lot, or that all matched
-    /// lots are identical (same cost), in which case the choice between them
-    /// is irrelevant and we fall back to insertion order (FIFO).
+    /// lots are identical (same cost number + currency), in which case the
+    /// choice between them is irrelevant and we fall back to insertion order
+    /// (FIFO).
     ///
     /// If multiple lots with *different* costs match — for example a wildcard
     /// reduction `-5 AAPL {}` against an inventory holding both `{150 USD}`
     /// and `{160 USD}` — the reduction is genuinely ambiguous and we return
-    /// `AmbiguousMatch`, matching Python beancount's `AmbiguousMatchError`.
+    /// `AmbiguousMatch`, matching Python beancount's `AmbiguousMatchError`
+    /// and the formal `STRICTCorrect.tla` specification.
+    ///
+    /// # The "interchangeable lots" heuristic
+    ///
+    /// We treat two matched lots as interchangeable when their `(cost.number,
+    /// cost.currency)` agree — the user-visible monetary identity. We
+    /// deliberately ignore `cost.date` and `cost.label`: the user's cost spec
+    /// could not have constrained those fields without naming them, so two
+    /// lots that differ only on date/label could not have been distinguished
+    /// by the spec the user wrote, and FIFO is unambiguous within that
+    /// equivalence class.
+    ///
+    /// A stricter spec-derived check would compare each pair of matched lots
+    /// on every cost field the spec did *not* constrain. The simpler
+    /// number+currency check matches Python beancount's behavior for the
+    /// real-world cases we know about (see
+    /// `test_reduce_strict_multiple_match_with_identical_costs_uses_fifo` and
+    /// the `test_validate_multiple_lot_match_uses_fifo` integration test for
+    /// the same-cost-different-date case).
     pub(super) fn reduce_strict(
         &mut self,
         units: &Amount,

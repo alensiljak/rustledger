@@ -649,6 +649,28 @@ mod tests {
     }
 
     #[test]
+    fn test_reduce_strict_multiple_match_different_dates_same_cost_uses_fifo() {
+        let mut inv = Inventory::new();
+
+        // Two lots at the same cost number but different acquisition dates.
+        // The user's cost spec could not have constrained the date without
+        // naming it, so the lots are interchangeable for the spec — FIFO.
+        let cost1 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 1, 15));
+        let cost2 = Cost::new(dec!(150.00), "USD").with_date(date(2024, 2, 15));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Strict)
+            .expect("same cost number, different dates should fall back to FIFO");
+
+        assert_eq!(inv.units("AAPL"), dec!(15));
+        // Reduced from the first (oldest) lot at 150.00 USD: 5 * 150 = 750.
+        assert_eq!(result.cost_basis.unwrap().number, dec!(750.00));
+    }
+
+    #[test]
     fn test_reduce_strict_multiple_match_total_match_exception() {
         let mut inv = Inventory::new();
 

@@ -38,10 +38,27 @@ pub enum BookingError {
     /// Insufficient units in matching lots.
     #[error("insufficient units: need {requested} but only {available} available")]
     InsufficientUnits {
+        /// The account being reduced.
+        account: InternedStr,
         /// Requested reduction amount.
         requested: Decimal,
         /// Available amount.
         available: Decimal,
+    },
+
+    /// Multiple lots with differing costs matched the reduction.
+    ///
+    /// Raised by STRICT booking when a partial cost spec like `{}` matches
+    /// more than one non-identical lot. Mirrors Python beancount's
+    /// `AmbiguousMatchError`.
+    #[error("ambiguous lot match: {num_matches} lots match for {currency} in account {account}")]
+    AmbiguousMatch {
+        /// The account being reduced.
+        account: InternedStr,
+        /// The currency being reduced.
+        currency: InternedStr,
+        /// The number of matching lots.
+        num_matches: usize,
     },
 
     /// Interpolation failed after booking.
@@ -80,8 +97,12 @@ pub struct CapitalGain {
 pub struct BookingEngine {
     /// Inventory per account.
     inventories: FxHashMap<InternedStr, Inventory>,
-    /// Default booking method.
+    /// Default booking method, used for accounts without an explicit
+    /// booking method on their `open` directive.
     booking_method: BookingMethod,
+    /// Per-account booking method overrides (from `open` directives).
+    /// Looked up first, falling back to `booking_method` if absent.
+    account_methods: FxHashMap<InternedStr, BookingMethod>,
 }
 
 impl BookingEngine {
@@ -91,16 +112,37 @@ impl BookingEngine {
         Self {
             inventories: FxHashMap::default(),
             booking_method: BookingMethod::Fifo,
+            account_methods: FxHashMap::default(),
         }
     }
 
-    /// Create a booking engine with a specific booking method.
+    /// Create a booking engine with a specific default booking method.
     #[must_use]
     pub fn with_method(method: BookingMethod) -> Self {
         Self {
             inventories: FxHashMap::default(),
             booking_method: method,
+            account_methods: FxHashMap::default(),
         }
+    }
+
+    /// Register the booking method for a specific account.
+    ///
+    /// Call this for each `open` directive *before* booking transactions for
+    /// that account, so the engine uses the per-account method (e.g. FIFO,
+    /// LIFO, NONE) rather than the engine-wide default. Subsequent calls
+    /// overwrite the previous method for the account.
+    pub fn set_account_method(&mut self, account: InternedStr, method: BookingMethod) {
+        self.account_methods.insert(account, method);
+    }
+
+    /// Resolve the booking method for an account, falling back to the
+    /// engine-wide default if not registered.
+    fn method_for(&self, account: &InternedStr) -> BookingMethod {
+        self.account_methods
+            .get(account)
+            .copied()
+            .unwrap_or(self.booking_method)
     }
 
     /// Get the inventory for an account.
@@ -163,12 +205,15 @@ impl BookingEngine {
                         // This ensures subsequent postings in the same transaction see
                         // the updated inventory state (e.g., after first posting exhausts a lot).
                         //
-                        // Errors from reduce (ambiguous match, no matching lot, insufficient
-                        // units) are intentionally not surfaced here — the validator runs the
-                        // same lot-matching logic and reports them as E4xxx diagnostics with
-                        // proper context. Surfacing them here would produce duplicate errors.
-                        if let Ok(booking_result) =
-                            inv.reduce(units, Some(cost_spec), self.booking_method)
+                        // Booking errors (ambiguous match, no matching lot, insufficient
+                        // units) are propagated so callers see them once. The full
+                        // pipeline path in `rustledger check` filters failed transactions
+                        // out of the validator's input to avoid double-reporting against
+                        // the validator's independent lot-matching pass.
+                        let method = self.method_for(&posting.account);
+                        let booking_result = inv
+                            .reduce(units, Some(cost_spec), method)
+                            .map_err(|e| convert_core_booking_error(e, &posting.account, units))?;
                         {
                             // Check if multiple lots were matched
                             if booking_result.matched.len() > 1 {
@@ -374,6 +419,9 @@ impl BookingEngine {
     pub fn apply(&mut self, txn: &Transaction) {
         for posting in &txn.postings {
             if let Some(IncompleteAmount::Complete(units)) = &posting.units {
+                // Resolve the per-account booking method before mutably
+                // borrowing the inventories map.
+                let method = self.method_for(&posting.account);
                 let inv = self.inventories.entry(posting.account.clone()).or_default();
 
                 // Determine if this is a reduction using is_reduced_by logic:
@@ -382,7 +430,7 @@ impl BookingEngine {
 
                 if is_reduction {
                     // Reduce from inventory
-                    let _ = inv.reduce(units, posting.cost.as_ref(), self.booking_method);
+                    let _ = inv.reduce(units, posting.cost.as_ref(), method);
                 } else {
                     // Add to inventory
                     let position = if let Some(cost_spec) = &posting.cost {
@@ -455,6 +503,43 @@ impl BookingEngine {
         let result = interpolate(&booked.transaction)?;
 
         Ok(result)
+    }
+}
+
+/// Convert a core inventory `BookingError` into the booking-layer error,
+/// attaching the account context that the core layer doesn't carry.
+fn convert_core_booking_error(
+    err: rustledger_core::BookingError,
+    account: &InternedStr,
+    units: &Amount,
+) -> BookingError {
+    use rustledger_core::BookingError as CoreError;
+    match err {
+        CoreError::AmbiguousMatch {
+            num_matches,
+            currency,
+        } => BookingError::AmbiguousMatch {
+            account: account.clone(),
+            currency,
+            num_matches,
+        },
+        CoreError::NoMatchingLot { .. } => BookingError::NoMatchingLot {
+            account: account.clone(),
+            units: format!("{units}"),
+        },
+        CoreError::InsufficientUnits {
+            requested,
+            available,
+            ..
+        } => BookingError::InsufficientUnits {
+            account: account.clone(),
+            requested,
+            available,
+        },
+        CoreError::CurrencyMismatch { .. } => BookingError::NoMatchingLot {
+            account: account.clone(),
+            units: format!("{units}"),
+        },
     }
 }
 

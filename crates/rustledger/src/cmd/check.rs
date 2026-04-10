@@ -672,9 +672,30 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         .parse()
         .unwrap_or(BookingMethod::Strict);
     let mut booking_engine = BookingEngine::with_method(booking_method);
-    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
 
-    for spanned in &mut spanned_directives {
+    // Register per-account booking methods from Open directives so the
+    // booking engine uses the right method for each account (FIFO/LIFO/NONE/
+    // STRICT/etc.) instead of the engine-wide default for all accounts.
+    for spanned in &spanned_directives {
+        if let Directive::Open(open) = &spanned.value
+            && let Some(method_str) = &open.booking
+            && let Ok(method) = method_str.parse::<BookingMethod>()
+        {
+            booking_engine.set_account_method(open.account.clone(), method);
+        }
+    }
+
+    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
+    // Lot-matching errors raised by the booking layer (ambiguous lot match,
+    // no matching lot, insufficient units). Reported as E4xxx diagnostics.
+    let mut booking_errors: Vec<(NaiveDate, String, rustledger_booking::BookingError)> = Vec::new();
+    // Indices of transactions whose booking failed. These are filtered out of
+    // the validator's input below so that booking and the validator's own
+    // independent lot-matching pass don't double-report the same diagnostic.
+    let mut failed_booking_indices: std::collections::HashSet<usize> =
+        std::collections::HashSet::new();
+
+    for (idx, spanned) in spanned_directives.iter_mut().enumerate() {
         if let Directive::Transaction(txn) = &mut spanned.value {
             match booking_engine.book_and_interpolate(txn) {
                 Ok(result) => {
@@ -682,16 +703,35 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     *txn = result.transaction;
                 }
                 Err(e) => {
-                    if let rustledger_booking::BookingError::Interpolation(interp_err) = e {
-                        interpolation_errors.push((
-                            txn.date,
-                            txn.narration.to_string(),
-                            interp_err,
-                        ));
+                    failed_booking_indices.insert(idx);
+                    match e {
+                        rustledger_booking::BookingError::Interpolation(interp_err) => {
+                            interpolation_errors.push((
+                                txn.date,
+                                txn.narration.to_string(),
+                                interp_err,
+                            ));
+                        }
+                        other => {
+                            booking_errors.push((txn.date, txn.narration.to_string(), other));
+                        }
                     }
                 }
             }
         }
+    }
+
+    // Drop failed-booking transactions from the validator's input. The
+    // validator runs its own lot-matching pass over the directives it
+    // receives, and we've already reported the booking failures above —
+    // including them in validation would emit a duplicate E4xxx diagnostic.
+    if !failed_booking_indices.is_empty() {
+        spanned_directives = spanned_directives
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| !failed_booking_indices.contains(i))
+            .map(|(_, s)| s)
+            .collect();
     }
 
     // Extract directives and spans in a single pass for efficiency
@@ -1075,6 +1115,48 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         }
     }
     error_count += interpolation_errors.len();
+
+    // Report booking errors (ambiguous lot match, no matching lot, insufficient
+    // units) propagated from the booking engine. These map to validation-phase
+    // E4xxx codes per spec/core/validation.md.
+    if !booking_errors.is_empty() {
+        let code_for = |err: &rustledger_booking::BookingError| -> &'static str {
+            match err {
+                rustledger_booking::BookingError::AmbiguousMatch { .. } => "E4003",
+                rustledger_booking::BookingError::NoMatchingLot { .. } => "E4001",
+                rustledger_booking::BookingError::InsufficientUnits { .. } => "E4002",
+                rustledger_booking::BookingError::Interpolation(_) => "INTERP",
+            }
+        };
+        if json_mode {
+            for (date, narration, err) in &booking_errors {
+                diagnostics.push(JsonDiagnostic {
+                    file: main_file_str.clone(),
+                    line: 1,
+                    column: 1,
+                    end_line: 1,
+                    end_column: 1,
+                    severity: "error".to_string(),
+                    phase: "validate".to_string(),
+                    code: code_for(err).to_string(),
+                    message: format!("{err}"),
+                    hint: None,
+                    context: Some(format!("{date}, \"{narration}\"")),
+                });
+            }
+            validate_error_count += booking_errors.len();
+        } else if !args.quiet {
+            for (date, narration, err) in &booking_errors {
+                writeln!(
+                    stdout,
+                    "error[{}]: {err} ({date}, \"{narration}\")",
+                    code_for(err)
+                )?;
+                writeln!(stdout)?;
+            }
+        }
+    }
+    error_count += booking_errors.len();
 
     // Validate the directives
     if args.verbose && !args.quiet {
