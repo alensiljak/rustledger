@@ -263,7 +263,12 @@ impl PluginManager {
 
     /// Execute all loaded plugins in sequence.
     pub fn execute_all(&self, mut input: PluginInput) -> Result<PluginOutput> {
-        let mut all_errors = Vec::with_capacity(self.plugins.len());
+        // Lazy allocation: the common case is "all plugins ran clean" and
+        // we'd rather pay zero allocations for that path than preallocate
+        // for errors that never arrive. `Vec::new()` has no allocation
+        // cost; the first `extend` from a non-empty `output.errors` pays
+        // for the first grow.
+        let mut all_errors = Vec::new();
 
         for plugin in &self.plugins {
             let output = plugin.execute(&input, &self.config)?;
