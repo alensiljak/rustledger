@@ -263,6 +263,11 @@ impl PluginManager {
 
     /// Execute all loaded plugins in sequence.
     pub fn execute_all(&self, mut input: PluginInput) -> Result<PluginOutput> {
+        // Lazy allocation: the common case is "all plugins ran clean" and
+        // we'd rather pay zero allocations for that path than preallocate
+        // for errors that never arrive. `Vec::new()` has no allocation
+        // cost; the first `extend` from a non-empty `output.errors` pays
+        // for the first grow.
         let mut all_errors = Vec::new();
 
         for plugin in &self.plugins {
@@ -361,6 +366,7 @@ impl WatchingPluginManager {
     /// Load a plugin from a file path.
     pub fn load(&mut self, path: impl AsRef<Path>) -> Result<usize> {
         let path = path.as_ref();
+        // Canonicalize path, or use original if it fails (e.g., symlink issues)
         let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         // Get modification time
