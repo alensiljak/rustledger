@@ -126,10 +126,10 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// # Arguments
 /// * `directives` - Owned directive list to validate. The caller is
 ///   responsible for constructing it (e.g., cloning from `LedgerState`
-///   directives, or moving from an overlay produced by
-///   [`build_live_directive_overlay`]). Taking ownership here lets
-///   callers that already produced an owned Vec (the overlay path) avoid
-///   a second clone on every diagnostics run.
+///   directives, or moving from an overlay produced by the
+///   crate-internal `build_live_directive_overlay` helper). Taking
+///   ownership here lets callers that already produced an owned Vec
+///   (the overlay path) avoid a second clone on every diagnostics run.
 /// * `source` - Source text of the current file
 /// * `validation_options` - Validation options (including custom account type names)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
