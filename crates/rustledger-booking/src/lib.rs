@@ -66,6 +66,7 @@ pub fn calculate_tolerance(amounts: &[&Amount]) -> HashMap<InternedStr, Decimal>
 /// 2. A price annotation on a simple posting (the price currency takes precedence).
 /// 3. The currency of other simple postings (units or currency-only amounts).
 /// 4. The currency from a cost spec (e.g., `{0 USD}` for zero-cost items).
+#[must_use]
 pub(crate) fn infer_cost_currency_from_postings(transaction: &Transaction) -> Option<InternedStr> {
     // First pass: look for simple postings (no cost spec) - these take priority
     for posting in &transaction.postings {

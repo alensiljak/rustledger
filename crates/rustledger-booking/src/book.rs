@@ -183,10 +183,22 @@ impl BookingEngine {
         // Create working copies of inventories for this transaction.
         // This allows us to track inventory changes across multiple postings
         // within the same transaction (e.g., main sale + fee posting).
+        //
+        // Clone only the inventories we actually need for this transaction's
+        // accounts. Use `entry().or_insert_with(...)` so that a posting list
+        // with repeated accounts (e.g., two postings on `Assets:Stock`) only
+        // triggers one clone per unique account instead of cloning the same
+        // inventory every time it appears. Without deduping, the optimization
+        // would be silently undone by transactions that list the same
+        // account more than once.
         let mut working_inventories: FxHashMap<InternedStr, Inventory> =
-            FxHashMap::with_capacity_and_hasher(self.inventories.len(), Default::default());
-        for (k, v) in &self.inventories {
-            working_inventories.insert(k.clone(), v.clone());
+            FxHashMap::with_capacity_and_hasher(txn.postings.len(), Default::default());
+        for posting in &txn.postings {
+            if let Some(inv) = self.inventories.get(&posting.account) {
+                working_inventories
+                    .entry(posting.account.clone())
+                    .or_insert_with(|| inv.clone());
+            }
         }
 
         // First pass: identify postings that need lot matching (reductions)
