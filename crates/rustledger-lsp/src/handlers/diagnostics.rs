@@ -124,34 +124,28 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// flagged as unbalanced.
 ///
 /// # Arguments
-/// * `directives` - Directives from the current file (used for line number mapping)
+/// * `directives` - Owned directive list to validate. The caller is
+///   responsible for constructing it (e.g., cloning from `LedgerState`
+///   directives, or moving from an overlay produced by
+///   [`build_live_directive_overlay`]). Taking ownership here lets
+///   callers that already produced an owned Vec (the overlay path) avoid
+///   a second clone on every diagnostics run.
 /// * `source` - Source text of the current file
 /// * `validation_options` - Validation options (including custom account type names)
-/// * `full_directives` - Optional: All directives from all files (for multi-file validation)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
 ///
-/// When `full_directives` is provided, validation runs on the complete ledger
-/// but only returns errors for the current file.
+/// When `current_file_id` is set, errors are filtered to those whose
+/// `file_id` matches (or is `None`, for global errors like duplicate
+/// account opens across files).
 pub fn validation_errors_to_diagnostics(
-    directives: &[Spanned<Directive>],
+    mut booked_directives: Vec<Spanned<Directive>>,
     source: &str,
     validation_options: ValidationOptions,
-    full_directives: Option<&[Spanned<Directive>]>,
     current_file_id: Option<u16>,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
 
-    // Only use full directives if we can identify this file in the ledger.
-    // If current_file_id is None, we can't filter errors properly and would
-    // produce diagnostics with incorrect line numbers (wrong file's LineIndex).
-    let directives_to_validate = if current_file_id.is_some() {
-        full_directives.unwrap_or(directives)
-    } else {
-        directives
-    };
-
-    // Clone and sort directives by date (required for correct lot matching during booking)
-    let mut booked_directives: Vec<Spanned<Directive>> = directives_to_validate.to_vec();
+    // Sort directives by date (required for correct lot matching during booking).
     booked_directives.sort_by(|a, b| {
         a.value
             .date()
@@ -349,8 +343,24 @@ pub fn all_diagnostics(
                 full_directives_raw,
                 current_file_id,
             );
-            let full_directives: Option<&[Spanned<Directive>]> =
-                overlay.as_deref().or(full_directives_raw);
+
+            // Construct the owned directive list for validation. This used
+            // to be done by `validation_errors_to_diagnostics.to_vec()`
+            // internally, which on the multi-file overlay path meant two
+            // full-ledger clones per keystroke (one for the overlay, one
+            // for `booked_directives`). Moving the overlay in by value
+            // saves the second clone. Other paths (single-file, or
+            // multi-file without overlay) still pay one clone, same as
+            // before.
+            let booked_directives: Vec<Spanned<Directive>> = if let Some(owned) = overlay {
+                owned
+            } else if let Some(full) = full_directives_raw
+                && current_file_id.is_some()
+            {
+                full.to_vec()
+            } else {
+                result.directives.clone()
+            };
 
             // Build validation options with custom account type names.
             // Use ledger-wide options when a ledger is loaded (handles multi-file
@@ -365,10 +375,9 @@ pub fn all_diagnostics(
             };
 
             let validation_diagnostics = validation_errors_to_diagnostics(
-                &result.directives,
+                booked_directives,
                 source,
                 validation_options,
-                full_directives,
                 current_file_id,
             );
             diagnostics.extend(validation_diagnostics);
@@ -604,10 +613,9 @@ mod tests {
         // Test 1: Validate bank.bean in ISOLATION (old broken behavior)
         // This should show E2001 for the second balance assertion
         let isolated_diagnostics = validation_errors_to_diagnostics(
-            &bank_result.directives,
+            bank_result.directives.clone(),
             bank_source,
             ValidationOptions::default(),
-            None,
             None,
         );
 
@@ -624,10 +632,9 @@ mod tests {
         // Test 2: Validate bank.bean with FULL LEDGER (fixed behavior)
         // This should NOT show E2001 because it sees the transaction from credit_card.bean
         let full_ledger_diagnostics = validation_errors_to_diagnostics(
-            &bank_result.directives,
+            all_directives.clone(),
             bank_source,
             ValidationOptions::default(),
-            Some(&all_directives),
             Some(1), // file_id=1 for bank.bean
         );
 
@@ -773,10 +780,9 @@ option "name_equity" "Капитал"
         // Without the overlay: validation would use the stale clean
         // directives and report no error, which is the bug.
         let no_overlay = validation_errors_to_diagnostics(
-            &fresh_unbalanced.directives,
+            stale_full_directives.clone(),
             buffer_unbalanced_source,
             ValidationOptions::default(),
-            Some(&stale_full_directives),
             Some(1),
         );
         let no_overlay_codes: Vec<_> = no_overlay.iter().map(get_code).collect();
@@ -796,10 +802,9 @@ option "name_equity" "Капитал"
         .expect("overlay must be built when both full_directives and file_id are present");
 
         let with_overlay = validation_errors_to_diagnostics(
-            &fresh_unbalanced.directives,
+            overlay,
             buffer_unbalanced_source,
             ValidationOptions::default(),
-            Some(&overlay),
             Some(1),
         );
         let with_overlay_codes: Vec<_> = with_overlay.iter().map(get_code).collect();
@@ -833,10 +838,9 @@ option "name_equity" "Капитал"
         // Without the overlay: validation uses the stale broken ledger and
         // the old error persists even though the buffer is fixed.
         let no_overlay_persist = validation_errors_to_diagnostics(
-            &fresh_fixed.directives,
+            stale_broken_full.clone(),
             buffer_fixed_source,
             ValidationOptions::default(),
-            Some(&stale_broken_full),
             Some(1),
         );
         let no_overlay_persist_codes: Vec<_> = no_overlay_persist.iter().map(get_code).collect();
@@ -857,10 +861,9 @@ option "name_equity" "Капитал"
         .expect("overlay must be built when both full_directives and file_id are present");
 
         let with_overlay_fixed = validation_errors_to_diagnostics(
-            &fresh_fixed.directives,
+            overlay_fixed,
             buffer_fixed_source,
             ValidationOptions::default(),
-            Some(&overlay_fixed),
             Some(1),
         );
         let with_overlay_fixed_codes: Vec<_> = with_overlay_fixed.iter().map(get_code).collect();
