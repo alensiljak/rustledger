@@ -509,8 +509,21 @@ pub fn process_inventory_reduction(
                 .with_context("Specify cost, date, or label to disambiguate".to_string()),
             );
         }
-        Err(rustledger_core::BookingError::CurrencyMismatch { .. }) => {
-            // This shouldn't happen in normal validation
+        Err(err @ rustledger_core::BookingError::CurrencyMismatch { .. }) => {
+            // Defensive: no `Inventory::reduce` path in `rustledger-core`
+            // currently emits this variant, but if a future one does we
+            // surface it consistently with the booking engine's path in
+            // `cmd/check.rs`. CurrencyMismatch is rendered and classified as
+            // a specialization of NoMatchingLot — see the canonical
+            // `AccountedBookingError::Display` impl in `rustledger-core`.
+            errors.push(
+                ValidationError::new(
+                    ErrorCode::NoMatchingLot,
+                    format!("{}", err.with_account(posting.account.clone())),
+                    txn.date,
+                )
+                .with_context(format!("currency: {}", units.currency)),
+            );
         }
     }
 }
