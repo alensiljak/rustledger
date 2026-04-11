@@ -106,6 +106,51 @@ fn test_load_include_cycle_detection() {
     }
 }
 
+/// Regression test for issue #765.
+///
+/// The pta-standards `include-cycle-detection` conformance test
+/// asserts on `error_contains: ["Duplicate filename"]`, matching Python
+/// beancount's wording for the same condition. rustledger previously
+/// said `"include cycle detected: ..."` which was more informative but
+/// didn't match the substring. We now lead with `"Duplicate filename
+/// parsed: \"<file>\""` and preserve the cycle path in a trailing
+/// parenthetical. This test pins the exact phrasing so a refactor
+/// can't silently drop the conformance-required substring.
+#[test]
+fn test_include_cycle_display_contains_duplicate_filename_issue_765() {
+    let path = fixtures_path("cycle_a.beancount");
+    let result = Loader::new().load(&path);
+
+    // Find the IncludeCycle error in either the Err path or the
+    // load_result.errors collection (the loader supports partial
+    // results).
+    let err: LoadError = match result {
+        Err(e @ LoadError::IncludeCycle { .. }) => e,
+        Ok(result) => result
+            .errors
+            .into_iter()
+            .find(|e| matches!(e, LoadError::IncludeCycle { .. }))
+            .expect("expected IncludeCycle error in load_result.errors"),
+        Err(other) => panic!("expected IncludeCycle error, got: {other}"),
+    };
+
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains("Duplicate filename"),
+        "IncludeCycle Display must contain 'Duplicate filename' for \
+         beancount conformance (#765). Got: {rendered}"
+    );
+    assert!(
+        rendered.contains("cycle_a.beancount"),
+        "IncludeCycle Display must mention the cycle file. Got: {rendered}"
+    );
+    assert!(
+        rendered.contains("include cycle:"),
+        "IncludeCycle Display should still preserve the cycle path \
+         for debuggability. Got: {rendered}"
+    );
+}
+
 #[test]
 fn test_load_missing_include() {
     let path = fixtures_path("missing_include.beancount");
