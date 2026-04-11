@@ -116,9 +116,23 @@ pub enum LoadError {
     },
 
     /// Include cycle detected.
-    #[error("include cycle detected: {}", .cycle.join(" -> "))]
+    ///
+    /// The Display string intentionally begins with `Duplicate filename
+    /// parsed:` to match Python beancount's wording for the same
+    /// condition. The pta-standards `include-cycle-detection`
+    /// conformance test asserts on the substring `"Duplicate filename"`,
+    /// so this wording is load-bearing (#765). The full cycle path is
+    /// preserved in a trailing parenthetical for debuggability.
+    #[error(
+        "Duplicate filename parsed: \"{}\" (include cycle: {})",
+        .cycle.last().map_or("", String::as_str),
+        .cycle.join(" -> ")
+    )]
     IncludeCycle {
-        /// The cycle of file paths.
+        /// The cycle of file paths. The last element is the
+        /// re-encountered filename (equal to one of the earlier
+        /// entries), and it's the one quoted in the `"Duplicate
+        /// filename parsed:"` prefix.
         cycle: Vec<String>,
     },
 

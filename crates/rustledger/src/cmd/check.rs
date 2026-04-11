@@ -350,6 +350,15 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 error_count += 1;
             }
             LoadError::IncludeCycle { cycle } => {
+                // Delegate to the canonical Display impl on
+                // `LoadError::IncludeCycle` so the wording lives in
+                // exactly one place (the `#[error(...)]` attribute on
+                // the variant). This is load-bearing for pta-standards
+                // conformance (#765): the substring `"Duplicate
+                // filename"` must appear, and centralizing the format
+                // string prevents it from drifting out of sync with the
+                // library-level error.
+                let message = load_error.to_string();
                 if json_mode {
                     diagnostics.push(JsonDiagnostic {
                         file: cycle.first().cloned().unwrap_or_default(),
@@ -360,17 +369,13 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         severity: "error".to_string(),
                         phase: "parse".to_string(),
                         code: "E0002".to_string(),
-                        message: format!("include cycle detected: {}", cycle.join(" -> ")),
+                        message,
                         hint: Some("break the cycle by removing one of the includes".to_string()),
                         context: None,
                     });
                     parse_error_count += 1;
                 } else if !args.quiet {
-                    writeln!(
-                        stdout,
-                        "error: include cycle detected: {}",
-                        cycle.join(" -> ")
-                    )?;
+                    writeln!(stdout, "error: {message}")?;
                 }
                 error_count += 1;
             }
