@@ -429,24 +429,17 @@ pub fn process_inventory_reduction(
 ) {
     match inv.reduce(units, posting.cost.as_ref(), booking_method) {
         Ok(_) => {}
-        Err(rustledger_core::BookingError::InsufficientUnits {
-            requested,
-            available,
-            ..
-        }) => {
+        Err(err @ rustledger_core::BookingError::InsufficientUnits { .. }) => {
             errors.push(
                 ValidationError::new(
                     ErrorCode::InsufficientUnits,
-                    format!(
-                        "Not enough units in {}: requested {}, available {}; not enough to reduce",
-                        posting.account, requested, available
-                    ),
+                    format!("{}", err.with_account(posting.account.clone())),
                     txn.date,
                 )
                 .with_context(format!("currency: {}", units.currency)),
             );
         }
-        Err(rustledger_core::BookingError::NoMatchingLot { currency, .. }) => {
+        Err(err @ rustledger_core::BookingError::NoMatchingLot { .. }) => {
             // In STRICT mode, when no lot matches AND the inventory has no POSITIVE
             // positions for this commodity, Python beancount allows "sell to open"
             // by creating a new lot with negative units. This is common in options trading.
@@ -500,30 +493,37 @@ pub fn process_inventory_reduction(
             errors.push(
                 ValidationError::new(
                     ErrorCode::NoMatchingLot,
-                    format!("No matching lot for {} in {}", currency, posting.account),
+                    format!("{}", err.with_account(posting.account.clone())),
                     txn.date,
                 )
                 .with_context(format!("cost spec: {:?}", posting.cost)),
             );
         }
-        Err(rustledger_core::BookingError::AmbiguousMatch {
-            currency,
-            num_matches,
-        }) => {
+        Err(err @ rustledger_core::BookingError::AmbiguousMatch { .. }) => {
             errors.push(
                 ValidationError::new(
                     ErrorCode::AmbiguousLotMatch,
-                    format!(
-                        "Ambiguous lot match for {}: {} lots match in {}",
-                        currency, num_matches, posting.account
-                    ),
+                    format!("{}", err.with_account(posting.account.clone())),
                     txn.date,
                 )
                 .with_context("Specify cost, date, or label to disambiguate".to_string()),
             );
         }
-        Err(rustledger_core::BookingError::CurrencyMismatch { .. }) => {
-            // This shouldn't happen in normal validation
+        Err(err @ rustledger_core::BookingError::CurrencyMismatch { .. }) => {
+            // Defensive: no `Inventory::reduce` path in `rustledger-core`
+            // currently emits this variant, but if a future one does we
+            // surface it consistently with the booking engine's path in
+            // `cmd/check.rs`. CurrencyMismatch is rendered and classified as
+            // a specialization of NoMatchingLot — see the canonical
+            // `AccountedBookingError::Display` impl in `rustledger-core`.
+            errors.push(
+                ValidationError::new(
+                    ErrorCode::NoMatchingLot,
+                    format!("{}", err.with_account(posting.account.clone())),
+                    txn.date,
+                )
+                .with_context(format!("currency: {}", units.currency)),
+            );
         }
     }
 }
