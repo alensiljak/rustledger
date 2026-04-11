@@ -24,6 +24,15 @@ use rustledger_core::{
     PriceAnnotation, Query, Transaction,
 };
 
+/// Cap on upfront `directives` preallocation to bound the single-allocation
+/// size on large/untrusted inputs (RPC, WASM, uploaded files). Vec still
+/// grows past this transparently if a real file exceeds it. See `parse`.
+const MAX_PREALLOC_DIRECTIVES: usize = 16_384;
+
+/// Cap on upfront `comments` preallocation. Same rationale as
+/// [`MAX_PREALLOC_DIRECTIVES`].
+const MAX_PREALLOC_COMMENTS: usize = 8_192;
+
 use crate::ParseResult;
 use crate::error::{ParseError, ParseErrorKind};
 use crate::logos_lexer::{Token, tokenize};
@@ -976,7 +985,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
 
     // Tags and links
     let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
 
     loop {
         if let Ok(tag) = parse_tag(stream) {
@@ -1352,7 +1361,7 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
 
     // Optional tags and links
     let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
     loop {
         if let Ok(tag) = parse_tag(stream) {
             tags.push(tag);
@@ -1603,13 +1612,22 @@ pub fn parse(source: &str) -> ParseResult {
 
     let mut stream = TokenStream::new(&raw_tokens);
 
-    // Preallocate collections with estimated capacities
-    // Typical beancount file: ~50 bytes per directive, few options/includes/plugins
-    let mut directives = Vec::with_capacity(source.len() / 50);
+    // Preallocate collections with estimated capacities.
+    //
+    // Typical beancount file: ~50 bytes per directive, a few
+    // options/includes/plugins. `directives` and `comments` are capped
+    // to bound the single-allocation size on very large or untrusted
+    // inputs (RPC, WASM, file uploads), so an adversary can't coerce a
+    // multi-megabyte upfront allocation just by padding the source with
+    // whitespace. The caps cover typical-size files (16384 directives
+    // ≈ 800KB at 50 bytes each, 8192 comments same) without an OOM/DoS
+    // spike on pathological inputs. Vec will grow past the cap
+    // transparently if a real file exceeds it.
+    let mut directives = Vec::with_capacity((source.len() / 50).min(MAX_PREALLOC_DIRECTIVES));
     let mut options = Vec::with_capacity(4);
     let mut includes = Vec::with_capacity(4);
-    let mut plugins = Vec::with_capacity(2);
-    let mut comments = Vec::with_capacity(source.len() / 100);
+    let mut plugins = Vec::with_capacity(4);
+    let mut comments = Vec::with_capacity((source.len() / 100).min(MAX_PREALLOC_COMMENTS));
     let mut errors = Vec::with_capacity(4);
 
     let mut tag_stack: Vec<(InternedStr, Span)> = Vec::with_capacity(8);
