@@ -288,6 +288,17 @@ fn build_live_directive_overlay(
             let mut merged: Vec<Spanned<Directive>> =
                 full.iter().filter(|d| d.file_id != fid).cloned().collect();
             for d in fresh_directives {
+                // The per-file parse produces directives with file_id=0 by
+                // default. Anything else would mean a caller pre-tagged
+                // them, which would silently get overwritten here and
+                // likely indicate a bug upstream. Assert in debug builds
+                // so we catch it early.
+                debug_assert!(
+                    d.file_id == 0 || d.file_id == fid,
+                    "fresh directive for file_id={fid} was pre-tagged with \
+                     unexpected file_id={} — caller bug?",
+                    d.file_id
+                );
                 let mut d = d.clone();
                 d.file_id = fid;
                 merged.push(d);
@@ -884,6 +895,119 @@ option "name_equity" "Капитал"
             result.is_none(),
             "full_directives present but no file_id: overlay should be None \
              (caller will fall back to full_directives as-is)"
+        );
+    }
+
+    /// End-to-end regression test for #685 through `all_diagnostics`.
+    ///
+    /// The other #685 regression test exercises
+    /// `build_live_directive_overlay` and `validation_errors_to_diagnostics`
+    /// directly, which pins the helper logic but does not pin the wiring
+    /// inside `all_diagnostics`. A future refactor that moves or renames
+    /// the overlay call (or adds a new caller that forgets it) could break
+    /// the fix without tripping the direct tests. This test uses a real
+    /// `LedgerState` backed by a tempdir file so the full
+    /// `all_diagnostics` code path runs, catching integration-level
+    /// regressions.
+    #[test]
+    fn test_all_diagnostics_applies_live_overlay_issue_685() {
+        use std::fs;
+
+        fn get_code(d: &Diagnostic) -> String {
+            match d.code.as_ref().unwrap() {
+                lsp_types::NumberOrString::String(s) => s.clone(),
+                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
+            }
+        }
+
+        let on_disk = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+        let buffer_unbalanced = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5001 USD
+"#;
+
+        // Write the balanced version to disk and build a real LedgerState
+        // from it. This is the state the LSP would have at startup, before
+        // any in-memory edits.
+        let tempdir = tempfile::tempdir().expect("tempdir");
+        let journal_path = tempdir.path().join("ledger.beancount");
+        fs::write(&journal_path, on_disk).expect("write journal");
+
+        let mut ledger_state = LedgerState::new();
+        ledger_state
+            .load(&journal_path)
+            .expect("LedgerState::load should succeed on well-formed journal");
+
+        // Find the file_id the loader assigned to this file. Mirrors the
+        // logic in `main_loop::publish_diagnostics` at the call site.
+        let canonical = journal_path.canonicalize().expect("canonicalize");
+        let file_id = ledger_state
+            .ledger()
+            .expect("ledger loaded")
+            .source_map
+            .files()
+            .iter()
+            .find_map(|f| {
+                f.path
+                    .canonicalize()
+                    .ok()
+                    .filter(|p| *p == canonical)
+                    .map(|_| f.id as u16)
+            })
+            .expect("file_id for loaded file");
+
+        // Simulate a `didChange` with the unbalanced buffer content.
+        // `all_diagnostics` parses the fresh text and should report E3001
+        // because the overlay brings the buffer edits into the validation
+        // directive list.
+        let result = parse(buffer_unbalanced);
+        assert!(
+            result.errors.is_empty(),
+            "buffer content should parse cleanly"
+        );
+
+        let diagnostics = all_diagnostics(
+            &result,
+            buffer_unbalanced,
+            Some(&ledger_state),
+            Some(file_id),
+        );
+        let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
+
+        assert!(
+            codes.iter().any(|c| c == "E3001"),
+            "all_diagnostics should report the buffer's new imbalance (E3001) \
+             even though LedgerState still holds the balanced on-disk \
+             version. Got: {codes:?}"
+        );
+
+        // And the inverse: re-parsing the now-balanced buffer should clear
+        // diagnostics, regardless of LedgerState's contents. (LedgerState
+        // here still holds the balanced on-disk version, so this path is
+        // symmetric with the unbalanced case — we're mainly asserting the
+        // happy path still works after the overlay merge.)
+        let result_clean = parse(on_disk);
+        assert!(result_clean.errors.is_empty());
+        let clean_diagnostics =
+            all_diagnostics(&result_clean, on_disk, Some(&ledger_state), Some(file_id));
+        let clean_error_count = clean_diagnostics
+            .iter()
+            .filter(|d| matches!(d.severity, Some(DiagnosticSeverity::ERROR)))
+            .count();
+        assert_eq!(
+            clean_error_count,
+            0,
+            "balanced buffer should produce no ERROR diagnostics. Got: {:?}",
+            clean_diagnostics.iter().map(get_code).collect::<Vec<_>>()
         );
     }
 }
