@@ -59,3 +59,37 @@ repos:
       # workspace). These checks run in CI instead where they can be parallelized
       # and cached. Use `cargo clippy` and `cargo test` manually before pushing
       # if you want to catch issues early.
+      #
+      # `cargo check` IS run as a pre-push hook. Unlike clippy/test, it
+      # skips codegen and lint passes and is typically 2-30 seconds on a
+      # warm incremental cache. Its job is specifically to catch compile
+      # errors (hallucinated APIs, missing imports, type mismatches,
+      # `unsafe` in forbid-unsafe-code crates) before a PR is opened.
+      # Closed PRs #768 and #769 each wasted a CI run because their
+      # authors pushed without running `cargo check` locally; this hook
+      # makes it impossible to repeat that mistake accidentally. Use
+      # `git push --no-verify` to bypass if you're intentionally pushing
+      # a WIP commit for backup.
+
+      # Cargo check - fast compile verification before push
+      - id: cargo-check
+        name: cargo check --workspace --all-features --all-targets
+        entry: cargo check --workspace --all-features --all-targets
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Forbid-unsafe-code invariant check - grep-level, runs in ms.
+      # Complements the cargo-check hook above. cargo-check catches the
+      # violation as a compile error; this script surfaces it with a
+      # clearer message that points at both the violation site and the
+      # forbid directive. See scripts/check-unsafe-invariant.sh for the
+      # full rationale.
+      - id: unsafe-invariant
+        name: verify forbid-unsafe-code invariant
+        entry: scripts/check-unsafe-invariant.sh
+        language: system
+        types: [rust]
+        pass_filenames: false
+        stages: [pre-push]
