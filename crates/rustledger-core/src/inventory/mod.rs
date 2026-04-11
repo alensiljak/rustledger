@@ -149,6 +149,79 @@ impl fmt::Display for BookingError {
 
 impl std::error::Error for BookingError {}
 
+impl BookingError {
+    /// Wrap this booking error with the account context that produced it.
+    ///
+    /// `Inventory` itself doesn't know which account it belongs to, so the
+    /// raw `BookingError` carries no `account` field. The caller (booking
+    /// engine, validator) knows the account and uses this constructor to
+    /// produce the user-facing error.
+    ///
+    /// The resulting [`AccountedBookingError`] is the **single canonical
+    /// rendering** of an inventory failure for user-facing output. Both the
+    /// booking layer and the validator format errors via this type so the
+    /// wording cannot drift between them — the failure mode that produced
+    /// #748.
+    #[must_use]
+    pub const fn with_account(self, account: InternedStr) -> AccountedBookingError {
+        AccountedBookingError {
+            error: self,
+            account,
+        }
+    }
+}
+
+/// A [`BookingError`] paired with the account that produced it.
+///
+/// This is the canonical user-facing inventory error type. Its `Display`
+/// impl is the **single source of truth** for booking-error wording across
+/// `rustledger-booking` and `rustledger-validate`. Conformance assertions
+/// (e.g. pta-standards `reduction-exceeds-inventory` requires the literal
+/// substring `"not enough"`) are pinned by this Display.
+///
+/// Construct via [`BookingError::with_account`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountedBookingError {
+    /// The underlying inventory-level error.
+    pub error: BookingError,
+    /// The account whose inventory produced the error.
+    pub account: InternedStr,
+}
+
+impl fmt::Display for AccountedBookingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.error {
+            BookingError::InsufficientUnits {
+                requested,
+                available,
+                ..
+            } => write!(
+                f,
+                "Not enough units in {}: requested {}, available {}; not enough to reduce",
+                self.account, requested, available
+            ),
+            BookingError::NoMatchingLot { currency, .. } => {
+                write!(f, "No matching lot for {} in {}", currency, self.account)
+            }
+            BookingError::AmbiguousMatch {
+                num_matches,
+                currency,
+            } => write!(
+                f,
+                "Ambiguous lot match for {}: {} lots match in {}",
+                currency, num_matches, self.account
+            ),
+            BookingError::CurrencyMismatch { expected, got } => write!(
+                f,
+                "Currency mismatch in {}: expected {}, got {}",
+                self.account, expected, got
+            ),
+        }
+    }
+}
+
+impl std::error::Error for AccountedBookingError {}
+
 /// An inventory is a collection of positions.
 ///
 /// It tracks all positions for an account and supports booking operations
