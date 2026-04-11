@@ -212,6 +212,9 @@ pub struct ValidationError {
 
 impl ValidationError {
     /// Create a new validation error without source location.
+    ///
+    /// # Errors
+    /// Returns a [`ValidationError`] with the given code and message.
     #[must_use]
     pub fn new(code: ErrorCode, message: impl Into<String>, date: NaiveDate) -> Self {
         Self {
@@ -225,6 +228,9 @@ impl ValidationError {
     }
 
     /// Create a new validation error with source location from a spanned directive.
+    ///
+    /// # Errors
+    /// Returns a [`ValidationError`] with source location from the spanned directive.
     #[must_use]
     pub fn with_location<T>(
         code: ErrorCode,
@@ -243,6 +249,9 @@ impl ValidationError {
     }
 
     /// Add context to this error.
+    ///
+    /// # Errors
+    /// Returns self with additional context string.
     #[must_use]
     pub fn with_context(mut self, context: impl Into<String>) -> Self {
         self.context = Some(context.into());

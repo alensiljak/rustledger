@@ -74,14 +74,13 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
                     ),
                     bal.date,
                 )
-                .with_context(format!(
-                    "pad dates: {}",
+                .with_context(
                     pending_pads
                         .iter()
                         .map(|p| p.date.to_string())
                         .collect::<Vec<_>>()
-                        .join(", ")
-                )),
+                        .join(", "),
+                ),
             );
         }
 
