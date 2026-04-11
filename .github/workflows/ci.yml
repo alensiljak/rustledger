@@ -91,6 +91,27 @@ jobs:
           components: rustfmt
       - run: cargo fmt --all -- --check
 
+  # Fast invariant check: verify that crates declaring
+  # `#![forbid(unsafe_code)]` contain no `unsafe` blocks/items. Runs in
+  # milliseconds via grep, so it fails loudly and early on AI-generated
+  # PRs that try to add unsafe to a forbidding crate (see PR #769 for
+  # the proximate trigger).
+  #
+  # `cargo check` also enforces this invariant, but its failure message
+  # reads `"usage of an unsafe block"` without mentioning the forbid
+  # directive the author is violating. This script prints both the
+  # offending line and the forbid directive line in the same error, as
+  # a named CI status, so reviewers don't have to hunt for context.
+  unsafe-invariant:
+    name: Unsafe Invariant
+    needs: [changes]
+    if: needs.changes.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+      - name: Verify forbid-unsafe-code invariant
+        run: ./scripts/check-unsafe-invariant.sh
+
   # Main CI matrix - check, clippy, test, doc (only on code changes)
   ci:
     name: ${{ matrix.name }}
@@ -191,7 +212,7 @@ jobs:
     name: build
     if: always()
     runs-on: ubuntu-latest
-    needs: [changes, fmt, ci, doctest, regressions]
+    needs: [changes, fmt, unsafe-invariant, ci, doctest, regressions]
     steps:
       - name: Check results
         run: |
@@ -202,7 +223,7 @@ jobs:
           fi
 
           # Otherwise, check that all jobs passed
-          results="${{ needs.fmt.result }} ${{ needs.ci.result }} ${{ needs.doctest.result }} ${{ needs.regressions.result }}"
+          results="${{ needs.fmt.result }} ${{ needs.unsafe-invariant.result }} ${{ needs.ci.result }} ${{ needs.doctest.result }} ${{ needs.regressions.result }}"
           echo "Job results: $results"
 
           if echo "$results" | grep -qE '(failure|cancelled)'; then
