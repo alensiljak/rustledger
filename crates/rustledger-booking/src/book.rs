@@ -36,7 +36,16 @@ pub enum BookingError {
     },
 
     /// Insufficient units in matching lots.
-    #[error("insufficient units: need {requested} but only {available} available")]
+    ///
+    /// Display string deliberately includes the phrase "not enough" and the
+    /// account name to match Python beancount's `BookingError` message and the
+    /// validator's pre-existing phrasing. The pta-standards
+    /// `reduction-exceeds-inventory` conformance test asserts on
+    /// `error_contains: ["not enough"]`, and downstream user tooling (CI
+    /// filters, scripts) matches on this phrasing — see #748.
+    #[error(
+        "Not enough units in {account}: requested {requested}, available {available}; not enough to reduce"
+    )]
     InsufficientUnits {
         /// The account being reduced.
         account: InternedStr,
@@ -1177,6 +1186,38 @@ mod tests {
         assert_eq!(
             result.transaction.postings[0].units,
             Some(IncompleteAmount::Complete(Amount::new(dec!(50), "USD")))
+        );
+    }
+
+    /// Regression test for #748.
+    ///
+    /// The pta-standards `reduction-exceeds-inventory` conformance test
+    /// asserts on `error_contains: ["not enough"]`. PR #745 made the booking
+    /// layer propagate `InsufficientUnits` directly to the user instead of
+    /// letting the validator's "Not enough units in ..." message win, which
+    /// dropped the "not enough" phrasing. This test pins the booking layer's
+    /// Display string so the conformance assertion (and any downstream user
+    /// tooling that greps the message) cannot regress silently again.
+    #[test]
+    fn test_insufficient_units_display_contains_not_enough() {
+        let err = BookingError::InsufficientUnits {
+            account: "Assets:Stock".into(),
+            requested: dec!(15),
+            available: dec!(10),
+        };
+        let rendered = format!("{err}");
+        assert!(
+            rendered.contains("not enough"),
+            "InsufficientUnits Display must contain 'not enough' for beancount \
+             compatibility (#748). Got: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assets:Stock"),
+            "InsufficientUnits Display must include the account name. Got: {rendered}"
+        );
+        assert!(
+            rendered.contains("15") && rendered.contains("10"),
+            "InsufficientUnits Display must include requested and available amounts. Got: {rendered}"
         );
     }
 }
