@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- *(parser)* reject 7 invalid inputs per beancount v3 spec
+- address Copilot review feedback on parser strict
+- align error message wording with Python beancount
+- address Copilot review feedback on error message wording
+- *(parser)* allow Unicode letters after ASCII start in account names
+
+### Features
+
+- migrate from archived ariadne to miette for error diagnostics
+
+### Testing
+
+- *(parser)* Add 36 new tests for untested functions
+- fix 14 fake-coverage tests flagged by Copilot review on #766
+
 ## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.11.0) - 2026-04-02
 
 ### Bug Fixes

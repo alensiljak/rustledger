@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- match beancount error message wording (4 cases)
+- exclude price directives from display precision tracking
+- exclude posting price annotations from display precision tracking
+- *(booking)* apply per-account methods across all consumers
+- align include-cycle error wording with Python beancount
+
+### Refactoring
+
+- extract reintern_directive helper for plain and Spanned usage
+
 ## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.11.0) - 2026-04-02
 
 ### Bug Fixes

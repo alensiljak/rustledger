@@ -8,6 +8,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- *(wasm)* run booking engine in query and validation paths
+- *(wasm)* sort directives by date and use Strict booking method
+- *(wasm)* address Copilot review feedback
+- *(wasm)* store multi-file errors as validation_errors, not parse_errors
+- address Copilot review feedback on WASM cache
+- *(booking)* apply per-account methods across all consumers
+
+### Documentation
+
+- *(wasm)* update README and crate docs for Ledger class
+
+### Features
+
+- *(wasm)* add ParsedLedger.fromFiles() for multi-file ledgers
+- *(wasm)* enable completions on multi-file ParsedLedger
+- *(wasm)* add serialize/fromCache for browser ledger caching
+
+### Refactoring
+
+- *(wasm)* rename load_and_interpolate to load_and_book
+- *(wasm)* use shared process() pipeline from rustledger-loader
+- *(wasm)* split into ParsedLedger (single-file) and Ledger (multi-file)
+- *(core)* deduplicate extract_accounts/currencies/payees
+- extract reintern_directive helper for plain and Spanned usage
+
+### Testing
+
+- add roundtrip tests and CHANGELOG for WASM cache
+
 ### Features
 
 - Add `serialize`/`fromCache` for browser ledger caching (OPFS/IndexedDB)

@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- *(parser)* reject 7 invalid inputs per beancount v3 spec
+- address Copilot review feedback on parser strict
+- *(lsp)* prevent panic on multi-byte UTF-8 characters in completions
+- proper UTF-16 conversion and emoji test per Copilot review
+- *(lsp)* use lexer tokens for semantic highlighting
+- use UTF-16 code units for semantic token positions
+- *(booking)* apply per-account methods across all consumers
+- overlay in-memory buffer on stale ledger snapshot for LSP diagnostics
+- avoid double-clone of full_directives on overlay path ([#758](https://github.com/rustledger/rustledger/pull/758))
+- overlay all open buffers when publishing LSP diagnostics ([#764](https://github.com/rustledger/rustledger/pull/764))
+
+### Documentation
+
+- update VS Code setup to use rustledger extension
+- clarify char_offset_to_byte handles code points not UTF-16 units
+- drop intra-doc link from public fn to private helper
+
+### Features
+
+- *(vscode)* distribute via GitHub Releases instead of marketplace
+
+### Performance
+
+- O(log n) line lookup and O(1) source matching
+- skip out-of-range tokens in range request
+
+### Refactoring
+
+- *(core)* deduplicate extract_accounts/currencies/payees
+
+### Testing
+
+- add emoji UTF-16 position assertions for semantic tokens
+- add end-to-end all_diagnostics regression test and helper invariant
+
 ## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.11.0) - 2026-03-12
 
 ### Bug Fixes
