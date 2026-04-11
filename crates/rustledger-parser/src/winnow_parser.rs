@@ -24,6 +24,15 @@ use rustledger_core::{
     PriceAnnotation, Query, Transaction,
 };
 
+/// Cap on upfront `directives` preallocation to bound the single-allocation
+/// size on large/untrusted inputs (RPC, WASM, uploaded files). Vec still
+/// grows past this transparently if a real file exceeds it. See `parse`.
+const MAX_PREALLOC_DIRECTIVES: usize = 16_384;
+
+/// Cap on upfront `comments` preallocation. Same rationale as
+/// [`MAX_PREALLOC_DIRECTIVES`].
+const MAX_PREALLOC_COMMENTS: usize = 8_192;
+
 use crate::ParseResult;
 use crate::error::{ParseError, ParseErrorKind};
 use crate::logos_lexer::{Token, tokenize};
@@ -961,7 +970,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     };
 
     // Parse payee/narration strings
-    let mut strings = Vec::new();
+    let mut strings = Vec::with_capacity(2);
     let mut has_pipe = false;
 
     while let Ok(s) = parse_string(stream) {
@@ -975,8 +984,8 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     }
 
     // Tags and links
-    let mut tags: Vec<InternedStr> = Vec::new();
-    let mut links: Vec<InternedStr> = Vec::new();
+    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
 
     loop {
         if let Ok(tag) = parse_tag(stream) {
@@ -992,9 +1001,9 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
 
     // Parse transaction-level metadata, tags/links, and postings
     let mut txn_meta: Metadata = Metadata::default();
-    let mut postings = Vec::new();
+    let mut postings = Vec::with_capacity(4);
     // Track comments that appear before the next posting (can be multiple lines)
-    let mut pending_comments: Vec<String> = Vec::new();
+    let mut pending_comments: Vec<String> = Vec::with_capacity(4);
 
     loop {
         // Skip newlines between lines
@@ -1168,7 +1177,7 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let account = parse_account(stream)?;
 
     // Parse currencies separated by commas
-    let mut currencies: Vec<InternedStr> = Vec::new();
+    let mut currencies: Vec<InternedStr> = Vec::with_capacity(3);
     while let Ok(c) = parse_currency(stream) {
         currencies.push(c);
         // Consume optional comma separator
@@ -1351,8 +1360,8 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
     let path = parse_string(stream)?;
 
     // Optional tags and links
-    let mut tags: Vec<InternedStr> = Vec::new();
-    let mut links: Vec<InternedStr> = Vec::new();
+    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
     loop {
         if let Ok(tag) = parse_tag(stream) {
             tags.push(tag);
@@ -1407,7 +1416,7 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
     expect_token!(stream, Token::Custom)?;
     let name = parse_string(stream)?;
 
-    let mut values = Vec::new();
+    let mut values = Vec::with_capacity(4);
     loop {
         // String
         if let Ok(s) = parse_string(stream) {
@@ -1603,15 +1612,26 @@ pub fn parse(source: &str) -> ParseResult {
 
     let mut stream = TokenStream::new(&raw_tokens);
 
-    let mut directives = Vec::new();
-    let mut options = Vec::new();
-    let mut includes = Vec::new();
-    let mut plugins = Vec::new();
-    let mut comments = Vec::new();
-    let mut errors = Vec::new();
+    // Preallocate collections with estimated capacities.
+    //
+    // Typical beancount file: ~50 bytes per directive, a few
+    // options/includes/plugins. `directives` and `comments` are capped
+    // to bound the single-allocation size on very large or untrusted
+    // inputs (RPC, WASM, file uploads), so an adversary can't coerce a
+    // multi-megabyte upfront allocation just by padding the source with
+    // whitespace. The caps cover typical-size files (16384 directives
+    // ≈ 800KB at 50 bytes each, 8192 comments same) without an OOM/DoS
+    // spike on pathological inputs. Vec will grow past the cap
+    // transparently if a real file exceeds it.
+    let mut directives = Vec::with_capacity((source.len() / 50).min(MAX_PREALLOC_DIRECTIVES));
+    let mut options = Vec::with_capacity(4);
+    let mut includes = Vec::with_capacity(4);
+    let mut plugins = Vec::with_capacity(4);
+    let mut comments = Vec::with_capacity((source.len() / 100).min(MAX_PREALLOC_COMMENTS));
+    let mut errors = Vec::with_capacity(4);
 
-    let mut tag_stack: Vec<(InternedStr, Span)> = Vec::new();
-    let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::new();
+    let mut tag_stack: Vec<(InternedStr, Span)> = Vec::with_capacity(8);
+    let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::with_capacity(8);
 
     while !stream.is_empty() {
         // Skip any blank lines between directives so `error_start` points at
@@ -2077,5 +2097,522 @@ mod tests {
             msg.contains("Invalid account"),
             "Unicode account error should contain 'Invalid account', got: {msg}"
         );
+    }
+
+    // ============================================================================
+    // HIGH PRIORITY TESTS - Core Parsing Functions
+    // ============================================================================
+
+    #[test]
+    fn test_parse_date_two_digit_year_is_rejected() {
+        // The lexer's date regex requires a 4-digit year (see logos_lexer.rs).
+        // A 2-digit year like `24-01-15` is therefore not recognized as
+        // `Token::Date` and cannot produce a directive. Pin that rejection
+        // so a future lexer change that accepts 2-digit years (e.g., adding
+        // a year-shortcut feature) will fail this test and prompt the
+        // author to explicitly decide the semantics.
+        let source = "24-01-15 open Assets:Bank USD\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "2-digit years should produce a parse error"
+        );
+        assert!(
+            result.directives.is_empty(),
+            "2-digit years should not produce any directives, got: {:?}",
+            result.directives
+        );
+    }
+
+    #[test]
+    fn test_parse_date_single_digit_month() {
+        // Single-digit month should be normalized to 2024-01-15.
+        let source = "2024-1-15 open Assets:Bank USD\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1, "Expected exactly one directive");
+        match &result.directives[0].value {
+            Directive::Open(open) => assert_eq!(
+                open.date,
+                NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+                "Single-digit month should normalize to 2024-01-15"
+            ),
+            other => panic!("Expected Directive::Open, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_process_string_escapes() {
+        // Newline escape
+        assert_eq!(process_string_escapes("hello\\nworld"), "hello\nworld");
+        // Tab escape
+        assert_eq!(process_string_escapes("tab\\t"), "tab\t");
+        // Quote escape
+        assert_eq!(process_string_escapes("say \\\"hello\\\""), "say \"hello\"");
+        // Backslash escape
+        assert_eq!(process_string_escapes("back\\\\slash"), "back\\slash");
+        // No escapes
+        assert_eq!(process_string_escapes("plain text"), "plain text");
+    }
+
+    #[test]
+    fn test_parse_signed_number_in_balance_tolerance() {
+        // `parse_signed_number` only runs in specific contexts where the
+        // grammar expects a signed value, notably the optional balance
+        // tolerance after `~`. Top-level bare numbers (`+100` / `-50.00`)
+        // don't reach this code path. Use a balance directive with an
+        // explicit negative tolerance to actually exercise it.
+        //
+        // The balance grammar is `<number> [~ <tolerance>] <currency>`,
+        // so the tolerance comes between the number and the currency,
+        // not after the currency.
+        let source = "2024-01-01 open Assets:Cash USD\n\
+                      2024-01-15 balance Assets:Cash 100 ~ -1 USD\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 2);
+
+        match &result.directives[1].value {
+            Directive::Balance(balance) => {
+                assert_eq!(
+                    balance.tolerance,
+                    Some(Decimal::from(-1)),
+                    "Balance tolerance should parse as -1 via parse_signed_number"
+                );
+            }
+            other => panic!("Expected Directive::Balance, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_flag_star() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Cash  100 USD
+  Expenses:Test
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Transaction(txn) => assert_eq!(txn.flag, '*'),
+            other => panic!("Expected Directive::Transaction, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_flag_exclamation() {
+        let source = r#"
+2024-01-15 ! "Test"
+  Assets:Cash  100 USD
+  Expenses:Test
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Transaction(txn) => assert_eq!(txn.flag, '!'),
+            other => panic!("Expected Directive::Transaction, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_option_with_true_string_value() {
+        // `option` directives store their value as a raw string regardless
+        // of content; they do NOT go through `parse_boolean`. This test
+        // pins that string round-trip. See
+        // `test_parse_boolean_metadata_value` below for actual
+        // `parse_boolean` coverage.
+        let source = "option \"bool\" \"True\"\n";
+        let result = parse(source);
+        assert_eq!(result.options.len(), 1);
+        assert_eq!(result.options[0].1, "True");
+    }
+
+    #[test]
+    fn test_parse_option_with_false_string_value() {
+        // See `test_parse_option_with_true_string_value`.
+        let source = "option \"bool\" \"False\"\n";
+        let result = parse(source);
+        assert_eq!(result.options.len(), 1);
+        assert_eq!(result.options[0].1, "False");
+    }
+
+    #[test]
+    fn test_parse_boolean_metadata_value() {
+        // `parse_boolean` fires on bare `True` / `False` tokens produced
+        // by the lexer, which only happens for metadata values (and a few
+        // other contexts). Exercise it by attaching boolean metadata to
+        // an `open` directive and asserting the resulting `MetaValue::Bool`.
+        let source = concat!(
+            "2024-01-01 open Assets:Bank USD\n",
+            "  flag_true: TRUE\n",
+            "  flag_false: FALSE\n",
+        );
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Open(open) => {
+                assert_eq!(
+                    open.meta.get("flag_true"),
+                    Some(&MetaValue::Bool(true)),
+                    "TRUE should parse as MetaValue::Bool(true), got: {:?}",
+                    open.meta.get("flag_true")
+                );
+                assert_eq!(
+                    open.meta.get("flag_false"),
+                    Some(&MetaValue::Bool(false)),
+                    "FALSE should parse as MetaValue::Bool(false), got: {:?}",
+                    open.meta.get("flag_false")
+                );
+            }
+            other => panic!("Expected Directive::Open, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_arithmetic_multiplication() {
+        let source = "2024-01-01 balance Assets:Bank 10 * 5 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Balance(b) => assert_eq!(b.amount.number, Decimal::from(50)),
+            other => panic!("Expected Directive::Balance, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_arithmetic_parentheses() {
+        let source = "2024-01-01 balance Assets:Bank (10 + 5) * 2 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Balance(b) => assert_eq!(b.amount.number, Decimal::from(30)),
+            other => panic!("Expected Directive::Balance, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_incomplete_amount_number_only() {
+        // A posting amount with a number but no currency should parse as
+        // `IncompleteAmount::NumberOnly`. This pins the parse path through
+        // `parse_incomplete_amount`'s NumberOnly branch.
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Cash  100
+  Expenses:Test
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Transaction(txn) => {
+                assert_eq!(txn.postings.len(), 2);
+                assert_eq!(
+                    txn.postings[0].units,
+                    Some(IncompleteAmount::NumberOnly(Decimal::from(100))),
+                    "first posting should have units as NumberOnly(100), got: {:?}",
+                    txn.postings[0].units
+                );
+            }
+            other => panic!("Expected Directive::Transaction, got: {other:?}"),
+        }
+    }
+
+    // Metadata tests removed - posting metadata format differs from expected
+
+    // ============================================================================
+    // MEDIUM PRIORITY TESTS - Directive Parsing
+    // ============================================================================
+
+    #[test]
+    fn test_parse_pushtag_and_poptag_directive() {
+        // Pushtag must be closed with poptag
+        let source = "pushtag #tag1\n2024-01-01 open Assets:Bank USD\npoptag #tag1\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_poptag_without_push_errors() {
+        let source = "poptag #neverpushed\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "poptag without pushtag should error"
+        );
+        let msg = result.errors[0].message();
+        assert!(
+            msg.contains("poptag") || msg.contains("never pushed"),
+            "error should mention poptag issue, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_parse_pushmeta_and_popmeta_directive() {
+        // Pushmeta/popmeta push metadata onto a stack and apply it to
+        // every enclosed directive until the matching popmeta. They are
+        // not themselves stored in `result.directives`; they mutate the
+        // metadata of enclosed directives via `apply_pushed_meta`.
+        //
+        // Syntax: `pushmeta key: "value"` then `popmeta key:` (the colon
+        // is required because `parse_meta_key` expects a MetaKey token).
+        let source = concat!(
+            "pushmeta key: \"value\"\n",
+            "2024-01-01 open Assets:Bank USD\n",
+            "popmeta key:\n",
+            "2024-01-02 close Assets:Bank\n",
+        );
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(
+            result.directives.len(),
+            2,
+            "pushmeta/popmeta should not appear as directives; expected just open + close, got: {:?}",
+            result
+                .directives
+                .iter()
+                .map(|d| format!("{:?}", d.value))
+                .collect::<Vec<_>>()
+        );
+
+        // The open directive (inside the push/pop window) should have the
+        // pushed metadata applied.
+        match &result.directives[0].value {
+            Directive::Open(open) => {
+                assert_eq!(
+                    open.meta.get("key"),
+                    Some(&MetaValue::String("value".to_string())),
+                    "Enclosed directive should have pushed metadata applied"
+                );
+            }
+            other => panic!("Expected Directive::Open, got: {other:?}"),
+        }
+
+        // The close directive (after popmeta) should NOT have the metadata.
+        match &result.directives[1].value {
+            Directive::Close(close) => {
+                assert!(
+                    !close.meta.contains_key("key"),
+                    "Directive after popmeta should not have the popped key, got meta: {:?}",
+                    close.meta
+                );
+            }
+            other => panic!("Expected Directive::Close, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_close_directive() {
+        let source = "2024-01-01 close Assets:Bank\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        assert!(matches!(result.directives[0].value, Directive::Close(_)));
+    }
+
+    #[test]
+    fn test_parse_commodity_directive() {
+        let source = "2024-01-01 commodity USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        assert!(matches!(
+            result.directives[0].value,
+            Directive::Commodity(_)
+        ));
+    }
+
+    #[test]
+    fn test_parse_pad_directive() {
+        // `parse_pad_directive` calls `parse_account` twice: the account
+        // being padded and the source (e.g., Equity:Opening-Balances).
+        let source = "2024-01-01 pad Assets:Bank Equity:Opening-Balances\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Pad(pad) => {
+                assert_eq!(pad.account.as_ref(), "Assets:Bank");
+                assert_eq!(pad.source_account.as_ref(), "Equity:Opening-Balances");
+            }
+            other => panic!("Expected Directive::Pad, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_event_directive() {
+        // `parse_event_directive` expects two quoted strings:
+        // event_type and value.
+        let source = "2024-01-01 event \"location\" \"Paris\"\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Event(event) => {
+                assert_eq!(event.event_type, "location");
+                assert_eq!(event.value, "Paris");
+            }
+            other => panic!("Expected Directive::Event, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_note_directive() {
+        // `parse_note_directive` expects an account followed by a quoted
+        // comment string.
+        let source = "2024-01-01 note Assets:Bank \"This is a note\"\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Note(note) => {
+                assert_eq!(note.account.as_ref(), "Assets:Bank");
+                assert_eq!(note.comment, "This is a note");
+            }
+            other => panic!("Expected Directive::Note, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_document_directive() {
+        // `parse_document_directive` expects an account followed by a
+        // quoted path string.
+        let source = "2024-01-01 document Assets:Bank \"2024/report.pdf\"\n";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "Expected no parse errors, got: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1);
+        match &result.directives[0].value {
+            Directive::Document(document) => {
+                assert_eq!(document.account.as_ref(), "Assets:Bank");
+                assert_eq!(document.path, "2024/report.pdf");
+            }
+            other => panic!("Expected Directive::Document, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parse_price_directive() {
+        let source = "2024-01-01 price AAPL 150.00 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        assert!(matches!(result.directives[0].value, Directive::Price(_)));
+    }
+
+    // ============================================================================
+    // LOW PRIORITY TESTS - Edge Cases
+    // ============================================================================
+
+    // Link test removed - posting metadata format differs
+
+    #[test]
+    fn test_parse_cost_spec_per_unit() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  -10 AAPL {150.00 USD}
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_cost_spec_date() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  -10 AAPL {2024-01-01}
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_cost_spec_label() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  -10 AAPL {"purchase"}
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_price_annotation_unit() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  10 AAPL @ 150.00 USD
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_price_annotation_total() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  10 AAPL @@ 1500.00 USD
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_standalone_comment() {
+        let source = "; This is a standalone comment\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(
+            result.comments.len(),
+            1,
+            "Single-line comment source should produce exactly one comment"
+        );
+    }
+
+    #[test]
+    fn test_parse_multiple_standalone_comments() {
+        let source = "; Comment 1\n; Comment 2\n; Comment 3\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.comments.len(), 3);
     }
 }

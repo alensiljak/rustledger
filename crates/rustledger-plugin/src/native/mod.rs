@@ -33,6 +33,7 @@ pub struct NativePluginRegistry {
 /// - `"zerosum"` → `"zerosum"`
 /// - `"beancount.plugins.implicit_prices"` → `"implicit_prices"`
 /// - `"beancount_reds_plugins.zerosum.zerosum"` → `"zerosum"`
+#[inline]
 fn plugin_short_name(name: &str) -> &str {
     name.rsplit('.').next().unwrap_or(name)
 }

@@ -99,10 +99,12 @@ struct PendingPad {
 /// - Synthetic padding transactions
 /// - Any errors encountered
 pub fn process_pads(directives: &[Directive]) -> PadResult {
-    let mut inventories: HashMap<InternedStr, Inventory> = HashMap::new();
-    let mut pending_pads: HashMap<InternedStr, PendingPad> = HashMap::new();
-    let mut padding_transactions = Vec::new();
-    let mut errors = Vec::new();
+    let num_directives = directives.len();
+    let mut inventories: HashMap<InternedStr, Inventory> =
+        HashMap::with_capacity(num_directives.min(16));
+    let mut pending_pads: HashMap<InternedStr, PendingPad> = HashMap::with_capacity(4);
+    let mut padding_transactions = Vec::with_capacity(num_directives.min(16));
+    let mut errors = Vec::with_capacity(4);
 
     // Sort directives by date for processing
     let mut sorted: Vec<&Directive> = directives.iter().collect();

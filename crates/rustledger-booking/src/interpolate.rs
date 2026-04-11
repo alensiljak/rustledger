@@ -117,7 +117,7 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
     let num_postings = transaction.postings.len();
     let mut residuals: HashMap<InternedStr, Decimal> = HashMap::with_capacity(num_postings.min(4));
     let mut missing_by_currency: HashMap<InternedStr, Vec<usize>> = HashMap::with_capacity(2);
-    let mut unassigned_missing: Vec<usize> = Vec::new();
+    let mut unassigned_missing: Vec<usize> = Vec::with_capacity(2);
 
     // Track maximum scale (decimal places) per currency for rounding interpolated amounts.
     // Python beancount rounds interpolated amounts to match the precision of other amounts
