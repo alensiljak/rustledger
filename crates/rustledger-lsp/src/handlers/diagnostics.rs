@@ -251,6 +251,53 @@ pub fn validation_error_to_diagnostic(
 /// 500KB is a generous limit - most beancount files are much smaller.
 const MAX_VALIDATION_FILE_SIZE: usize = 500 * 1024;
 
+/// Build the effective directive list for validation by overlaying a fresh
+/// in-memory parse onto a potentially-stale ledger snapshot.
+///
+/// # Why this exists (issue #685)
+///
+/// The LSP's `LedgerState` is loaded from disk at startup and refreshed only
+/// by file-watcher events, which fire on save. In-memory buffer edits do not
+/// touch it. Without an overlay, `all_diagnostics` would validate the current
+/// file against the stale on-disk directives and produce two bad behaviors:
+///
+/// 1. A new error the user introduces in the buffer is not reported until
+///    after the next save.
+/// 2. After the user saves (at which point the file-watcher pushes the bad
+///    content into `LedgerState`) and then fixes the error in the buffer,
+///    the error is still reported against the now-stale `LedgerState` until
+///    the user saves again.
+///
+/// The overlay solves both: for the file currently being edited we drop the
+/// stale directives (matched by `file_id`) and append the fresh directives
+/// from the latest in-memory parse, remapped to the same `file_id` so the
+/// per-file filter in [`validation_errors_to_diagnostics`] still works.
+/// Validation then sees the live buffer state for this file plus the
+/// on-disk state for every other file in the ledger.
+///
+/// Returns `None` when there is nothing to overlay (no ledger state or no
+/// `current_file_id`). Callers should fall back to the original
+/// `full_directives` in that case.
+fn build_live_directive_overlay(
+    fresh_directives: &[Spanned<Directive>],
+    full_directives: Option<&[Spanned<Directive>]>,
+    current_file_id: Option<u16>,
+) -> Option<Vec<Spanned<Directive>>> {
+    match (full_directives, current_file_id) {
+        (Some(full), Some(fid)) => {
+            let mut merged: Vec<Spanned<Directive>> =
+                full.iter().filter(|d| d.file_id != fid).cloned().collect();
+            for d in fresh_directives {
+                let mut d = d.clone();
+                d.file_id = fid;
+                merged.push(d);
+            }
+            Some(merged)
+        }
+        _ => None,
+    }
+}
+
 /// Get all diagnostics (parse errors + validation errors) for a parse result.
 ///
 /// Validation is skipped for files larger than `MAX_VALIDATION_FILE_SIZE` to
@@ -278,8 +325,21 @@ pub fn all_diagnostics(
     // 2. File is not too large (to keep LSP responsive)
     if result.errors.is_empty() {
         if source.len() <= MAX_VALIDATION_FILE_SIZE {
-            // Get full directives from ledger state if available
-            let full_directives = ledger_state.and_then(|ls| ls.directives());
+            // Get full directives from ledger state if available, then
+            // apply a live overlay of the fresh in-memory parse.
+            //
+            // See `build_live_directive_overlay` for why the overlay is
+            // necessary (it's the fix for issue #685: without it,
+            // diagnostics lag behind in-memory buffer edits because the
+            // ledger state is only refreshed on file-watcher save events).
+            let full_directives_raw = ledger_state.and_then(|ls| ls.directives());
+            let overlay = build_live_directive_overlay(
+                &result.directives,
+                full_directives_raw,
+                current_file_id,
+            );
+            let full_directives: Option<&[Spanned<Directive>]> =
+                overlay.as_deref().or(full_directives_raw);
 
             // Build validation options with custom account type names.
             // Use ledger-wide options when a ledger is loaded (handles multi-file
@@ -624,6 +684,206 @@ option "name_equity" "Капитал"
                 .iter()
                 .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
             "At least one diagnostic should be ERROR severity"
+        );
+    }
+
+    /// Regression test for issue #685.
+    ///
+    /// When the LSP is started against a journal file, `ledger_state` is
+    /// loaded from disk at startup and refreshed only by file-watcher events
+    /// on save. In-memory buffer edits don't touch it, so without a live
+    /// overlay the validation pass sees stale directives and diagnostics lag
+    /// behind the buffer until the next save.
+    ///
+    /// This test exercises `build_live_directive_overlay` directly, plus the
+    /// downstream `validation_errors_to_diagnostics` path, to confirm both of
+    /// the bad behaviors that motivated the bug are fixed:
+    ///
+    /// 1. A new error introduced in the buffer is reported before any save.
+    /// 2. After the buffer is fixed, the error is cleared, even if the
+    ///    stale `full_directives` still hold the broken version.
+    #[test]
+    fn test_live_overlay_reflects_buffer_edits_issue_685() {
+        // Helper for reading an LSP diagnostic's string code.
+        fn get_code(d: &Diagnostic) -> String {
+            match d.code.as_ref().unwrap() {
+                lsp_types::NumberOrString::String(s) => s.clone(),
+                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
+            }
+        }
+
+        // The on-disk version of the file is balanced.
+        let on_disk_source = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+
+        // The buffer version has been edited to be unbalanced (5000 vs 5001).
+        let buffer_unbalanced_source = r#"2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5001 USD
+"#;
+
+        // And a later state where the user has fixed the imbalance back to
+        // its original value while `ledger_state` still holds the broken
+        // saved version (simulating: user saved while broken, then fixed in
+        // the buffer).
+        let buffer_fixed_source = on_disk_source;
+        let on_disk_stale_broken_source = buffer_unbalanced_source;
+
+        // ===== Scenario 1: buffer is edited, ledger_state still clean =====
+
+        let fresh_unbalanced = parse(buffer_unbalanced_source);
+        assert!(
+            fresh_unbalanced.errors.is_empty(),
+            "buffer should parse cleanly"
+        );
+
+        // Simulate what `LedgerState::load` would have given us: parsed
+        // directives from the on-disk content, with a specific file_id.
+        // file_id=1 matches how multi-file tests in this module assign IDs.
+        let on_disk_clean = parse(on_disk_source);
+        let stale_full_directives: Vec<Spanned<Directive>> = on_disk_clean
+            .directives
+            .iter()
+            .map(|d| {
+                let mut d = d.clone();
+                d.file_id = 1;
+                d
+            })
+            .collect();
+
+        // Without the overlay: validation would use the stale clean
+        // directives and report no error, which is the bug.
+        let no_overlay = validation_errors_to_diagnostics(
+            &fresh_unbalanced.directives,
+            buffer_unbalanced_source,
+            ValidationOptions::default(),
+            Some(&stale_full_directives),
+            Some(1),
+        );
+        let no_overlay_codes: Vec<_> = no_overlay.iter().map(get_code).collect();
+        assert!(
+            !no_overlay_codes.iter().any(|c| c == "E3001"),
+            "Bug reproduction: without overlay, stale ledger_state hides \
+             the buffer's new imbalance. Got: {no_overlay_codes:?}"
+        );
+
+        // With the overlay: fresh directives replace stale ones for this
+        // file, and the new imbalance is reported.
+        let overlay = build_live_directive_overlay(
+            &fresh_unbalanced.directives,
+            Some(&stale_full_directives),
+            Some(1),
+        )
+        .expect("overlay must be built when both full_directives and file_id are present");
+
+        let with_overlay = validation_errors_to_diagnostics(
+            &fresh_unbalanced.directives,
+            buffer_unbalanced_source,
+            ValidationOptions::default(),
+            Some(&overlay),
+            Some(1),
+        );
+        let with_overlay_codes: Vec<_> = with_overlay.iter().map(get_code).collect();
+        assert!(
+            with_overlay_codes.iter().any(|c| c == "E3001"),
+            "Fix verification: with overlay, buffer's imbalance should be \
+             reported as E3001. Got: {with_overlay_codes:?}"
+        );
+
+        // ===== Scenario 2: buffer is fixed, ledger_state still broken =====
+
+        let fresh_fixed = parse(buffer_fixed_source);
+        assert!(
+            fresh_fixed.errors.is_empty(),
+            "fixed buffer should parse cleanly"
+        );
+
+        // Simulate: user saved the broken version at some point, so
+        // `ledger_state` now holds the broken directives.
+        let stale_broken = parse(on_disk_stale_broken_source);
+        let stale_broken_full: Vec<Spanned<Directive>> = stale_broken
+            .directives
+            .iter()
+            .map(|d| {
+                let mut d = d.clone();
+                d.file_id = 1;
+                d
+            })
+            .collect();
+
+        // Without the overlay: validation uses the stale broken ledger and
+        // the old error persists even though the buffer is fixed.
+        let no_overlay_persist = validation_errors_to_diagnostics(
+            &fresh_fixed.directives,
+            buffer_fixed_source,
+            ValidationOptions::default(),
+            Some(&stale_broken_full),
+            Some(1),
+        );
+        let no_overlay_persist_codes: Vec<_> = no_overlay_persist.iter().map(get_code).collect();
+        assert!(
+            no_overlay_persist_codes.iter().any(|c| c == "E3001"),
+            "Bug reproduction: without overlay, stale broken ledger_state \
+             makes a now-fixed buffer still appear broken. \
+             Got: {no_overlay_persist_codes:?}"
+        );
+
+        // With the overlay: fresh fixed directives replace the stale broken
+        // ones, and the error is cleared.
+        let overlay_fixed = build_live_directive_overlay(
+            &fresh_fixed.directives,
+            Some(&stale_broken_full),
+            Some(1),
+        )
+        .expect("overlay must be built when both full_directives and file_id are present");
+
+        let with_overlay_fixed = validation_errors_to_diagnostics(
+            &fresh_fixed.directives,
+            buffer_fixed_source,
+            ValidationOptions::default(),
+            Some(&overlay_fixed),
+            Some(1),
+        );
+        let with_overlay_fixed_codes: Vec<_> = with_overlay_fixed.iter().map(get_code).collect();
+        assert!(
+            !with_overlay_fixed_codes.iter().any(|c| c == "E3001"),
+            "Fix verification: with overlay, fixed buffer should clear the \
+             stale error. Got: {with_overlay_fixed_codes:?}"
+        );
+    }
+
+    #[test]
+    fn test_live_overlay_returns_none_without_file_id() {
+        let parsed = parse("2024-01-01 open Assets:Bank:Checking USD\n");
+        let result = build_live_directive_overlay(&parsed.directives, None, None);
+        assert!(
+            result.is_none(),
+            "no ledger, no file_id: overlay should be None"
+        );
+
+        let other_parsed = parse("2024-01-01 open Income:Salary\n");
+        let other_dirs: Vec<Spanned<Directive>> = other_parsed
+            .directives
+            .iter()
+            .map(|d| {
+                let mut d = d.clone();
+                d.file_id = 2;
+                d
+            })
+            .collect();
+        let result = build_live_directive_overlay(&parsed.directives, Some(&other_dirs), None);
+        assert!(
+            result.is_none(),
+            "full_directives present but no file_id: overlay should be None \
+             (caller will fall back to full_directives as-is)"
         );
     }
 }
