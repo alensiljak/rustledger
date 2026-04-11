@@ -203,10 +203,13 @@ impl BookingEngine {
         // Create working copies of inventories for this transaction.
         // This allows us to track inventory changes across multiple postings
         // within the same transaction (e.g., main sale + fee posting).
+        // Clone only the inventories we actually need for this transaction's accounts
         let mut working_inventories: FxHashMap<InternedStr, Inventory> =
-            FxHashMap::with_capacity_and_hasher(self.inventories.len(), Default::default());
-        for (k, v) in &self.inventories {
-            working_inventories.insert(k.clone(), v.clone());
+            FxHashMap::with_capacity_and_hasher(txn.postings.len(), Default::default());
+        for posting in &txn.postings {
+            if let Some(inv) = self.inventories.get(&posting.account) {
+                working_inventories.insert(posting.account.clone(), inv.clone());
+            }
         }
 
         // First pass: identify postings that need lot matching (reductions)
