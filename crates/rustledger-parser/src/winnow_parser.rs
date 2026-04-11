@@ -961,7 +961,7 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     };
 
     // Parse payee/narration strings
-    let mut strings = Vec::new();
+    let mut strings = Vec::with_capacity(2);
     let mut has_pipe = false;
 
     while let Ok(s) = parse_string(stream) {
@@ -975,8 +975,8 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     }
 
     // Tags and links
-    let mut tags: Vec<InternedStr> = Vec::new();
-    let mut links: Vec<InternedStr> = Vec::new();
+    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(8);
 
     loop {
         if let Ok(tag) = parse_tag(stream) {
@@ -992,9 +992,9 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
 
     // Parse transaction-level metadata, tags/links, and postings
     let mut txn_meta: Metadata = Metadata::default();
-    let mut postings = Vec::new();
+    let mut postings = Vec::with_capacity(4);
     // Track comments that appear before the next posting (can be multiple lines)
-    let mut pending_comments: Vec<String> = Vec::new();
+    let mut pending_comments: Vec<String> = Vec::with_capacity(4);
 
     loop {
         // Skip newlines between lines
@@ -1168,7 +1168,7 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let account = parse_account(stream)?;
 
     // Parse currencies separated by commas
-    let mut currencies: Vec<InternedStr> = Vec::new();
+    let mut currencies: Vec<InternedStr> = Vec::with_capacity(3);
     while let Ok(c) = parse_currency(stream) {
         currencies.push(c);
         // Consume optional comma separator
@@ -1351,8 +1351,8 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
     let path = parse_string(stream)?;
 
     // Optional tags and links
-    let mut tags: Vec<InternedStr> = Vec::new();
-    let mut links: Vec<InternedStr> = Vec::new();
+    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
+    let mut links: Vec<InternedStr> = Vec::with_capacity(8);
     loop {
         if let Ok(tag) = parse_tag(stream) {
             tags.push(tag);
@@ -1407,7 +1407,7 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
     expect_token!(stream, Token::Custom)?;
     let name = parse_string(stream)?;
 
-    let mut values = Vec::new();
+    let mut values = Vec::with_capacity(4);
     loop {
         // String
         if let Ok(s) = parse_string(stream) {
@@ -1603,15 +1603,17 @@ pub fn parse(source: &str) -> ParseResult {
 
     let mut stream = TokenStream::new(&raw_tokens);
 
-    let mut directives = Vec::new();
-    let mut options = Vec::new();
-    let mut includes = Vec::new();
-    let mut plugins = Vec::new();
-    let mut comments = Vec::new();
-    let mut errors = Vec::new();
+    // Preallocate collections with estimated capacities
+    // Typical beancount file: ~50 bytes per directive, few options/includes/plugins
+    let mut directives = Vec::with_capacity(source.len() / 50);
+    let mut options = Vec::with_capacity(4);
+    let mut includes = Vec::with_capacity(4);
+    let mut plugins = Vec::with_capacity(2);
+    let mut comments = Vec::with_capacity(source.len() / 100);
+    let mut errors = Vec::with_capacity(4);
 
-    let mut tag_stack: Vec<(InternedStr, Span)> = Vec::new();
-    let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::new();
+    let mut tag_stack: Vec<(InternedStr, Span)> = Vec::with_capacity(8);
+    let mut meta_stack: Vec<(String, MetaValue, Span)> = Vec::with_capacity(8);
 
     while !stream.is_empty() {
         // Skip any blank lines between directives so `error_start` points at
