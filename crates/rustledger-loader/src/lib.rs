@@ -329,6 +329,7 @@ impl Loader {
     /// Note: Parse errors and path traversal errors are collected in
     /// [`LoadResult::errors`] rather than returned directly, allowing
     /// partial results to be returned.
+    #[must_use]
     pub fn load(&mut self, path: &Path) -> Result<LoadResult, LoadError> {
         let mut directives = Vec::new();
         let mut options = Options::default();
@@ -380,11 +381,8 @@ impl Loader {
 
         // Check for cycles using O(1) HashSet lookup
         if self.include_stack_set.contains(&path_buf) {
-            let mut cycle: Vec<String> = self
-                .include_stack
-                .iter()
-                .map(|p| p.display().to_string())
-                .collect();
+            let mut cycle: Vec<String> = Vec::with_capacity(self.include_stack.len() + 1);
+            cycle.extend(self.include_stack.iter().map(|p| p.display().to_string()));
             cycle.push(path.display().to_string());
             return Err(LoadError::IncludeCycle { cycle });
         }
@@ -479,8 +477,8 @@ impl Loader {
 
                 if !path_to_check.starts_with(root) {
                     errors.push(LoadError::PathTraversal {
-                        include_path: include_path.clone(),
-                        base_dir: root.clone(),
+                        include_path: include_path.to_string(),
+                        base_dir: root.to_path_buf(),
                     });
                     continue;
                 }
