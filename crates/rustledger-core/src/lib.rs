@@ -71,7 +71,7 @@ pub use extract::{
 };
 pub use format::{FormatConfig, format_directive};
 pub use intern::{InternedStr, StringInterner};
-pub use inventory::{BookingError, BookingMethod, BookingResult, Inventory};
+pub use inventory::{AccountedBookingError, BookingError, BookingMethod, BookingResult, Inventory};
 pub use position::Position;
 
 // Re-export commonly used external types

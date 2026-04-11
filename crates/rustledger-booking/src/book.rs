@@ -6,11 +6,10 @@
 //! - Calculating capital gains/losses
 //! - Filling in cost specs for lot reductions
 
-use rust_decimal::Decimal;
 use rustc_hash::FxHashMap;
 use rustledger_core::{
-    Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr, Inventory, Position,
-    Posting, Transaction,
+    AccountedBookingError, Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr,
+    Inventory, Position, Posting, Transaction,
 };
 use thiserror::Error;
 
@@ -24,51 +23,23 @@ use crate::{InterpolationError, InterpolationResult, interpolate};
 // to 170.17, because 1.763 * 170.17 = 300.00971 ≠ 300.00.
 
 /// Errors that can occur during booking.
+///
+/// Inventory-level failures (insufficient units, no matching lot, ambiguous
+/// match, currency mismatch) are unified under [`BookingError::Inventory`],
+/// which carries an [`AccountedBookingError`] from `rustledger-core`. This
+/// keeps the user-facing wording in **one place** so it cannot drift between
+/// the booking layer and the validator — see #748 / #750.
 #[derive(Debug, Clone, Error)]
 pub enum BookingError {
-    /// No matching lot found for reduction.
-    #[error("no matching lot for {units} in account {account}")]
-    NoMatchingLot {
-        /// The account being reduced.
-        account: InternedStr,
-        /// The units being reduced.
-        units: String,
-    },
-
-    /// Insufficient units in matching lots.
+    /// An inventory-level booking failure (insufficient units, no matching
+    /// lot, ambiguous match, currency mismatch).
     ///
-    /// Display string deliberately includes the phrase "not enough" and the
-    /// account name to match Python beancount's `BookingError` message and the
-    /// validator's pre-existing phrasing. The pta-standards
-    /// `reduction-exceeds-inventory` conformance test asserts on
-    /// `error_contains: ["not enough"]`, and downstream user tooling (CI
-    /// filters, scripts) matches on this phrasing — see #748.
-    #[error(
-        "Not enough units in {account}: requested {requested}, available {available}; not enough to reduce"
-    )]
-    InsufficientUnits {
-        /// The account being reduced.
-        account: InternedStr,
-        /// Requested reduction amount.
-        requested: Decimal,
-        /// Available amount.
-        available: Decimal,
-    },
-
-    /// Multiple lots with differing costs matched the reduction.
-    ///
-    /// Raised by STRICT booking when a partial cost spec like `{}` matches
-    /// more than one non-identical lot. Mirrors Python beancount's
-    /// `AmbiguousMatchError`.
-    #[error("ambiguous lot match: {num_matches} lots match for {currency} in account {account}")]
-    AmbiguousMatch {
-        /// The account being reduced.
-        account: InternedStr,
-        /// The currency being reduced.
-        currency: InternedStr,
-        /// The number of matching lots.
-        num_matches: usize,
-    },
+    /// `Display` is delegated to the inner [`AccountedBookingError`], which
+    /// is the single canonical source of wording for booking errors. The
+    /// pta-standards `reduction-exceeds-inventory` conformance test depends
+    /// on this Display containing the literal substring `"not enough"`.
+    #[error(transparent)]
+    Inventory(AccountedBookingError),
 
     /// Interpolation failed after booking.
     #[error("interpolation failed: {0}")]
@@ -246,7 +217,7 @@ impl BookingEngine {
                         let method = self.method_for(&posting.account);
                         let booking_result = inv
                             .reduce(units, Some(cost_spec), method)
-                            .map_err(|e| convert_core_booking_error(e, &posting.account, units))?;
+                            .map_err(|e| convert_core_booking_error(e, &posting.account))?;
                         {
                             // Check if multiple lots were matched
                             if booking_result.matched.len() > 1 {
@@ -541,39 +512,16 @@ impl BookingEngine {
 
 /// Convert a core inventory `BookingError` into the booking-layer error,
 /// attaching the account context that the core layer doesn't carry.
+///
+/// All inventory-level failures funnel into a single
+/// [`BookingError::Inventory`] variant. The user-facing wording lives in the
+/// `Display` impl on [`AccountedBookingError`] so it cannot drift between
+/// the booking layer and the validator (#748 / #750).
 fn convert_core_booking_error(
     err: rustledger_core::BookingError,
     account: &InternedStr,
-    units: &Amount,
 ) -> BookingError {
-    use rustledger_core::BookingError as CoreError;
-    match err {
-        CoreError::AmbiguousMatch {
-            num_matches,
-            currency,
-        } => BookingError::AmbiguousMatch {
-            account: account.clone(),
-            currency,
-            num_matches,
-        },
-        CoreError::NoMatchingLot { .. } => BookingError::NoMatchingLot {
-            account: account.clone(),
-            units: format!("{units}"),
-        },
-        CoreError::InsufficientUnits {
-            requested,
-            available,
-            ..
-        } => BookingError::InsufficientUnits {
-            account: account.clone(),
-            requested,
-            available,
-        },
-        CoreError::CurrencyMismatch { .. } => BookingError::NoMatchingLot {
-            account: account.clone(),
-            units: format!("{units}"),
-        },
-    }
+    BookingError::Inventory(err.with_account(account.clone()))
 }
 
 /// Book and interpolate a list of transactions.
@@ -1195,16 +1143,24 @@ mod tests {
     /// asserts on `error_contains: ["not enough"]`. PR #745 made the booking
     /// layer propagate `InsufficientUnits` directly to the user instead of
     /// letting the validator's "Not enough units in ..." message win, which
-    /// dropped the "not enough" phrasing. This test pins the booking layer's
+    /// dropped the "not enough" phrasing. This test pins the user-facing
     /// Display string so the conformance assertion (and any downstream user
     /// tooling that greps the message) cannot regress silently again.
+    ///
+    /// After #750, the canonical Display lives on
+    /// [`rustledger_core::AccountedBookingError`] and `BookingError::Inventory`
+    /// delegates to it transparently — so this test exercises the same path
+    /// the validator and `cmd/check.rs` use.
     #[test]
     fn test_insufficient_units_display_contains_not_enough() {
-        let err = BookingError::InsufficientUnits {
-            account: "Assets:Stock".into(),
-            requested: dec!(15),
-            available: dec!(10),
-        };
+        let err = BookingError::Inventory(
+            rustledger_core::BookingError::InsufficientUnits {
+                currency: "AAPL".into(),
+                requested: dec!(15),
+                available: dec!(10),
+            }
+            .with_account("Assets:Stock".into()),
+        );
         let rendered = format!("{err}");
         assert!(
             rendered.contains("not enough"),
