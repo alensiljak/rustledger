@@ -335,7 +335,8 @@ pub fn validate_spanned_with_options(
 
     // Sort directives by date, then by type priority
     // Use parallel sort only for large collections (threading overhead otherwise)
-    let mut sorted: Vec<&Spanned<Directive>> = directives.iter().collect();
+    let mut sorted: Vec<&Spanned<Directive>> = Vec::with_capacity(directives.len());
+    sorted.extend(directives.iter());
     let sort_fn = |a: &&Spanned<Directive>, b: &&Spanned<Directive>| {
         a.value
             .date()
