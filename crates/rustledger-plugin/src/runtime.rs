@@ -263,7 +263,7 @@ impl PluginManager {
 
     /// Execute all loaded plugins in sequence.
     pub fn execute_all(&self, mut input: PluginInput) -> Result<PluginOutput> {
-        let mut all_errors = Vec::new();
+        let mut all_errors = Vec::with_capacity(self.plugins.len());
 
         for plugin in &self.plugins {
             let output = plugin.execute(&input, &self.config)?;
@@ -361,6 +361,7 @@ impl WatchingPluginManager {
     /// Load a plugin from a file path.
     pub fn load(&mut self, path: impl AsRef<Path>) -> Result<usize> {
         let path = path.as_ref();
+        // Canonicalize path, or use original if it fails (e.g., symlink issues)
         let abs_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 
         // Get modification time
