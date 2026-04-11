@@ -331,48 +331,56 @@ impl SelectQuery {
     }
 
     /// Set the DISTINCT flag.
+    #[must_use]
     pub const fn distinct(mut self) -> Self {
         self.distinct = true;
         self
     }
 
     /// Set the FROM clause.
+    #[must_use]
     pub fn from(mut self, from: FromClause) -> Self {
         self.from = Some(from);
         self
     }
 
     /// Set the WHERE clause.
+    #[must_use]
     pub fn where_clause(mut self, expr: Expr) -> Self {
         self.where_clause = Some(expr);
         self
     }
 
     /// Set the GROUP BY clause.
+    #[must_use]
     pub fn group_by(mut self, exprs: Vec<Expr>) -> Self {
         self.group_by = Some(exprs);
         self
     }
 
     /// Set the HAVING clause.
+    #[must_use]
     pub fn having(mut self, expr: Expr) -> Self {
         self.having = Some(expr);
         self
     }
 
     /// Set the PIVOT BY clause.
+    #[must_use]
     pub fn pivot_by(mut self, exprs: Vec<Expr>) -> Self {
         self.pivot_by = Some(exprs);
         self
     }
 
     /// Set the ORDER BY clause.
+    #[must_use]
     pub fn order_by(mut self, specs: Vec<OrderSpec>) -> Self {
         self.order_by = Some(specs);
         self
     }
 
     /// Set the LIMIT.
+    #[must_use]
     pub const fn limit(mut self, n: u64) -> Self {
         self.limit = Some(n);
         self

@@ -380,12 +380,17 @@ impl Loader {
 
         // Check for cycles using O(1) HashSet lookup
         if self.include_stack_set.contains(&path_buf) {
-            let mut cycle: Vec<String> = self
+            // `collect::<Vec<_>>()` on a chain of two `ExactSizeIterator`s
+            // preallocates the exact capacity via `size_hint`, so an
+            // explicit `Vec::with_capacity(...)` + `extend` + `push` is
+            // equivalent and noisier. This is the cycle-error cold path
+            // anyway — readability wins over micro-optimization.
+            let cycle: Vec<String> = self
                 .include_stack
                 .iter()
                 .map(|p| p.display().to_string())
+                .chain(std::iter::once(path.display().to_string()))
                 .collect();
-            cycle.push(path.display().to_string());
             return Err(LoadError::IncludeCycle { cycle });
         }
 

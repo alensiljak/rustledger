@@ -704,7 +704,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                 interp_err,
                             ));
                         }
-                        other => {
+                        other @ rustledger_booking::BookingError::Inventory(_) => {
                             booking_errors.push((txn.date, txn.narration.to_string(), other));
                         }
                     }
@@ -1114,9 +1114,12 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     if !booking_errors.is_empty() {
         let code_for = |err: &rustledger_booking::BookingError| -> &'static str {
             match err {
-                rustledger_booking::BookingError::AmbiguousMatch { .. } => "E4003",
-                rustledger_booking::BookingError::NoMatchingLot { .. } => "E4001",
-                rustledger_booking::BookingError::InsufficientUnits { .. } => "E4002",
+                rustledger_booking::BookingError::Inventory(inv_err) => match &inv_err.error {
+                    rustledger_core::BookingError::AmbiguousMatch { .. } => "E4003",
+                    rustledger_core::BookingError::NoMatchingLot { .. } => "E4001",
+                    rustledger_core::BookingError::InsufficientUnits { .. } => "E4002",
+                    rustledger_core::BookingError::CurrencyMismatch { .. } => "E4001",
+                },
                 rustledger_booking::BookingError::Interpolation(_) => "INTERP",
             }
         };

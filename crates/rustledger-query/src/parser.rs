@@ -694,7 +694,8 @@ fn set_literal<'a>(
                     ),
                 )
                 .map(|(first, rest)| {
-                    let mut elements = vec![first];
+                    let mut elements = Vec::with_capacity(1 + rest.len());
+                    elements.push(first);
                     elements.extend(rest);
                     elements
                 }),

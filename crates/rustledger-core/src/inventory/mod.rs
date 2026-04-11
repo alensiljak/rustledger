@@ -149,6 +149,85 @@ impl fmt::Display for BookingError {
 
 impl std::error::Error for BookingError {}
 
+impl BookingError {
+    /// Wrap this booking error with the account context that produced it.
+    ///
+    /// `Inventory` itself doesn't know which account it belongs to, so the
+    /// raw `BookingError` carries no `account` field. The caller (booking
+    /// engine, validator) knows the account and uses this constructor to
+    /// produce the user-facing error.
+    ///
+    /// The resulting [`AccountedBookingError`] is the **single canonical
+    /// rendering** of an inventory failure for user-facing output. Both the
+    /// booking layer and the validator format errors via this type so the
+    /// wording cannot drift between them — the failure mode that produced
+    /// #748.
+    #[must_use]
+    pub const fn with_account(self, account: InternedStr) -> AccountedBookingError {
+        AccountedBookingError {
+            error: self,
+            account,
+        }
+    }
+}
+
+/// A [`BookingError`] paired with the account that produced it.
+///
+/// This is the canonical user-facing inventory error type. Its `Display`
+/// impl is the **single source of truth** for booking-error wording across
+/// `rustledger-booking` and `rustledger-validate`. Conformance assertions
+/// (e.g. pta-standards `reduction-exceeds-inventory` requires the literal
+/// substring `"not enough"`) are pinned by this Display.
+///
+/// Construct via [`BookingError::with_account`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountedBookingError {
+    /// The underlying inventory-level error.
+    pub error: BookingError,
+    /// The account whose inventory produced the error.
+    pub account: InternedStr,
+}
+
+impl fmt::Display for AccountedBookingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.error {
+            BookingError::InsufficientUnits {
+                requested,
+                available,
+                ..
+            } => write!(
+                f,
+                "Not enough units in {}: requested {}, available {}; not enough to reduce",
+                self.account, requested, available
+            ),
+            BookingError::NoMatchingLot { currency, .. } => {
+                write!(f, "No matching lot for {} in {}", currency, self.account)
+            }
+            BookingError::AmbiguousMatch {
+                num_matches,
+                currency,
+            } => write!(
+                f,
+                "Ambiguous lot match for {}: {} lots match in {}",
+                currency, num_matches, self.account
+            ),
+            // Currency mismatch is semantically a specialization of
+            // NoMatchingLot (there is no lot for the given currency in this
+            // inventory), so we render and classify it the same way. Consumers
+            // filtering on E4001 don't need to special-case CurrencyMismatch.
+            //
+            // This variant is defensive: no `Inventory::reduce` path in
+            // `rustledger-core` currently emits it, but we still render it
+            // consistently in case a future emission site is added.
+            BookingError::CurrencyMismatch { got, .. } => {
+                write!(f, "No matching lot for {} in {}", got, self.account)
+            }
+        }
+    }
+}
+
+impl std::error::Error for AccountedBookingError {}
+
 /// An inventory is a collection of positions.
 ///
 /// It tracks all positions for an account and supports booking operations
@@ -1481,5 +1560,123 @@ mod tests {
 
         // Should use cost from newest lot (200)
         assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00));
+    }
+
+    // === AccountedBookingError Display tests ===
+    //
+    // These tests pin the canonical user-facing wording for every variant
+    // of `AccountedBookingError`. The whole point of unifying booking-error
+    // Display into `rustledger-core` (#750) is that there's a single source
+    // of truth — and a single source of truth with no tests is one refactor
+    // away from drifting again, which is exactly the failure mode that
+    // produced #748. Any change to the Display strings below will break
+    // these tests, forcing the author to consciously re-check pta-standards
+    // conformance assertions and downstream user tooling.
+
+    #[test]
+    fn test_accounted_error_display_insufficient_units() {
+        let err = BookingError::InsufficientUnits {
+            currency: "AAPL".into(),
+            requested: dec!(15),
+            available: dec!(10),
+        }
+        .with_account("Assets:Stock".into());
+        let rendered = format!("{err}");
+
+        // Pinned by pta-standards `reduction-exceeds-inventory`
+        // (`error_contains: ["not enough"]`). See #748 / #749.
+        assert!(
+            rendered.contains("not enough"),
+            "must contain 'not enough' (pta-standards): {rendered}"
+        );
+        assert!(
+            rendered.contains("Assets:Stock"),
+            "must contain account name: {rendered}"
+        );
+        assert!(
+            rendered.contains("15") && rendered.contains("10"),
+            "must contain requested and available amounts: {rendered}"
+        );
+    }
+
+    #[test]
+    fn test_accounted_error_display_no_matching_lot() {
+        let err = BookingError::NoMatchingLot {
+            currency: "AAPL".into(),
+            cost_spec: CostSpec::empty(),
+        }
+        .with_account("Assets:Stock".into());
+        let rendered = format!("{err}");
+
+        assert!(
+            rendered.contains("No matching lot"),
+            "must contain 'No matching lot': {rendered}"
+        );
+        assert!(
+            rendered.contains("AAPL"),
+            "must contain currency: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assets:Stock"),
+            "must contain account name: {rendered}"
+        );
+    }
+
+    #[test]
+    fn test_accounted_error_display_ambiguous_match() {
+        let err = BookingError::AmbiguousMatch {
+            num_matches: 3,
+            currency: "AAPL".into(),
+        }
+        .with_account("Assets:Stock".into());
+        let rendered = format!("{err}");
+
+        assert!(
+            rendered.contains("Ambiguous"),
+            "must contain 'Ambiguous': {rendered}"
+        );
+        assert!(
+            rendered.contains("AAPL"),
+            "must contain currency: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assets:Stock"),
+            "must contain account name: {rendered}"
+        );
+        assert!(
+            rendered.contains('3'),
+            "must contain match count: {rendered}"
+        );
+    }
+
+    #[test]
+    fn test_accounted_error_display_currency_mismatch_renders_as_no_matching_lot() {
+        // CurrencyMismatch is semantically a specialization of NoMatchingLot
+        // (there is no lot for the given currency in this inventory) and the
+        // canonical Display collapses them into the same user-facing phrasing
+        // so that consumers filtering on E4001 don't need to special-case it.
+        // This variant is defensive — no `Inventory::reduce` path currently
+        // emits it — but we still pin its rendering in case a future emission
+        // site is added.
+        let err = BookingError::CurrencyMismatch {
+            expected: "USD".into(),
+            got: "EUR".into(),
+        }
+        .with_account("Assets:Cash".into());
+        let rendered = format!("{err}");
+
+        assert!(
+            rendered.contains("No matching lot"),
+            "CurrencyMismatch must render as 'No matching lot' for E4001 \
+             consistency: {rendered}"
+        );
+        assert!(
+            rendered.contains("EUR"),
+            "must contain the mismatched (got) currency: {rendered}"
+        );
+        assert!(
+            rendered.contains("Assets:Cash"),
+            "must contain account name: {rendered}"
+        );
     }
 }
