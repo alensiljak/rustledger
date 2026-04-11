@@ -62,7 +62,11 @@ cd "$REPO_ROOT"
 # Workspace crates live under `crates/`.
 FORBID_CRATES=()
 while IFS= read -r entry_file; do
-    if grep -q '^\s*#!\[forbid(unsafe_code)\]' "$entry_file"; then
+    # `[[:space:]]*` is POSIX-portable; `\s*` is a PCRE escape that GNU
+    # grep accepts as an extension but BSD/macOS grep treats as literal
+    # `s`. Using the POSIX character class ensures the script works in
+    # every CI environment and on every developer's machine.
+    if grep -q '^[[:space:]]*#!\[forbid(unsafe_code)\]' "$entry_file"; then
         # Strip src/lib.rs or src/main.rs to get the crate dir
         crate_dir="${entry_file%/src/lib.rs}"
         crate_dir="${crate_dir%/src/main.rs}"
@@ -103,10 +107,12 @@ for crate_dir in "${FORBID_CRATES[@]}"; do
     crate_name="${crate_dir#crates/}"
 
     # Find the forbid directive's location for the error message.
+    # POSIX `[[:space:]]*` instead of PCRE `\s*` for portability — see
+    # the comment at the enumeration loop above.
     forbid_location=""
     for entry in "$crate_dir/src/lib.rs" "$crate_dir/src/main.rs"; do
         if [[ -f "$entry" ]]; then
-            line_num="$(grep -n '^\s*#!\[forbid(unsafe_code)\]' "$entry" | head -n1 | cut -d: -f1 || true)"
+            line_num="$(grep -n '^[[:space:]]*#!\[forbid(unsafe_code)\]' "$entry" | head -n1 | cut -d: -f1 || true)"
             if [[ -n "$line_num" ]]; then
                 forbid_location="$entry:$line_num"
                 break
@@ -114,14 +120,34 @@ for crate_dir in "${FORBID_CRATES[@]}"; do
         fi
     done
 
-    # Search the crate's src/ tree (but not target/ or tests/) for
-    # new unsafe usage. Tests are NOT excluded: a forbid-unsafe-code
-    # crate with test-only unsafe is still a violation because
-    # `#![forbid]` at the crate root applies to the whole crate
-    # including tests (though `#[cfg(test)]` modules in bins/libs
-    # compile under the same crate attributes).
+    # Search the crate's `src/` tree for new unsafe usage. This covers
+    # the library crate itself and any `#[cfg(test)]` modules inside
+    # `src/`, because those compile under the same crate attributes
+    # and therefore inherit the `#![forbid(unsafe_code)]` directive.
+    #
+    # What is NOT scanned: `tests/` (integration tests) and `benches/`
+    # (benchmarks). Each file under those directories is a separate
+    # crate target that does NOT inherit `src/lib.rs`'s crate-root
+    # attributes. If you want similar protection for integration
+    # tests, each test file needs its own `#![forbid(unsafe_code)]`.
+    #
+    # The regex has two alternatives because the `unsafe` + keyword
+    # whitespace rules differ:
+    #   - `unsafe [fn|impl|trait]` requires at least one whitespace
+    #     character between `unsafe` and the keyword. Rust's lexer
+    #     would merge `unsafefn` into a single identifier, so the
+    #     syntactically-valid form always has whitespace.
+    #   - `unsafe {` can have zero whitespace: `unsafe{ body }` is
+    #     valid Rust (rustfmt will insert the space, but the raw form
+    #     is legal). So we match `[[:space:]]*\{` for this case to
+    #     catch `unsafe{}` alongside `unsafe {}`.
+    #
+    # Known limitation: a comment between `unsafe` and the following
+    # token (`unsafe /* c */ {}`) is not matched. This is vanishingly
+    # rare in practice and adding support would complicate the regex
+    # without meaningful coverage gain.
     matches="$(grep -rn --include='*.rs' \
-        -E '(^|[^[:alnum:]_])unsafe[[:space:]]+(\{|fn|impl|trait)' \
+        -E '(^|[^[:alnum:]_])unsafe([[:space:]]+(fn|impl|trait)|[[:space:]]*\{)' \
         "$crate_dir/src" 2>/dev/null || true)"
 
     if [[ -n "$matches" ]]; then
