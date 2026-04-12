@@ -11,7 +11,11 @@ use rustledger_loader::{
 };
 use rustledger_plugin::NativePluginRegistry;
 #[cfg(feature = "python-plugin-wasm")]
-use rustledger_plugin::python::{is_python_available, suggest_module_path};
+use rustledger_plugin::PluginManager;
+#[cfg(feature = "python-plugin-wasm")]
+use rustledger_plugin::python::{PythonRuntime, is_python_available, suggest_module_path};
+#[cfg(feature = "python-plugin-wasm")]
+use rustledger_plugin::{PluginInput, PluginOptions};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -517,8 +521,14 @@ pub fn run(args: &Args) -> Result<ExitCode> {
 
     // Validate plugins declared in the beancount file. Native plugins are
     // handled by process::process() below. Non-native plugins (Python modules,
-    // WASM files) get pre-validation errors here.
+    // WASM files) are collected here for post-process execution.
     let native_registry = NativePluginRegistry::new();
+    #[cfg(feature = "python-plugin-wasm")]
+    let mut python_plugins_to_run: Vec<rustledger_loader::Plugin> = Vec::new();
+    #[cfg(feature = "python-plugin-wasm")]
+    let mut wasm_plugins_from_file: Vec<(PathBuf, Option<String>)> = Vec::new();
+    #[cfg(feature = "python-plugin-wasm")]
+    let beancount_dir = file.parent().unwrap_or(std::path::Path::new("."));
 
     for plugin in &load_result.plugins {
         // Check if it's a known native plugin — process::process() will run it
@@ -537,15 +547,30 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             continue; // Will be executed by process::process()
         }
 
-        // Non-native plugin — report error
-        if !plugin.force_python {
-            // Check for WASM file extension
+        // Non-native plugin: categorize as WASM, file-based Python, or unknown
+        #[cfg(feature = "python-plugin-wasm")]
+        {
+            // WASM plugin — collect for post-process execution
             let is_wasm = std::path::Path::new(&plugin.name)
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("wasm"));
             if is_wasm {
-                // WASM plugins not yet supported through the unified pipeline
-                // TODO: add WASM plugin execution as post-processing step
+                let wasm_path = if std::path::Path::new(&plugin.name).is_absolute() {
+                    PathBuf::from(&plugin.name)
+                } else {
+                    beancount_dir.join(&plugin.name)
+                };
+                wasm_plugins_from_file.push((wasm_path, plugin.config.clone()));
+                continue;
+            }
+
+            // File-based Python plugin — collect for post-process execution
+            let is_py_file = std::path::Path::new(&plugin.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+            let is_file_based = is_py_file || plugin.name.contains(std::path::MAIN_SEPARATOR);
+            if is_file_based {
+                python_plugins_to_run.push(plugin.clone());
                 continue;
             }
         }
@@ -745,11 +770,214 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             error_count += 1;
         }
     }
-    let warning_count = ledger
+    let mut warning_count = ledger
         .errors
         .iter()
         .filter(|e| matches!(e.severity, rustledger_loader::ErrorSeverity::Warning))
         .count();
+
+    // === Run Python/WASM plugins as post-processing ===
+    // These are not handled by process::process() (which only runs native plugins).
+    #[cfg(feature = "python-plugin-wasm")]
+    if !python_plugins_to_run.is_empty()
+        || !wasm_plugins_from_file.is_empty()
+        || !args.plugins.is_empty()
+    {
+        // Convert directives to wrappers for plugin execution
+        let wrappers: Vec<_> = spanned_directives
+            .iter()
+            .map(|s| rustledger_plugin::directive_to_wrapper(&s.value))
+            .collect();
+
+        let mut current_input = PluginInput {
+            directives: wrappers,
+            options: PluginOptions {
+                operating_currencies: ledger.options.operating_currency.clone(),
+                title: ledger.options.title.clone(),
+            },
+            config: None,
+        };
+
+        // Run file-based Python plugins
+        if !python_plugins_to_run.is_empty() {
+            match PythonRuntime::new() {
+                Ok(runtime) => {
+                    for plugin in &python_plugins_to_run {
+                        if args.verbose && !args.quiet {
+                            eprintln!("  Running Python plugin: {}", plugin.name);
+                        }
+                        let input = PluginInput {
+                            directives: current_input.directives.clone(),
+                            options: current_input.options.clone(),
+                            config: plugin.config.clone(),
+                        };
+                        match runtime.execute_module(&plugin.name, &input, file.parent()) {
+                            Ok(output) => {
+                                for err in &output.errors {
+                                    let sev = match err.severity {
+                                        rustledger_plugin::PluginErrorSeverity::Error => "error",
+                                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                                            "warning"
+                                        }
+                                    };
+                                    if json_mode {
+                                        diagnostics.push(JsonDiagnostic {
+                                            file: main_file_str.clone(),
+                                            line: 1,
+                                            column: 1,
+                                            end_line: 1,
+                                            end_column: 1,
+                                            severity: sev.to_string(),
+                                            phase: "plugin".to_string(),
+                                            code: "PLUGIN".to_string(),
+                                            message: err.message.clone(),
+                                            hint: None,
+                                            context: None,
+                                        });
+                                    } else if !args.quiet {
+                                        writeln!(stdout, "{sev}: {}", err.message)?;
+                                    }
+                                    match err.severity {
+                                        rustledger_plugin::PluginErrorSeverity::Error => {
+                                            error_count += 1;
+                                        }
+                                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                                            warning_count += 1;
+                                        }
+                                    }
+                                }
+                                current_input.directives = output.directives;
+                            }
+                            Err(e) => {
+                                if json_mode {
+                                    diagnostics.push(JsonDiagnostic {
+                                        file: main_file_str.clone(),
+                                        line: 1,
+                                        column: 1,
+                                        end_line: 1,
+                                        end_column: 1,
+                                        severity: "error".to_string(),
+                                        phase: "plugin".to_string(),
+                                        code: "E8002".to_string(),
+                                        message: format!("Python plugin execution failed: {e}"),
+                                        hint: None,
+                                        context: None,
+                                    });
+                                } else if !args.quiet {
+                                    writeln!(
+                                        stdout,
+                                        "error[E8002]: Python plugin execution failed: {e}"
+                                    )?;
+                                }
+                                error_count += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if json_mode {
+                        diagnostics.push(JsonDiagnostic {
+                            file: main_file_str.clone(),
+                            line: 1,
+                            column: 1,
+                            end_line: 1,
+                            end_column: 1,
+                            severity: "error".to_string(),
+                            phase: "plugin".to_string(),
+                            code: "E8003".to_string(),
+                            message: format!("Python runtime unavailable: {e}"),
+                            hint: None,
+                            context: None,
+                        });
+                    } else if !args.quiet {
+                        writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
+                    }
+                    error_count += python_plugins_to_run.len();
+                }
+            }
+        }
+
+        // Run WASM plugins from file declarations
+        for (plugin_path, config) in &wasm_plugins_from_file {
+            if args.verbose && !args.quiet {
+                eprintln!("  Loading WASM plugin: {}", plugin_path.display());
+            }
+            let mut mgr = PluginManager::new();
+            if let Err(e) = mgr.load(plugin_path) {
+                if !args.quiet {
+                    writeln!(
+                        stdout,
+                        "error: failed to load WASM plugin {}: {e}",
+                        plugin_path.display()
+                    )?;
+                }
+                error_count += 1;
+                continue;
+            }
+            let input = PluginInput {
+                directives: current_input.directives.clone(),
+                options: current_input.options.clone(),
+                config: config.clone(),
+            };
+            match mgr.execute(0, &input) {
+                Ok(output) => {
+                    for err in &output.errors {
+                        if !args.quiet {
+                            writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
+                        }
+                        error_count += 1;
+                    }
+                    current_input.directives = output.directives;
+                }
+                Err(e) => {
+                    if !args.quiet {
+                        writeln!(
+                            stdout,
+                            "error: WASM plugin {} execution failed: {e}",
+                            plugin_path.display()
+                        )?;
+                    }
+                    error_count += 1;
+                }
+            }
+        }
+
+        // Run WASM plugins from CLI --plugin flag
+        if !args.plugins.is_empty() {
+            let mut wasm_mgr = PluginManager::new();
+            for plugin_path in &args.plugins {
+                if let Err(e) = wasm_mgr.load(plugin_path) {
+                    if !args.quiet {
+                        writeln!(
+                            stdout,
+                            "error: failed to load WASM plugin {}: {e}",
+                            plugin_path.display()
+                        )?;
+                    }
+                    error_count += 1;
+                }
+            }
+            if !wasm_mgr.is_empty() {
+                match wasm_mgr.execute_all(current_input.clone()) {
+                    Ok(output) => {
+                        for err in &output.errors {
+                            if !args.quiet {
+                                writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
+                            }
+                            error_count += 1;
+                        }
+                        // current_input.directives = output.directives;
+                    }
+                    Err(e) => {
+                        if !args.quiet {
+                            writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
+                        }
+                        error_count += 1;
+                    }
+                }
+            }
+        }
+    }
 
     // Print summary / output
     let elapsed = start.elapsed();
