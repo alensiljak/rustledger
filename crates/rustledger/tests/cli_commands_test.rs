@@ -823,3 +823,194 @@ fn test_query_stdin_input() {
         "Query should return accounts or be empty"
     );
 }
+
+// ============================================================================
+// JSON Output Validity Tests (Issue #780)
+// ============================================================================
+
+/// Helper: run `rledger check --format json --no-cache` on inline content,
+/// return parsed JSON. Skips the test if the binary doesn't support the flags.
+fn check_json(rledger: &std::path::Path, content: &str) -> Option<serde_json::Value> {
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(tmp.path(), content).expect("write");
+
+    let output = Command::new(rledger)
+        .args(["check", "--format", "json", "--no-cache"])
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run rledger check");
+
+    // Only skip when the command fails AND stderr indicates the flags
+    // are unsupported (clap usage error). Don't skip on success — stderr
+    // may legitimately contain other output like verbose logging.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("--no-cache") || stderr.contains("--format") {
+            eprintln!("Skipping: required flags not supported");
+            return None;
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Core assertion: stdout must start with '{' (no plain-text prefix).
+    let trimmed = stdout.trim();
+    let preview: String = trimmed.chars().take(200).collect();
+    assert!(
+        trimmed.starts_with('{'),
+        "JSON output must start with '{{', got: {preview}"
+    );
+
+    let json: serde_json::Value = serde_json::from_str(trimmed).unwrap_or_else(|e| {
+        let long_preview: String = trimmed.chars().take(500).collect();
+        panic!("stdout is not valid JSON: {e}\nfirst 500 chars: {long_preview}")
+    });
+
+    // Structural assertions: required top-level fields.
+    assert!(json["diagnostics"].is_array(), "missing diagnostics array");
+    assert!(json["error_count"].is_number(), "missing error_count");
+    assert!(json["warning_count"].is_number(), "missing warning_count");
+    assert!(
+        json["parse_error_count"].is_number(),
+        "missing parse_error_count"
+    );
+    assert!(
+        json["validate_error_count"].is_number(),
+        "missing validate_error_count"
+    );
+
+    Some(json)
+}
+
+/// Regression for #774: plugin errors must appear inside the JSON diagnostics
+/// array, not as plain text before the JSON document.
+#[test]
+fn test_json_output_plugin_errors_in_diagnostics() {
+    let rledger = require_rledger!();
+    let content = r#"
+option "operating_currency" "USD"
+
+plugin "a_completely_nonexistent_plugin"
+plugin "another_fake_plugin" "some_config"
+
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Expenses:Food
+
+2024-01-15 * "Lunch"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+"#;
+
+    let Some(json) = check_json(&rledger, content) else {
+        return;
+    };
+
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+
+    // Plugin errors should be in the diagnostics array.
+    let plugin_diags: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| {
+            let code = d["code"].as_str().unwrap_or("");
+            code == "E8001" || code == "E8005"
+        })
+        .collect();
+
+    assert!(
+        plugin_diags.len() >= 2,
+        "expected at least 2 plugin error diagnostics, got {}: {json}",
+        plugin_diags.len()
+    );
+
+    // error_count must include the plugin errors.
+    let error_count = json["error_count"].as_u64().unwrap_or(0);
+    assert!(
+        error_count >= 2,
+        "error_count should include plugin errors, got {error_count}"
+    );
+}
+
+/// Clean file with no errors: JSON output should have empty diagnostics
+/// and all counts at zero.
+#[test]
+fn test_json_output_clean_file() {
+    let rledger = require_rledger!();
+    let content = r#"
+2024-01-01 open Assets:Cash USD
+2024-01-01 open Expenses:Food
+
+2024-01-15 * "Lunch"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+"#;
+
+    let Some(json) = check_json(&rledger, content) else {
+        return;
+    };
+
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics.is_empty(),
+        "clean file should have no diagnostics, got: {diagnostics:?}"
+    );
+    assert_eq!(json["error_count"], 0);
+    assert_eq!(json["warning_count"], 0);
+    assert_eq!(json["parse_error_count"], 0);
+    assert_eq!(json["validate_error_count"], 0);
+}
+
+/// File with parse errors only: `parse_error_count` should be positive and
+/// all error diagnostics should have phase "parse".
+#[test]
+fn test_json_output_parse_errors_only() {
+    let rledger = require_rledger!();
+    // Malformed beancount syntax
+    let content = "2024-01-01 open Assets:Cash\n\nthis is not valid beancount syntax {{{ }}\n";
+
+    let Some(json) = check_json(&rledger, content) else {
+        return;
+    };
+
+    let error_count = json["error_count"].as_u64().unwrap_or(0);
+    assert!(error_count > 0, "should have parse errors");
+
+    let parse_count = json["parse_error_count"].as_u64().unwrap_or(0);
+    assert!(parse_count > 0, "parse_error_count should be > 0");
+
+    // All error diagnostics should be parse-phase (no validation on
+    // a file that can't parse).
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    let non_parse_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d["severity"] == "error" && d["phase"] != "parse")
+        .collect();
+    assert!(
+        non_parse_errors.is_empty(),
+        "all errors should be parse-phase, found non-parse: {non_parse_errors:?}"
+    );
+}
+
+/// File with validation errors: diagnostics should include phase "validate".
+#[test]
+fn test_json_output_validation_errors() {
+    let rledger = require_rledger!();
+    // Transaction references account that was never opened
+    let content = r#"
+2024-01-15 * "No open"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+"#;
+
+    let Some(json) = check_json(&rledger, content) else {
+        return;
+    };
+
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    assert!(
+        diagnostics.iter().any(|d| d["phase"] == "validate"),
+        "should have validation-phase diagnostics for unopened accounts"
+    );
+
+    let validate_count = json["validate_error_count"].as_u64().unwrap_or(0);
+    assert!(validate_count > 0, "validate_error_count should be > 0");
+}
