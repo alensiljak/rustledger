@@ -38,3 +38,121 @@ The forecast plugin was a built-in beancount v2 plugin that was removed in v3.
 There is no standalone PyPI package to provide this functionality.
 Fava has a similar plugin at fava.plugins.forecast but with different API.
 """
+
+# === Non-ASCII account name exclusions (#572, #736, #739) ===
+#
+# rustledger's `Token::Account` lexer regex enforces two related rules
+# from the beancount v3 spec:
+#
+#   1. **Segment start:** every colon-delimited account segment must
+#      start with an ASCII uppercase letter (or ASCII digit for
+#      sub-segments). Unicode letters are NOT permitted at segment
+#      starts.
+#
+#   2. **Segment body:** within a segment, characters must be ASCII
+#      digits, hyphens, or Unicode letters (category `L`). Symbols,
+#      emoji, and punctuation are NOT permitted anywhere in the name,
+#      even mid-segment.
+#
+# Unicode letters ARE permitted in subsequent positions within a
+# segment as long as the first character is ASCII — e.g.,
+# `Förra-årets-resultat` parses fine because it starts with `F` and
+# `ö`/`å` are in category `L`.
+#
+# Python beancount is more permissive on both rules: it accepts
+# Unicode letters at segment starts AND some symbols mid-segment.
+# This is a deliberate and documented divergence — the pta-standards
+# conformance suite asserts the stricter rules, and rustledger's
+# lexer has dedicated unit tests pinning the behavior
+# (`test_tokenize_account_unicode`,
+# `test_tokenize_account_unicode_letters_after_ascii_start` in
+# `crates/rustledger-parser/src/logos_lexer.rs`).
+#
+# The 4 files below split across the two rules:
+#
+#   - `double-entry-generator`, `ledger2beancount`, `pinto-reports`:
+#     non-ASCII at a sub-segment start (rule 1).
+#   - `fava-portfolio-returns`: emoji `✨` in the segment body, which
+#     is in Unicode category `So` (Symbol, Other), not `L` (rule 2).
+#
+# None represent mainstream usage patterns — they are either test
+# fixtures that deliberately exercise edge cases or charts of
+# accounts using non-Latin scripts. The general workaround for
+# affected users is to rename or prefix each offending segment so
+# it starts with ASCII and contains only letters/digits/hyphens.
+# The `name_*` options (issue #572) only rename the ROOT segment
+# type (e.g., `Assets` → `Activos`) and do NOT help with
+# sub-segment localization.
+
+[[exclusions]]
+pattern = "double-entry-generator/example_hxsec_example-hxsec-output.beancount"
+reason = "CJK characters at start of account sub-segment (#572, #736, #739)"
+details = """
+Uses `Assets:Hxsec:Positions:沪深300` where the `沪深300` sub-segment
+starts with the CJK character `沪` (U+6CAA). rustledger's lexer requires
+ASCII `[A-Z0-9]` at the start of every account segment per the beancount
+v3 spec; Python beancount accepts Unicode at segment starts. The single
+parse error on line 7 cascades into downstream misparses on lines 61–63
+where the same account is referenced in postings.
+
+Workaround for users with similar real-world needs: rename the segment
+to use an ASCII prefix, e.g., `Positions-SHCNI300` or
+`Positions-ShShen300`.
+"""
+
+[[exclusions]]
+pattern = "fava-portfolio-returns/src_fava_portfolio_returns_test_ledger_unicode.beancount"
+reason = "Emoji (non-letter Unicode) in account segment (#572, #736, #739)"
+details = """
+Uses `Assets:CORP✨` where `✨` (U+2728 SPARKLES) is in Unicode category
+`So` (Symbol, Other), not `L` (Letter). rustledger's lexer regex
+`[\\p{L}0-9-]*` allows Unicode letters mid-segment but rejects symbols
+and emoji. Python beancount accepts this. This is a test-only file from
+`fava-portfolio-returns` specifically exercising Unicode handling, not
+a real-world account name.
+"""
+
+[[exclusions]]
+pattern = "ledger2beancount/tests_accounts.beancount"
+reason = "Accented Latin capitals at start of account sub-segments (#572, #736, #739)"
+details = """
+Uses `Expenses:École-républicaine` and `Expenses:École` where the
+sub-segment starts with `É` (U+00C9 LATIN CAPITAL LETTER E WITH ACUTE).
+rustledger requires `[A-Z0-9]` at the start of sub-segments. The 2×P0006
+(InvalidAccount) errors are on the `open` lines themselves, and the
+3×P0012 (SyntaxError) errors cascade on transactions referencing these
+accounts later in the file.
+
+This file is the ledger2beancount project's own test suite for
+account-name edge cases and includes many intentionally unusual
+names. The non-Unicode parts of the file parse correctly — only the
+`École` account definitions and their downstream references fail.
+"""
+
+[[exclusions]]
+pattern = "pinto-reports/example.beancount"
+reason = "Swedish accented capitals at start of account sub-segments (#572, #736, #739)"
+details = """
+Uses a Swedish BAS chart of accounts with sub-segment names starting
+with `Å` (U+00C5) and `Ö` (U+00D6). All 6 parse errors occur on lines
+where the sub-segment's first character is accented:
+
+  - line 22: `Liabilities:2069:Årets-resultat`
+  - line 37: `Income:3740:Öres-och-kronutjämning`
+  - line 40: `Income:3999:Övriga-intäkter`
+  - line 64: `Expenses:6450:Års-eller-föreningsstämma`
+  - line 77: `Expenses:6090:Övriga-försäljningskostnader`
+  - line 91: `Expenses:6990:Övriga-externa-kostnader`
+
+Lines like `Liabilities:2098:Förra-årets-resultat` (line 23) parse
+correctly because `F` is ASCII at the segment start; the `ö` and `å`
+mid-segment are permitted. This confirms the rule is specifically
+about the first character of each colon-delimited segment.
+
+Workaround for Swedish-speaking users: rename or prefix each
+affected sub-segment so it starts with ASCII (e.g.,
+`Liabilities:2069:A-Arets-resultat`). The `name_*` options (issue
+#572) do NOT help here because they only rename the root segment
+type (`Assets`, `Liabilities`, etc.), and the root segments in
+this file are already ASCII.
+"""
