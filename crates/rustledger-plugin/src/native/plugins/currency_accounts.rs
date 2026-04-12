@@ -66,9 +66,10 @@ impl NativePlugin for CurrencyAccountsPlugin {
         use std::collections::{BTreeMap, HashSet};
         use std::str::FromStr;
 
-        // Get base account from config if provided, validating that it's
-        // non-empty. Python's plugin falls back to the default when the
-        // config isn't a valid account string.
+        // Get base account from config if provided. We only check for
+        // non-empty (Python's plugin additionally validates that it is a
+        // well-formed account name and falls back to the default when
+        // it isn't, but we skip that check for simplicity).
         let base_account = input
             .config
             .as_ref()
@@ -189,32 +190,36 @@ impl NativePlugin for CurrencyAccountsPlugin {
                 }
             };
 
-            let mut new_postings: Vec<PostingData> =
-                Vec::with_capacity(txn.postings.len() + curmap.len());
-
+            // Compute each group's weight inventory for neutralization.
+            let mut group_inv: BTreeMap<&String, BTreeMap<String, Decimal>> = BTreeMap::new();
             for (group_key, posting_indices) in &curmap {
-                // Accumulate the group's weight inventory.
-                let mut inv: BTreeMap<String, Decimal> = BTreeMap::new();
+                let inv = group_inv.entry(group_key).or_default();
                 for &idx in posting_indices {
                     if let Some((amount, currency)) = weight_of(&txn.postings[idx]) {
                         *inv.entry(currency).or_default() += amount;
                     }
                 }
-
-                // Re-insert original postings for this group.
-                //
-                // Python's plugin strips price annotations here
-                // (currency_accounts.py:145) because its pipeline runs
-                // plugins BEFORE booking. In rustledger, booking runs
-                // first and the validator re-checks afterwards, so we
-                // must keep prices to preserve the weight-based balance.
-                for &idx in posting_indices {
-                    new_postings.push(txn.postings[idx].clone());
-                }
-
-                // Drop zero-sum entries.
                 inv.retain(|_, amount| !amount.is_zero());
+            }
 
+            // Re-insert ALL original postings in their original order
+            // (including any with units == None, which are auto-balanced
+            // postings that must not be dropped).
+            //
+            // Python's plugin strips price annotations here
+            // (currency_accounts.py:145) because its pipeline runs
+            // plugins BEFORE booking. In rustledger, booking runs
+            // first and the validator re-checks afterwards, so we
+            // must keep prices to preserve the weight-based balance.
+            let mut new_postings: Vec<PostingData> =
+                Vec::with_capacity(txn.postings.len() + curmap.len());
+            for posting in &txn.postings {
+                new_postings.push(posting.clone());
+            }
+
+            // Append neutralizing postings (sorted by group key for
+            // deterministic output).
+            for (group_key, inv) in &group_inv {
                 // Python calls `inv.get_only_position()` and errors on
                 // multi-currency groups. We skip neutralization in that
                 // case rather than failing — it indicates a transaction
@@ -223,15 +228,15 @@ impl NativePlugin for CurrencyAccountsPlugin {
                     continue;
                 }
 
-                let (weight_currency, weight_amount) = inv.into_iter().next().unwrap();
+                let (weight_currency, weight_amount) = inv.iter().next().unwrap();
                 let account_name = format!("{base_account}:{group_key}");
                 created_accounts.insert(account_name.clone());
 
                 new_postings.push(PostingData {
                     account: account_name,
                     units: Some(AmountData {
-                        number: (-weight_amount).to_string(),
-                        currency: weight_currency,
+                        number: (-*weight_amount).to_string(),
+                        currency: weight_currency.clone(),
                     }),
                     cost: None,
                     price: None,
