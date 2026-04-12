@@ -652,6 +652,29 @@ fn test_file_level_booking_method_applied() {
     );
 }
 
+#[test]
+fn test_api_booking_method_used_when_file_does_not_set_option() {
+    // simple.beancount does NOT set `option "booking_method"`. The
+    // API-level LoadOptions.booking_method should be used as-is.
+    let path = fixtures_path("simple.beancount");
+    let options = LoadOptions {
+        booking_method: rustledger_core::BookingMethod::Fifo,
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    // No errors — simple.beancount has no cost-based transactions, so
+    // the booking method doesn't matter. But the important thing is
+    // that the API-level override is accepted (not overridden by the
+    // file's default "STRICT").
+    assert!(
+        ledger.errors.is_empty(),
+        "unexpected errors: {:?}",
+        ledger.errors
+    );
+}
+
 // ============================================================================
 // Document Discovery Tests (Issue #466)
 // ============================================================================

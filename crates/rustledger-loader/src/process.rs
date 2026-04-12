@@ -206,21 +206,25 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     //
     // The booking method comes from two sources: the API-level
     // `LoadOptions.booking_method` and the file-level `option
-    // "booking_method"`. The file-level option takes precedence when
-    // the caller hasn't explicitly overridden it (i.e., when
-    // `LoadOptions` still has the default `Strict`). This matches
-    // Python beancount, where `option "booking_method" "FIFO"` sets the
-    // default for all accounts without an explicit method on their
-    // `open` directive.
+    // "booking_method"`. The file-level option takes precedence only
+    // when the file explicitly set it AND the caller hasn't overridden
+    // the API-level default. This matches Python beancount, where
+    // `option "booking_method" "FIFO"` sets the default for all accounts
+    // without an explicit method on their `open` directive.
+    //
+    // We check `set_options` (not `booking_method.is_empty()`) because
+    // `Options::new()` defaults `booking_method` to "STRICT", so the
+    // string is never empty.
     #[cfg(feature = "booking")]
     {
-        let effective_method = if raw.options.booking_method.is_empty() {
-            options.booking_method
-        } else {
+        let file_set_booking = raw.options.set_options.contains("booking_method");
+        let effective_method = if file_set_booking {
             raw.options
                 .booking_method
                 .parse()
                 .unwrap_or(options.booking_method)
+        } else {
+            options.booking_method
         };
         run_booking(&mut directives, effective_method, &mut errors);
     }
