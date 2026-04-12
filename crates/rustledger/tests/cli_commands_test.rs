@@ -959,7 +959,7 @@ fn test_json_output_clean_file() {
     assert_eq!(json["validate_error_count"], 0);
 }
 
-/// File with parse errors only: parse_error_count should be positive and
+/// File with parse errors only: `parse_error_count` should be positive and
 /// all error diagnostics should have phase "parse".
 #[test]
 fn test_json_output_parse_errors_only() {
@@ -1006,13 +1006,8 @@ fn test_json_output_validation_errors() {
     };
 
     let diagnostics = json["diagnostics"].as_array().unwrap();
-    let validate_diags: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| d["phase"] == "validate")
-        .collect();
-
     assert!(
-        !validate_diags.is_empty(),
+        diagnostics.iter().any(|d| d["phase"] == "validate"),
         "should have validation-phase diagnostics for unopened accounts"
     );
 
