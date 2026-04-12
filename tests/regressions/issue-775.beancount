@@ -1,0 +1,31 @@
+; Issue: https://github.com/rustledger/rustledger/issues/775
+; Description: File-level `option "booking_method" "FIFO"` should be applied
+;              as the default for accounts opened without an explicit method.
+; Expected: No errors - FIFO resolves the ambiguous lot match.
+
+option "operating_currency" "USD"
+option "booking_method" "FIFO"
+
+2020-01-01 open Assets:Stock
+2020-01-01 open Assets:Cash       USD
+2020-01-01 open Expenses:Gains    USD
+
+; Build up 3 lots
+2020-02-01 * "Buy lot 1"
+  Assets:Stock    100 CORP {1 USD}
+  Assets:Cash    -100 USD
+
+2020-03-01 * "Buy lot 2"
+  Assets:Stock    100 CORP {2 USD}
+  Assets:Cash    -200 USD
+
+2020-04-01 * "Buy lot 3"
+  Assets:Stock    100 CORP {3 USD}
+  Assets:Cash    -300 USD
+
+; Sell 50 shares - under FIFO should match lot 1 (oldest)
+; Under STRICT this would be "ambiguous lot match"
+2020-05-01 * "Sell 50"
+  Assets:Stock    -50 CORP {}
+  Assets:Cash     100 USD
+  Expenses:Gains
