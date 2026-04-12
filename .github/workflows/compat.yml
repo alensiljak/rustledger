@@ -135,6 +135,7 @@ jobs:
           import json
           import subprocess
           import os
+          import sys
           import re
           from collections import Counter, defaultdict
           from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -305,9 +306,26 @@ jobs:
                           result.rust_json_parse_failed = True
                           # Log immediately so it's visible in workflow output
                           print(f"WARNING: rledger --format json produced invalid JSON for {file_path}: {e}", file=sys.stderr)
-                          # Show the first 200 chars of stdout for debugging
                           preview = proc.stdout[:200].replace('\n', '\\n')
                           print(f"  stdout preview: {preview}", file=sys.stderr)
+                          # Attempt recovery: find the first '{' and parse from there
+                          # (handles plain-text prefix before valid JSON, as in #774)
+                          json_start = proc.stdout.find('{')
+                          if json_start != -1:
+                              try:
+                                  data_json = json.loads(proc.stdout[json_start:])
+                                  result.rust_error_count = data_json.get("error_count", 0)
+                                  for diag in data_json.get("diagnostics", [])[:5]:
+                                      code = diag.get("code", "")
+                                      if code:
+                                          result.rust_error_types.append(code)
+                                  print(f"  recovered {result.rust_error_count} errors from JSON after prefix", file=sys.stderr)
+                              except json.JSONDecodeError:
+                                  result.rust_error_count = 1
+                                  result.rust_error_types = ["JsonParseFailed"]
+                          else:
+                              result.rust_error_count = 1
+                              result.rust_error_types = ["JsonParseFailed"]
               except subprocess.TimeoutExpired:
                   result.rust_error_count = 1
                   result.rust_error_types = ["Timeout"]
