@@ -1,5 +1,7 @@
 //! Diagnostics handler for publishing parse and validation errors.
 
+use std::sync::Arc;
+
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustledger_booking::BookingEngine;
 use rustledger_core::{BookingMethod, Directive};
@@ -190,21 +192,31 @@ pub fn validation_errors_to_diagnostics(
     // This ensures plugin-transformed directives (e.g., effective_date splitting
     // transactions across dates) are seen by validation (#793).
     if let Some(ctx) = plugin_ctx {
-        // Emit info diagnostics for non-native plugins (Python plugins may be slow).
+        // Emit info diagnostics for non-native plugins. The loader's run_plugins()
+        // only executes native plugins — Python/WASM plugins are not run in the LSP.
+        // Warn users so they understand why the LSP may disagree with `rledger check`.
         for plugin in ctx.plugins {
+            // Only show the diagnostic for plugins declared in the current file.
+            if let Some(fid) = current_file_id
+                && plugin.file_id != fid as usize
+            {
+                continue;
+            }
             let is_native = NativePluginRegistry::is_builtin(&plugin.name);
             let is_wasm = plugin.name.ends_with(".wasm");
             if !is_native && !is_wasm {
+                let (start_line, start_col) = line_index.offset_to_position(plugin.span.start);
+                let (end_line, end_col) = line_index.offset_to_position(plugin.span.end);
                 extra_diagnostics.push(Diagnostic {
                     range: Range {
-                        start: Position::new(0, 0),
-                        end: Position::new(0, 0),
+                        start: Position::new(start_line, start_col),
+                        end: Position::new(end_line, end_col),
                     },
                     severity: Some(DiagnosticSeverity::INFORMATION),
                     code: Some(lsp_types::NumberOrString::String("E8006".to_string())),
                     source: Some("rustledger".to_string()),
                     message: format!(
-                        "Plugin \"{}\" is a Python plugin — LSP validation may be slower",
+                        "Plugin \"{}\" is not a native plugin — skipped in LSP, validation may differ from `rledger check`",
                         plugin.name
                     ),
                     related_information: None,
@@ -226,26 +238,34 @@ pub fn validation_errors_to_diagnostics(
             &mut plugin_errors,
         ) {
             Ok(()) => {
-                // Convert plugin errors to diagnostics
-                for err in &plugin_errors {
-                    let severity = match err.severity {
-                        rustledger_loader::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
-                        rustledger_loader::ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
-                    };
-                    extra_diagnostics.push(Diagnostic {
-                        range: Range {
-                            start: Position::new(0, 0),
-                            end: Position::new(0, 0),
-                        },
-                        severity: Some(severity),
-                        code: Some(lsp_types::NumberOrString::String(err.code.clone())),
-                        source: Some("rustledger".to_string()),
-                        message: err.message.clone(),
-                        related_information: None,
-                        tags: None,
-                        code_description: None,
-                        data: None,
-                    });
+                // Convert plugin errors to diagnostics.
+                // Plugin errors don't carry file_id, so we only show them
+                // in the main file (file_id 0) to avoid duplication across
+                // open documents in multi-file mode.
+                let show_plugin_errors = current_file_id.is_none() || current_file_id == Some(0);
+                if show_plugin_errors {
+                    for err in &plugin_errors {
+                        let severity = match err.severity {
+                            rustledger_loader::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                            rustledger_loader::ErrorSeverity::Warning => {
+                                DiagnosticSeverity::WARNING
+                            }
+                        };
+                        extra_diagnostics.push(Diagnostic {
+                            range: Range {
+                                start: Position::new(0, 0),
+                                end: Position::new(0, 0),
+                            },
+                            severity: Some(severity),
+                            code: Some(lsp_types::NumberOrString::String(err.code.clone())),
+                            source: Some("rustledger".to_string()),
+                            message: err.message.clone(),
+                            related_information: None,
+                            tags: None,
+                            code_description: None,
+                            data: None,
+                        });
+                    }
                 }
             }
             Err(e) => {
@@ -504,42 +524,63 @@ pub fn all_diagnostics(
             };
 
             // Build plugin context for running plugins before validation.
-            // Multi-file: use plugins/options/source_map from loaded Ledger.
-            // Single-file: build from ParseResult's plugin declarations.
-            let single_file_plugins: Vec<Plugin>;
+            // Multi-file: merge ledger plugins with fresh buffer plugins (so
+            // unsaved edits to plugin directives take effect immediately).
+            // Single-file: build entirely from ParseResult's plugin declarations.
+            //
+            // Helper closure to convert ParseResult plugins to Plugin structs.
+            let parse_result_to_plugins =
+                |plugins: &[(String, Option<String>, Span)], file_id: usize| -> Vec<Plugin> {
+                    plugins
+                        .iter()
+                        .map(|(name, config, span)| {
+                            let (actual_name, force_python) =
+                                if let Some(stripped) = name.strip_prefix("python:") {
+                                    (stripped.to_string(), true)
+                                } else {
+                                    (name.clone(), false)
+                                };
+                            Plugin {
+                                name: actual_name,
+                                config: config.clone(),
+                                span: *span,
+                                file_id,
+                                force_python,
+                            }
+                        })
+                        .collect()
+                };
+
+            let merged_plugins: Vec<Plugin>;
             let single_file_options: LoaderOptions;
             let single_file_source_map: SourceMap;
 
             let plugin_ctx = if let Some(ls) = ledger_state
                 && let Some(ledger) = ls.ledger()
-                && !ledger.plugins.is_empty()
             {
-                Some(PluginContext {
-                    plugins: &ledger.plugins,
-                    file_options: &ledger.options,
-                    source_map: &ledger.source_map,
-                })
-            } else if !result.plugins.is_empty() {
-                // Single-file mode: build plugin list from ParseResult
-                single_file_plugins = result
+                // Merge: keep ledger plugins from OTHER files, replace current
+                // file's plugins with the fresh parse (mirrors directive overlay).
+                let current_fid = current_file_id.unwrap_or(0) as usize;
+                merged_plugins = ledger
                     .plugins
                     .iter()
-                    .map(|(name, config, span)| {
-                        let (actual_name, force_python) =
-                            if let Some(stripped) = name.strip_prefix("python:") {
-                                (stripped.to_string(), true)
-                            } else {
-                                (name.clone(), false)
-                            };
-                        Plugin {
-                            name: actual_name,
-                            config: config.clone(),
-                            span: *span,
-                            file_id: 0,
-                            force_python,
-                        }
-                    })
+                    .filter(|p| p.file_id != current_fid)
+                    .cloned()
+                    .chain(parse_result_to_plugins(&result.plugins, current_fid))
                     .collect();
+
+                if merged_plugins.is_empty() {
+                    None
+                } else {
+                    Some(PluginContext {
+                        plugins: &merged_plugins,
+                        file_options: &ledger.options,
+                        source_map: &ledger.source_map,
+                    })
+                }
+            } else if !result.plugins.is_empty() {
+                // Single-file mode: build plugin list from ParseResult
+                merged_plugins = parse_result_to_plugins(&result.plugins, 0);
                 single_file_options = {
                     let mut opts = LoaderOptions::new();
                     for (key, value, _span) in &result.options {
@@ -547,9 +588,16 @@ pub fn all_diagnostics(
                     }
                     opts
                 };
-                single_file_source_map = SourceMap::new();
+                // Build a SourceMap with the current buffer so run_plugins()
+                // can attach filename/line info to wrappers and reconstruct
+                // spans when converting back.
+                single_file_source_map = {
+                    let mut sm = SourceMap::new();
+                    sm.add_file(std::path::PathBuf::from("<buffer>"), Arc::from(source));
+                    sm
+                };
                 Some(PluginContext {
-                    plugins: &single_file_plugins,
+                    plugins: &merged_plugins,
                     file_options: &single_file_options,
                     source_map: &single_file_source_map,
                 })
