@@ -1014,3 +1014,350 @@ fn test_json_output_validation_errors() {
     let validate_count = json["validate_error_count"].as_u64().unwrap_or(0);
     assert!(validate_count > 0, "validate_error_count should be > 0");
 }
+
+// ============================================================================
+// Plugin Execution Tests (Issue #784 regression guard)
+//
+// These tests verify that all plugin types (native, Python, WASM) are
+// actually executed through the CLI. The #784 refactor accidentally
+// removed Python/WASM execution with no test to catch it.
+// ============================================================================
+
+fn wasm_plugins_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/wasm-plugins")
+}
+
+fn python_plugins_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("tests/fixtures/python-plugins")
+}
+
+// --- Group 1: Native plugin parity (check vs query) ---
+
+/// Native plugins declared in a beancount file must execute through
+/// the check path (which delegates to `process::process`).
+#[test]
+fn test_native_plugin_runs_in_check_path() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    // auto_accounts should create opens for implicitly-used accounts,
+    // making this file pass validation without explicit opens.
+    std::fs::write(
+        tmp.path(),
+        "\
+option \"operating_currency\" \"USD\"
+plugin \"auto_accounts\"
+
+2020-01-15 * \"Lunch\"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--format", "json", "--no-cache"])
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run rledger check");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("--no-cache") || stderr.contains("--format") {
+            eprintln!("Skipping: required flags not supported");
+            return;
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("should produce valid JSON");
+    assert_eq!(
+        json["error_count"], 0,
+        "auto_accounts should make file pass: {json}"
+    );
+}
+
+/// Native plugins must also execute through the query path (process.rs).
+#[test]
+fn test_native_plugin_runs_in_query_path() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(
+        tmp.path(),
+        "\
+option \"operating_currency\" \"USD\"
+plugin \"auto_accounts\"
+
+2020-01-15 * \"Lunch\"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["query", "-q"])
+        .arg(tmp.path())
+        .arg("SELECT DISTINCT account ORDER BY account")
+        .output()
+        .expect("failed to run rledger query");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // auto_accounts should have created opens — accounts should appear
+    assert!(
+        stdout.contains("Assets:Cash") && stdout.contains("Expenses:Food"),
+        "query should see accounts from auto_accounts plugin: {stdout}"
+    );
+}
+
+// --- Group 2: Python plugin execution ---
+
+/// Python file-based plugin dispatch must exist in check.rs.
+/// If the dispatch code is removed, this test fails because rledger
+/// would report 0 errors on a file that a Python plugin should flag.
+///
+/// Accepts either: plugin actually ran (error output), OR E8003
+/// (Python runtime unavailable). Both prove the dispatch code exists.
+/// Silent success (exit 0, no errors) means dispatch was removed.
+#[cfg(feature = "python-plugin-wasm")]
+#[test]
+fn test_python_file_plugin_dispatch_exists() {
+    let rledger = require_rledger!();
+    let src_dir = python_plugins_dir();
+    if !src_dir.join("error_plugin.py").exists() {
+        eprintln!("Skipping: Python plugin fixtures not found");
+        return;
+    }
+
+    // Copy plugin to temp dir and create a beancount file referencing it
+    let tmp_dir = tempfile::TempDir::new().expect("tempdir");
+    std::fs::copy(
+        src_dir.join("error_plugin.py"),
+        tmp_dir.path().join("error_plugin.py"),
+    )
+    .expect("copy plugin");
+
+    let beancount_path = tmp_dir.path().join("test.beancount");
+    std::fs::write(
+        &beancount_path,
+        "\
+option \"operating_currency\" \"USD\"
+plugin \"./error_plugin.py\"
+
+2020-01-01 open Assets:Cash USD
+2020-01-01 open Expenses:Food USD
+
+; No payee — error_plugin.py should flag this
+2020-01-15 * \"Groceries\"
+  Expenses:Food   10 USD
+  Assets:Cash    -10 USD
+",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache"])
+        .arg(&beancount_path)
+        .output()
+        .expect("failed to run rledger check");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // The plugin dispatch code must be reached. Either:
+    // - The plugin ran and produced output, OR
+    // - E8003: Python runtime unavailable (acceptable in CI), OR
+    // - E8002: Plugin execution failed
+    // Silent exit-0 with no plugin mention means dispatch was removed.
+    let dispatch_reached = combined.contains("E8002")
+        || combined.contains("E8003")
+        || combined.contains("error_plugin")
+        || combined.contains("payee")
+        || combined.contains("Python plugin");
+
+    assert!(
+        dispatch_reached,
+        "Python plugin dispatch code must be reached. Got exit={}, stdout={stdout}, stderr={stderr}",
+        output.status.code().unwrap_or(-1)
+    );
+}
+
+/// Module-based Python plugin names must produce E8001 or E8004.
+#[test]
+fn test_python_module_plugin_error_code() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(
+        tmp.path(),
+        "\
+2020-01-01 open Assets:Cash USD
+plugin \"some.unknown.python.module\"
+",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--format", "json", "--no-cache"])
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run rledger check");
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("--format") {
+            eprintln!("Skipping: --format json not supported");
+            return;
+        }
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("should produce valid JSON");
+    let diagnostics = json["diagnostics"].as_array().expect("diagnostics");
+
+    assert!(
+        diagnostics.iter().any(|d| {
+            let code = d["code"].as_str().unwrap_or("");
+            code == "E8001" || code == "E8004" || code == "E8005"
+        }),
+        "unknown Python module should produce E8001/E8004/E8005: {json}"
+    );
+}
+
+// --- Group 3: WASM plugin execution ---
+
+/// The --plugin CLI flag must reach the WASM runtime.
+/// A minimal stub plugin causes a deserialization error — the test
+/// verifies the error appears (proving dispatch was reached).
+#[cfg(feature = "python-plugin-wasm")]
+#[test]
+fn test_wasm_plugin_cli_flag_dispatch() {
+    let rledger = require_rledger!();
+    let wasm_path = wasm_plugins_dir().join("passthrough.wasm");
+    if !wasm_path.exists() {
+        eprintln!("Skipping: passthrough.wasm fixture not found");
+        return;
+    }
+
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(tmp.path(), "2020-01-01 open Assets:Cash USD\n").expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache", "--plugin"])
+        .arg(&wasm_path)
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run rledger check");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // The WASM runtime must be reached. The stub plugin returns invalid
+    // data, so we expect an error — NOT silent success.
+    assert!(
+        combined.contains("WASM") || combined.contains("plugin") || combined.contains("error"),
+        "WASM dispatch must be reached via --plugin flag: stdout={stdout}, stderr={stderr}"
+    );
+}
+
+/// WASM plugins declared in beancount files must reach the WASM runtime.
+#[cfg(feature = "python-plugin-wasm")]
+#[test]
+fn test_wasm_plugin_from_beancount_file() {
+    let rledger = require_rledger!();
+    let wasm_src = wasm_plugins_dir().join("passthrough.wasm");
+    if !wasm_src.exists() {
+        eprintln!("Skipping: passthrough.wasm fixture not found");
+        return;
+    }
+
+    let tmp_dir = tempfile::TempDir::new().expect("tempdir");
+    std::fs::copy(&wasm_src, tmp_dir.path().join("passthrough.wasm")).expect("copy wasm");
+
+    let beancount_path = tmp_dir.path().join("test.beancount");
+    std::fs::write(
+        &beancount_path,
+        "\
+plugin \"./passthrough.wasm\"
+
+2020-01-01 open Assets:Cash USD
+",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache"])
+        .arg(&beancount_path)
+        .output()
+        .expect("failed to run rledger check");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // WASM dispatch must be reached — stub produces an error, not silence
+    assert!(
+        combined.contains("WASM") || combined.contains("plugin") || combined.contains("error"),
+        "WASM dispatch must be reached via plugin directive: stdout={stdout}, stderr={stderr}"
+    );
+}
+
+/// Missing WASM plugin file must produce an error.
+#[cfg(feature = "python-plugin-wasm")]
+#[test]
+fn test_wasm_plugin_missing_file_error() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(tmp.path(), "2020-01-01 open Assets:Cash USD\n").expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache", "--plugin", "/nonexistent/path.wasm"])
+        .arg(tmp.path())
+        .output()
+        .expect("failed to run rledger check");
+
+    assert!(!output.status.success(), "missing WASM plugin should fail");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+    assert!(
+        combined.contains("failed to load") || combined.contains("error"),
+        "should report load failure: {combined}"
+    );
+}
+
+// --- Group 4: Plugin categorization ---
+
+/// Native plugins (beancount.plugins.*) must be resolved to Rust
+/// implementations without falling through to Python/WASM.
+#[test]
+fn test_native_plugin_preferred_over_python_fallback() {
+    let rledger = require_rledger!();
+    let fixture = python_plugins_dir().join("native_preferred.beancount");
+    if !fixture.exists() {
+        eprintln!("Skipping: native_preferred.beancount not found");
+        return;
+    }
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache"])
+        .arg(&fixture)
+        .output()
+        .expect("failed to run rledger check");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let combined = format!("{stdout}{stderr}");
+
+    // Should NOT produce E8001/E8003/E8005 — all plugins are native
+    assert!(
+        !combined.contains("E8001") && !combined.contains("E8003") && !combined.contains("E8005"),
+        "native plugins should not produce plugin-not-found errors: {combined}"
+    );
+}

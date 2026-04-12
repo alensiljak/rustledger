@@ -877,7 +877,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 Err(e) => {
                     if json_mode {
                         diagnostics.push(JsonDiagnostic {
-                            file: main_file_str.clone(),
+                            file: main_file_str,
                             line: 1,
                             column: 1,
                             end_line: 1,
@@ -958,7 +958,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 }
             }
             if !wasm_mgr.is_empty() {
-                match wasm_mgr.execute_all(current_input.clone()) {
+                match wasm_mgr.execute_all(current_input) {
                     Ok(output) => {
                         for err in &output.errors {
                             if !args.quiet {
