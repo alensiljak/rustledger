@@ -3,8 +3,9 @@
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustledger_booking::BookingEngine;
 use rustledger_core::{BookingMethod, Directive};
-use rustledger_loader::Options as LoaderOptions;
+use rustledger_loader::{LoadOptions, Options as LoaderOptions, Plugin, SourceMap};
 use rustledger_parser::{ParseError, ParseResult, Span, Spanned};
+use rustledger_plugin::NativePluginRegistry;
 use rustledger_validate::{
     Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
 };
@@ -116,12 +117,26 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
     }
 }
 
+/// Plugin context for running plugins during LSP validation.
+///
+/// Contains the data needed by [`rustledger_loader::run_plugins`] to execute
+/// plugins on directives. Built from either a loaded `Ledger` (multi-file)
+/// or from parsed file data (single-file).
+pub struct PluginContext<'a> {
+    /// Plugin declarations from the file.
+    pub plugins: &'a [Plugin],
+    /// Parsed file options (operating currencies, documents, etc.).
+    pub file_options: &'a LoaderOptions,
+    /// Source map for location tracking.
+    pub source_map: &'a SourceMap,
+}
+
 /// Run validation on parsed directives and convert errors to LSP diagnostics.
 ///
-/// This function runs booking/interpolation before validation to mirror the
-/// ordering used by `rledger check`. Without booking, transactions with
-/// auto-filled postings (e.g., a posting with no amount) would be incorrectly
-/// flagged as unbalanced.
+/// This function mirrors the `rledger check` pipeline: sort → book → plugins →
+/// validate. Without this ordering, files that depend on plugin transformations
+/// (e.g., `effective_date` splitting transactions across dates) would produce
+/// false validation errors.
 ///
 /// # Arguments
 /// * `directives` - Owned directive list to validate. The caller is
@@ -133,6 +148,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// * `source` - Source text of the current file
 /// * `validation_options` - Validation options (including custom account type names)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+/// * `plugin_ctx` - Optional plugin context for running plugins before validation
 ///
 /// When `current_file_id` is set, errors are filtered to those whose
 /// `file_id` matches (or is `None`, for global errors like duplicate
@@ -142,8 +158,10 @@ pub fn validation_errors_to_diagnostics(
     source: &str,
     validation_options: ValidationOptions,
     current_file_id: Option<u16>,
+    plugin_ctx: Option<&PluginContext<'_>>,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
+    let mut extra_diagnostics = Vec::new();
 
     // Sort directives by date (required for correct lot matching during booking).
     booked_directives.sort_by(|a, b| {
@@ -168,6 +186,74 @@ pub fn validation_errors_to_diagnostics(
         // If booking fails, we leave the transaction as-is and let validation catch it
     }
 
+    // Run plugins after booking, before validation — same order as process::process().
+    // This ensures plugin-transformed directives (e.g., effective_date splitting
+    // transactions across dates) are seen by validation (#793).
+    if let Some(ctx) = plugin_ctx {
+        // Emit info diagnostics for non-native plugins (Python plugins may be slow).
+        for plugin in ctx.plugins {
+            let is_native = NativePluginRegistry::is_builtin(&plugin.name);
+            let is_wasm = plugin.name.ends_with(".wasm");
+            if !is_native && !is_wasm {
+                extra_diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    severity: Some(DiagnosticSeverity::INFORMATION),
+                    code: Some(lsp_types::NumberOrString::String("E8006".to_string())),
+                    source: Some("rustledger".to_string()),
+                    message: format!(
+                        "Plugin \"{}\" is a Python plugin — LSP validation may be slower",
+                        plugin.name
+                    ),
+                    related_information: None,
+                    tags: None,
+                    code_description: None,
+                    data: None,
+                });
+            }
+        }
+
+        let load_options = LoadOptions::default();
+        let mut plugin_errors = Vec::new();
+        match rustledger_loader::run_plugins(
+            &mut booked_directives,
+            ctx.plugins,
+            ctx.file_options,
+            &load_options,
+            ctx.source_map,
+            &mut plugin_errors,
+        ) {
+            Ok(()) => {
+                // Convert plugin errors to diagnostics
+                for err in &plugin_errors {
+                    let severity = match err.severity {
+                        rustledger_loader::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                        rustledger_loader::ErrorSeverity::Warning => DiagnosticSeverity::WARNING,
+                    };
+                    extra_diagnostics.push(Diagnostic {
+                        range: Range {
+                            start: Position::new(0, 0),
+                            end: Position::new(0, 0),
+                        },
+                        severity: Some(severity),
+                        code: Some(lsp_types::NumberOrString::String(err.code.clone())),
+                        source: Some("rustledger".to_string()),
+                        message: err.message.clone(),
+                        related_information: None,
+                        tags: None,
+                        code_description: None,
+                        data: None,
+                    });
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Plugin execution failed in LSP: {e}");
+            }
+        }
+    }
+
     let validation_errors = validate_spanned_with_options(&booked_directives, validation_options);
 
     // Filter errors to only those in the current file (if file_id filtering is enabled).
@@ -182,10 +268,13 @@ pub fn validation_errors_to_diagnostics(
         validation_errors
     };
 
-    filtered_errors
-        .iter()
-        .map(|e| validation_error_to_diagnostic(e, &line_index))
-        .collect()
+    let mut result: Vec<Diagnostic> = extra_diagnostics;
+    result.extend(
+        filtered_errors
+            .iter()
+            .map(|e| validation_error_to_diagnostic(e, &line_index)),
+    );
+    result
 }
 
 /// Convert a single validation error to an LSP diagnostic.
@@ -414,11 +503,66 @@ pub fn all_diagnostics(
                 build_validation_options_from_file(&result.options)
             };
 
+            // Build plugin context for running plugins before validation.
+            // Multi-file: use plugins/options/source_map from loaded Ledger.
+            // Single-file: build from ParseResult's plugin declarations.
+            let single_file_plugins: Vec<Plugin>;
+            let single_file_options: LoaderOptions;
+            let single_file_source_map: SourceMap;
+
+            let plugin_ctx = if let Some(ls) = ledger_state
+                && let Some(ledger) = ls.ledger()
+                && !ledger.plugins.is_empty()
+            {
+                Some(PluginContext {
+                    plugins: &ledger.plugins,
+                    file_options: &ledger.options,
+                    source_map: &ledger.source_map,
+                })
+            } else if !result.plugins.is_empty() {
+                // Single-file mode: build plugin list from ParseResult
+                single_file_plugins = result
+                    .plugins
+                    .iter()
+                    .map(|(name, config, span)| {
+                        let (actual_name, force_python) =
+                            if let Some(stripped) = name.strip_prefix("python:") {
+                                (stripped.to_string(), true)
+                            } else {
+                                (name.clone(), false)
+                            };
+                        Plugin {
+                            name: actual_name,
+                            config: config.clone(),
+                            span: *span,
+                            file_id: 0,
+                            force_python,
+                        }
+                    })
+                    .collect();
+                single_file_options = {
+                    let mut opts = LoaderOptions::new();
+                    for (key, value, _span) in &result.options {
+                        opts.set(key, value);
+                    }
+                    opts
+                };
+                single_file_source_map = SourceMap::new();
+                Some(PluginContext {
+                    plugins: &single_file_plugins,
+                    file_options: &single_file_options,
+                    source_map: &single_file_source_map,
+                })
+            } else {
+                None
+            };
+
             let validation_diagnostics = validation_errors_to_diagnostics(
                 booked_directives,
                 source,
                 validation_options,
                 current_file_id,
+                plugin_ctx.as_ref(),
             );
             diagnostics.extend(validation_diagnostics);
         } else {
@@ -657,6 +801,7 @@ mod tests {
             bank_source,
             ValidationOptions::default(),
             None,
+            None,
         );
 
         let isolated_codes: Vec<_> = isolated_diagnostics.iter().map(get_code).collect();
@@ -676,6 +821,7 @@ mod tests {
             bank_source,
             ValidationOptions::default(),
             Some(1), // file_id=1 for bank.bean
+            None,
         );
 
         let full_ledger_codes: Vec<_> = full_ledger_diagnostics.iter().map(get_code).collect();
@@ -824,6 +970,7 @@ option "name_equity" "Капитал"
             buffer_unbalanced_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let no_overlay_codes: Vec<_> = no_overlay.iter().map(get_code).collect();
         assert!(
@@ -845,6 +992,7 @@ option "name_equity" "Капитал"
             buffer_unbalanced_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let with_overlay_codes: Vec<_> = with_overlay.iter().map(get_code).collect();
         assert!(
@@ -881,6 +1029,7 @@ option "name_equity" "Капитал"
             buffer_fixed_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let no_overlay_persist_codes: Vec<_> = no_overlay_persist.iter().map(get_code).collect();
         assert!(
@@ -903,6 +1052,7 @@ option "name_equity" "Капитал"
             buffer_fixed_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let with_overlay_fixed_codes: Vec<_> = with_overlay_fixed.iter().map(get_code).collect();
         assert!(
@@ -1034,6 +1184,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let baseline_codes: Vec<_> = baseline.iter().map(get_code).collect();
         assert!(
@@ -1062,6 +1213,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let single_codes: Vec<_> = single_overlay_diagnostics.iter().map(get_code).collect();
         assert!(
@@ -1089,6 +1241,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let multi_codes: Vec<_> = multi_overlay_diagnostics.iter().map(get_code).collect();
         assert!(

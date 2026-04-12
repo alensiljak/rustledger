@@ -291,8 +291,15 @@ fn run_booking(
 }
 
 /// Run plugins on directives.
+///
+/// Executes native plugins (and document discovery) on the given directives,
+/// modifying them in-place. Plugin errors are appended to `errors`.
+///
+/// This is called by [`process()`] as part of the full pipeline, but can also
+/// be called standalone (e.g., by the LSP) when plugin execution is needed
+/// outside the normal load flow.
 #[cfg(feature = "plugins")]
-fn run_plugins(
+pub fn run_plugins(
     directives: &mut Vec<Spanned<Directive>>,
     file_plugins: &[Plugin],
     file_options: &Options,

@@ -31,6 +31,7 @@ rustledger-core.workspace = true
 rustledger-loader.workspace = true
 rustledger-booking.workspace = true
 rustledger-validate.workspace = true
+rustledger-plugin.workspace = true
 
 # Utilities
 tracing.workspace = true
