@@ -207,10 +207,14 @@ pub fn validation_errors_to_diagnostics(
                 continue;
             }
             let is_native = registry.find(&plugin.name).is_some();
-            let is_wasm = plugin.name.ends_with(".wasm");
-            if !is_native && !is_wasm {
+            if !is_native {
                 let (start_line, start_col) = line_index.offset_to_position(plugin.span.start);
                 let (end_line, end_col) = line_index.offset_to_position(plugin.span.end);
+                let kind = if plugin.name.ends_with(".wasm") {
+                    "WASM"
+                } else {
+                    "Python"
+                };
                 extra_diagnostics.push(Diagnostic {
                     range: Range {
                         start: Position::new(start_line, start_col),
@@ -220,7 +224,7 @@ pub fn validation_errors_to_diagnostics(
                     code: Some(lsp_types::NumberOrString::String("E8006".to_string())),
                     source: Some("rustledger".to_string()),
                     message: format!(
-                        "Plugin \"{}\" is not a native plugin — skipped in LSP, validation may differ from `rledger check`",
+                        "Plugin \"{}\" is a {kind} plugin — skipped in LSP, validation may differ from `rledger check`",
                         plugin.name
                     ),
                     related_information: None,
@@ -594,10 +598,16 @@ pub fn all_diagnostics(
                 };
                 // Build a SourceMap with the current buffer so run_plugins()
                 // can attach filename/line info to wrappers and reconstruct
-                // spans when converting back.
+                // spans when converting back. Use an absolute path so that
+                // document directory resolution in run_plugins (which uses
+                // the first file's parent as base_dir) doesn't produce an
+                // empty path.
                 single_file_source_map = {
                     let mut sm = SourceMap::new();
-                    sm.add_file(std::path::PathBuf::from("<buffer>"), Arc::from(source));
+                    sm.add_file(
+                        std::path::PathBuf::from("/tmp/rustledger-lsp-buffer.beancount"),
+                        Arc::from(source),
+                    );
                     sm
                 };
                 Some(PluginContext {
@@ -1594,17 +1604,14 @@ include "credit_card.beancount"
         let result = parse(source);
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
-        // Without plugins: should have E1001 (account not opened)
-        let no_plugin_diags = all_diagnostics(&result, source, None, None, &[]);
-        let no_plugin_codes: Vec<_> = no_plugin_diags.iter().map(get_code).collect();
+        // all_diagnostics() now runs plugins in single-file mode, so
+        // auto_accounts should auto-generate the missing opens.
+        let diags = all_diagnostics(&result, source, None, None, &[]);
+        let codes: Vec<_> = diags.iter().map(get_code).collect();
 
-        // The plugin declaration itself doesn't have an effect in no-plugin mode.
-        // At minimum, the validator should flag the unopened accounts.
-        // Note: all_diagnostics() DOES run plugins in single-file mode now,
-        // so auto_accounts will auto-generate the opens. Verify this works.
         assert!(
-            !no_plugin_codes.iter().any(|c| c == "E1001"),
-            "With auto_accounts plugin running, should NOT have E1001. Got: {no_plugin_codes:?}"
+            !codes.iter().any(|c| c == "E1001"),
+            "With auto_accounts plugin running, should NOT have E1001. Got: {codes:?}"
         );
     }
 
