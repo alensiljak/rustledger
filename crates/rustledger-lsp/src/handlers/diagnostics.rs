@@ -195,6 +195,10 @@ pub fn validation_errors_to_diagnostics(
         // Emit info diagnostics for non-native plugins. The loader's run_plugins()
         // only executes native plugins — Python/WASM plugins are not run in the LSP.
         // Warn users so they understand why the LSP may disagree with `rledger check`.
+        //
+        // Create the registry once rather than calling is_builtin() per plugin
+        // (which internally allocates a new registry each time).
+        let registry = NativePluginRegistry::new();
         for plugin in ctx.plugins {
             // Only show the diagnostic for plugins declared in the current file.
             if let Some(fid) = current_file_id
@@ -202,7 +206,7 @@ pub fn validation_errors_to_diagnostics(
             {
                 continue;
             }
-            let is_native = NativePluginRegistry::is_builtin(&plugin.name);
+            let is_native = registry.find(&plugin.name).is_some();
             let is_wasm = plugin.name.ends_with(".wasm");
             if !is_native && !is_wasm {
                 let (start_line, start_col) = line_index.offset_to_position(plugin.span.start);
