@@ -203,9 +203,26 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     });
 
     // 2. Booking/interpolation
+    //
+    // The booking method comes from two sources: the API-level
+    // `LoadOptions.booking_method` and the file-level `option
+    // "booking_method"`. The file-level option takes precedence when
+    // the caller hasn't explicitly overridden it (i.e., when
+    // `LoadOptions` still has the default `Strict`). This matches
+    // Python beancount, where `option "booking_method" "FIFO"` sets the
+    // default for all accounts without an explicit method on their
+    // `open` directive.
     #[cfg(feature = "booking")]
     {
-        run_booking(&mut directives, options, &mut errors);
+        let effective_method = if raw.options.booking_method.is_empty() {
+            options.booking_method
+        } else {
+            raw.options
+                .booking_method
+                .parse()
+                .unwrap_or(options.booking_method)
+        };
+        run_booking(&mut directives, effective_method, &mut errors);
     }
 
     // 3. Run plugins (including document discovery when run_plugins is enabled)
@@ -243,12 +260,12 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
 #[cfg(feature = "booking")]
 fn run_booking(
     directives: &mut Vec<Spanned<Directive>>,
-    options: &LoadOptions,
+    booking_method: BookingMethod,
     errors: &mut Vec<LedgerError>,
 ) {
     use rustledger_booking::BookingEngine;
 
-    let mut engine = BookingEngine::with_method(options.booking_method);
+    let mut engine = BookingEngine::with_method(booking_method);
     engine.register_account_methods(directives.iter().map(|s| &s.value));
 
     for spanned in directives.iter_mut() {

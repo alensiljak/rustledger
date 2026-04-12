@@ -631,6 +631,28 @@ fn test_process_preserves_display_context() {
 }
 
 // ============================================================================
+// Booking Method Default Tests (Issue #775)
+// ============================================================================
+
+#[test]
+fn test_file_level_booking_method_applied() {
+    // The file has `option "booking_method" "FIFO"` and a sell posting
+    // that matches 2 lots. Under STRICT this would be an ambiguous lot
+    // match error. Under FIFO the oldest lot is selected.
+    let path = fixtures_path("booking_method_fifo.beancount");
+    let options = LoadOptions::default(); // default = Strict, but file says FIFO
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    // No booking errors — FIFO resolves the ambiguity.
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under file-level FIFO, got: {booking_errors:?}"
+    );
+}
+
+// ============================================================================
 // Document Discovery Tests (Issue #466)
 // ============================================================================
 
