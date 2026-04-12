@@ -135,6 +135,7 @@ jobs:
           import json
           import subprocess
           import os
+          import sys
           import re
           from collections import Counter, defaultdict
           from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -230,6 +231,8 @@ jobs:
               posting_count_match: bool = False
               python_posting_count: int = 0
               rust_posting_count: int = 0
+              # JSON parse health (rledger --format json output)
+              rust_json_parse_failed: bool = False
 
               @property
               def full_match(self) -> bool:
@@ -299,8 +302,30 @@ jobs:
                               code = diag.get("code", "")
                               if code:
                                   result.rust_error_types.append(code)
-                      except json.JSONDecodeError:
-                          pass
+                      except json.JSONDecodeError as e:
+                          result.rust_json_parse_failed = True
+                          # Log immediately so it's visible in workflow output
+                          print(f"WARNING: rledger --format json produced invalid JSON for {file_path}: {e}", file=sys.stderr)
+                          preview = proc.stdout[:200].replace('\n', '\\n')
+                          print(f"  stdout preview: {preview}", file=sys.stderr)
+                          # Attempt recovery: find the first '{' and parse from there
+                          # (handles plain-text prefix before valid JSON, as in #774)
+                          json_start = proc.stdout.find('{')
+                          if json_start != -1:
+                              try:
+                                  data_json = json.loads(proc.stdout[json_start:])
+                                  result.rust_error_count = data_json.get("error_count", 0)
+                                  for diag in data_json.get("diagnostics", [])[:5]:
+                                      code = diag.get("code", "")
+                                      if code:
+                                          result.rust_error_types.append(code)
+                                  print(f"  recovered {result.rust_error_count} errors from JSON after prefix", file=sys.stderr)
+                              except json.JSONDecodeError:
+                                  result.rust_error_count = 1
+                                  result.rust_error_types = ["JsonParseFailed"]
+                          else:
+                              result.rust_error_count = 1
+                              result.rust_error_types = ["JsonParseFailed"]
               except subprocess.TimeoutExpired:
                   result.rust_error_count = 1
                   result.rust_error_types = ["Timeout"]
@@ -427,6 +452,9 @@ jobs:
           rust_only_pass = sum(1 for r in results if r.rust_ok and not r.python_ok)
           python_only_pass = sum(1 for r in results if r.python_ok and not r.rust_ok)
 
+          # JSON parse failures (rledger --format json produced invalid output)
+          json_parse_failures = [r for r in results if r.rust_json_parse_failed]
+
           # === Regression detection ===
           previous_file = Path(".github/badges/previous-check-results.jsonl")
           regressions = []
@@ -489,6 +517,17 @@ jobs:
                       print(f"    Rust error count: {r.rust_error_count}, types: {r.rust_error_types[:5]}")
 
           print(f"Regressions: {len(regressions)}")
+          print(f"JSON parse failures: {len(json_parse_failures)}")
+
+          if json_parse_failures:
+              print(f"\n=== JSON PARSE FAILURES ({len(json_parse_failures)}) ===")
+              print(f"rledger --format json produced invalid JSON for these files.")
+              print(f"This indicates a bug in rledger's JSON output (see #774).")
+              for r in json_parse_failures[:10]:
+                  print(f"  - {r.file}")
+              if len(json_parse_failures) > 10:
+                  print(f"  ... and {len(json_parse_failures) - 10} more")
+
           print(f"\n=== Synthetic vs Real-World ===")
           print(f"  Real-world: {realworld_check}/{realworld_total} ({realworld_pct}%)")
           print(f"  Synthetic:  {synthetic_check}/{synthetic_total} ({synthetic_pct}%)")
@@ -526,6 +565,7 @@ jobs:
               f.write(f"rust_only_pass={rust_only_pass}\n")
               f.write(f"python_only_pass={python_only_pass}\n")
               f.write(f"regression_count={len(regressions)}\n")
+              f.write(f"json_parse_failures={len(json_parse_failures)}\n")
               # Synthetic vs real-world breakdown
               f.write(f"realworld_total={realworld_total}\n")
               f.write(f"realworld_match={realworld_check}\n")
@@ -1006,6 +1046,7 @@ jobs:
           | **Full AST match** | **${{ steps.compat_test.outputs.full_pct }}%** |
           | **BQL match** | **${{ steps.bql_compat.outputs.bql_pct }}%** |
           | Regressions | ${{ steps.compat_test.outputs.regression_count }} |
+          | JSON parse failures | ${{ steps.compat_test.outputs.json_parse_failures }} |
 
           ### Check Compatibility (bean-check vs rledger-check)
           | Metric | Value |
