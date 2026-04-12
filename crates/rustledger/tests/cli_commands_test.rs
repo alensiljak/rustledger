@@ -840,27 +840,30 @@ fn check_json(rledger: &std::path::Path, content: &str) -> Option<serde_json::Va
         .output()
         .expect("failed to run rledger check");
 
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if stderr.contains("--no-cache") || stderr.contains("--format") {
-        eprintln!("Skipping: required flags not supported");
-        return None;
+    // Only skip when the command fails AND stderr indicates the flags
+    // are unsupported (clap usage error). Don't skip on success — stderr
+    // may legitimately contain other output like verbose logging.
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("--no-cache") || stderr.contains("--format") {
+            eprintln!("Skipping: required flags not supported");
+            return None;
+        }
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Core assertion: stdout must start with '{' (no plain-text prefix).
     let trimmed = stdout.trim();
+    let preview: String = trimmed.chars().take(200).collect();
     assert!(
         trimmed.starts_with('{'),
-        "JSON output must start with '{{', got: {}",
-        &trimmed[..trimmed.len().min(200)]
+        "JSON output must start with '{{', got: {preview}"
     );
 
     let json: serde_json::Value = serde_json::from_str(trimmed).unwrap_or_else(|e| {
-        panic!(
-            "stdout is not valid JSON: {e}\nfirst 500 chars: {}",
-            &trimmed[..trimmed.len().min(500)]
-        )
+        let long_preview: String = trimmed.chars().take(500).collect();
+        panic!("stdout is not valid JSON: {e}\nfirst 500 chars: {long_preview}")
     });
 
     // Structural assertions: required top-level fields.
@@ -956,11 +959,12 @@ fn test_json_output_clean_file() {
     assert_eq!(json["validate_error_count"], 0);
 }
 
-/// File with parse errors only: diagnostics should all have phase "parse".
+/// File with parse errors only: parse_error_count should be positive and
+/// all error diagnostics should have phase "parse".
 #[test]
 fn test_json_output_parse_errors_only() {
     let rledger = require_rledger!();
-    // Malformed beancount — missing amount on second posting, unclosed string
+    // Malformed beancount syntax
     let content = "2024-01-01 open Assets:Cash\n\nthis is not valid beancount syntax {{{ }}\n";
 
     let Some(json) = check_json(&rledger, content) else {
@@ -972,6 +976,18 @@ fn test_json_output_parse_errors_only() {
 
     let parse_count = json["parse_error_count"].as_u64().unwrap_or(0);
     assert!(parse_count > 0, "parse_error_count should be > 0");
+
+    // All error diagnostics should be parse-phase (no validation on
+    // a file that can't parse).
+    let diagnostics = json["diagnostics"].as_array().unwrap();
+    let non_parse_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d["severity"] == "error" && d["phase"] != "parse")
+        .collect();
+    assert!(
+        non_parse_errors.is_empty(),
+        "all errors should be parse-phase, found non-parse: {non_parse_errors:?}"
+    );
 }
 
 /// File with validation errors: diagnostics should include phase "validate".
