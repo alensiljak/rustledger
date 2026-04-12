@@ -579,7 +579,6 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     python_plugins_to_run.push(plugin.clone());
                 } else {
                     // Module-based plugin - we can't resolve it without system Python
-                    // Provide helpful error message with suggestion
                     let (line, file_path) =
                         if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
                             let (l, _) = source_file.line_col(plugin.span.start);
@@ -595,27 +594,55 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         None
                     };
 
-                    if let Some(module_path) = suggestion {
-                        if !args.quiet {
-                            let plugin_name = &plugin.name;
+                    let (code, message) = if let Some(module_path) = &suggestion {
+                        (
+                            "E8004".to_string(),
+                            format!(
+                                "Cannot resolve Python module '{}'. Replace with: plugin \"{}\"",
+                                plugin.name, module_path
+                            ),
+                        )
+                    } else {
+                        (
+                            "E8001".to_string(),
+                            format!("Plugin not found: \"{}\"", plugin.name),
+                        )
+                    };
+
+                    if json_mode {
+                        diagnostics.push(JsonDiagnostic {
+                            file: file_path.display().to_string(),
+                            line,
+                            column: 1,
+                            end_line: line,
+                            end_column: 1,
+                            severity: "error".to_string(),
+                            phase: "plugin".to_string(),
+                            code,
+                            message,
+                            hint: suggestion.map(|m| format!("plugin \"{m}\"")),
+                            context: None,
+                        });
+                        parse_error_count += 1;
+                    } else if !args.quiet {
+                        let path_str = file_path.display();
+                        let plugin_name = &plugin.name;
+                        if let Some(module_path) = &suggestion {
                             writeln!(
                                 stdout,
-                                "{}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
-                                file_path.display(),
+                                "{path_str}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
                             )?;
                             writeln!(stdout)?;
                             writeln!(stdout, "Replace line {line}:")?;
                             writeln!(stdout, "  plugin \"{plugin_name}\"")?;
                             writeln!(stdout, "with:")?;
                             writeln!(stdout, "  plugin \"{module_path}\"")?;
+                        } else {
+                            writeln!(
+                                stdout,
+                                "{path_str}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
+                            )?;
                         }
-                    } else if !args.quiet {
-                        let plugin_name = &plugin.name;
-                        writeln!(
-                            stdout,
-                            "{}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
-                            file_path.display(),
-                        )?;
                     }
                     error_count += 1;
                 }
@@ -631,7 +658,25 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         (1, 1, file.clone())
                     };
 
-                if !args.quiet {
+                if json_mode {
+                    diagnostics.push(JsonDiagnostic {
+                        file: file_path.display().to_string(),
+                        line,
+                        column: 1,
+                        end_line: line,
+                        end_column: 1,
+                        severity: "error".to_string(),
+                        phase: "plugin".to_string(),
+                        code: "E8005".to_string(),
+                        message: format!(
+                            "Python plugin \"{}\" requires python-plugin-wasm feature",
+                            plugin.name
+                        ),
+                        hint: None,
+                        context: None,
+                    });
+                    parse_error_count += 1;
+                } else if !args.quiet {
                     writeln!(
                         stdout,
                         "{}:{}: error[E8005]: Python plugin \"{}\" requires python-plugin-wasm feature",
@@ -844,7 +889,28 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 let output = plugin.process(plugin_input);
 
                 for err in &output.errors {
-                    if !args.quiet {
+                    if json_mode {
+                        let severity = match err.severity {
+                            rustledger_plugin::PluginErrorSeverity::Error => "error",
+                            rustledger_plugin::PluginErrorSeverity::Warning => "warning",
+                        };
+                        diagnostics.push(JsonDiagnostic {
+                            file: main_file_str.clone(),
+                            line: 1,
+                            column: 1,
+                            end_line: 1,
+                            end_column: 1,
+                            severity: severity.to_string(),
+                            phase: "plugin".to_string(),
+                            code: "PLUGIN".to_string(),
+                            message: err.message.clone(),
+                            hint: None,
+                            context: Some(format!("plugin: {}", plugin.name())),
+                        });
+                        if matches!(err.severity, rustledger_plugin::PluginErrorSeverity::Error) {
+                            validate_error_count += 1;
+                        }
+                    } else if !args.quiet {
                         writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
                     }
                     error_count += 1;
@@ -881,15 +947,27 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         match runtime.execute_module(&plugin.name, &plugin_input, file.parent()) {
                             Ok(output) => {
                                 for err in &output.errors {
-                                    if !args.quiet {
-                                        let severity = match err.severity {
-                                            rustledger_plugin::PluginErrorSeverity::Error => {
-                                                "error"
-                                            }
-                                            rustledger_plugin::PluginErrorSeverity::Warning => {
-                                                "warning"
-                                            }
-                                        };
+                                    let severity = match err.severity {
+                                        rustledger_plugin::PluginErrorSeverity::Error => "error",
+                                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                                            "warning"
+                                        }
+                                    };
+                                    if json_mode {
+                                        diagnostics.push(JsonDiagnostic {
+                                            file: main_file_str.clone(),
+                                            line: 1,
+                                            column: 1,
+                                            end_line: 1,
+                                            end_column: 1,
+                                            severity: severity.to_string(),
+                                            phase: "plugin".to_string(),
+                                            code: "PLUGIN".to_string(),
+                                            message: err.message.clone(),
+                                            hint: None,
+                                            context: Some(format!("plugin: {}", plugin.name)),
+                                        });
+                                    } else if !args.quiet {
                                         writeln!(stdout, "{severity}: {}", err.message)?;
                                     }
                                     error_count += 1;
@@ -901,7 +979,22 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                 };
                             }
                             Err(e) => {
-                                if !args.quiet {
+                                if json_mode {
+                                    diagnostics.push(JsonDiagnostic {
+                                        file: main_file_str.clone(),
+                                        line: 1,
+                                        column: 1,
+                                        end_line: 1,
+                                        end_column: 1,
+                                        severity: "error".to_string(),
+                                        phase: "plugin".to_string(),
+                                        code: "E8002".to_string(),
+                                        message: format!("Python plugin execution failed: {e}"),
+                                        hint: None,
+                                        context: Some(format!("plugin: {}", plugin.name)),
+                                    });
+                                    parse_error_count += 1;
+                                } else if !args.quiet {
                                     writeln!(
                                         stdout,
                                         "error[E8002]: Python plugin execution failed: {e}"
@@ -914,7 +1007,22 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 }
                 Err(e) => {
                     // E8003: Python runtime unavailable
-                    if !args.quiet {
+                    if json_mode {
+                        diagnostics.push(JsonDiagnostic {
+                            file: main_file_str.clone(),
+                            line: 1,
+                            column: 1,
+                            end_line: 1,
+                            end_column: 1,
+                            severity: "error".to_string(),
+                            phase: "plugin".to_string(),
+                            code: "E8003".to_string(),
+                            message: format!("Python runtime unavailable: {e}"),
+                            hint: None,
+                            context: None,
+                        });
+                        parse_error_count += python_plugins_to_run.len();
+                    } else if !args.quiet {
                         writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
                     }
                     error_count += python_plugins_to_run.len();
