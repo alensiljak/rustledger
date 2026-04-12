@@ -49,7 +49,7 @@ pub struct JsonDiagnostic {
     pub end_column: usize,
     /// Severity: "error" or "warning"
     pub severity: String,
-    /// Processing phase: "parse" or "validate"
+    /// Processing phase: "parse", "validate", or "plugin"
     pub phase: String,
     /// Error code (e.g., "P0012", "E1001")
     pub code: String,
@@ -623,7 +623,6 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             hint: suggestion.map(|m| format!("plugin \"{m}\"")),
                             context: None,
                         });
-                        parse_error_count += 1;
                     } else if !args.quiet {
                         let path_str = file_path.display();
                         let plugin_name = &plugin.name;
@@ -675,7 +674,6 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                         hint: None,
                         context: None,
                     });
-                    parse_error_count += 1;
                 } else if !args.quiet {
                     writeln!(
                         stdout,
@@ -907,13 +905,17 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             hint: None,
                             context: Some(format!("plugin: {}", plugin.name())),
                         });
-                        if matches!(err.severity, rustledger_plugin::PluginErrorSeverity::Error) {
-                            validate_error_count += 1;
-                        }
                     } else if !args.quiet {
                         writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
                     }
-                    error_count += 1;
+                    match err.severity {
+                        rustledger_plugin::PluginErrorSeverity::Error => {
+                            error_count += 1;
+                        }
+                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                            // Warnings don't increment error_count
+                        }
+                    }
                 }
 
                 current_input = PluginInput {
@@ -970,7 +972,14 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                     } else if !args.quiet {
                                         writeln!(stdout, "{severity}: {}", err.message)?;
                                     }
-                                    error_count += 1;
+                                    match err.severity {
+                                        rustledger_plugin::PluginErrorSeverity::Error => {
+                                            error_count += 1;
+                                        }
+                                        rustledger_plugin::PluginErrorSeverity::Warning => {
+                                            // Warnings don't increment error_count
+                                        }
+                                    }
                                 }
                                 current_input = PluginInput {
                                     directives: output.directives,
@@ -993,7 +1002,6 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                         hint: None,
                                         context: Some(format!("plugin: {}", plugin.name)),
                                     });
-                                    parse_error_count += 1;
                                 } else if !args.quiet {
                                     writeln!(
                                         stdout,
@@ -1021,10 +1029,13 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             hint: None,
                             context: None,
                         });
-                        parse_error_count += python_plugins_to_run.len();
                     } else if !args.quiet {
                         writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
                     }
+                    // Count all affected plugins as errors (the single
+                    // diagnostic represents them collectively, but the
+                    // error count reflects the number of plugins that
+                    // couldn't run).
                     error_count += python_plugins_to_run.len();
                 }
             }
