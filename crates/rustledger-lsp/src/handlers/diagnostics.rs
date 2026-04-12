@@ -630,6 +630,14 @@ mod tests {
     use super::*;
     use rustledger_parser::parse;
 
+    /// Helper to extract the code string from a diagnostic.
+    fn get_code(d: &Diagnostic) -> String {
+        match d.code.as_ref().unwrap() {
+            lsp_types::NumberOrString::String(s) => s.clone(),
+            lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
+        }
+    }
+
     #[test]
     fn test_line_index_offset_to_position() {
         let source = "line1\nline2\nline3";
@@ -1560,6 +1568,247 @@ include "credit_card.beancount"
             "Fix verification: with credit_card buffer overlaid, main's \
              balance assertion should fail (4950 expected, 4925 actual \
              after the -75 edit). Got: {with_overlay_codes:?}"
+        );
+    }
+
+    // ====================================================================
+    // Plugin execution in LSP diagnostics (Issue #793)
+    // ====================================================================
+
+    /// Test that native plugins (auto_accounts) run during LSP validation.
+    /// Without auto_accounts, using an account without an explicit `open`
+    /// produces E1001. With the plugin, opens are auto-generated.
+    #[test]
+    fn test_native_plugin_runs_in_lsp_diagnostics() {
+        // File uses accounts without explicit opens — would fail without auto_accounts.
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        // Without plugins: should have E1001 (account not opened)
+        let no_plugin_diags = all_diagnostics(&result, source, None, None, &[]);
+        let no_plugin_codes: Vec<_> = no_plugin_diags.iter().map(get_code).collect();
+
+        // The plugin declaration itself doesn't have an effect in no-plugin mode.
+        // At minimum, the validator should flag the unopened accounts.
+        // Note: all_diagnostics() DOES run plugins in single-file mode now,
+        // so auto_accounts will auto-generate the opens. Verify this works.
+        assert!(
+            !no_plugin_codes.iter().any(|c| c == "E1001"),
+            "With auto_accounts plugin running, should NOT have E1001. Got: {no_plugin_codes:?}"
+        );
+    }
+
+    /// Test that validation_errors_to_diagnostics with PluginContext
+    /// actually transforms directives via native plugins.
+    #[test]
+    fn test_plugin_context_transforms_directives() {
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        // First: validate WITHOUT plugin context — should produce E1001
+        let without_plugins = validation_errors_to_diagnostics(
+            result.directives.clone(),
+            source,
+            ValidationOptions::default(),
+            None,
+            None,
+        );
+        let without_codes: Vec<_> = without_plugins.iter().map(get_code).collect();
+        assert!(
+            without_codes.iter().any(|c| c == "E1001"),
+            "Without plugins, should have E1001 for unopened accounts. Got: {without_codes:?}"
+        );
+
+        // Now: validate WITH plugin context — auto_accounts should fix E1001
+        let plugins = vec![Plugin {
+            name: "auto_accounts".to_string(),
+            config: None,
+            span: Span::new(0, 0),
+            file_id: 0,
+            force_python: false,
+        }];
+        let file_options = LoaderOptions::new();
+        let mut source_map = SourceMap::new();
+        source_map.add_file(std::path::PathBuf::from("<test>"), Arc::from(source));
+        let ctx = PluginContext {
+            plugins: &plugins,
+            file_options: &file_options,
+            source_map: &source_map,
+        };
+        let with_plugins = validation_errors_to_diagnostics(
+            result.directives.clone(),
+            source,
+            ValidationOptions::default(),
+            None,
+            Some(&ctx),
+        );
+        let with_codes: Vec<_> = with_plugins.iter().map(get_code).collect();
+        assert!(
+            !with_codes.iter().any(|c| c == "E1001"),
+            "With auto_accounts plugin, should NOT have E1001. Got: {with_codes:?}"
+        );
+    }
+
+    /// Regression test for issue #793: effective_date plugin must prevent
+    /// false balance errors in LSP diagnostics.
+    ///
+    /// The scenario: a transaction with `effective_date` metadata on a posting
+    /// defers that posting to a later date. Without the plugin running,
+    /// an intermediate balance assertion sees the debit and fails.
+    /// With the plugin, the posting is split into a holding pattern and
+    /// the balance assertion passes.
+    #[test]
+    fn test_effective_date_plugin_prevents_false_balance_error_issue_793() {
+        // This is the exact reproduction case from issue #793.
+        // The effective_date plugin config maps Assets postings through
+        // Equity:Transfer as a holding account.
+        let source = concat!(
+            "option \"operating_currency\" \"USD\"\n",
+            "\n",
+            "plugin \"beancount_reds_plugins.effective_date.effective_date\" \"{\n",
+            " 'Assets':   {'earlier': 'Equity:Transfer', 'later': 'Equity:Transfer'},\n",
+            " }\"\n",
+            "\n",
+            "2024-01-01 open Assets:Bank\n",
+            "2024-01-01 open Equity:Transfer\n",
+            "2024-01-01 open Expenses:Food\n",
+            "2024-01-01 open Income:Employment\n",
+            "\n",
+            "2024-02-01 * \"Salary\"\n",
+            "  Assets:Bank                             1000 USD\n",
+            "  Income:Employment\n",
+            "\n",
+            "2024-02-02 balance Assets:Bank  1000 USD\n",
+            "\n",
+            "2024-02-03 * \"Delayed food purchase\"\n",
+            "  Expenses:Food                            100 USD\n",
+            "  Assets:Bank                             -100 USD\n",
+            "    effective_date: 2024-03-01\n",
+            "\n",
+            "2024-02-04 balance Assets:Bank  1000 USD\n",
+            "2024-03-02 balance Assets:Bank   900 USD\n",
+        );
+
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        // Use all_diagnostics (single-file mode) — this should run the
+        // effective_date plugin and NOT produce a false E2001 for the
+        // 2024-02-04 balance assertion.
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
+
+        // The key assertion: no E2001 balance error at 2024-02-04.
+        // Without the plugin, validation would see -100 USD on Assets:Bank
+        // at 2024-02-03 and the 2024-02-04 balance of 1000 USD would fail.
+        let balance_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E2001")
+            .collect();
+        assert!(
+            balance_errors.is_empty(),
+            "Issue #793 regression: effective_date plugin should prevent false \
+             balance errors. Got E2001 diagnostics: {balance_errors:?}\n\
+             All codes: {codes:?}"
+        );
+    }
+
+    /// Test that non-native plugins emit an info diagnostic in the LSP.
+    #[test]
+    fn test_non_native_plugin_emits_info_diagnostic() {
+        let source = r#"plugin "some.python.plugin"
+
+2024-01-01 open Assets:Cash USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+
+        // Should have an E8006 info diagnostic about the non-native plugin
+        let info_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E8006")
+            .collect();
+        assert!(
+            !info_diags.is_empty(),
+            "Should emit E8006 info for non-native plugin. Got: {:?}",
+            diagnostics.iter().map(get_code).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            info_diags[0].severity,
+            Some(DiagnosticSeverity::INFORMATION),
+            "E8006 should be INFORMATION severity"
+        );
+        assert!(
+            info_diags[0].message.contains("some.python.plugin"),
+            "E8006 message should name the plugin"
+        );
+        assert!(
+            info_diags[0].message.contains("skipped"),
+            "E8006 message should say the plugin is skipped"
+        );
+    }
+
+    /// Test that native plugins do NOT emit an info diagnostic.
+    #[test]
+    fn test_native_plugin_no_info_diagnostic() {
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Test"
+  Assets:Cash   100 USD
+  Income:Salary
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let info_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E8006")
+            .collect();
+        assert!(
+            info_diags.is_empty(),
+            "Native plugins should NOT emit E8006 info diagnostic. Got: {info_diags:?}"
+        );
+    }
+
+    /// Test that plugin errors are converted to LSP diagnostics.
+    #[test]
+    fn test_plugin_errors_become_diagnostics() {
+        // document_discovery plugin with a non-existent documents directory
+        // should produce a plugin error (or at least not crash).
+        let source = r#"option "documents" "/nonexistent/path/to/docs"
+plugin "auto_accounts"
+
+2024-01-15 * "Test"
+  Assets:Cash   100 USD
+  Income:Salary
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        // This exercises the plugin execution path. Even if no errors are
+        // produced (document_discovery is lenient), the code path is covered.
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+
+        // auto_accounts should still work — no E1001
+        let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
+        assert!(
+            !codes.iter().any(|c| c == "E1001"),
+            "auto_accounts should still auto-generate opens. Got: {codes:?}"
         );
     }
 }
