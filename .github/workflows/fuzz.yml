@@ -1,7 +1,7 @@
-# Fuzzing workflow - continuous fuzzing for parser and query engine
+# Fuzzing workflow - continuous fuzzing for parser, query engine, and booking engine
 #
 # Runs on:
-# - PRs that touch parser/query code (10 min per target)
+# - PRs that touch parser/query/booking code (10 min per target)
 # - Nightly schedule (30 min per target)
 # - Manual trigger with configurable duration
 #
@@ -12,6 +12,7 @@ on:
     paths:
       - 'crates/rustledger-parser/**'
       - 'crates/rustledger-query/**'
+      - 'crates/rustledger-booking/**'
   schedule:
     # Nightly at 4 AM UTC
     - cron: '0 4 * * *'
@@ -32,6 +33,7 @@ on:
           - fuzz_parse
           - fuzz_parse_line
           - fuzz_query_parse
+          - fuzz_booking
 
 permissions:
   contents: read
@@ -62,8 +64,6 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
-        with:
-          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly
@@ -163,8 +163,6 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
-        with:
-          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly
@@ -244,4 +242,103 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           tail -20 crates/rustledger-query/fuzz-output.txt >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  fuzz-booking:
+    name: Fuzz Booking (fuzz_booking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
+
+      - name: Check if target should run
+        id: check
+        run: |
+          INPUT_TARGET="${{ github.event.inputs.target || 'all' }}"
+          if [ "$INPUT_TARGET" = "all" ] || [ "$INPUT_TARGET" = "fuzz_booking" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
+        if: steps.check.outputs.should_run == 'true'
+        with:
+          toolchain: nightly
+
+      - name: Install cargo-fuzz
+        if: steps.check.outputs.should_run == 'true'
+        run: cargo install cargo-fuzz
+
+      - name: Restore corpus cache
+        if: steps.check.outputs.should_run == 'true'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: crates/rustledger-booking/fuzz/corpus/fuzz_booking
+          key: fuzz-corpus-booking-${{ github.sha }}
+          restore-keys: |
+            fuzz-corpus-booking-
+
+      - name: Determine fuzz duration
+        if: steps.check.outputs.should_run == 'true'
+        id: duration
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            # Nightly: 30 minutes
+            echo "seconds=1800" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual: use input or default 10 minutes
+            echo "seconds=${{ github.event.inputs.duration || '600' }}" >> $GITHUB_OUTPUT
+          else
+            # PR: 10 minutes
+            echo "seconds=600" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run fuzzer
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-booking
+          echo "Running fuzz_booking for ${{ steps.duration.outputs.seconds }} seconds..."
+          cargo +nightly fuzz run fuzz_booking -- \
+            -max_total_time=${{ steps.duration.outputs.seconds }} \
+            -max_len=1024 \
+            -print_final_stats=1 \
+            2>&1 | tee fuzz-output.txt
+
+      - name: Check for crashes
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          cd crates/rustledger-booking
+          if [ -d "fuzz/artifacts/fuzz_booking" ] && [ "$(ls -A fuzz/artifacts/fuzz_booking)" ]; then
+            echo "::error::Fuzzer found crashes!"
+            ls -la fuzz/artifacts/fuzz_booking/
+            exit 1
+          else
+            echo "No crashes found"
+          fi
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: crashes-fuzz_booking
+          path: crates/rustledger-booking/fuzz/artifacts/fuzz_booking/
+
+      - name: Upload corpus
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'schedule'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7
+        with:
+          name: corpus-fuzz_booking
+          path: crates/rustledger-booking/fuzz/corpus/fuzz_booking/
+          retention-days: 7
+
+      - name: Summary
+        if: steps.check.outputs.should_run == 'true'
+        run: |
+          echo "## Fuzz Results: fuzz_booking" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Duration: ${{ steps.duration.outputs.seconds }} seconds" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -20 crates/rustledger-booking/fuzz-output.txt >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
