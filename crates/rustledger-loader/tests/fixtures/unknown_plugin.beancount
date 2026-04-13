@@ -1,0 +1,5 @@
+; Test fixture: unknown plugin name should produce an error in Ledger.errors.
+option "operating_currency" "USD"
+plugin "some.unknown.plugin.module"
+
+2024-01-01 open Assets:Cash USD

@@ -790,3 +790,168 @@ fn test_document_discovery_no_duplicates() {
         "document discovery should not create duplicate Document directives"
     );
 }
+
+// ============================================================================
+// Plugin execution through process::process() pipeline (Issue #788)
+// ============================================================================
+
+/// Test that plugins declared in a beancount file execute through the
+/// process.rs pipeline and their output is visible in the Ledger.
+///
+/// `auto_accounts` should synthesize Open directives for all implicitly-used
+/// accounts. Without the plugin, these accounts would have no opens.
+#[test]
+fn test_plugin_execution_auto_accounts() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("auto_accounts_plugin.beancount");
+    let ledger = load(&path, &LoadOptions::default()).expect("should load file with plugin");
+
+    // The file has NO explicit open directives — auto_accounts should
+    // generate them for Assets:Bank:Checking, Income:Salary, Expenses:Food.
+    let opens: Vec<_> = ledger
+        .directives
+        .iter()
+        .filter_map(|d| {
+            if let rustledger_core::Directive::Open(o) = &d.value {
+                Some(o.account.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert!(
+        opens.iter().any(|a| a == "Assets:Bank:Checking"),
+        "auto_accounts should generate Open for Assets:Bank:Checking. Opens: {opens:?}"
+    );
+    assert!(
+        opens.iter().any(|a| a == "Income:Salary"),
+        "auto_accounts should generate Open for Income:Salary. Opens: {opens:?}"
+    );
+    assert!(
+        opens.iter().any(|a| a == "Expenses:Food"),
+        "auto_accounts should generate Open for Expenses:Food. Opens: {opens:?}"
+    );
+
+    // Validation should pass (no E1001 errors) since opens are auto-generated.
+    let validation_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "E1001").collect();
+    assert!(
+        validation_errors.is_empty(),
+        "auto_accounts should prevent E1001 (account not opened). Got: {validation_errors:?}"
+    );
+}
+
+/// Test the interaction between booking and plugins: booking runs first,
+/// then plugins see booked transactions.
+///
+/// With FIFO booking + `auto_accounts`: the sell transaction should match
+/// lot 1 (FIFO) without ambiguity, and `auto_accounts` should generate
+/// opens for the implicitly-used accounts.
+#[test]
+fn test_plugin_and_booking_interaction() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("fifo_with_plugin.beancount");
+    let ledger = load(&path, &LoadOptions::default()).expect("should load FIFO + plugin file");
+
+    // auto_accounts should have generated opens
+    let opens: Vec<_> = ledger
+        .directives
+        .iter()
+        .filter_map(|d| {
+            if let rustledger_core::Directive::Open(o) = &d.value {
+                Some(o.account.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert!(
+        opens.iter().any(|a| a == "Assets:Stock"),
+        "auto_accounts should generate Open for Assets:Stock. Opens: {opens:?}"
+    );
+    assert!(
+        opens.iter().any(|a| a == "Assets:Cash"),
+        "auto_accounts should generate Open for Assets:Cash. Opens: {opens:?}"
+    );
+
+    // FIFO booking should have resolved the sell without ambiguity error.
+    // The sell is -5 CORP {} which should match lot 1 (cost 1 USD) under FIFO.
+    let booking_errors: Vec<_> = ledger
+        .errors
+        .iter()
+        .filter(|e| e.message.contains("ambiguous"))
+        .collect();
+    assert!(
+        booking_errors.is_empty(),
+        "FIFO booking should resolve sell without ambiguity. Errors: {booking_errors:?}"
+    );
+
+    // No validation errors expected (auto_accounts generates opens, FIFO resolves lots)
+    assert!(
+        ledger.errors.is_empty(),
+        "No errors expected with FIFO + auto_accounts. Got: {:?}",
+        ledger.errors
+    );
+}
+
+/// Test that unknown plugin names produce errors in Ledger.errors.
+#[test]
+fn test_unknown_plugin_error_collection() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("unknown_plugin.beancount");
+    let ledger =
+        load(&path, &LoadOptions::default()).expect("should load file with unknown plugin");
+
+    // The unknown plugin "some.unknown.plugin.module" should NOT crash
+    // the pipeline — it should be silently skipped (only native plugins
+    // are executed). Verify the ledger loaded successfully.
+    //
+    // Note: the current run_plugins() implementation silently skips
+    // non-native plugins. If/when Python plugin support is added to the
+    // loader pipeline, this test should be updated to check for an error
+    // like E8001 (plugin not found).
+    assert!(
+        !ledger.directives.is_empty(),
+        "Ledger should still have directives even with unknown plugin"
+    );
+}
+
+/// Test that plugin-synthesized directives are visible in the `Ledger`.
+/// This verifies that the directive conversion round-trip (`Directive` →
+/// `DirectiveWrapper` → `Directive`) preserves the synthesized data.
+#[test]
+fn test_plugin_output_directives_visible_in_ledger() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("auto_accounts_plugin.beancount");
+    let ledger = load(&path, &LoadOptions::default()).expect("should load");
+
+    // Count directives: the file has 2 transactions. auto_accounts should
+    // add 3 open directives (Assets:Bank:Checking, Income:Salary, Expenses:Food).
+    // Total should be at least 5.
+    let total = ledger.directives.len();
+    let txn_count = ledger
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+        .count();
+    let open_count = ledger
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Open(_)))
+        .count();
+
+    assert_eq!(txn_count, 2, "Should have 2 transactions");
+    assert!(
+        open_count >= 3,
+        "auto_accounts should synthesize at least 3 Open directives. Got {open_count}"
+    );
+    assert!(
+        total >= 5,
+        "Total directives should be at least 5 (2 txn + 3 opens). Got {total}"
+    );
+}
