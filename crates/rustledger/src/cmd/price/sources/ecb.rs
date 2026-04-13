@@ -30,6 +30,9 @@ pub struct EcbSource {}
 
 impl EcbSource {
     /// Create a new ECB source.
+    ///
+    /// The timeout parameter is accepted for API consistency but not
+    /// currently applied to HTTP requests.
     pub const fn new(_timeout: Duration) -> Self {
         Self {}
     }

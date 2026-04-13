@@ -24,6 +24,9 @@ pub struct CoinbaseSource {}
 
 impl CoinbaseSource {
     /// Create a new Coinbase source.
+    ///
+    /// The timeout parameter is accepted for API consistency but not
+    /// currently applied to HTTP requests.
     pub const fn new(_timeout: Duration) -> Self {
         Self {}
     }

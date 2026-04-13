@@ -8,9 +8,9 @@ use std::path::PathBuf;
 pub fn project_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
-        .unwrap()
+        .expect("CARGO_MANIFEST_DIR should have a parent (crates/)")
         .parent()
-        .unwrap()
+        .expect("crates/ should have a parent (workspace root)")
         .to_path_buf()
 }
 
@@ -43,6 +43,8 @@ pub fn rledger_binary() -> Option<PathBuf> {
 }
 
 /// Skip tests when rledger binary is not available.
+///
+/// Requires `mod common;` to be declared in the test file.
 #[macro_export]
 macro_rules! require_rledger {
     () => {

@@ -30,6 +30,9 @@ pub struct OandaSource {}
 
 impl OandaSource {
     /// Create a new OANDA source.
+    ///
+    /// The timeout parameter is accepted for API consistency but not
+    /// currently applied to HTTP requests.
     pub const fn new(_timeout: Duration) -> Self {
         Self {}
     }
