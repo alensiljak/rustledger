@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- match beancount error message wording (4 cases)
+- *(query)* improve BQL function dispatch for aggregate context
+- *(query)* fix count(*) and add GROUP BY aggregate support for table queries
+- resolve SELECT aliases in GROUP BY for table aggregate queries
+- address Copilot review feedback on count(*) and aggregates
+- *(query)* allow ORDER BY on expressions not in SELECT
+- address Copilot review feedback on ORDER BY hidden columns
+- *(query)* add open_date, close_date, open_meta, meta to table path
+- address Copilot review — META type validation and tests
+- *(query)* apply SQL truthiness in WHERE clause and boolean operators
+
+### Features
+
+- migrate from archived ariadne to miette for error diagnostics
+
+### Performance
+
+- *(query)* Fix rust-skills CRITICAL and HIGH issues
+
 ## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.1...v0.11.0) - 2026-04-02
 
 ### Bug Fixes
