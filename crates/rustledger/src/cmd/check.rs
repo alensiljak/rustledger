@@ -3,20 +3,19 @@
 use crate::cmd::completions::ShellType;
 use crate::report::{self, SourceCache};
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
 use clap::{Parser, ValueEnum};
-use rustledger_booking::{BookingEngine, InterpolationError};
-use rustledger_core::{BookingMethod, Directive};
+use rustledger_core::Directive;
 use rustledger_loader::{
-    CacheEntry, CachedOptions, CachedPlugin, LoadError, LoadResult, Loader, load_cache_entry,
+    CacheEntry, CachedOptions, CachedPlugin, LoadError, Loader, load_cache_entry,
     reintern_directives, save_cache_entry,
 };
+use rustledger_plugin::NativePluginRegistry;
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::PluginManager;
 #[cfg(feature = "python-plugin-wasm")]
 use rustledger_plugin::python::{PythonRuntime, is_python_available, suggest_module_path};
-use rustledger_plugin::{NativePluginRegistry, PluginInput, PluginOptions};
-use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
+#[cfg(feature = "python-plugin-wasm")]
+use rustledger_plugin::{PluginInput, PluginOptions};
 use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -520,7 +519,9 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     }
     error_count += option_error_count;
 
-    // Validate plugins declared in the beancount file and categorize them
+    // Validate plugins declared in the beancount file. Native plugins are
+    // handled by process::process() below. Non-native plugins (Python modules,
+    // WASM files) are collected here for post-process execution.
     let native_registry = NativePluginRegistry::new();
     #[cfg(feature = "python-plugin-wasm")]
     let mut python_plugins_to_run: Vec<rustledger_loader::Plugin> = Vec::new();
@@ -530,28 +531,8 @@ pub fn run(args: &Args) -> Result<ExitCode> {
     let beancount_dir = file.parent().unwrap_or(std::path::Path::new("."));
 
     for plugin in &load_result.plugins {
-        // Check if it's a WASM plugin (by file extension) - route to WASM runtime
-        #[cfg(feature = "python-plugin-wasm")]
-        {
-            let is_wasm_file = std::path::Path::new(&plugin.name)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("wasm"));
-
-            if is_wasm_file {
-                // Resolve path relative to beancount file's directory
-                let wasm_path = if std::path::Path::new(&plugin.name).is_absolute() {
-                    PathBuf::from(&plugin.name)
-                } else {
-                    beancount_dir.join(&plugin.name)
-                };
-                wasm_plugins_from_file.push((wasm_path, plugin.config.clone()));
-                continue;
-            }
-        }
-
-        // Check if it's a known native plugin
+        // Check if it's a known native plugin — process::process() will run it
         let is_native = native_registry.find(&plugin.name).is_some();
-        // Check for common beancount.plugins.* that we support as native
         let is_supported_beancount_plugin = plugin.name.starts_with("beancount.plugins.")
             && native_registry
                 .find(
@@ -562,394 +543,278 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                 )
                 .is_some();
 
-        // Determine if we should use Python for this plugin
-        let use_python = plugin.force_python || (!is_native && !is_supported_beancount_plugin);
+        if is_native || is_supported_beancount_plugin {
+            continue; // Will be executed by process::process()
+        }
 
-        if use_python {
-            #[cfg(feature = "python-plugin-wasm")]
-            {
-                // Check if it's a file-based plugin (can be executed directly)
-                let is_py_file = std::path::Path::new(&plugin.name)
-                    .extension()
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
-                let is_file_based = is_py_file || plugin.name.contains(std::path::MAIN_SEPARATOR);
-
-                if is_file_based {
-                    // File-based Python plugins can be executed in WASM sandbox
-                    python_plugins_to_run.push(plugin.clone());
+        // Non-native plugin: categorize as WASM, file-based Python, or unknown
+        #[cfg(feature = "python-plugin-wasm")]
+        {
+            // WASM plugin — collect for post-process execution
+            let is_wasm = std::path::Path::new(&plugin.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("wasm"));
+            if is_wasm {
+                let wasm_path = if std::path::Path::new(&plugin.name).is_absolute() {
+                    PathBuf::from(&plugin.name)
                 } else {
-                    // Module-based plugin - we can't resolve it without system Python
-                    let (line, file_path) =
-                        if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
-                            let (l, _) = source_file.line_col(plugin.span.start);
-                            (l, source_file.path.clone())
-                        } else {
-                            (1, file.clone())
-                        };
-
-                    // Try to find the module path using system Python (for helpful error only)
-                    let suggestion = if is_python_available() {
-                        suggest_module_path(&plugin.name)
-                    } else {
-                        None
-                    };
-
-                    let (code, message) = if let Some(module_path) = &suggestion {
-                        (
-                            "E8004".to_string(),
-                            format!(
-                                "Cannot resolve Python module '{}'. Replace with: plugin \"{}\"",
-                                plugin.name, module_path
-                            ),
-                        )
-                    } else {
-                        (
-                            "E8001".to_string(),
-                            format!("Plugin not found: \"{}\"", plugin.name),
-                        )
-                    };
-
-                    if json_mode {
-                        diagnostics.push(JsonDiagnostic {
-                            file: file_path.display().to_string(),
-                            line,
-                            column: 1,
-                            end_line: line,
-                            end_column: 1,
-                            severity: "error".to_string(),
-                            phase: "plugin".to_string(),
-                            code,
-                            message,
-                            hint: suggestion.map(|m| format!("plugin \"{m}\"")),
-                            context: None,
-                        });
-                    } else if !args.quiet {
-                        let path_str = file_path.display();
-                        let plugin_name = &plugin.name;
-                        if let Some(module_path) = &suggestion {
-                            writeln!(
-                                stdout,
-                                "{path_str}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
-                            )?;
-                            writeln!(stdout)?;
-                            writeln!(stdout, "Replace line {line}:")?;
-                            writeln!(stdout, "  plugin \"{plugin_name}\"")?;
-                            writeln!(stdout, "with:")?;
-                            writeln!(stdout, "  plugin \"{module_path}\"")?;
-                        } else {
-                            writeln!(
-                                stdout,
-                                "{path_str}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
-                            )?;
-                        }
-                    }
-                    error_count += 1;
-                }
+                    beancount_dir.join(&plugin.name)
+                };
+                wasm_plugins_from_file.push((wasm_path, plugin.config.clone()));
+                continue;
             }
-            #[cfg(not(feature = "python-plugin-wasm"))]
-            {
-                // Python plugins not supported in this build
-                let (line, _column, file_path) =
-                    if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
-                        let (l, c) = source_file.line_col(plugin.span.start);
-                        (l, c, source_file.path.clone())
-                    } else {
-                        (1, 1, file.clone())
-                    };
 
-                if json_mode {
-                    diagnostics.push(JsonDiagnostic {
-                        file: file_path.display().to_string(),
-                        line,
-                        column: 1,
-                        end_line: line,
-                        end_column: 1,
-                        severity: "error".to_string(),
-                        phase: "plugin".to_string(),
-                        code: "E8005".to_string(),
-                        message: format!(
-                            "Python plugin \"{}\" requires python-plugin-wasm feature",
-                            plugin.name
-                        ),
-                        hint: None,
-                        context: None,
-                    });
-                } else if !args.quiet {
+            // File-based Python plugin — collect for post-process execution
+            let is_py_file = std::path::Path::new(&plugin.name)
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("py"));
+            let is_file_based = is_py_file || plugin.name.contains(std::path::MAIN_SEPARATOR);
+            if is_file_based {
+                python_plugins_to_run.push(plugin.clone());
+                continue;
+            }
+        }
+
+        // Python/unknown plugin — report error with helpful message
+        let (line, file_path) =
+            if let Some(source_file) = load_result.source_map.get(plugin.file_id) {
+                let (l, _) = source_file.line_col(plugin.span.start);
+                (l, source_file.path.clone())
+            } else {
+                (1, file.clone())
+            };
+
+        #[cfg(feature = "python-plugin-wasm")]
+        {
+            let suggestion = if is_python_available() {
+                suggest_module_path(&plugin.name)
+            } else {
+                None
+            };
+
+            let (code, message) = if let Some(module_path) = &suggestion {
+                (
+                    "E8004".to_string(),
+                    format!(
+                        "Cannot resolve Python module '{}'. Replace with: plugin \"{}\"",
+                        plugin.name, module_path
+                    ),
+                )
+            } else {
+                (
+                    "E8001".to_string(),
+                    format!("Plugin not found: \"{}\"", plugin.name),
+                )
+            };
+
+            if json_mode {
+                diagnostics.push(JsonDiagnostic {
+                    file: file_path.display().to_string(),
+                    line,
+                    column: 1,
+                    end_line: line,
+                    end_column: 1,
+                    severity: "error".to_string(),
+                    phase: "plugin".to_string(),
+                    code,
+                    message,
+                    hint: suggestion.map(|m| format!("plugin \"{m}\"")),
+                    context: None,
+                });
+            } else if !args.quiet {
+                let path_str = file_path.display();
+                let plugin_name = &plugin.name;
+                if let Some(module_path) = &suggestion {
                     writeln!(
                         stdout,
-                        "{}:{}: error[E8005]: Python plugin \"{}\" requires python-plugin-wasm feature",
-                        file_path.display(),
-                        line,
-                        plugin.name
+                        "{path_str}:{line}: error[E8004]: Cannot resolve Python module '{plugin_name}'",
+                    )?;
+                    writeln!(stdout)?;
+                    writeln!(stdout, "Replace line {line}:")?;
+                    writeln!(stdout, "  plugin \"{plugin_name}\"")?;
+                    writeln!(stdout, "with:")?;
+                    writeln!(stdout, "  plugin \"{module_path}\"")?;
+                } else {
+                    writeln!(
+                        stdout,
+                        "{path_str}:{line}: error[E8001]: Plugin not found: \"{plugin_name}\"",
                     )?;
                 }
-                error_count += 1;
             }
+            error_count += 1;
+        }
+        #[cfg(not(feature = "python-plugin-wasm"))]
+        {
+            if json_mode {
+                diagnostics.push(JsonDiagnostic {
+                    file: file_path.display().to_string(),
+                    line,
+                    column: 1,
+                    end_line: line,
+                    end_column: 1,
+                    severity: "error".to_string(),
+                    phase: "plugin".to_string(),
+                    code: "E8005".to_string(),
+                    message: format!(
+                        "Python plugin \"{}\" requires python-plugin-wasm feature",
+                        plugin.name
+                    ),
+                    hint: None,
+                    context: None,
+                });
+            } else if !args.quiet {
+                writeln!(
+                    stdout,
+                    "{}:{}: error[E8005]: Python plugin \"{}\" requires python-plugin-wasm feature",
+                    file_path.display(),
+                    line,
+                    plugin.name
+                )?;
+            }
+            error_count += 1;
         }
     }
 
-    // Destructure to enable move instead of clone
-    let LoadResult {
-        directives: mut spanned_directives,
-        options,
-        plugins: file_plugins,
-        source_map,
-        ..
-    } = load_result;
+    // === Delegate booking, native plugins, and validation to process::process() ===
+    //
+    // This is the single source of truth for the core pipeline (sort → book →
+    // native plugins → validate). check.rs handles: caching (above), load error
+    // reporting (above), plugin pre-validation (above), JSON formatting (below),
+    // and Python/WASM plugins (below). See #784 for rationale.
 
-    // Run booking and interpolation FIRST (before plugins)
-    // This matches Python beancount behavior where booking fills in missing amounts
-    // before plugins run. Plugins like gain_loss need the interpolated amounts.
-    if args.verbose && !args.quiet {
-        eprintln!(
-            "Booking and interpolating {} directives...",
-            spanned_directives.len()
-        );
-    }
+    // Build LoadOptions for the processing pipeline
+    let load_options = rustledger_loader::LoadOptions {
+        run_plugins: true,
+        auto_accounts: args.auto,
+        extra_plugins: args.native_plugins.clone(),
+        extra_plugin_configs: vec![None; args.native_plugins.len()],
+        validate: true,
+        ..Default::default()
+    };
 
-    // Sort directives by date before booking, so lot matching works correctly
-    spanned_directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
-    });
+    // Clear load errors from the result (already reported above with rich formatting)
+    let mut process_input = load_result;
+    process_input.errors.clear();
 
-    let booking_method: BookingMethod = options
-        .booking_method
-        .parse()
-        .unwrap_or(BookingMethod::Strict);
-    let mut booking_engine = BookingEngine::with_method(booking_method);
-    // Register per-account booking methods from Open directives so the
-    // booking engine uses the right method for each account (FIFO/LIFO/NONE/
-    // STRICT/etc.) instead of the engine-wide default for all accounts.
-    booking_engine.register_account_methods(spanned_directives.iter().map(|s| &s.value));
+    let ledger = rustledger_loader::process(process_input, &load_options)
+        .with_context(|| "processing pipeline failed")?;
 
-    let mut interpolation_errors: Vec<(NaiveDate, String, InterpolationError)> = Vec::new();
-    // Lot-matching errors raised by the booking layer (ambiguous lot match,
-    // no matching lot, insufficient units). Reported as E4xxx diagnostics.
-    let mut booking_errors: Vec<(NaiveDate, String, rustledger_booking::BookingError)> = Vec::new();
-    // Indices of transactions whose booking failed. These are filtered out of
-    // the validator's input below so that booking and the validator's own
-    // independent lot-matching pass don't double-report the same diagnostic.
-    let mut failed_booking_indices: std::collections::HashSet<usize> =
-        std::collections::HashSet::new();
-
-    for (idx, spanned) in spanned_directives.iter_mut().enumerate() {
+    // Normalize total prices (@@→@) AFTER validation to preserve exact totals for
+    // precise residual calculation.
+    let mut spanned_directives = ledger.directives;
+    for spanned in &mut spanned_directives {
         if let Directive::Transaction(txn) = &mut spanned.value {
-            match booking_engine.book_and_interpolate(txn) {
-                Ok(result) => {
-                    booking_engine.apply(&result.transaction);
-                    *txn = result.transaction;
-                }
-                Err(e) => {
-                    failed_booking_indices.insert(idx);
-                    match e {
-                        rustledger_booking::BookingError::Interpolation(interp_err) => {
-                            interpolation_errors.push((
-                                txn.date,
-                                txn.narration.to_string(),
-                                interp_err,
-                            ));
-                        }
-                        other @ rustledger_booking::BookingError::Inventory(_) => {
-                            booking_errors.push((txn.date, txn.narration.to_string(), other));
-                        }
-                    }
-                }
-            }
+            rustledger_booking::normalize_prices(txn);
         }
     }
 
-    // Drop failed-booking transactions from the validator's input. The
-    // validator runs its own lot-matching pass over the directives it
-    // receives, and we've already reported the booking failures above —
-    // including them in validation would emit a duplicate E4xxx diagnostic.
-    if !failed_booking_indices.is_empty() {
-        spanned_directives = spanned_directives
-            .into_iter()
-            .enumerate()
-            .filter(|(i, _)| !failed_booking_indices.contains(i))
-            .map(|(_, s)| s)
-            .collect();
-    }
+    let _source_map = ledger.source_map;
 
-    // Extract directives and spans in a single pass for efficiency
-    // We need the spans for validation error reporting
-    let (directives, directive_spans): (Vec<_>, Vec<(rustledger_parser::Span, u16)>) =
-        spanned_directives
-            .into_iter()
-            .map(|s| (s.value, (s.span, s.file_id)))
-            .unzip();
-
-    // Save account types before options are partially moved
-    let account_types: Vec<String> = options
-        .account_types()
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-
-    // Build list of native plugins to run from CLI args (with no config)
-    let mut native_plugins_to_run: Vec<(String, Option<String>)> = args
-        .native_plugins
-        .iter()
-        .map(|name| (name.clone(), None))
-        .collect();
-
-    // Also run plugins declared in the beancount file (if they're native)
-    for plugin in &file_plugins {
-        // Try with full name first, then without beancount.plugins. prefix
-        let plugin_name = if native_registry.find(&plugin.name).is_some() {
-            plugin.name.clone()
-        } else if let Some(short_name) = plugin.name.strip_prefix("beancount.plugins.") {
-            if native_registry.find(short_name).is_some() {
-                short_name.to_string()
-            } else {
-                continue; // Unknown plugin, already reported error above
-            }
-        } else {
-            continue; // Unknown plugin, already reported error above
+    // Convert process errors to diagnostics, using the phase field to
+    // split into parse/validate/plugin categories.
+    for err in &ledger.errors {
+        let severity_str = match err.severity {
+            rustledger_loader::ErrorSeverity::Error => "error",
+            rustledger_loader::ErrorSeverity::Warning => "warning",
         };
 
-        if !native_plugins_to_run.iter().any(|(n, _)| n == &plugin_name) {
-            native_plugins_to_run.push((plugin_name, plugin.config.clone()));
+        if json_mode {
+            diagnostics.push(JsonDiagnostic {
+                file: err
+                    .location
+                    .as_ref()
+                    .map_or_else(|| main_file_str.clone(), |l| l.file.display().to_string()),
+                line: err.location.as_ref().map_or(1, |l| l.line),
+                column: err.location.as_ref().map_or(1, |l| l.column),
+                end_line: err.location.as_ref().map_or(1, |l| l.line),
+                end_column: err.location.as_ref().map_or(1, |l| l.column),
+                severity: severity_str.to_string(),
+                phase: err.phase.clone(),
+                code: err.code.clone(),
+                message: err.message.clone(),
+                hint: None,
+                context: None,
+            });
+
+            match (err.severity, err.phase.as_str()) {
+                (rustledger_loader::ErrorSeverity::Error, "parse") => {
+                    parse_error_count += 1;
+                }
+                (rustledger_loader::ErrorSeverity::Error, "validate") => {
+                    validate_error_count += 1;
+                }
+                _ => {}
+            }
+        } else if !args.quiet {
+            if let Some(loc) = &err.location {
+                writeln!(
+                    stdout,
+                    "{}:{}: error[{}]: {}",
+                    loc.file.display(),
+                    loc.line,
+                    err.code,
+                    err.message
+                )?;
+            } else {
+                writeln!(
+                    stdout,
+                    "{}: error[{}]: {}",
+                    file.display(),
+                    err.code,
+                    err.message
+                )?;
+            }
+        }
+
+        if matches!(err.severity, rustledger_loader::ErrorSeverity::Error) {
+            error_count += 1;
         }
     }
+    let mut warning_count = ledger
+        .errors
+        .iter()
+        .filter(|e| matches!(e.severity, rustledger_loader::ErrorSeverity::Warning))
+        .count();
 
-    // If --auto is set, add auto-plugins
-    if args.auto
-        && !native_plugins_to_run
-            .iter()
-            .any(|(n, _)| n == "auto_accounts")
+    // === Run Python/WASM plugins as post-processing ===
+    // These are not handled by process::process() (which only runs native plugins).
+    #[cfg(feature = "python-plugin-wasm")]
+    if !python_plugins_to_run.is_empty()
+        || !wasm_plugins_from_file.is_empty()
+        || !args.plugins.is_empty()
     {
-        native_plugins_to_run.insert(0, ("auto_accounts".to_string(), None));
-    }
-
-    // Run plugins if specified
-    #[cfg(feature = "python-plugin-wasm")]
-    let has_wasm_plugins = !args.plugins.is_empty() || !wasm_plugins_from_file.is_empty();
-    #[cfg(not(feature = "python-plugin-wasm"))]
-    let has_wasm_plugins = false;
-    #[cfg(feature = "python-plugin-wasm")]
-    let has_python_plugins = !python_plugins_to_run.is_empty();
-    #[cfg(not(feature = "python-plugin-wasm"))]
-    let has_python_plugins = false;
-
-    // Declare spanned_directives before the plugin block so it's available afterwards.
-    // Allow useless_let_if_seq because refactoring this to an expression would make
-    // the code much harder to read given the complexity of both branches.
-    #[allow(clippy::useless_let_if_seq)]
-    let mut spanned_directives: Vec<rustledger_parser::Spanned<Directive>>;
-
-    if !native_plugins_to_run.is_empty() || has_wasm_plugins || has_python_plugins {
-        if args.verbose && !args.quiet {
-            eprintln!("Running plugins...");
-        }
-
-        // Convert directives to wrappers WITH source locations for proper error reporting
-        let wrappers: Vec<_> = directives
+        // Convert directives to wrappers for plugin execution
+        let wrappers: Vec<_> = spanned_directives
             .iter()
-            .zip(directive_spans.iter())
-            .map(|(directive, (span, file_id))| {
-                let (filename, lineno) = if let Some(file) = source_map.get(*file_id as usize) {
-                    let (line, _col) = file.line_col(span.start);
-                    (Some(file.path.display().to_string()), Some(line as u32))
-                } else {
-                    (None, None)
-                };
-                rustledger_plugin::directive_to_wrapper_with_location(directive, filename, lineno)
-            })
+            .map(|s| rustledger_plugin::directive_to_wrapper(&s.value))
             .collect();
 
-        let plugin_input = PluginInput {
+        let mut current_input = PluginInput {
             directives: wrappers,
             options: PluginOptions {
-                operating_currencies: options.operating_currency,
-                title: options.title,
+                operating_currencies: ledger.options.operating_currency.clone(),
+                title: ledger.options.title.clone(),
             },
             config: None,
         };
 
-        // native_registry already created above for plugin validation
-        let mut current_input = plugin_input;
-
-        for (plugin_name, plugin_config) in &native_plugins_to_run {
-            if let Some(plugin) = native_registry.find(plugin_name) {
-                if args.verbose && !args.quiet {
-                    eprintln!("  Running native plugin: {}", plugin.name());
-                }
-                // Set config for this specific plugin
-                let plugin_input = PluginInput {
-                    directives: current_input.directives.clone(),
-                    options: current_input.options.clone(),
-                    config: plugin_config.clone(),
-                };
-                let output = plugin.process(plugin_input);
-
-                for err in &output.errors {
-                    if json_mode {
-                        let severity = match err.severity {
-                            rustledger_plugin::PluginErrorSeverity::Error => "error",
-                            rustledger_plugin::PluginErrorSeverity::Warning => "warning",
-                        };
-                        diagnostics.push(JsonDiagnostic {
-                            file: main_file_str.clone(),
-                            line: 1,
-                            column: 1,
-                            end_line: 1,
-                            end_column: 1,
-                            severity: severity.to_string(),
-                            phase: "plugin".to_string(),
-                            code: "PLUGIN".to_string(),
-                            message: err.message.clone(),
-                            hint: None,
-                            context: Some(format!("plugin: {}", plugin.name())),
-                        });
-                    } else if !args.quiet {
-                        writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
-                    }
-                    match err.severity {
-                        rustledger_plugin::PluginErrorSeverity::Error => {
-                            error_count += 1;
-                        }
-                        rustledger_plugin::PluginErrorSeverity::Warning => {
-                            // Warnings don't increment error_count
-                        }
-                    }
-                }
-
-                current_input = PluginInput {
-                    directives: output.directives,
-                    options: current_input.options.clone(),
-                    config: None,
-                };
-            } else if !args.quiet {
-                writeln!(stdout, "warning: unknown native plugin: {plugin_name}")?;
-            }
-        }
-
-        // Run Python plugins (file-based only - module-based are rejected earlier)
-        #[cfg(feature = "python-plugin-wasm")]
+        // Run file-based Python plugins
         if !python_plugins_to_run.is_empty() {
-            // Lazily initialize Python runtime
             match PythonRuntime::new() {
                 Ok(runtime) => {
                     for plugin in &python_plugins_to_run {
                         if args.verbose && !args.quiet {
                             eprintln!("  Running Python plugin: {}", plugin.name);
                         }
-
-                        // Set config for this specific plugin
-                        let plugin_input = PluginInput {
+                        let input = PluginInput {
                             directives: current_input.directives.clone(),
                             options: current_input.options.clone(),
                             config: plugin.config.clone(),
                         };
-
-                        match runtime.execute_module(&plugin.name, &plugin_input, file.parent()) {
+                        match runtime.execute_module(&plugin.name, &input, file.parent()) {
                             Ok(output) => {
                                 for err in &output.errors {
-                                    let severity = match err.severity {
+                                    let sev = match err.severity {
                                         rustledger_plugin::PluginErrorSeverity::Error => "error",
                                         rustledger_plugin::PluginErrorSeverity::Warning => {
                                             "warning"
@@ -962,30 +827,26 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                             column: 1,
                                             end_line: 1,
                                             end_column: 1,
-                                            severity: severity.to_string(),
+                                            severity: sev.to_string(),
                                             phase: "plugin".to_string(),
                                             code: "PLUGIN".to_string(),
                                             message: err.message.clone(),
                                             hint: None,
-                                            context: Some(format!("plugin: {}", plugin.name)),
+                                            context: None,
                                         });
                                     } else if !args.quiet {
-                                        writeln!(stdout, "{severity}: {}", err.message)?;
+                                        writeln!(stdout, "{sev}: {}", err.message)?;
                                     }
                                     match err.severity {
                                         rustledger_plugin::PluginErrorSeverity::Error => {
                                             error_count += 1;
                                         }
                                         rustledger_plugin::PluginErrorSeverity::Warning => {
-                                            // Warnings don't increment error_count
+                                            warning_count += 1;
                                         }
                                     }
                                 }
-                                current_input = PluginInput {
-                                    directives: output.directives,
-                                    options: current_input.options.clone(),
-                                    config: None,
-                                };
+                                current_input.directives = output.directives;
                             }
                             Err(e) => {
                                 if json_mode {
@@ -1000,7 +861,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                                         code: "E8002".to_string(),
                                         message: format!("Python plugin execution failed: {e}"),
                                         hint: None,
-                                        context: Some(format!("plugin: {}", plugin.name)),
+                                        context: None,
                                     });
                                 } else if !args.quiet {
                                     writeln!(
@@ -1014,10 +875,9 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     }
                 }
                 Err(e) => {
-                    // E8003: Python runtime unavailable
                     if json_mode {
                         diagnostics.push(JsonDiagnostic {
-                            file: main_file_str.clone(),
+                            file: main_file_str,
                             line: 1,
                             column: 1,
                             end_line: 1,
@@ -1032,44 +892,73 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                     } else if !args.quiet {
                         writeln!(stdout, "error[E8003]: Python runtime unavailable: {e}")?;
                     }
-                    // Count all affected plugins as errors (the single
-                    // diagnostic represents them collectively, but the
-                    // error count reflects the number of plugins that
-                    // couldn't run).
                     error_count += python_plugins_to_run.len();
                 }
             }
         }
 
-        #[cfg(feature = "python-plugin-wasm")]
-        if !args.plugins.is_empty() || !wasm_plugins_from_file.is_empty() {
-            // Execute WASM plugins declared in beancount file (each with its own config)
-            for (plugin_path, config) in &wasm_plugins_from_file {
-                if args.verbose && !args.quiet {
-                    eprintln!("  Loading WASM plugin: {}", plugin_path.display());
+        // Run WASM plugins from file declarations
+        for (plugin_path, config) in &wasm_plugins_from_file {
+            if args.verbose && !args.quiet {
+                eprintln!("  Loading WASM plugin: {}", plugin_path.display());
+            }
+            let mut mgr = PluginManager::new();
+            if let Err(e) = mgr.load(plugin_path) {
+                if !args.quiet {
+                    writeln!(
+                        stdout,
+                        "error: failed to load WASM plugin {}: {e}",
+                        plugin_path.display()
+                    )?;
                 }
-                let mut plugin_manager = PluginManager::new();
-                if let Err(e) = plugin_manager.load(plugin_path) {
+                error_count += 1;
+                continue;
+            }
+            let input = PluginInput {
+                directives: current_input.directives.clone(),
+                options: current_input.options.clone(),
+                config: config.clone(),
+            };
+            match mgr.execute(0, &input) {
+                Ok(output) => {
+                    for err in &output.errors {
+                        if !args.quiet {
+                            writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
+                        }
+                        error_count += 1;
+                    }
+                    current_input.directives = output.directives;
+                }
+                Err(e) => {
                     if !args.quiet {
                         writeln!(
                             stdout,
-                            "error: failed to load WASM plugin {}: {}",
-                            plugin_path.display(),
-                            e
+                            "error: WASM plugin {} execution failed: {e}",
+                            plugin_path.display()
                         )?;
                     }
                     error_count += 1;
-                    continue;
                 }
+            }
+        }
 
-                // Execute with this plugin's config
-                let plugin_input = PluginInput {
-                    directives: current_input.directives.clone(),
-                    options: current_input.options.clone(),
-                    config: config.clone(),
-                };
-
-                match plugin_manager.execute(0, &plugin_input) {
+        // Run WASM plugins from CLI --plugin flag
+        if !args.plugins.is_empty() {
+            let mut wasm_mgr = PluginManager::new();
+            for plugin_path in &args.plugins {
+                if let Err(e) = wasm_mgr.load(plugin_path) {
+                    if !args.quiet {
+                        writeln!(
+                            stdout,
+                            "error: failed to load WASM plugin {}: {e}",
+                            plugin_path.display()
+                        )?;
+                    }
+                    error_count += 1;
+                }
+            }
+            if !wasm_mgr.is_empty() {
+                match wasm_mgr.execute_all(current_input) {
                     Ok(output) => {
                         for err in &output.errors {
                             if !args.quiet {
@@ -1077,291 +966,21 @@ pub fn run(args: &Args) -> Result<ExitCode> {
                             }
                             error_count += 1;
                         }
-                        current_input.directives = output.directives;
+                        // current_input.directives = output.directives;
                     }
                     Err(e) => {
                         if !args.quiet {
-                            writeln!(
-                                stdout,
-                                "error: WASM plugin {} execution failed: {e}",
-                                plugin_path.display()
-                            )?;
+                            writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
                         }
                         error_count += 1;
                     }
                 }
             }
-
-            // Execute WASM plugins from CLI --plugin flag (no config)
-            if !args.plugins.is_empty() {
-                let mut wasm_manager = PluginManager::new();
-                for plugin_path in &args.plugins {
-                    if args.verbose && !args.quiet {
-                        eprintln!("  Loading WASM plugin: {}", plugin_path.display());
-                    }
-                    if let Err(e) = wasm_manager.load(plugin_path) {
-                        if !args.quiet {
-                            writeln!(
-                                stdout,
-                                "error: failed to load WASM plugin {}: {}",
-                                plugin_path.display(),
-                                e
-                            )?;
-                        }
-                        error_count += 1;
-                    }
-                }
-
-                if !wasm_manager.is_empty() {
-                    if args.verbose && !args.quiet {
-                        eprintln!("  Executing {} WASM plugin(s)...", wasm_manager.len());
-                    }
-
-                    match wasm_manager.execute_all(current_input.clone()) {
-                        Ok(output) => {
-                            for err in &output.errors {
-                                if !args.quiet {
-                                    writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
-                                }
-                                error_count += 1;
-                            }
-
-                            current_input = PluginInput {
-                                directives: output.directives,
-                                options: current_input.options.clone(),
-                                config: None,
-                            };
-                        }
-                        Err(e) => {
-                            if !args.quiet {
-                                writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
-                            }
-                            error_count += 1;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Convert wrappers back to Spanned directives, preserving source locations.
-        // This matches the pattern in process.rs - convert per-wrapper in the loop
-        // to handle errors properly and reconstruct spans from filename/lineno.
-        let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
-            .files()
-            .iter()
-            .map(|f| (f.path.display().to_string(), f.id as u16))
-            .collect();
-
-        let mut spanned_directives_from_plugins: Vec<rustledger_parser::Spanned<Directive>> =
-            Vec::new();
-        for wrapper in &current_input.directives {
-            // Convert wrapper to directive
-            let directive = match rustledger_plugin::wrapper_to_directive(wrapper) {
-                Ok(d) => d,
-                Err(e) => {
-                    if !args.quiet {
-                        writeln!(stdout, "error: failed to convert plugin output: {e}")?;
-                    }
-                    error_count += 1;
-                    continue;
-                }
-            };
-
-            // Reconstruct span from wrapper's filename/lineno
-            let (span, file_id) =
-                if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
-                    if let Some(&fid) = filename_to_file_id.get(filename) {
-                        if let Some(file) = source_map.get(fid as usize) {
-                            let span_start = file.line_start(lineno as usize).unwrap_or(0);
-                            (rustledger_parser::Span::new(span_start, span_start), fid)
-                        } else {
-                            (rustledger_parser::Span::new(0, 0), 0)
-                        }
-                    } else {
-                        // Unknown file (plugin-generated) - use zero span
-                        (rustledger_parser::Span::new(0, 0), 0)
-                    }
-                } else {
-                    // No location info - use zero span
-                    (rustledger_parser::Span::new(0, 0), 0)
-                };
-
-            spanned_directives_from_plugins.push(
-                rustledger_parser::Spanned::new(directive, span).with_file_id(file_id as usize),
-            );
-        }
-
-        // Use the reconstructed spanned directives
-        spanned_directives = spanned_directives_from_plugins;
-    } else {
-        // No plugins ran - restore original spanned directives from directive_spans
-        spanned_directives = directives
-            .into_iter()
-            .zip(directive_spans)
-            .map(|(d, (span, file_id))| {
-                rustledger_parser::Spanned::new(d, span).with_file_id(file_id as usize)
-            })
-            .collect();
-    }
-
-    // Report interpolation errors from booking (which ran before plugins)
-    if !interpolation_errors.is_empty() {
-        if json_mode {
-            for (date, narration, err) in &interpolation_errors {
-                diagnostics.push(JsonDiagnostic {
-                    file: main_file_str.clone(),
-                    line: 1, // Transaction dates don't have line numbers yet
-                    column: 1,
-                    end_line: 1,
-                    end_column: 1,
-                    severity: "error".to_string(),
-                    phase: "validate".to_string(),
-                    code: "INTERP".to_string(),
-                    message: format!("{err}"),
-                    hint: None,
-                    context: Some(format!("{date}, \"{narration}\"")),
-                });
-            }
-            validate_error_count += interpolation_errors.len();
-        } else if !args.quiet {
-            for (date, narration, err) in &interpolation_errors {
-                writeln!(stdout, "error[INTERP]: {err} ({date}, \"{narration}\")")?;
-                writeln!(stdout)?;
-            }
-        }
-    }
-    error_count += interpolation_errors.len();
-
-    // Report booking errors (ambiguous lot match, no matching lot, insufficient
-    // units) propagated from the booking engine. These map to validation-phase
-    // E4xxx codes per spec/core/validation.md.
-    if !booking_errors.is_empty() {
-        let code_for = |err: &rustledger_booking::BookingError| -> &'static str {
-            match err {
-                rustledger_booking::BookingError::Inventory(inv_err) => match &inv_err.error {
-                    rustledger_core::BookingError::AmbiguousMatch { .. } => "E4003",
-                    rustledger_core::BookingError::NoMatchingLot { .. } => "E4001",
-                    rustledger_core::BookingError::InsufficientUnits { .. } => "E4002",
-                    rustledger_core::BookingError::CurrencyMismatch { .. } => "E4001",
-                },
-                rustledger_booking::BookingError::Interpolation(_) => "INTERP",
-            }
-        };
-        if json_mode {
-            for (date, narration, err) in &booking_errors {
-                diagnostics.push(JsonDiagnostic {
-                    file: main_file_str.clone(),
-                    line: 1,
-                    column: 1,
-                    end_line: 1,
-                    end_column: 1,
-                    severity: "error".to_string(),
-                    phase: "validate".to_string(),
-                    code: code_for(err).to_string(),
-                    message: format!("{err}"),
-                    hint: None,
-                    context: Some(format!("{date}, \"{narration}\"")),
-                });
-            }
-            validate_error_count += booking_errors.len();
-        } else if !args.quiet {
-            for (date, narration, err) in &booking_errors {
-                writeln!(
-                    stdout,
-                    "error[{}]: {err} ({date}, \"{narration}\")",
-                    code_for(err)
-                )?;
-                writeln!(stdout)?;
-            }
-        }
-    }
-    error_count += booking_errors.len();
-
-    // Validate the directives
-    if args.verbose && !args.quiet {
-        eprintln!("Validating {} directives...", spanned_directives.len());
-    }
-
-    // Build validation options with account types from loader options
-    // Set document_base to the file's directory for relative path resolution
-    let document_base = file.parent().map(std::path::Path::to_path_buf);
-    let validation_options = ValidationOptions {
-        account_types,
-        document_base,
-        infer_tolerance_from_cost: options.infer_tolerance_from_cost,
-        tolerance_multiplier: options.inferred_tolerance_multiplier,
-        inferred_tolerance_default: options.inferred_tolerance_default,
-        ..Default::default()
-    };
-    let validation_errors = validate_spanned_with_options(&spanned_directives, validation_options);
-
-    // Normalize total prices (@@→@) AFTER validation to preserve exact totals for
-    // precise residual calculation. The booking step preserves Total prices so that
-    // balance checking uses the original total directly, avoiding division-then-
-    // multiplication precision loss.
-    for spanned in &mut spanned_directives {
-        if let Directive::Transaction(txn) = &mut spanned.value {
-            rustledger_booking::normalize_prices(txn);
-        }
-    }
-
-    let local_validation_error_count = validation_errors
-        .iter()
-        .filter(|e| !e.code.is_warning())
-        .count();
-    let validation_warning_count = validation_errors
-        .iter()
-        .filter(|e| e.code.is_warning())
-        .count();
-    error_count += local_validation_error_count;
-
-    if !validation_errors.is_empty() {
-        if json_mode {
-            let mut parse_phase_errors = 0usize;
-            for err in &validation_errors {
-                let severity = if err.code.is_warning() {
-                    "warning"
-                } else {
-                    "error"
-                };
-                let is_parse_phase = err.code.is_parse_phase();
-                if is_parse_phase && !err.code.is_warning() {
-                    parse_phase_errors += 1;
-                }
-                diagnostics.push(JsonDiagnostic {
-                    file: main_file_str.clone(),
-                    line: 1, // Validation errors don't have precise locations yet
-                    column: 1,
-                    end_line: 1,
-                    end_column: 1,
-                    severity: severity.to_string(),
-                    phase: if is_parse_phase {
-                        "parse".to_string()
-                    } else {
-                        "validate".to_string()
-                    },
-                    code: err.code.code().to_string(),
-                    message: err.message.clone(),
-                    hint: None,
-                    context: Some(format!("{}", err.date)),
-                });
-            }
-            parse_error_count += parse_phase_errors;
-            validate_error_count += local_validation_error_count - parse_phase_errors;
-        } else if !args.quiet {
-            report::report_validation_errors(
-                &validation_errors,
-                &source_map,
-                &cache,
-                &mut stdout,
-                use_color,
-            )?;
         }
     }
 
     // Print summary / output
     let elapsed = start.elapsed();
-    let warning_count = validation_warning_count;
 
     if json_mode {
         let output = JsonOutput {

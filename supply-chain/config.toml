@@ -52,6 +52,9 @@ audit-as-crates-io = false
 [policy.rustledger-plugin]
 audit-as-crates-io = false
 
+[policy.rustledger-plugin-types]
+audit-as-crates-io = false
+
 [policy.rustledger-query]
 audit-as-crates-io = false
 

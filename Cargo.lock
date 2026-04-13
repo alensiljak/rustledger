@@ -3247,6 +3247,7 @@ dependencies = [
  "rustledger-core",
  "rustledger-loader",
  "rustledger-parser",
+ "rustledger-plugin",
  "rustledger-validate",
  "serde",
  "serde_json",

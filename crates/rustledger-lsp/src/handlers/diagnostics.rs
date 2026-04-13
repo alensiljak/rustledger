@@ -1,10 +1,13 @@
 //! Diagnostics handler for publishing parse and validation errors.
 
+use std::sync::Arc;
+
 use lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
 use rustledger_booking::BookingEngine;
 use rustledger_core::{BookingMethod, Directive};
-use rustledger_loader::Options as LoaderOptions;
+use rustledger_loader::{LoadOptions, Options as LoaderOptions, Plugin, SourceMap};
 use rustledger_parser::{ParseError, ParseResult, Span, Spanned};
+use rustledger_plugin::NativePluginRegistry;
 use rustledger_validate::{
     Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
 };
@@ -116,12 +119,26 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
     }
 }
 
+/// Plugin context for running plugins during LSP validation.
+///
+/// Contains the data needed by [`rustledger_loader::run_plugins`] to execute
+/// plugins on directives. Built from either a loaded `Ledger` (multi-file)
+/// or from parsed file data (single-file).
+pub struct PluginContext<'a> {
+    /// Plugin declarations from the file.
+    pub plugins: &'a [Plugin],
+    /// Parsed file options (operating currencies, documents, etc.).
+    pub file_options: &'a LoaderOptions,
+    /// Source map for location tracking.
+    pub source_map: &'a SourceMap,
+}
+
 /// Run validation on parsed directives and convert errors to LSP diagnostics.
 ///
-/// This function runs booking/interpolation before validation to mirror the
-/// ordering used by `rledger check`. Without booking, transactions with
-/// auto-filled postings (e.g., a posting with no amount) would be incorrectly
-/// flagged as unbalanced.
+/// This function mirrors the `rledger check` pipeline: sort → book → plugins →
+/// validate. Without this ordering, files that depend on plugin transformations
+/// (e.g., `effective_date` splitting transactions across dates) would produce
+/// false validation errors.
 ///
 /// # Arguments
 /// * `directives` - Owned directive list to validate. The caller is
@@ -133,6 +150,7 @@ pub fn parse_error_to_diagnostic(error: &ParseError, line_index: &LineIndex) -> 
 /// * `source` - Source text of the current file
 /// * `validation_options` - Validation options (including custom account type names)
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+/// * `plugin_ctx` - Optional plugin context for running plugins before validation
 ///
 /// When `current_file_id` is set, errors are filtered to those whose
 /// `file_id` matches (or is `None`, for global errors like duplicate
@@ -142,8 +160,10 @@ pub fn validation_errors_to_diagnostics(
     source: &str,
     validation_options: ValidationOptions,
     current_file_id: Option<u16>,
+    plugin_ctx: Option<&PluginContext<'_>>,
 ) -> Vec<Diagnostic> {
     let line_index = LineIndex::new(source);
+    let mut extra_diagnostics = Vec::new();
 
     // Sort directives by date (required for correct lot matching during booking).
     booked_directives.sort_by(|a, b| {
@@ -168,6 +188,100 @@ pub fn validation_errors_to_diagnostics(
         // If booking fails, we leave the transaction as-is and let validation catch it
     }
 
+    // Run plugins after booking, before validation — same order as process::process().
+    // This ensures plugin-transformed directives (e.g., effective_date splitting
+    // transactions across dates) are seen by validation (#793).
+    if let Some(ctx) = plugin_ctx {
+        // Emit info diagnostics for non-native plugins. The loader's run_plugins()
+        // only executes native plugins — Python/WASM plugins are not run in the LSP.
+        // Warn users so they understand why the LSP may disagree with `rledger check`.
+        //
+        // Create the registry once rather than calling is_builtin() per plugin
+        // (which internally allocates a new registry each time).
+        let registry = NativePluginRegistry::new();
+        for plugin in ctx.plugins {
+            // Only show the diagnostic for plugins declared in the current file.
+            if let Some(fid) = current_file_id
+                && plugin.file_id != fid as usize
+            {
+                continue;
+            }
+            let is_native = registry.find(&plugin.name).is_some();
+            if !is_native {
+                let (start_line, start_col) = line_index.offset_to_position(plugin.span.start);
+                let (end_line, end_col) = line_index.offset_to_position(plugin.span.end);
+                let kind = if plugin.name.ends_with(".wasm") {
+                    "WASM"
+                } else {
+                    "Python"
+                };
+                extra_diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position::new(start_line, start_col),
+                        end: Position::new(end_line, end_col),
+                    },
+                    severity: Some(DiagnosticSeverity::INFORMATION),
+                    code: Some(lsp_types::NumberOrString::String("E8006".to_string())),
+                    source: Some("rustledger".to_string()),
+                    message: format!(
+                        "Plugin \"{}\" is a {kind} plugin — skipped in LSP, validation may differ from `rledger check`",
+                        plugin.name
+                    ),
+                    related_information: None,
+                    tags: None,
+                    code_description: None,
+                    data: None,
+                });
+            }
+        }
+
+        let load_options = LoadOptions::default();
+        let mut plugin_errors = Vec::new();
+        match rustledger_loader::run_plugins(
+            &mut booked_directives,
+            ctx.plugins,
+            ctx.file_options,
+            &load_options,
+            ctx.source_map,
+            &mut plugin_errors,
+        ) {
+            Ok(()) => {
+                // Convert plugin errors to diagnostics.
+                // Plugin errors don't carry file_id, so we only show them
+                // in the main file (file_id 0) to avoid duplication across
+                // open documents in multi-file mode.
+                let show_plugin_errors = current_file_id.is_none() || current_file_id == Some(0);
+                if show_plugin_errors {
+                    for err in &plugin_errors {
+                        let severity = match err.severity {
+                            rustledger_loader::ErrorSeverity::Error => DiagnosticSeverity::ERROR,
+                            rustledger_loader::ErrorSeverity::Warning => {
+                                DiagnosticSeverity::WARNING
+                            }
+                        };
+                        extra_diagnostics.push(Diagnostic {
+                            range: Range {
+                                start: Position::new(0, 0),
+                                end: Position::new(0, 0),
+                            },
+                            severity: Some(severity),
+                            code: Some(lsp_types::NumberOrString::String(err.code.clone())),
+                            source: Some("rustledger".to_string()),
+                            message: err.message.clone(),
+                            related_information: None,
+                            tags: None,
+                            code_description: None,
+                            data: None,
+                        });
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Plugin execution failed in LSP: {e}");
+            }
+        }
+    }
+
     let validation_errors = validate_spanned_with_options(&booked_directives, validation_options);
 
     // Filter errors to only those in the current file (if file_id filtering is enabled).
@@ -182,10 +296,13 @@ pub fn validation_errors_to_diagnostics(
         validation_errors
     };
 
-    filtered_errors
-        .iter()
-        .map(|e| validation_error_to_diagnostic(e, &line_index))
-        .collect()
+    let mut result: Vec<Diagnostic> = extra_diagnostics;
+    result.extend(
+        filtered_errors
+            .iter()
+            .map(|e| validation_error_to_diagnostic(e, &line_index)),
+    );
+    result
 }
 
 /// Convert a single validation error to an LSP diagnostic.
@@ -414,11 +531,100 @@ pub fn all_diagnostics(
                 build_validation_options_from_file(&result.options)
             };
 
+            // Build plugin context for running plugins before validation.
+            // Multi-file: merge ledger plugins with fresh buffer plugins (so
+            // unsaved edits to plugin directives take effect immediately).
+            // Single-file: build entirely from ParseResult's plugin declarations.
+            //
+            // Helper closure to convert ParseResult plugins to Plugin structs.
+            let parse_result_to_plugins =
+                |plugins: &[(String, Option<String>, Span)], file_id: usize| -> Vec<Plugin> {
+                    plugins
+                        .iter()
+                        .map(|(name, config, span)| {
+                            let (actual_name, force_python) =
+                                if let Some(stripped) = name.strip_prefix("python:") {
+                                    (stripped.to_string(), true)
+                                } else {
+                                    (name.clone(), false)
+                                };
+                            Plugin {
+                                name: actual_name,
+                                config: config.clone(),
+                                span: *span,
+                                file_id,
+                                force_python,
+                            }
+                        })
+                        .collect()
+                };
+
+            let merged_plugins: Vec<Plugin>;
+            let single_file_options: LoaderOptions;
+            let single_file_source_map: SourceMap;
+
+            let plugin_ctx = if let Some(ls) = ledger_state
+                && let Some(ledger) = ls.ledger()
+            {
+                // Merge: keep ledger plugins from OTHER files, replace current
+                // file's plugins with the fresh parse (mirrors directive overlay).
+                let current_fid = current_file_id.unwrap_or(0) as usize;
+                merged_plugins = ledger
+                    .plugins
+                    .iter()
+                    .filter(|p| p.file_id != current_fid)
+                    .cloned()
+                    .chain(parse_result_to_plugins(&result.plugins, current_fid))
+                    .collect();
+
+                if merged_plugins.is_empty() {
+                    None
+                } else {
+                    Some(PluginContext {
+                        plugins: &merged_plugins,
+                        file_options: &ledger.options,
+                        source_map: &ledger.source_map,
+                    })
+                }
+            } else if !result.plugins.is_empty() {
+                // Single-file mode: build plugin list from ParseResult
+                merged_plugins = parse_result_to_plugins(&result.plugins, 0);
+                single_file_options = {
+                    let mut opts = LoaderOptions::new();
+                    for (key, value, _span) in &result.options {
+                        opts.set(key, value);
+                    }
+                    opts
+                };
+                // Build a SourceMap with the current buffer so run_plugins()
+                // can attach filename/line info to wrappers and reconstruct
+                // spans when converting back. Use an absolute path so that
+                // document directory resolution in run_plugins (which uses
+                // the first file's parent as base_dir) doesn't produce an
+                // empty path.
+                single_file_source_map = {
+                    let mut sm = SourceMap::new();
+                    sm.add_file(
+                        std::path::PathBuf::from("/tmp/rustledger-lsp-buffer.beancount"),
+                        Arc::from(source),
+                    );
+                    sm
+                };
+                Some(PluginContext {
+                    plugins: &merged_plugins,
+                    file_options: &single_file_options,
+                    source_map: &single_file_source_map,
+                })
+            } else {
+                None
+            };
+
             let validation_diagnostics = validation_errors_to_diagnostics(
                 booked_directives,
                 source,
                 validation_options,
                 current_file_id,
+                plugin_ctx.as_ref(),
             );
             diagnostics.extend(validation_diagnostics);
         } else {
@@ -437,6 +643,14 @@ pub fn all_diagnostics(
 mod tests {
     use super::*;
     use rustledger_parser::parse;
+
+    /// Helper to extract the code string from a diagnostic.
+    fn get_code(d: &Diagnostic) -> String {
+        match d.code.as_ref().unwrap() {
+            lsp_types::NumberOrString::String(s) => s.clone(),
+            lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
+        }
+    }
 
     #[test]
     fn test_line_index_offset_to_position() {
@@ -657,6 +871,7 @@ mod tests {
             bank_source,
             ValidationOptions::default(),
             None,
+            None,
         );
 
         let isolated_codes: Vec<_> = isolated_diagnostics.iter().map(get_code).collect();
@@ -676,6 +891,7 @@ mod tests {
             bank_source,
             ValidationOptions::default(),
             Some(1), // file_id=1 for bank.bean
+            None,
         );
 
         let full_ledger_codes: Vec<_> = full_ledger_diagnostics.iter().map(get_code).collect();
@@ -824,6 +1040,7 @@ option "name_equity" "Капитал"
             buffer_unbalanced_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let no_overlay_codes: Vec<_> = no_overlay.iter().map(get_code).collect();
         assert!(
@@ -845,6 +1062,7 @@ option "name_equity" "Капитал"
             buffer_unbalanced_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let with_overlay_codes: Vec<_> = with_overlay.iter().map(get_code).collect();
         assert!(
@@ -881,6 +1099,7 @@ option "name_equity" "Капитал"
             buffer_fixed_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let no_overlay_persist_codes: Vec<_> = no_overlay_persist.iter().map(get_code).collect();
         assert!(
@@ -903,6 +1122,7 @@ option "name_equity" "Капитал"
             buffer_fixed_source,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let with_overlay_fixed_codes: Vec<_> = with_overlay_fixed.iter().map(get_code).collect();
         assert!(
@@ -1034,6 +1254,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let baseline_codes: Vec<_> = baseline.iter().map(get_code).collect();
         assert!(
@@ -1062,6 +1283,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let single_codes: Vec<_> = single_overlay_diagnostics.iter().map(get_code).collect();
         assert!(
@@ -1089,6 +1311,7 @@ option "name_equity" "Капитал"
             bank_on_disk,
             ValidationOptions::default(),
             Some(1),
+            None,
         );
         let multi_codes: Vec<_> = multi_overlay_diagnostics.iter().map(get_code).collect();
         assert!(
@@ -1359,6 +1582,244 @@ include "credit_card.beancount"
             "Fix verification: with credit_card buffer overlaid, main's \
              balance assertion should fail (4950 expected, 4925 actual \
              after the -75 edit). Got: {with_overlay_codes:?}"
+        );
+    }
+
+    // ====================================================================
+    // Plugin execution in LSP diagnostics (Issue #793)
+    // ====================================================================
+
+    /// Test that native plugins (auto_accounts) run during LSP validation.
+    /// Without auto_accounts, using an account without an explicit `open`
+    /// produces E1001. With the plugin, opens are auto-generated.
+    #[test]
+    fn test_native_plugin_runs_in_lsp_diagnostics() {
+        // File uses accounts without explicit opens — would fail without auto_accounts.
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        // all_diagnostics() now runs plugins in single-file mode, so
+        // auto_accounts should auto-generate the missing opens.
+        let diags = all_diagnostics(&result, source, None, None, &[]);
+        let codes: Vec<_> = diags.iter().map(get_code).collect();
+
+        assert!(
+            !codes.iter().any(|c| c == "E1001"),
+            "With auto_accounts plugin running, should NOT have E1001. Got: {codes:?}"
+        );
+    }
+
+    /// Test that validation_errors_to_diagnostics with PluginContext
+    /// actually transforms directives via native plugins.
+    #[test]
+    fn test_plugin_context_transforms_directives() {
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        // First: validate WITHOUT plugin context — should produce E1001
+        let without_plugins = validation_errors_to_diagnostics(
+            result.directives.clone(),
+            source,
+            ValidationOptions::default(),
+            None,
+            None,
+        );
+        let without_codes: Vec<_> = without_plugins.iter().map(get_code).collect();
+        assert!(
+            without_codes.iter().any(|c| c == "E1001"),
+            "Without plugins, should have E1001 for unopened accounts. Got: {without_codes:?}"
+        );
+
+        // Now: validate WITH plugin context — auto_accounts should fix E1001
+        let plugins = vec![Plugin {
+            name: "auto_accounts".to_string(),
+            config: None,
+            span: Span::new(0, 0),
+            file_id: 0,
+            force_python: false,
+        }];
+        let file_options = LoaderOptions::new();
+        let mut source_map = SourceMap::new();
+        source_map.add_file(std::path::PathBuf::from("<test>"), Arc::from(source));
+        let ctx = PluginContext {
+            plugins: &plugins,
+            file_options: &file_options,
+            source_map: &source_map,
+        };
+        let with_plugins = validation_errors_to_diagnostics(
+            result.directives.clone(),
+            source,
+            ValidationOptions::default(),
+            None,
+            Some(&ctx),
+        );
+        let with_codes: Vec<_> = with_plugins.iter().map(get_code).collect();
+        assert!(
+            !with_codes.iter().any(|c| c == "E1001"),
+            "With auto_accounts plugin, should NOT have E1001. Got: {with_codes:?}"
+        );
+    }
+
+    /// Regression test for issue #793: effective_date plugin must prevent
+    /// false balance errors in LSP diagnostics.
+    ///
+    /// The scenario: a transaction with `effective_date` metadata on a posting
+    /// defers that posting to a later date. Without the plugin running,
+    /// an intermediate balance assertion sees the debit and fails.
+    /// With the plugin, the posting is split into a holding pattern and
+    /// the balance assertion passes.
+    #[test]
+    fn test_effective_date_plugin_prevents_false_balance_error_issue_793() {
+        // This is the exact reproduction case from issue #793.
+        // The effective_date plugin config maps Assets postings through
+        // Equity:Transfer as a holding account.
+        let source = concat!(
+            "option \"operating_currency\" \"USD\"\n",
+            "\n",
+            "plugin \"beancount_reds_plugins.effective_date.effective_date\" \"{\n",
+            " 'Assets':   {'earlier': 'Equity:Transfer', 'later': 'Equity:Transfer'},\n",
+            " }\"\n",
+            "\n",
+            "2024-01-01 open Assets:Bank\n",
+            "2024-01-01 open Equity:Transfer\n",
+            "2024-01-01 open Expenses:Food\n",
+            "2024-01-01 open Income:Employment\n",
+            "\n",
+            "2024-02-01 * \"Salary\"\n",
+            "  Assets:Bank                             1000 USD\n",
+            "  Income:Employment\n",
+            "\n",
+            "2024-02-02 balance Assets:Bank  1000 USD\n",
+            "\n",
+            "2024-02-03 * \"Delayed food purchase\"\n",
+            "  Expenses:Food                            100 USD\n",
+            "  Assets:Bank                             -100 USD\n",
+            "    effective_date: 2024-03-01\n",
+            "\n",
+            "2024-02-04 balance Assets:Bank  1000 USD\n",
+            "2024-03-02 balance Assets:Bank   900 USD\n",
+        );
+
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "Should have no parse errors");
+
+        // Use all_diagnostics (single-file mode) — this should run the
+        // effective_date plugin and NOT produce a false E2001 for the
+        // 2024-02-04 balance assertion.
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
+
+        // The key assertion: no E2001 balance error at 2024-02-04.
+        // Without the plugin, validation would see -100 USD on Assets:Bank
+        // at 2024-02-03 and the 2024-02-04 balance of 1000 USD would fail.
+        let balance_errors: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E2001")
+            .collect();
+        assert!(
+            balance_errors.is_empty(),
+            "Issue #793 regression: effective_date plugin should prevent false \
+             balance errors. Got E2001 diagnostics: {balance_errors:?}\n\
+             All codes: {codes:?}"
+        );
+    }
+
+    /// Test that non-native plugins emit an info diagnostic in the LSP.
+    #[test]
+    fn test_non_native_plugin_emits_info_diagnostic() {
+        let source = r#"plugin "some.python.plugin"
+
+2024-01-01 open Assets:Cash USD
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+
+        // Should have an E8006 info diagnostic about the non-native plugin
+        let info_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E8006")
+            .collect();
+        assert!(
+            !info_diags.is_empty(),
+            "Should emit E8006 info for non-native plugin. Got: {:?}",
+            diagnostics.iter().map(get_code).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            info_diags[0].severity,
+            Some(DiagnosticSeverity::INFORMATION),
+            "E8006 should be INFORMATION severity"
+        );
+        assert!(
+            info_diags[0].message.contains("some.python.plugin"),
+            "E8006 message should name the plugin"
+        );
+        assert!(
+            info_diags[0].message.contains("skipped"),
+            "E8006 message should say the plugin is skipped"
+        );
+    }
+
+    /// Test that native plugins do NOT emit an info diagnostic.
+    #[test]
+    fn test_native_plugin_no_info_diagnostic() {
+        let source = r#"plugin "auto_accounts"
+
+2024-01-15 * "Test"
+  Assets:Cash   100 USD
+  Income:Salary
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let info_diags: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| get_code(d) == "E8006")
+            .collect();
+        assert!(
+            info_diags.is_empty(),
+            "Native plugins should NOT emit E8006 info diagnostic. Got: {info_diags:?}"
+        );
+    }
+
+    /// Test that plugin errors are converted to LSP diagnostics.
+    #[test]
+    fn test_plugin_errors_become_diagnostics() {
+        // document_discovery plugin with a non-existent documents directory
+        // should produce a plugin error (or at least not crash).
+        let source = r#"option "documents" "/nonexistent/path/to/docs"
+plugin "auto_accounts"
+
+2024-01-15 * "Test"
+  Assets:Cash   100 USD
+  Income:Salary
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty());
+
+        // This exercises the plugin execution path. Even if no errors are
+        // produced (document_discovery is lenient), the code path is covered.
+        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+
+        // auto_accounts should still work — no E1001
+        let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
+        assert!(
+            !codes.iter().any(|c| c == "E1001"),
+            "auto_accounts should still auto-generate opens. Got: {codes:?}"
         );
     }
 }

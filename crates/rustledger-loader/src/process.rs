@@ -127,6 +127,8 @@ pub struct LedgerError {
     pub message: String,
     /// Source location, if available.
     pub location: Option<ErrorLocation>,
+    /// Processing phase that produced this error: "parse", "validate", or "plugin".
+    pub phase: String,
 }
 
 /// Error severity level.
@@ -150,13 +152,14 @@ pub struct ErrorLocation {
 }
 
 impl LedgerError {
-    /// Create a new error.
+    /// Create a new error with the given phase.
     pub fn error(code: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             severity: ErrorSeverity::Error,
             code: code.into(),
             message: message.into(),
             location: None,
+            phase: "validate".to_string(),
         }
     }
 
@@ -167,7 +170,15 @@ impl LedgerError {
             code: code.into(),
             message: message.into(),
             location: None,
+            phase: "validate".to_string(),
         }
+    }
+
+    /// Set the processing phase for this error.
+    #[must_use]
+    pub fn with_phase(mut self, phase: impl Into<String>) -> Self {
+        self.phase = phase.into();
+        self
     }
 
     /// Add a location to this error.
@@ -189,9 +200,9 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     let mut directives = raw.directives;
     let mut errors: Vec<LedgerError> = Vec::new();
 
-    // Convert load errors to ledger errors
+    // Convert load errors to ledger errors (parse phase)
     for load_err in raw.errors {
-        errors.push(LedgerError::error("LOAD", load_err.to_string()));
+        errors.push(LedgerError::error("LOAD", load_err.to_string()).with_phase("parse"));
     }
 
     // 1. Sort by date (and priority for same-date directives)
@@ -291,8 +302,15 @@ fn run_booking(
 }
 
 /// Run plugins on directives.
+///
+/// Executes native plugins (and document discovery) on the given directives,
+/// modifying them in-place. Plugin errors are appended to `errors`.
+///
+/// This is called by [`process()`] as part of the full pipeline, but can also
+/// be called standalone (e.g., by the LSP) when plugin execution is needed
+/// outside the normal load flow.
 #[cfg(feature = "plugins")]
-fn run_plugins(
+pub fn run_plugins(
     directives: &mut Vec<Spanned<Directive>>,
     file_plugins: &[Plugin],
     file_options: &Options,
@@ -435,10 +453,10 @@ fn run_plugins(
                 for err in output.errors {
                     let ledger_err = match err.severity {
                         rustledger_plugin::PluginErrorSeverity::Error => {
-                            LedgerError::error("PLUGIN", err.message)
+                            LedgerError::error("PLUGIN", err.message).with_phase("plugin")
                         }
                         rustledger_plugin::PluginErrorSeverity::Warning => {
-                            LedgerError::warning("PLUGIN", err.message)
+                            LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
                         }
                     };
                     errors.push(ledger_err);
@@ -515,7 +533,23 @@ fn run_validation(
     let validation_errors = validate_spanned_with_options(directives, validation_options);
 
     for err in validation_errors {
-        errors.push(LedgerError::error(err.code.code(), err.to_string()));
+        let phase = if err.code.is_parse_phase() {
+            "parse"
+        } else {
+            "validate"
+        };
+        let severity_level = if err.code.is_warning() {
+            ErrorSeverity::Warning
+        } else {
+            ErrorSeverity::Error
+        };
+        errors.push(LedgerError {
+            severity: severity_level,
+            code: err.code.code().to_string(),
+            message: err.to_string(),
+            location: None,
+            phase: phase.to_string(),
+        });
     }
 }
 
