@@ -182,7 +182,7 @@ jobs:
           SCORE="${{ steps.results.outputs.score }}"
           MISSED="${{ steps.results.outputs.missed }}"
           # PR runs require 75% for core/pipeline modules
-          # Scheduled runs require 70%
+          # Non-PR runs (scheduled, manual) require 70%
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             THRESHOLD=75
           else
