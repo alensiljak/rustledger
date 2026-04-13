@@ -55,6 +55,7 @@ test-changed:
         echo "No crate changes detected."
         exit 0
     fi
+    failed=0
     for crate in $changed_crates; do
         pkg="rustledger-${crate#rustledger-}"
         # Normalize: if crate dir is already "rustledger-foo", don't double-prefix
@@ -63,9 +64,21 @@ test-changed:
         elif [[ "$crate" == "rustledger" ]]; then
             pkg="rustledger"
         fi
+        # Check if the package exists before trying to test it
+        if ! cargo pkgid -p "$pkg" > /dev/null 2>&1; then
+            echo "  (skipped: $pkg not a cargo package)"
+            continue
+        fi
         echo "==> Testing $pkg"
-        cargo test -p "$pkg" --all-features 2>/dev/null || echo "  (skipped: $pkg not found)"
+        if ! cargo test -p "$pkg" --all-features; then
+            failed=1
+        fi
     done
+    if [ "$failed" -ne 0 ]; then
+        echo ""
+        echo "Some tests failed!"
+        exit 1
+    fi
 
 # Run specific test
 test-one name:
