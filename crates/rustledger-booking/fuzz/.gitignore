@@ -1,1 +1,4 @@
-crates/rustledger-booking/fuzz/target/
+target/
+corpus/
+artifacts/
+coverage/

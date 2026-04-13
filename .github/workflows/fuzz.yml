@@ -64,8 +64,6 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
-        with:
-          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly
@@ -165,8 +163,6 @@ jobs:
           fi
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # nightly
-        with:
-          toolchain: nightly
         if: steps.check.outputs.should_run == 'true'
         with:
           toolchain: nightly

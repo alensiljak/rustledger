@@ -59,7 +59,7 @@ struct FuzzPosting {
     account_idx: u8,
     /// Amount in cents (to keep decimals reasonable)
     amount_cents: i32,
-    /// Currency index (0=USD, 1=EUR, 2=STOCK)
+    /// Currency index (0=USD, 1=EUR, 2=CORP)
     currency_idx: u8,
     /// Optional cost spec
     cost: Option<FuzzCostSpec>,
@@ -78,7 +78,7 @@ struct FuzzTransaction {
     month: u8,
     /// Day (1-28)
     day: u8,
-    /// Postings (2-6)
+    /// Postings (2-8, filtered at runtime)
     postings: Vec<FuzzPosting>,
     /// Optional prior transactions to build inventory state
     prior_buys: Vec<FuzzPriorBuy>,
@@ -87,7 +87,9 @@ struct FuzzTransaction {
 /// A prior buy transaction to populate inventory before the main transaction.
 #[derive(Debug, Arbitrary)]
 struct FuzzPriorBuy {
-    amount_cents: u16,
+    /// Number of units to buy (whole units, not cents)
+    units: u16,
+    /// Cost per unit in cents
     cost_cents: u16,
     year_offset: u8,
 }
@@ -126,11 +128,11 @@ fuzz_target!(|input: FuzzTransaction| {
 
     // Build prior inventory state with buy transactions
     for (i, buy) in input.prior_buys.iter().take(5).enumerate() {
-        if buy.amount_cents == 0 || buy.cost_cents == 0 {
+        if buy.units == 0 || buy.cost_cents == 0 {
             continue;
         }
         let buy_date = make_date(buy.year_offset, 1, 1);
-        let units = Decimal::new(buy.amount_cents as i64, 0);
+        let units = Decimal::new(buy.units as i64, 0);
         let cost = make_decimal(buy.cost_cents as i32);
 
         let posting = Posting::new("Assets:Stock", Amount::new(units, "CORP"))
