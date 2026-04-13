@@ -52,6 +52,9 @@ audit-as-crates-io = false
 [policy.rustledger-plugin]
 audit-as-crates-io = false
 
+[policy.rustledger-plugin-types]
+audit-as-crates-io = false
+
 [policy.rustledger-query]
 audit-as-crates-io = false
 
@@ -63,6 +66,10 @@ audit-as-crates-io = false
 
 [[exemptions.addr2line]]
 version = "0.25.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.addr2line]]
+version = "0.26.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.aes]]
@@ -281,10 +288,6 @@ criteria = "safe-to-deploy"
 version = "3.3.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.fallible-iterator]]
-version = "0.3.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.find-msvc-tools]]
 version = "0.1.9"
 criteria = "safe-to-deploy"
@@ -323,6 +326,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.getrandom]]
 version = "0.4.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.gimli]]
+version = "0.33.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.half]]
