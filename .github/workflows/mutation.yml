@@ -5,7 +5,7 @@
 #
 # Runs on:
 # - Monthly schedule (1st of each month)
-# - PR changes to core crates (TLA+-verified modules)
+# - PR changes to core crates and critical pipeline crates
 # - Manual trigger with configurable packages
 #
 # See: https://mutants.rs/
@@ -22,6 +22,9 @@ on:
       - 'crates/rustledger-core/src/inventory/**'
       - 'crates/rustledger-booking/src/**'
       - 'crates/rustledger-validate/src/**'
+      # Critical pipeline crates (#774, #775, #776)
+      - 'crates/rustledger-loader/src/**'
+      - 'crates/rustledger-plugin/src/**'
   workflow_dispatch:
     inputs:
       packages:
@@ -45,7 +48,7 @@ jobs:
   mutants:
     name: Mutation Testing
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
 
@@ -67,8 +70,11 @@ jobs:
           TIMEOUT="${{ github.event.inputs.timeout || '300' }}"
 
           if [ "$INPUT" = "all" ]; then
-            # Test core packages (skip CLI and WASM which are slow)
-            PACKAGES="rustledger-core,rustledger-parser,rustledger-booking,rustledger-validate"
+            # Test core + pipeline packages (skip CLI, LSP, and WASM which are slow)
+            PACKAGES="rustledger-core,rustledger-parser,rustledger-booking,rustledger-validate,rustledger-loader,rustledger-plugin"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            # Monthly: test all critical crates
+            PACKAGES="rustledger-core,rustledger-booking,rustledger-validate,rustledger-loader,rustledger-plugin"
           else
             PACKAGES="$INPUT"
           fi
@@ -175,12 +181,12 @@ jobs:
         run: |
           SCORE="${{ steps.results.outputs.score }}"
           MISSED="${{ steps.results.outputs.missed }}"
-          # PR runs require 70% for TLA+-verified modules
-          # Scheduled runs are informational at 60%
+          # PR runs require 75% for core/pipeline modules
+          # Scheduled runs require 70%
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            THRESHOLD=70
+            THRESHOLD=75
           else
-            THRESHOLD=60
+            THRESHOLD=70
           fi
 
           if [ "$SCORE" -lt "$THRESHOLD" ]; then
@@ -188,7 +194,7 @@ jobs:
             echo "Consider adding more tests for the $MISSED missed mutants."
             if [ "${{ github.event_name }}" = "pull_request" ]; then
               echo ""
-              echo "TLA+-verified modules require a minimum 70% mutation score."
+              echo "Core and pipeline modules require a minimum 75% mutation score."
               echo "Please add tests that catch the missed mutants."
               # Don't fail the workflow, just warn
             fi
