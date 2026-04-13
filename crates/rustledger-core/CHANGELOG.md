@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
+
+### Bug Fixes
+
+- *(format)* preserve posting-level metadata on format
+- use format_metadata for transaction-level meta too
+- exclude price directives from display precision tracking
+- add space after { in cost display, cap display precision at 8
+- normalize decimals before tracking display precision
+- revert normalize in update, use original precision tracking
+- normalize after quantize to strip trailing zeros
+- revert normalize in quantize, add common-vs-max precision divergences
+- *(booking)* detect ambiguous lot match in STRICT mode
+- *(booking)* propagate errors, track per-account booking methods
+- address Copilot review on #755
+
+### Documentation
+
+- *(booking)* fix reduce_strict docstring per Copilot review
+
+### Features
+
+- *(query)* per-column display context for BQL output
+
+### Performance
+
+- hoist meta_indent allocation above posting loop
+- *(core)* Apply rust-memory audit fixes
+
+### Refactoring
+
+- *(core)* deduplicate extract_accounts/currencies/payees
+
 ## [0.11.0](https://github.com/rustledger/rustledger/compare/v0.10.0...v0.11.0) - 2026-04-02
 
 ### Bug Fixes
