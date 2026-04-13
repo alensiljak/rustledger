@@ -1,0 +1,10 @@
+---
+source: crates/rustledger/tests/cli_snapshot_test.rs
+expression: stdout.trim()
+---
+date        narration         account        position
+----------  ----------------  -------------  --------
+2024-01-20  Weekly groceries  Expenses:Food  50 USD  
+2024-01-25  Dinner            Expenses:Food  30 USD  
+
+2 row(s)

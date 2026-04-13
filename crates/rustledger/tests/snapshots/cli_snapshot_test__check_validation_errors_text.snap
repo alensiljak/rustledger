@@ -1,0 +1,8 @@
+---
+source: crates/rustledger/tests/cli_snapshot_test.rs
+expression: normalized.trim()
+---
+<fixtures>/validation-errors.beancount: error[E1001]: [E1001] Account Expenses:Food was never opened
+<fixtures>/validation-errors.beancount: error[E1001]: [E1001] Account Assets:Cash was never opened
+<fixtures>/validation-errors.beancount: error[E1001]: [E1001] Account Assets:Cash was never opened
+✗ 3 errors
