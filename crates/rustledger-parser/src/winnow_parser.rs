@@ -983,9 +983,10 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
         }
     }
 
-    // Tags and links
-    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
+    // Tags and links — use Vec::new() (no allocation) since ~90% of
+    // transactions have zero tags/links in real-world ledgers.
+    let mut tags: Vec<InternedStr> = Vec::new();
+    let mut links: Vec<InternedStr> = Vec::new();
 
     loop {
         if let Ok(tag) = parse_tag(stream) {
@@ -1002,8 +1003,9 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     // Parse transaction-level metadata, tags/links, and postings
     let mut txn_meta: Metadata = Metadata::default();
     let mut postings = Vec::with_capacity(4);
-    // Track comments that appear before the next posting (can be multiple lines)
-    let mut pending_comments: Vec<String> = Vec::with_capacity(4);
+    // Track comments that appear before the next posting (can be multiple lines).
+    // Vec::new() since most transactions have no inter-posting comments.
+    let mut pending_comments: Vec<String> = Vec::new();
 
     loop {
         // Skip newlines between lines
@@ -1359,9 +1361,9 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
     let account = parse_account(stream)?;
     let path = parse_string(stream)?;
 
-    // Optional tags and links
-    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
+    // Optional tags and links (rarely present on documents)
+    let mut tags: Vec<InternedStr> = Vec::new();
+    let mut links: Vec<InternedStr> = Vec::new();
     loop {
         if let Ok(tag) = parse_tag(stream) {
             tags.push(tag);
