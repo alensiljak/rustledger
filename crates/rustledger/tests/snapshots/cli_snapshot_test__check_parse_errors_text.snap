@@ -1,0 +1,17 @@
+---
+source: crates/rustledger/tests/cli_snapshot_test.rs
+expression: normalized.trim()
+---
+P0012
+
+  x parse error: unexpected input
+   ,-[<fixtures>/parse-errors.beancount:5:1]
+ 4 | 
+ 5 | this is not valid beancount {{{ }}
+   : ^^^^^^^^^^^^^^^^^|^^^^^^^^^^^^^^^^^
+   :                  `-- parse error
+ 6 | 
+ 7 | 2024-01-15 * "Valid transaction"
+   `----
+<fixtures>/parse-errors.beancount: error[E1001]: [E1001] Account Income:Salary was never opened
+✗ 2 errors

@@ -3126,6 +3126,7 @@ dependencies = [
  "edit",
  "format_num_pattern",
  "glob",
+ "insta",
  "miette",
  "rayon",
  "rust_decimal",
