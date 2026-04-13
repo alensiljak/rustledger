@@ -2,6 +2,8 @@
 ; Description: File-level `option "booking_method" "FIFO"` should be applied
 ;              as the default for accounts opened without an explicit method.
 ; Expected: No errors - FIFO resolves the ambiguous lot match.
+; ASSERT: no_errors
+; ASSERT: check_stderr !contains "ambiguous"
 
 option "operating_currency" "USD"
 option "booking_method" "FIFO"
