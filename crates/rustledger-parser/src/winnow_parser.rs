@@ -200,20 +200,62 @@ fn parse_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     if let Some(t) = stream.peek()
         && let Token::Number(s) = &t.token
     {
-        // Fast path: if no commas, parse directly without allocating.
-        // ~99% of numbers don't contain commas.
-        let parse_result = if s.contains(',') {
-            let cleaned = s.replace(',', "");
-            Decimal::from_str(&cleaned)
+        // Fast path: simple numbers without commas (99%+ of cases).
+        // Avoids Decimal::from_str overhead (whitespace handling, scientific
+        // notation, overflow checks) for common beancount number formats.
+        if !s.contains(',')
+            && let Some(num) = fast_parse_decimal(s)
+        {
+            stream.advance();
+            return Ok(num);
+        }
+
+        // Slow path: commas or unusual format — use Decimal::from_str.
+        let cleaned = if s.contains(',') {
+            std::borrow::Cow::Owned(s.replace(',', ""))
         } else {
-            Decimal::from_str(s)
+            std::borrow::Cow::Borrowed(*s)
         };
-        if let Ok(num) = parse_result {
+        if let Ok(num) = Decimal::from_str(&cleaned) {
             stream.advance();
             return Ok(num);
         }
     }
     Err(())
+}
+
+/// Fast decimal parser for simple beancount number formats.
+///
+/// Handles `[0-9]+(\.[0-9]+)?` — no sign, no commas, no exponent.
+/// Returns `None` for anything more complex, falling through to
+/// `Decimal::from_str`.
+fn fast_parse_decimal(s: &str) -> Option<Decimal> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut mantissa: i64 = 0;
+    let mut scale: u32 = 0;
+    let mut in_decimal = false;
+
+    for &b in bytes {
+        match b {
+            b'0'..=b'9' => {
+                // Check for overflow before multiplying
+                mantissa = mantissa.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
+                if in_decimal {
+                    scale += 1;
+                }
+            }
+            b'.' if !in_decimal => {
+                in_decimal = true;
+            }
+            _ => return None, // Unexpected character — fall back to Decimal::from_str
+        }
+    }
+
+    Some(Decimal::new(mantissa, scale))
 }
 
 /// Parse a number with optional leading minus sign.
