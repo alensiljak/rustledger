@@ -29,15 +29,12 @@ use std::time::Duration;
 /// - `FRED/GDP` - Federal Reserve Economic Data
 /// - `CHRIS/CME_CL1` - CME Crude Oil Futures
 #[derive(Debug)]
-pub struct QuandlSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct QuandlSource {}
 
 impl QuandlSource {
     /// Create a new Quandl source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Get the API key from environment.

@@ -697,14 +697,6 @@ mod tests {
             "Should have at least one validation error"
         );
 
-        // Helper to get code string from a diagnostic
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
-            }
-        }
-
         // Check expected error codes are present
         let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
 
@@ -758,14 +750,6 @@ mod tests {
 
         // Single-file validation (no ledger state)
         let diagnostics = all_diagnostics(&result, source, None, None, &[]);
-
-        // Helper to get code string from a diagnostic
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
-            }
-        }
 
         // Filter to only ERROR severity diagnostics (allow warnings/info)
         let error_diagnostics: Vec<&Diagnostic> = diagnostics
@@ -854,14 +838,6 @@ mod tests {
         for mut d in credit_card_result.directives {
             d.file_id = 2;
             all_directives.push(d);
-        }
-
-        // Helper to get code string from a diagnostic
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {}", n),
-            }
         }
 
         // Test 1: Validate bank.bean in ISOLATION (old broken behavior)
@@ -979,12 +955,6 @@ option "name_equity" "Капитал"
     #[test]
     fn test_live_overlay_reflects_buffer_edits_issue_685() {
         // Helper for reading an LSP diagnostic's string code.
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
-            }
-        }
 
         // The on-disk version of the file is balanced.
         let on_disk_source = r#"2024-01-01 open Assets:Bank:Checking USD
@@ -1178,13 +1148,6 @@ option "name_equity" "Капитал"
     /// every open buffer in the ledger.
     #[test]
     fn test_multi_buffer_overlay_replaces_multiple_files_issue_760() {
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
-            }
-        }
-
         // Bank file: has a balance assertion (4950) that depends on the
         // credit-card file's transaction amount (-50). If the credit-card
         // file's transaction is edited in the buffer to -75, the assertion
@@ -1337,13 +1300,6 @@ option "name_equity" "Капитал"
     fn test_all_diagnostics_applies_live_overlay_issue_685() {
         use std::fs;
 
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
-            }
-        }
-
         let on_disk = r#"2024-01-01 open Assets:Bank:Checking USD
 2024-01-01 open Income:Salary
 
@@ -1455,13 +1411,6 @@ option "name_equity" "Капитал"
     #[test]
     fn test_all_diagnostics_multi_buffer_overlay_issue_760() {
         use std::fs;
-
-        fn get_code(d: &Diagnostic) -> String {
-            match d.code.as_ref().unwrap() {
-                lsp_types::NumberOrString::String(s) => s.clone(),
-                lsp_types::NumberOrString::Number(n) => panic!("Unexpected number code: {n}"),
-            }
-        }
 
         // Main journal: opens, a paycheck, a balance assertion that depends
         // on the credit-card file, and an include directive.

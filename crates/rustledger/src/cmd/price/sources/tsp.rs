@@ -24,15 +24,12 @@ use std::time::Duration;
 /// - `SFUND` - S Fund (Small Cap Stock Index)
 /// - `IFUND` - I Fund (International Stock Index)
 #[derive(Debug)]
-pub struct TspSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct TspSource {}
 
 impl TspSource {
     /// Create a new TSP source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Normalize TSP fund name.

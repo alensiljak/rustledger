@@ -20,15 +20,12 @@ use std::time::Duration;
 /// - Cryptocurrencies by ID: `bitcoin`, `ethereum`, `solana`
 /// - Also supports uppercase symbols which are converted to lowercase IDs
 #[derive(Debug)]
-pub struct CoinCapSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct CoinCapSource {}
 
 impl CoinCapSource {
     /// Create a new `CoinCap` source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Convert ticker to `CoinCap` asset ID.

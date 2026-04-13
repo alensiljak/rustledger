@@ -26,15 +26,12 @@ use std::time::Duration;
 /// - Rates are against EUR (EUR is the base currency)
 /// - Weekend/holiday rates use the last available rate
 #[derive(Debug)]
-pub struct EcbSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct EcbSource {}
 
 impl EcbSource {
     /// Create a new ECB source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Build the ECB API URL for a currency pair.

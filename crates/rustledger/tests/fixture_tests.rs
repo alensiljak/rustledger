@@ -7,42 +7,15 @@
 //! - tests/fixtures/lima-tests/*.beancount - 218 parser conformance tests
 //! - tests/fixtures/examples/*.beancount - Official beancount examples
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
+use common::{project_root, rledger_binary};
 
 fn spec_fixtures_dir() -> PathBuf {
     project_root().join("tests/fixtures")
-}
-
-fn rledger_binary() -> Option<PathBuf> {
-    // Use CARGO_BIN_EXE_rledger if available (set by cargo test)
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
-        return Some(PathBuf::from(path));
-    }
-
-    // Check target/release first (for --release builds like AUR PKGBUILD)
-    let release_path = project_root().join("target/release/rledger");
-    if release_path.exists() {
-        return Some(release_path);
-    }
-
-    // Fall back to target/debug
-    let debug_path = project_root().join("target/debug/rledger");
-    if debug_path.exists() {
-        return Some(debug_path);
-    }
-
-    // Binary not found (Nix builds, not yet built, etc.)
-    None
 }
 
 /// Run rledger check on a file and return (success, output).
