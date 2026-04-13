@@ -75,8 +75,8 @@ struct AccountState {
     closed: Option<NaiveDate>,
     /// Allowed currencies (empty = any).
     currencies: FxHashSet<InternedStr>,
-    /// Booking method (stored for future use in booking validation).
-    #[allow(dead_code)]
+    /// Booking method for this account (from `open` directive).
+    /// Used by `update_inventories()` for lot matching during validation.
     booking: BookingMethod,
 }
 
