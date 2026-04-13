@@ -273,7 +273,10 @@ impl MainLoopState {
                 let id = req.id.clone();
                 let lens: CodeLens = match serde_json::from_value(req.params.clone()) {
                     Ok(l) => l,
-                    Err(_) => return false, // Fall back to sync
+                    Err(e) => {
+                        self.dispatch_async(id, move || Err(e.to_string()));
+                        return true;
+                    }
                 };
 
                 // Snapshot data eagerly on the main thread
@@ -307,7 +310,10 @@ impl MainLoopState {
                 let params: SemanticTokensParams = match serde_json::from_value(req.params.clone())
                 {
                     Ok(p) => p,
-                    Err(_) => return false,
+                    Err(e) => {
+                        self.dispatch_async(id, move || Err(e.to_string()));
+                        return true;
+                    }
                 };
 
                 // Snapshot data eagerly
