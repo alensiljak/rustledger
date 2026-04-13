@@ -26,15 +26,12 @@ use std::time::Duration;
 /// All cryptocurrencies listed on `CoinMarketCap`:
 /// - `BTC`, `ETH`, `SOL`, `DOGE`, etc.
 #[derive(Debug)]
-pub struct CoinMarketCapSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct CoinMarketCapSource {}
 
 impl CoinMarketCapSource {
     /// Create a new `CoinMarketCap` source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Get the API key from environment.

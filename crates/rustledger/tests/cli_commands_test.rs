@@ -2,56 +2,12 @@
 //!
 //! Tests for rledger check, rledger query, rledger format, rledger doctor, and rledger report.
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn test_fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-}
-
-fn rledger_binary() -> Option<PathBuf> {
-    // Use CARGO_BIN_EXE_rledger if available (set by cargo test)
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
-        return Some(PathBuf::from(path));
-    }
-
-    // Check target/release first (for --release builds)
-    let release_path = project_root().join("target/release/rledger");
-    if release_path.exists() {
-        return Some(release_path);
-    }
-
-    // Fall back to target/debug
-    let debug_path = project_root().join("target/debug/rledger");
-    if debug_path.exists() {
-        return Some(debug_path);
-    }
-
-    // Binary not found (Nix builds, not yet built, etc.)
-    None
-}
-
-/// Helper macro to skip tests when rledger binary is not available
-macro_rules! require_rledger {
-    () => {
-        match rledger_binary() {
-            Some(path) => path,
-            None => {
-                eprintln!("Skipping: rledger binary not found");
-                return;
-            }
-        }
-    };
-}
+use common::test_fixtures_dir;
 
 // =============================================================================
 // rledger check tests

@@ -86,8 +86,7 @@ use std::sync::Arc;
 pub enum Event {
     /// LSP message from the client.
     Message(Message),
-    /// Response from a background task.
-    #[allow(dead_code)] // Will be used when we add threadpool
+    /// Response from a background task (dispatched via threadpool).
     Task(TaskResult),
 }
 
@@ -104,13 +103,15 @@ pub enum Message {
 
 /// Result from a background task.
 #[derive(Debug)]
-#[allow(dead_code)] // Will be used when we add threadpool
 pub struct TaskResult {
     /// The request ID this task is responding to.
     pub request_id: lsp_server::RequestId,
     /// The result of the task, or an error message.
     pub result: Result<serde_json::Value, String>,
 }
+
+/// A job to be executed on the background worker thread.
+type BackgroundJob = Box<dyn FnOnce() + Send>;
 
 /// State managed by the main loop.
 pub struct MainLoopState {
@@ -126,6 +127,12 @@ pub struct MainLoopState {
     pub ledger_state: SharedLedgerState,
     /// Path to the journal file (if configured).
     pub journal_file: Option<PathBuf>,
+    /// Channel for receiving results from background tasks.
+    pub task_sender: Sender<TaskResult>,
+    /// Receiver end of the task channel (used by run_main_loop).
+    pub task_receiver: Receiver<TaskResult>,
+    /// Channel for submitting jobs to the background worker thread.
+    pub job_sender: Sender<BackgroundJob>,
 }
 
 /// Default empty parse result for missing documents.
@@ -146,6 +153,22 @@ impl MainLoopState {
             }
         }
 
+        let (task_sender, task_receiver) = crossbeam_channel::unbounded();
+        let (job_sender, job_receiver) = crossbeam_channel::unbounded::<BackgroundJob>();
+
+        // Spawn a single persistent worker thread for background requests.
+        // Using one thread avoids the overhead of thread-per-request while
+        // still keeping the main loop unblocked. Jobs are processed FIFO;
+        // stale results are discarded via revision-based cancellation.
+        std::thread::Builder::new()
+            .name("lsp-worker".into())
+            .spawn(move || {
+                for job in job_receiver {
+                    job();
+                }
+            })
+            .expect("failed to spawn LSP worker thread");
+
         Self {
             vfs: Arc::new(RwLock::new(Vfs::new())),
             sender,
@@ -153,6 +176,9 @@ impl MainLoopState {
             shutdown_requested: false,
             ledger_state,
             journal_file,
+            task_sender,
+            task_receiver,
+            job_sender,
         }
     }
 
@@ -181,9 +207,126 @@ impl MainLoopState {
     pub fn handle_event(&mut self, event: Event) {
         match event {
             Event::Message(msg) => self.handle_message(msg),
-            Event::Task(_result) => {
-                // TODO: Send response back to client
+            Event::Task(task_result) => {
+                let response = match task_result.result {
+                    Ok(value) => lsp_server::Response::new_ok(task_result.request_id, value),
+                    Err(msg) => lsp_server::Response::new_err(
+                        task_result.request_id,
+                        lsp_server::ErrorCode::InternalError as i32,
+                        msg,
+                    ),
+                };
+                self.send(lsp_server::Message::Response(response));
             }
+        }
+    }
+
+    /// Dispatch a request handler to the background worker thread.
+    ///
+    /// The handler closure receives no mutable state — it should capture
+    /// any needed data (parse results, ledger state) before being moved.
+    /// The result is sent back to the main loop as a `Task` event.
+    ///
+    /// Cancellation: the revision at dispatch time is captured. If the
+    /// world state changes before the handler completes (e.g., user edits
+    /// a document), the result is silently dropped instead of being sent.
+    fn dispatch_async(
+        &self,
+        request_id: lsp_server::RequestId,
+        handler: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
+    ) {
+        let task_sender = self.task_sender.clone();
+        let dispatch_revision = crate::snapshot::current_revision();
+
+        let _ = self.job_sender.send(Box::new(move || {
+            let result = handler();
+
+            // Drop stale results — if the world changed since dispatch,
+            // the client will have sent a new request for fresh data.
+            if crate::snapshot::current_revision() != dispatch_revision {
+                tracing::debug!(
+                    "Dropping stale result for request {:?} (revision changed)",
+                    request_id
+                );
+                return;
+            }
+
+            // Ignore send errors — the main loop may have shut down
+            let _ = task_sender.send(TaskResult { request_id, result });
+        }));
+    }
+
+    /// Try to dispatch an expensive request to the background worker.
+    ///
+    /// Returns `true` if the request was dispatched (response will arrive
+    /// as `Event::Task`), `false` if it should be handled synchronously.
+    ///
+    /// Data is eagerly snapshotted on the main thread (while locks are
+    /// cheap), then the CPU-intensive handler runs on the worker thread.
+    /// This avoids duplicating handler logic — the same handler functions
+    /// are called from both sync and async paths.
+    fn try_dispatch_async(&self, req: &lsp_server::Request) -> bool {
+        match req.method.as_str() {
+            // codeLens/resolve runs full balance calculations — the most
+            // expensive operation in the LSP.
+            CodeLensResolve::METHOD => {
+                let id = req.id.clone();
+                let lens: CodeLens = match serde_json::from_value(req.params.clone()) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        self.dispatch_async(id, move || Err(e.to_string()));
+                        return true;
+                    }
+                };
+
+                // Snapshot data eagerly on the main thread
+                let uri: Option<Uri> = lens
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .and_then(|s| s.parse().ok());
+                let (_text, parse_result) = if let Some(ref uri) = uri {
+                    self.get_document_data(uri)
+                } else {
+                    (String::new(), empty_parse_result())
+                };
+                let ledger_directives = {
+                    let guard = self.ledger_state.read();
+                    guard.directives().map(|d| d.to_vec())
+                };
+
+                // Dispatch the expensive balance calculation to the worker
+                self.dispatch_async(id, move || {
+                    let resolved =
+                        handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
+                    serde_json::to_value(resolved).map_err(|e| e.to_string())
+                });
+                true
+            }
+            // semanticTokens/full tokenizes the entire document — CPU-bound.
+            SemanticTokensFullRequest::METHOD => {
+                let id = req.id.clone();
+                let params: SemanticTokensParams = match serde_json::from_value(req.params.clone())
+                {
+                    Ok(p) => p,
+                    Err(e) => {
+                        self.dispatch_async(id, move || Err(e.to_string()));
+                        return true;
+                    }
+                };
+
+                // Snapshot data eagerly
+                let uri = &params.text_document.uri;
+                let (text, parse_result) = self.get_document_data(uri);
+
+                self.dispatch_async(id, move || {
+                    let response = handle_semantic_tokens(&params, &text, &parse_result);
+                    serde_json::to_value(response).map_err(|e| e.to_string())
+                });
+                true
+            }
+            _ => false,
         }
     }
 
@@ -199,10 +342,20 @@ impl MainLoopState {
     }
 
     /// Handle an LSP request (expects response).
+    ///
+    /// Most read-only requests are dispatched to a background thread to keep
+    /// the main loop responsive. Requests that mutate state (initialize,
+    /// shutdown) or need ordering guarantees run synchronously.
     fn handle_request(&mut self, req: lsp_server::Request) {
         let id = req.id.clone();
 
-        // Dispatch based on method
+        // Check for async-dispatchable requests first.
+        // These are read-only and can safely run off the main thread.
+        if self.try_dispatch_async(&req) {
+            return; // Response will come back as Event::Task
+        }
+
+        // Synchronous dispatch for all other requests.
         let result = match req.method.as_str() {
             Initialize::METHOD => self.handle_initialize(req),
             Shutdown::METHOD => {
@@ -214,7 +367,6 @@ impl MainLoopState {
             References::METHOD => self.handle_references_request(req),
             HoverRequest::METHOD => self.handle_hover_request(req),
             DocumentSymbolRequest::METHOD => self.handle_document_symbols_request(req),
-            SemanticTokensFullRequest::METHOD => self.handle_semantic_tokens_request(req),
             SemanticTokensFullDeltaRequest::METHOD => {
                 self.handle_semantic_tokens_delta_request(req)
             }
@@ -239,7 +391,6 @@ impl MainLoopState {
             LinkedEditingRange::METHOD => self.handle_linked_editing_range_request(req),
             OnTypeFormatting::METHOD => self.handle_on_type_formatting_request(req),
             CodeLensRequest::METHOD => self.handle_code_lens_request(req),
-            CodeLensResolve::METHOD => self.handle_code_lens_resolve_request(req),
             DocumentColor::METHOD => self.handle_document_color_request(req),
             ColorPresentationRequest::METHOD => self.handle_color_presentation_request(req),
             GotoDeclaration::METHOD => self.handle_goto_declaration_request(req),
@@ -377,22 +528,6 @@ impl MainLoopState {
         let (text, parse_result) = self.get_document_data(uri);
 
         let response = handle_document_symbols(&params, &text, &parse_result);
-
-        serde_json::to_value(response).map_err(|e| e.to_string())
-    }
-
-    /// Handle the textDocument/semanticTokens/full request.
-    fn handle_semantic_tokens_request(
-        &self,
-        req: lsp_server::Request,
-    ) -> Result<serde_json::Value, String> {
-        let params: SemanticTokensParams =
-            serde_json::from_value(req.params).map_err(|e| e.to_string())?;
-
-        let uri = &params.text_document.uri;
-        let (text, parse_result) = self.get_document_data(uri);
-
-        let response = handle_semantic_tokens(&params, &text, &parse_result);
 
         serde_json::to_value(response).map_err(|e| e.to_string())
     }
@@ -773,40 +908,6 @@ impl MainLoopState {
         let response = handle_code_lens(&params, &text, &parse_result);
 
         serde_json::to_value(response).map_err(|e| e.to_string())
-    }
-
-    /// Handle the codeLens/resolve request.
-    ///
-    /// Uses full ledger directives when available (multi-file mode) to correctly
-    /// verify balance assertions that depend on transactions in other included files.
-    fn handle_code_lens_resolve_request(
-        &self,
-        req: lsp_server::Request,
-    ) -> Result<serde_json::Value, String> {
-        let lens: CodeLens = serde_json::from_value(req.params).map_err(|e| e.to_string())?;
-
-        // Get the document URI from the lens's data field
-        let uri: Uri = if let Some(data) = &lens.data {
-            data.get("uri")
-                .and_then(|v| v.as_str())
-                .and_then(|s| s.parse().ok())
-                .unwrap_or_else(|| "file:///unknown".parse().unwrap())
-        } else {
-            "file:///unknown".parse().unwrap()
-        };
-
-        let (_text, parse_result) = self.get_document_data(&uri);
-
-        // Clone directives while holding the lock, then drop the guard before
-        // running the expensive balance calculation (issue #470).
-        let ledger_directives = {
-            let ledger_guard = self.ledger_state.read();
-            ledger_guard.directives().map(|d| d.to_vec())
-        };
-
-        let resolved = handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
-
-        serde_json::to_value(resolved).map_err(|e| e.to_string())
     }
 
     /// Handle the textDocument/documentColor request.
@@ -1345,6 +1446,10 @@ impl MainLoopState {
 
 /// Run the main event loop.
 ///
+/// Uses `crossbeam_channel::select!` to multiplex between incoming LSP
+/// messages and results from background task threads, keeping the main
+/// loop responsive while expensive requests run in parallel.
+///
 /// # Arguments
 /// * `receiver` - Channel to receive LSP messages from the client
 /// * `sender` - Channel to send LSP messages to the client
@@ -1355,19 +1460,32 @@ pub fn run_main_loop(
     journal_file: Option<PathBuf>,
 ) {
     let mut state = MainLoopState::new(sender, journal_file);
+    let task_receiver = state.task_receiver.clone();
 
     tracing::info!("Main loop started");
 
-    for msg in receiver {
-        let event = match msg {
-            lsp_server::Message::Request(req) => Event::Message(Message::Request(req)),
-            lsp_server::Message::Notification(notif) => {
-                Event::Message(Message::Notification(notif))
+    loop {
+        crossbeam_channel::select! {
+            recv(receiver) -> msg => {
+                let msg = match msg {
+                    Ok(msg) => msg,
+                    Err(_) => break, // Channel closed
+                };
+                let event = match msg {
+                    lsp_server::Message::Request(req) => Event::Message(Message::Request(req)),
+                    lsp_server::Message::Notification(notif) => {
+                        Event::Message(Message::Notification(notif))
+                    }
+                    lsp_server::Message::Response(resp) => Event::Message(Message::Response(resp)),
+                };
+                state.handle_event(event);
             }
-            lsp_server::Message::Response(resp) => Event::Message(Message::Response(resp)),
-        };
-
-        state.handle_event(event);
+            recv(task_receiver) -> task_result => {
+                if let Ok(result) = task_result {
+                    state.handle_event(Event::Task(result));
+                }
+            }
+        }
     }
 
     tracing::info!("Main loop ended");

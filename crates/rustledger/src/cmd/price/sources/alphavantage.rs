@@ -27,15 +27,12 @@ use std::time::Duration;
 /// - Forex: Use `from_currency/to_currency` format (e.g., `EUR/USD`)
 /// - Crypto: Use `CRYPTO:symbol` format (e.g., `CRYPTO:BTC`)
 #[derive(Debug)]
-pub struct AlphaVantageSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct AlphaVantageSource {}
 
 impl AlphaVantageSource {
     /// Create a new Alpha Vantage source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Get the API key from environment.

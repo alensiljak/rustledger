@@ -20,15 +20,15 @@ use std::time::Duration;
 /// - Cryptocurrencies: `BTC`, `ETH`, `SOL`, etc.
 /// - Format: Uses `{CRYPTO}-{CURRENCY}` pairs (e.g., `BTC-USD`)
 #[derive(Debug)]
-pub struct CoinbaseSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct CoinbaseSource {}
 
 impl CoinbaseSource {
     /// Create a new Coinbase source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    ///
+    /// The timeout parameter is accepted for API consistency but not
+    /// currently applied to HTTP requests.
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Build the Coinbase API URL.

@@ -6,48 +6,11 @@
 //!
 //! See issue #786: <https://github.com/rustledger/rustledger/issues/786>
 
-use std::path::PathBuf;
+mod common;
+
 use std::process::Command;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn test_fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-}
-
-fn rledger_binary() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
-        return Some(PathBuf::from(path));
-    }
-    let release_path = project_root().join("target/release/rledger");
-    if release_path.exists() {
-        return Some(release_path);
-    }
-    let debug_path = project_root().join("target/debug/rledger");
-    if debug_path.exists() {
-        return Some(debug_path);
-    }
-    None
-}
-
-macro_rules! require_rledger {
-    () => {
-        match rledger_binary() {
-            Some(path) => path,
-            None => {
-                eprintln!("Skipping: rledger binary not found");
-                return;
-            }
-        }
-    };
-}
+use common::test_fixtures_dir;
 
 /// Normalize output for snapshot stability: strip the file path prefix
 /// so snapshots don't depend on the absolute path of the test machine.

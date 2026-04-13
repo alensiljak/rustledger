@@ -69,9 +69,8 @@ pub fn get_completions_cached(
     }
 }
 
-/// Get completions at the given position (legacy, extracts data each time).
-#[allow(dead_code)] // Used by tests
-pub fn get_completions(
+/// Get completions at the given position (non-cached, used by tests).
+pub(crate) fn get_completions(
     source: &str,
     line: u32,
     character: u32,

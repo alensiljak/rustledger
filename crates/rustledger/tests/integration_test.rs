@@ -3,21 +3,12 @@
 //! These tests verify that rustledger produces the same results as
 //! the reference Python implementation.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-fn project_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf()
-}
-
-fn test_fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
-}
+use common::{project_root, test_fixtures_dir};
 
 fn rust_bean_check_binary() -> Option<PathBuf> {
     // Use CARGO_BIN_EXE_bean-check if available (set by cargo test)

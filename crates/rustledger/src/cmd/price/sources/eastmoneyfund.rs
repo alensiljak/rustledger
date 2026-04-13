@@ -23,15 +23,12 @@ use std::time::Duration;
 /// - `110011` - 易方达中小盘
 /// - etc.
 #[derive(Debug)]
-pub struct EastMoneyFundSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct EastMoneyFundSource {}
 
 impl EastMoneyFundSource {
     /// Create a new East Money Fund source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Build the East Money API URL.

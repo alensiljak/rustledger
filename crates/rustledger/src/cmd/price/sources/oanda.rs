@@ -26,15 +26,15 @@ use std::time::Duration;
 /// All major and minor forex pairs:
 /// - `EUR_USD`, `GBP_USD`, `USD_JPY`, etc.
 #[derive(Debug)]
-pub struct OandaSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct OandaSource {}
 
 impl OandaSource {
     /// Create a new OANDA source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    ///
+    /// The timeout parameter is accepted for API consistency but not
+    /// currently applied to HTTP requests.
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Get the API key from environment.

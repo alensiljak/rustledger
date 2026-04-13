@@ -91,18 +91,6 @@ impl Error {
         self
     }
 
-    #[allow(dead_code)]
-    pub fn with_field(mut self, field: impl Into<String>) -> Self {
-        self.field = Some(field.into());
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn warning(mut self) -> Self {
-        self.severity = "warning".to_string();
-        self
-    }
-
     pub fn validate_phase(mut self) -> Self {
         self.phase = "validate".to_string();
         self

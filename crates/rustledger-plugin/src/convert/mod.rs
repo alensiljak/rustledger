@@ -31,9 +31,6 @@ pub enum ConversionError {
     /// Invalid flag format.
     #[error("invalid flag: {0}")]
     InvalidFlag(String),
-    /// Unknown directive type.
-    #[error("unknown directive type: {0}")]
-    UnknownDirective(String),
 }
 
 /// Convert a directive to its serializable wrapper with source location.

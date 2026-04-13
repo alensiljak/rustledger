@@ -26,19 +26,13 @@ use std::time::Duration;
 ///
 /// # Limitations
 ///
-/// - **Timeout**: The `timeout` field is stored but not currently enforced.
-///   This is because the standard library's `Command::wait_with_output()` does
-///   not support timeouts. Implementing proper timeout would require either
-///   spawning a separate thread or using an async runtime. For most use cases,
-///   external price commands complete quickly enough that this is not an issue.
+/// - **Timeout**: The `timeout` parameter is accepted for API compatibility but
+///   not currently enforced. `Command::wait_with_output()` does not support
+///   timeouts without a separate thread or async runtime.
 #[derive(Debug)]
 pub struct ExternalCommandSource {
     /// The command and arguments to execute.
     command: Vec<String>,
-    /// Timeout for command execution.
-    /// NOTE: Not currently enforced. See struct-level documentation.
-    #[allow(dead_code)]
-    timeout: Duration,
     /// Additional environment variables.
     env: HashMap<String, String>,
     /// Source name for identification in responses.
@@ -47,7 +41,7 @@ pub struct ExternalCommandSource {
 
 impl ExternalCommandSource {
     /// Create a new external command source.
-    pub fn new(command: Vec<String>, timeout: Duration, env: HashMap<String, String>) -> Self {
+    pub fn new(command: Vec<String>, _timeout: Duration, env: HashMap<String, String>) -> Self {
         // Derive source name from the command for better traceability
         let source_name = command.first().map_or_else(
             || "external".to_string(),
@@ -63,7 +57,6 @@ impl ExternalCommandSource {
 
         Self {
             command,
-            timeout,
             env,
             source_name,
         }
@@ -72,13 +65,12 @@ impl ExternalCommandSource {
     /// Create a new external command source with a custom name.
     pub const fn with_name(
         command: Vec<String>,
-        timeout: Duration,
+        _timeout: Duration,
         env: HashMap<String, String>,
         name: String,
     ) -> Self {
         Self {
             command,
-            timeout,
             env,
             source_name: name,
         }

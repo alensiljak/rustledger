@@ -20,15 +20,12 @@ use std::time::Duration;
 /// All major world currencies:
 /// - USD, EUR, GBP, JPY, CHF, CAD, AUD, CNY, INR, etc.
 #[derive(Debug)]
-pub struct RatesApiSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct RatesApiSource {}
 
 impl RatesApiSource {
     /// Create a new Rates API source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Build the API URL.

@@ -23,15 +23,12 @@ use std::time::Duration;
 /// - Forex: `EURUSD=X`, `GBPUSD=X`
 /// - Mutual funds: Fund symbols
 #[derive(Debug)]
-pub struct YahooFinanceSource {
-    #[allow(dead_code)]
-    timeout: Duration,
-}
+pub struct YahooFinanceSource {}
 
 impl YahooFinanceSource {
     /// Create a new Yahoo Finance source.
-    pub const fn new(timeout: Duration) -> Self {
-        Self { timeout }
+    pub const fn new(_timeout: Duration) -> Self {
+        Self {}
     }
 
     /// Build the Yahoo Finance API URL.

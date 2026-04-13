@@ -55,9 +55,8 @@ fn find_account_definition_cached(
     None
 }
 
-/// Get the definition location for the symbol at the given position (legacy, creates cache each time).
-#[allow(dead_code)] // Used by tests
-pub fn get_definition(
+/// Get the definition location for the symbol at the given position (non-cached, used by tests).
+pub(crate) fn get_definition(
     source: &str,
     line: u32,
     character: u32,
