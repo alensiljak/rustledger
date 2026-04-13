@@ -84,8 +84,6 @@ mod token_type {
 mod token_modifier {
     pub const DEFINITION: u32 = 1 << 0;
     pub const DEPRECATED: u32 = 1 << 1;
-    #[allow(dead_code)]
-    pub const READONLY: u32 = 1 << 2;
 }
 
 /// A raw token before delta encoding.
