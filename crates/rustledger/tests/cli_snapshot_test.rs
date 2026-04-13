@@ -59,7 +59,8 @@ fn normalize_output(output: &str, fixture_dir: &str) -> String {
 // rledger check — text output
 // ============================================================================
 
-/// Snapshot: `rledger check` on a clean file (text mode, no errors).
+/// Snapshot: `rledger check` on a valid file (text mode).
+/// The file triggers a warning (E1004: close with non-zero balance) but no errors.
 #[test]
 fn test_snapshot_check_clean_file_text() {
     let rledger = require_rledger!();
@@ -71,10 +72,39 @@ fn test_snapshot_check_clean_file_text() {
         .output()
         .expect("failed to run rledger check");
 
+    assert!(
+        output.status.success(),
+        "rledger check should succeed on valid file: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let stdout = String::from_utf8_lossy(&output.stdout);
     let normalized = normalize_output(&stdout, &test_fixtures_dir().display().to_string());
 
     insta::assert_snapshot!("check_clean_text", normalized.trim());
+}
+
+/// Snapshot: `rledger check` on a file with parse errors (text mode).
+#[test]
+fn test_snapshot_check_parse_errors_text() {
+    let rledger = require_rledger!();
+    let fixture = test_fixtures_dir().join("parse-errors.beancount");
+
+    let output = Command::new(&rledger)
+        .args(["check", "--no-cache"])
+        .arg(&fixture)
+        .output()
+        .expect("failed to run rledger check");
+
+    assert!(
+        !output.status.success(),
+        "rledger check should fail on file with parse errors"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let normalized = normalize_output(&stdout, &test_fixtures_dir().display().to_string());
+
+    insta::assert_snapshot!("check_parse_errors_text", normalized.trim());
 }
 
 /// Snapshot: `rledger check` on a file with validation errors (text mode).
@@ -88,6 +118,11 @@ fn test_snapshot_check_validation_errors_text() {
         .arg(&fixture)
         .output()
         .expect("failed to run rledger check");
+
+    assert!(
+        !output.status.success(),
+        "rledger check should fail on file with validation errors"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let normalized = normalize_output(&stdout, &test_fixtures_dir().display().to_string());
@@ -176,6 +211,12 @@ fn test_snapshot_query_table_output() {
         .output()
         .expect("failed to run rledger query");
 
+    assert!(
+        output.status.success(),
+        "rledger query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     insta::assert_snapshot!("query_table_output", stdout.trim());
@@ -193,6 +234,12 @@ fn test_snapshot_query_aggregate_output() {
         .arg("SELECT account, SUM(position) GROUP BY account ORDER BY account")
         .output()
         .expect("failed to run rledger query");
+
+    assert!(
+        output.status.success(),
+        "rledger query failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
