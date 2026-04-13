@@ -57,14 +57,18 @@ struct TokenStream<'src> {
     /// calendar values (e.g., Feb 29 in a non-leap year). Used in place of
     /// the generic "unexpected input" error during error recovery.
     deferred_error: Option<ParseError>,
+    /// String interner for deduplicating repeated strings (accounts, currencies).
+    /// Typical ledger: ~10 unique accounts × 1000 txns = 10K lookups vs 10K allocations.
+    interner: rustledger_core::intern::StringInterner,
 }
 
 impl<'src> TokenStream<'src> {
-    const fn new(tokens: &'src [SpannedToken<'src>]) -> Self {
+    fn new(tokens: &'src [SpannedToken<'src>]) -> Self {
         Self {
             tokens,
             pos: 0,
             deferred_error: None,
+            interner: rustledger_core::intern::StringInterner::new(),
         }
     }
 
@@ -252,7 +256,7 @@ fn parse_account(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Account(s) = &t.token
     {
-        let result: InternedStr = (*s).into();
+        let result = stream.interner.intern(s);
         stream.advance();
         return Ok(result);
     }
@@ -263,7 +267,7 @@ fn parse_currency(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Currency(s) = &t.token
     {
-        let result: InternedStr = (*s).into();
+        let result = stream.interner.intern(s);
         stream.advance();
         return Ok(result);
     }
@@ -274,7 +278,7 @@ fn parse_tag(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Tag(s) = &t.token
     {
-        let result: InternedStr = s[1..].into(); // Skip #
+        let result = stream.interner.intern(&s[1..]); // Skip #
         stream.advance();
         return Ok(result);
     }
@@ -285,7 +289,7 @@ fn parse_link(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Link(s) = &t.token
     {
-        let result: InternedStr = s[1..].into(); // Skip ^
+        let result = stream.interner.intern(&s[1..]); // Skip ^
         stream.advance();
         return Ok(result);
     }
