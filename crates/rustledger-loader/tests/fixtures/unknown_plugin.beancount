@@ -1,4 +1,4 @@
-; Test fixture: unknown plugin name should produce an error in Ledger.errors.
+; Test fixture: unknown plugin name is silently skipped without crashing.
 option "operating_currency" "USD"
 plugin "some.unknown.plugin.module"
 

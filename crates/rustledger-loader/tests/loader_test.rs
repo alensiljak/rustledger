@@ -897,9 +897,13 @@ fn test_plugin_and_booking_interaction() {
     );
 }
 
-/// Test that unknown plugin names produce errors in Ledger.errors.
+/// Test that unknown plugin names are gracefully skipped without crashing.
+///
+/// The loader's `run_plugins()` only executes native plugins. Non-native
+/// plugin names (Python modules, unknown names) are silently skipped.
+/// This test verifies the pipeline doesn't panic or error on unknown plugins.
 #[test]
-fn test_unknown_plugin_error_collection() {
+fn test_unknown_plugin_skipped_gracefully() {
     use rustledger_loader::{LoadOptions, load};
 
     let path = fixtures_path("unknown_plugin.beancount");
