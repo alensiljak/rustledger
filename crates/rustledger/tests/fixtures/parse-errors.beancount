@@ -1,0 +1,9 @@
+; File with intentional parse errors for snapshot testing
+
+2024-01-01 open Assets:Cash USD
+
+this is not valid beancount {{{ }}
+
+2024-01-15 * "Valid transaction"
+  Assets:Cash   100 USD
+  Income:Salary

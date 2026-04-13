@@ -28,19 +28,34 @@ Example:
 ...
 ```
 
+## Inline Assertions
+
+Files can include `; ASSERT:` comments for content-based verification (not just exit codes):
+
+```beancount
+; ASSERT: no_errors
+; ASSERT: error_count == 0
+; ASSERT: check_stderr !contains "ambiguous"
+; ASSERT: check_stderr contains "warning"
+; ASSERT: query "SELECT DISTINCT account" contains "Equity:Currency:USD"
+; ASSERT: query "SELECT DISTINCT account" row_count == 4
+```
+
+Files without assertions fall back to exit-code-only checking (exit 0 = pass).
+
 ## Running Tests
 
-These files are tested by:
-1. `rledger check` - should exit 0 (no errors)
-2. Compatibility test suite - compares output with Python beancount
-
 ```bash
-# Run all regression tests
-for f in tests/regressions/issue-*.beancount; do
-  echo "Testing $f..."
-  cargo run --release -p rustledger -- check "$f"
-done
+# Run all regression tests (with assertions)
+./scripts/test-regressions.sh
+
+# Run with a specific binary
+./scripts/test-regressions.sh ./target/debug/rledger
 ```
+
+These regression files are also exercised by the nightly compatibility workflow,
+which includes `tests/regressions` in its `TEST_DIRS` configuration in
+`.github/workflows/compat.yml`.
 
 ## Adding New Tests
 

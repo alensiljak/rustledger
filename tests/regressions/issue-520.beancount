@@ -2,6 +2,8 @@
 ; Description: currency_accounts plugin should generate Open directives for
 ;              the currency tracking accounts it creates (e.g., Equity:Currency:USD)
 ; Expected: No errors - plugin generates Open directives like Python beancount
+; ASSERT: no_errors
+; ASSERT: query "SELECT DISTINCT account ORDER BY account" contains "Equity:Currency:USD"
 
 option "operating_currency" "EUR"
 

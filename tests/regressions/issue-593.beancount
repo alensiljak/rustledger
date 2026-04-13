@@ -17,6 +17,9 @@
 ;     - Should use latest price (1.40 EUR from last @ annotation)
 ;     - SUM(value(position)) should equal 4 ABC * 1.40 = 5.60 EUR
 
+; ASSERT: no_errors
+; ASSERT: query "SELECT SUM(cost(position)) WHERE account = 'Equity:Stocks'" contains "5.20 EUR"
+
 plugin "beancount.plugins.implicit_prices"
 
 1900-01-01 open Equity:Stocks
