@@ -217,6 +217,14 @@ fn parse_string(stream: &mut TokenStream<'_>) -> ParseRes<String> {
 }
 
 fn process_string_escapes(s: &str) -> String {
+    // Fast path: if no backslash, the string needs no escape processing.
+    // This avoids a String allocation + char-by-char copy for the ~99%
+    // of narrations/payees that contain no escape sequences.
+    if !s.contains('\\') {
+        return s.to_string();
+    }
+
+    // Slow path: process escape sequences
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
