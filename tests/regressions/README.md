@@ -53,6 +53,10 @@ Files without assertions fall back to exit-code-only checking (exit 0 = pass).
 ./scripts/test-regressions.sh ./target/debug/rledger
 ```
 
+These regression files are also exercised by the nightly compatibility workflow,
+which includes `tests/regressions` in its `TEST_DIRS` configuration in
+`.github/workflows/compat.yml`.
+
 ## Adding New Tests
 
 When adding a test from a new issue:

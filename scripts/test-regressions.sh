@@ -23,6 +23,10 @@ FAILED=0
 SKIPPED=0
 FAILED_TESTS=""
 
+# Create a temp file for stderr capture; clean up on exit
+STDERR_TMP=$(mktemp)
+trap 'rm -f "$STDERR_TMP"' EXIT
+
 # Build if binary doesn't exist
 if [ ! -f "$RLEDGER" ]; then
     echo "Building rledger..."
@@ -54,14 +58,14 @@ run_assertion() {
     # error_count == N
     if [[ "$assertion" =~ ^error_count\ *==\ *([0-9]+)$ ]]; then
         local expected="${BASH_REMATCH[1]}"
-        # Try JSON output first for precise count
+        # Try JSON output first for precise count (handles pretty-printed JSON)
         local json_out
         json_out=$("$RLEDGER" check --format json --no-cache "$file" 2>/dev/null || true)
         local actual
-        actual=$(echo "$json_out" | grep -o '"error_count":[0-9]*' | cut -d: -f2 || echo "")
+        actual=$(echo "$json_out" | grep -oE '"error_count"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -n1 || echo "")
         if [ -z "$actual" ]; then
             # Fallback: count error lines in text output
-            actual=$(echo "$check_stdout" | grep -c "^error\[" || echo "0")
+            actual=$(echo "$check_stdout" | grep -cE '(^error\[|: error\[)' || echo "0")
         fi
         if [ "$actual" != "$expected" ]; then
             echo "    FAIL: error_count == $expected, got $actual"
@@ -73,7 +77,7 @@ run_assertion() {
     # check_stderr contains "TEXT"
     if [[ "$assertion" =~ ^check_stderr\ +contains\ +\"(.+)\"$ ]]; then
         local pattern="${BASH_REMATCH[1]}"
-        if ! echo "$check_stderr" | grep -qF "$pattern"; then
+        if ! echo "$check_stderr" | grep -qF -- "$pattern"; then
             echo "    FAIL: stderr should contain \"$pattern\""
             return 1
         fi
@@ -83,9 +87,9 @@ run_assertion() {
     # check_stderr !contains "TEXT"
     if [[ "$assertion" =~ ^check_stderr\ +\!contains\ +\"(.+)\"$ ]]; then
         local pattern="${BASH_REMATCH[1]}"
-        if echo "$check_stderr" | grep -qF "$pattern"; then
+        if echo "$check_stderr" | grep -qF -- "$pattern"; then
             echo "    FAIL: stderr should NOT contain \"$pattern\""
-            echo "    found: $(grep -F "$pattern" <<< "$check_stderr" | head -3)"
+            echo "    found: $(grep -F -- "$pattern" <<< "$check_stderr" | head -3)"
             return 1
         fi
         return 0
@@ -97,7 +101,7 @@ run_assertion() {
         local pattern="${BASH_REMATCH[2]}"
         local query_out
         query_out=$("$RLEDGER" query -q "$file" "$bql" 2>/dev/null || true)
-        if ! echo "$query_out" | grep -qF "$pattern"; then
+        if ! echo "$query_out" | grep -qF -- "$pattern"; then
             echo "    FAIL: query output should contain \"$pattern\""
             echo "    query: $bql"
             echo "    output: $(head -10 <<< "$query_out")"
@@ -112,10 +116,10 @@ run_assertion() {
         local pattern="${BASH_REMATCH[2]}"
         local query_out
         query_out=$("$RLEDGER" query -q "$file" "$bql" 2>/dev/null || true)
-        if echo "$query_out" | grep -qF "$pattern"; then
+        if echo "$query_out" | grep -qF -- "$pattern"; then
             echo "    FAIL: query output should NOT contain \"$pattern\""
             echo "    query: $bql"
-            echo "    found: $(grep -F "$pattern" <<< "$query_out" | head -3)"
+            echo "    found: $(grep -F -- "$pattern" <<< "$query_out" | head -3)"
             return 1
         fi
         return 0
@@ -127,9 +131,13 @@ run_assertion() {
         local expected="${BASH_REMATCH[2]}"
         local query_out
         query_out=$("$RLEDGER" query -q "$file" "$bql" 2>/dev/null || true)
-        # Count non-empty, non-header lines (skip first 2 lines: header + separator)
+        # Parse the trailing "N row(s)" summary line for the actual count
         local actual
-        actual=$(echo "$query_out" | tail -n +3 | grep -c '.' || echo "0")
+        actual=$(echo "$query_out" | grep -oE '^[0-9]+ row' | grep -oE '^[0-9]+' | tail -1 || echo "")
+        if [ -z "$actual" ]; then
+            # Fallback: count non-empty lines after header+separator (skip first 2)
+            actual=$(echo "$query_out" | tail -n +3 | grep -cE '.+' || echo "0")
+        fi
         if [ "$actual" != "$expected" ]; then
             echo "    FAIL: query row_count == $expected, got $actual"
             echo "    query: $bql"
@@ -139,8 +147,8 @@ run_assertion() {
         return 0
     fi
 
-    echo "    WARN: unknown assertion syntax: $assertion"
-    return 0
+    echo "    FAIL: unknown assertion syntax: $assertion"
+    return 1
 }
 
 for f in "$TESTS_DIR"/issue-*.beancount; do
@@ -162,8 +170,8 @@ for f in "$TESTS_DIR"/issue-*.beancount; do
     check_stdout=""
     check_stderr=""
     check_exit=0
-    check_stdout=$("$RLEDGER" check --no-cache "$f" 2>/tmp/rledger-regression-stderr) || check_exit=$?
-    check_stderr=$(cat /tmp/rledger-regression-stderr 2>/dev/null || true)
+    check_stdout=$("$RLEDGER" check --no-cache "$f" 2>"$STDERR_TMP") || check_exit=$?
+    check_stderr=$(cat "$STDERR_TMP" 2>/dev/null || true)
 
     if [ ${#assertions[@]} -eq 0 ]; then
         # No assertions — fall back to exit-code-only
@@ -194,9 +202,6 @@ for f in "$TESTS_DIR"/issue-*.beancount; do
         fi
     fi
 done
-
-# Cleanup
-rm -f /tmp/rledger-regression-stderr
 
 echo ""
 echo "Results: $PASSED passed, $FAILED failed"
