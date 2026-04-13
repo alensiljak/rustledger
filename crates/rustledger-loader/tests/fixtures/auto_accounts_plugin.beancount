@@ -1,0 +1,12 @@
+; Test fixture: auto_accounts plugin should generate Open directives
+; for implicitly-used accounts.
+option "operating_currency" "USD"
+plugin "auto_accounts"
+
+2024-01-15 * "Paycheck"
+  Assets:Bank:Checking                    5000 USD
+  Income:Salary                          -5000 USD
+
+2024-01-20 * "Groceries"
+  Expenses:Food                            50 USD
+  Assets:Bank:Checking                    -50 USD
