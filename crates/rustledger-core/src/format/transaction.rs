@@ -1,8 +1,8 @@
 //! Transaction and posting formatting.
 
 use super::directives::format_metadata;
-use super::{FormatConfig, format_amount, format_cost_spec, format_price_annotation};
-use crate::{Amount, CostSpec, IncompleteAmount, Posting, PriceAnnotation, Transaction};
+use super::{FormatConfig, format_cost_spec, format_price_annotation};
+use crate::{CostSpec, IncompleteAmount, Posting, PriceAnnotation, Transaction};
 use std::fmt::Write;
 
 /// Format a transaction.
@@ -124,30 +124,6 @@ pub fn format_posting_incomplete_amount(
     price: &Option<PriceAnnotation>,
 ) -> String {
     let mut out = format_incomplete_amount(units);
-
-    // Cost spec
-    if let Some(cost_spec) = cost {
-        out.push(' ');
-        out.push_str(&format_cost_spec(cost_spec));
-    }
-
-    // Price annotation
-    if let Some(price_ann) = price {
-        out.push(' ');
-        out.push_str(&format_price_annotation(price_ann));
-    }
-
-    out
-}
-
-/// Format the amount part of a posting (units + cost + price).
-#[allow(dead_code)]
-pub fn format_posting_amount(
-    units: &Amount,
-    cost: &Option<CostSpec>,
-    price: &Option<PriceAnnotation>,
-) -> String {
-    let mut out = format_amount(units);
 
     // Cost spec
     if let Some(cost_spec) = cost {

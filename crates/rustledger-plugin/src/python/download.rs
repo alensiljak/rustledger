@@ -39,12 +39,6 @@ pub fn python_stdlib_path() -> Result<PathBuf, PythonError> {
     Ok(dir.join("lib"))
 }
 
-/// Check if the Python runtime is already downloaded.
-#[allow(dead_code)]
-pub fn is_downloaded() -> bool {
-    python_wasm_path().map(|p| p.exists()).unwrap_or(false)
-}
-
 /// Ensure the Python WASI runtime is downloaded and cached.
 ///
 /// Returns the path to the python.wasm file.

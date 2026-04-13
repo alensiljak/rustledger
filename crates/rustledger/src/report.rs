@@ -42,12 +42,6 @@ impl SourceCache {
     pub fn add(&mut self, path: &str, content: String) {
         self.sources.insert(path.to_string(), content);
     }
-
-    /// Get a source by path.
-    #[allow(dead_code)]
-    pub fn get(&self, path: &str) -> Option<&str> {
-        self.sources.get(path).map(String::as_str)
-    }
 }
 
 impl Default for SourceCache {

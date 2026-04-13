@@ -250,12 +250,6 @@ fn arb_pad() -> impl Strategy<Value = Pad> {
         .prop_map(|(date, account, source)| Pad::new(date, account, source))
 }
 
-/// Generate a Posting
-#[allow(dead_code)]
-fn arb_posting() -> impl Strategy<Value = Posting> {
-    (arb_account(), arb_amount()).prop_map(|(account, amount)| Posting::new(account, amount))
-}
-
 /// Generate a balanced Transaction (two postings that sum to zero)
 fn arb_transaction() -> impl Strategy<Value = Transaction> {
     (
