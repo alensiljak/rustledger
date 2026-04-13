@@ -110,6 +110,9 @@ pub struct TaskResult {
     pub result: Result<serde_json::Value, String>,
 }
 
+/// A job to be executed on the background worker thread.
+type BackgroundJob = Box<dyn FnOnce() + Send>;
+
 /// State managed by the main loop.
 pub struct MainLoopState {
     /// Virtual file system for open documents.
@@ -128,6 +131,8 @@ pub struct MainLoopState {
     pub task_sender: Sender<TaskResult>,
     /// Receiver end of the task channel (used by run_main_loop).
     pub task_receiver: Receiver<TaskResult>,
+    /// Channel for submitting jobs to the background worker thread.
+    pub job_sender: Sender<BackgroundJob>,
 }
 
 /// Default empty parse result for missing documents.
@@ -149,6 +154,20 @@ impl MainLoopState {
         }
 
         let (task_sender, task_receiver) = crossbeam_channel::unbounded();
+        let (job_sender, job_receiver) = crossbeam_channel::unbounded::<BackgroundJob>();
+
+        // Spawn a single persistent worker thread for background requests.
+        // Using one thread avoids the overhead of thread-per-request while
+        // still keeping the main loop unblocked. Jobs are processed FIFO;
+        // stale results are discarded via revision-based cancellation.
+        std::thread::Builder::new()
+            .name("lsp-worker".into())
+            .spawn(move || {
+                for job in job_receiver {
+                    job();
+                }
+            })
+            .expect("failed to spawn LSP worker thread");
 
         Self {
             vfs: Arc::new(RwLock::new(Vfs::new())),
@@ -159,6 +178,7 @@ impl MainLoopState {
             journal_file,
             task_sender,
             task_receiver,
+            job_sender,
         }
     }
 
@@ -201,54 +221,103 @@ impl MainLoopState {
         }
     }
 
-    /// Dispatch a request handler to a background thread.
+    /// Dispatch a request handler to the background worker thread.
     ///
     /// The handler closure receives no mutable state — it should capture
     /// any needed data (parse results, ledger state) before being moved.
     /// The result is sent back to the main loop as a `Task` event.
+    ///
+    /// Cancellation: the revision at dispatch time is captured. If the
+    /// world state changes before the handler completes (e.g., user edits
+    /// a document), the result is silently dropped instead of being sent.
     fn dispatch_async(
         &self,
         request_id: lsp_server::RequestId,
         handler: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
     ) {
         let task_sender = self.task_sender.clone();
-        std::thread::spawn(move || {
+        let dispatch_revision = crate::snapshot::current_revision();
+
+        let _ = self.job_sender.send(Box::new(move || {
             let result = handler();
+
+            // Drop stale results — if the world changed since dispatch,
+            // the client will have sent a new request for fresh data.
+            if crate::snapshot::current_revision() != dispatch_revision {
+                tracing::debug!(
+                    "Dropping stale result for request {:?} (revision changed)",
+                    request_id
+                );
+                return;
+            }
+
             // Ignore send errors — the main loop may have shut down
             let _ = task_sender.send(TaskResult { request_id, result });
-        });
+        }));
     }
 
-    /// Try to dispatch an expensive request to a background thread.
+    /// Try to dispatch an expensive request to the background worker.
     ///
     /// Returns `true` if the request was dispatched (response will arrive
     /// as `Event::Task`), `false` if it should be handled synchronously.
     ///
-    /// Only the most CPU-intensive requests are dispatched to avoid the
-    /// overhead of snapshot creation for lightweight handlers.
+    /// Data is eagerly snapshotted on the main thread (while locks are
+    /// cheap), then the CPU-intensive handler runs on the worker thread.
+    /// This avoids duplicating handler logic — the same handler functions
+    /// are called from both sync and async paths.
     fn try_dispatch_async(&self, req: &lsp_server::Request) -> bool {
         match req.method.as_str() {
             // codeLens/resolve runs full balance calculations — the most
             // expensive operation in the LSP.
             CodeLensResolve::METHOD => {
-                let req = req.clone();
                 let id = req.id.clone();
-                let snapshot = ReadonlySnapshot {
-                    vfs: Arc::clone(&self.vfs),
-                    ledger_state: Arc::clone(&self.ledger_state),
+                let lens: CodeLens = match serde_json::from_value(req.params.clone()) {
+                    Ok(l) => l,
+                    Err(_) => return false, // Fall back to sync
                 };
-                self.dispatch_async(id, move || snapshot.handle_code_lens_resolve(req));
+
+                // Snapshot data eagerly on the main thread
+                let uri: Option<Uri> = lens
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.get("uri"))
+                    .and_then(|u| u.as_str())
+                    .and_then(|s| s.parse().ok());
+                let (_text, parse_result) = if let Some(ref uri) = uri {
+                    self.get_document_data(uri)
+                } else {
+                    (String::new(), empty_parse_result())
+                };
+                let ledger_directives = {
+                    let guard = self.ledger_state.read();
+                    guard.directives().map(|d| d.to_vec())
+                };
+
+                // Dispatch the expensive balance calculation to the worker
+                self.dispatch_async(id, move || {
+                    let resolved =
+                        handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
+                    serde_json::to_value(resolved).map_err(|e| e.to_string())
+                });
                 true
             }
             // semanticTokens/full tokenizes the entire document — CPU-bound.
             SemanticTokensFullRequest::METHOD => {
-                let req = req.clone();
                 let id = req.id.clone();
-                let snapshot = ReadonlySnapshot {
-                    vfs: Arc::clone(&self.vfs),
-                    ledger_state: Arc::clone(&self.ledger_state),
+                let params: SemanticTokensParams = match serde_json::from_value(req.params.clone())
+                {
+                    Ok(p) => p,
+                    Err(_) => return false,
                 };
-                self.dispatch_async(id, move || snapshot.handle_semantic_tokens(req));
+
+                // Snapshot data eagerly
+                let uri = &params.text_document.uri;
+                let (text, parse_result) = self.get_document_data(uri);
+
+                self.dispatch_async(id, move || {
+                    let response = handle_semantic_tokens(&params, &text, &parse_result);
+                    serde_json::to_value(response).map_err(|e| e.to_string())
+                });
                 true
             }
             _ => false,
@@ -1366,78 +1435,6 @@ impl MainLoopState {
         if let Err(e) = self.sender.send(msg) {
             tracing::error!("Failed to send message: {}", e);
         }
-    }
-}
-
-/// Readonly snapshot of shared state for background request handling.
-///
-/// Contains cloned `Arc` handles to the VFS and ledger state, allowing
-/// read-only request handlers to run on background threads while the
-/// main loop continues processing notifications.
-struct ReadonlySnapshot {
-    vfs: Arc<RwLock<Vfs>>,
-    ledger_state: SharedLedgerState,
-}
-
-impl ReadonlySnapshot {
-    /// Get document text and cached parse result.
-    fn get_document_data(&self, uri: &Uri) -> (String, Arc<ParseResult>) {
-        if let Some(path) = uri_to_path(uri)
-            && let Some((text, parse_result)) = self.vfs.write().get_document_data(&path)
-        {
-            return (text, parse_result);
-        }
-        (String::new(), empty_parse_result())
-    }
-
-    /// Handle codeLens/resolve on a background thread.
-    ///
-    /// This is the most expensive LSP operation — it runs full balance
-    /// calculations for the resolved code lens.
-    fn handle_code_lens_resolve(
-        &self,
-        req: lsp_server::Request,
-    ) -> Result<serde_json::Value, String> {
-        let params: CodeLens = serde_json::from_value(req.params).map_err(|e| e.to_string())?;
-
-        let uri = params
-            .data
-            .as_ref()
-            .and_then(|d| d.get("uri"))
-            .and_then(|u| u.as_str())
-            .and_then(|s| s.parse::<Uri>().ok());
-
-        let (_text, parse_result) = if let Some(ref uri) = uri {
-            self.get_document_data(uri)
-        } else {
-            (String::new(), empty_parse_result())
-        };
-
-        let ledger_directives = {
-            let ledger_guard = self.ledger_state.read();
-            ledger_guard.directives().map(|d| d.to_vec())
-        };
-
-        let resolved =
-            handle_code_lens_resolve(params, &parse_result, ledger_directives.as_deref());
-        serde_json::to_value(resolved).map_err(|e| e.to_string())
-    }
-
-    /// Handle semanticTokens/full on a background thread.
-    ///
-    /// Token generation is CPU-bound and benefits from running off the
-    /// main loop, especially for large files.
-    fn handle_semantic_tokens(
-        &self,
-        req: lsp_server::Request,
-    ) -> Result<serde_json::Value, String> {
-        let params: SemanticTokensParams =
-            serde_json::from_value(req.params).map_err(|e| e.to_string())?;
-        let uri = &params.text_document.uri;
-        let (text, parse_result) = self.get_document_data(uri);
-
-        let response = handle_semantic_tokens(&params, &text, &parse_result);
-        serde_json::to_value(response).map_err(|e| e.to_string())
     }
 }
 
