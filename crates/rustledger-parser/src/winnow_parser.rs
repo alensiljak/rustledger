@@ -127,8 +127,24 @@ fn parse_date(stream: &mut TokenStream<'_>) -> ParseRes<NaiveDate> {
         && let Token::Date(s) = &t.token
     {
         let span = Span::new(t.span.0, t.span.1);
-        // Normalize: replace '/' separators with '-' and zero-pad single-digit
-        // month/day so chrono can parse with "%Y-%m-%d".
+
+        // Fast path: canonical "YYYY-MM-DD" (10 chars, no '/')
+        // avoids normalize_date_str + chrono's format parser overhead.
+        if s.len() == 10
+            && s.as_bytes()[4] == b'-'
+            && s.as_bytes()[7] == b'-'
+            && let (Ok(y), Ok(m), Ok(d)) = (
+                s[0..4].parse::<i32>(),
+                s[5..7].parse::<u32>(),
+                s[8..10].parse::<u32>(),
+            )
+            && let Some(date) = NaiveDate::from_ymd_opt(y, m, d)
+        {
+            stream.advance();
+            return Ok(date);
+        }
+
+        // Slow path: normalize separators and zero-pad, then parse
         let normalized = normalize_date_str(s);
         if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
             stream.advance();
@@ -184,8 +200,15 @@ fn parse_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     if let Some(t) = stream.peek()
         && let Token::Number(s) = &t.token
     {
-        let cleaned = s.replace(',', "");
-        if let Ok(num) = Decimal::from_str(&cleaned) {
+        // Fast path: if no commas, parse directly without allocating.
+        // ~99% of numbers don't contain commas.
+        let parse_result = if s.contains(',') {
+            let cleaned = s.replace(',', "");
+            Decimal::from_str(&cleaned)
+        } else {
+            Decimal::from_str(s)
+        };
+        if let Ok(num) = parse_result {
             stream.advance();
             return Ok(num);
         }
