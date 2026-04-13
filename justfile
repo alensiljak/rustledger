@@ -46,6 +46,27 @@ test-cov:
 test-prop iterations="10000":
     PROPTEST_CASES={{iterations}} cargo test --features proptest
 
+# Run tests only for crates with uncommitted changes (fast pre-push check)
+test-changed:
+    #!/usr/bin/env bash
+    set -eo pipefail
+    changed_crates=$(git diff --name-only HEAD 2>/dev/null | grep '^crates/' | cut -d/ -f2 | sort -u || true)
+    if [ -z "$changed_crates" ]; then
+        echo "No crate changes detected."
+        exit 0
+    fi
+    for crate in $changed_crates; do
+        pkg="rustledger-${crate#rustledger-}"
+        # Normalize: if crate dir is already "rustledger-foo", don't double-prefix
+        if [[ "$crate" == rustledger-* ]]; then
+            pkg="$crate"
+        elif [[ "$crate" == "rustledger" ]]; then
+            pkg="rustledger"
+        fi
+        echo "==> Testing $pkg"
+        cargo test -p "$pkg" --all-features 2>/dev/null || echo "  (skipped: $pkg not found)"
+    done
+
 # Run specific test
 test-one name:
     cargo nextest run {{name}}

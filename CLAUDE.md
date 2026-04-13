@@ -270,6 +270,25 @@ cargo fmt --all -- --check                 # Format check
 cargo deny check                           # Security audit
 ```
 
+## Pre-push Hooks & Fast Testing
+
+The pre-push hook runs `cargo check` (2-30s) but intentionally **does not** run `cargo test` (full workspace takes 10-30 min). This means compilation-correct but semantically-wrong changes can be pushed and only caught in CI.
+
+**Before pushing, test the crates you changed:**
+
+```bash
+# Test only the crate(s) you modified (5-30s typically)
+cargo test -p rustledger-parser
+cargo test -p rustledger-lsp --all-features
+
+# Or use the just recipe to auto-detect changed crates:
+just test-changed
+```
+
+The `just test-changed` recipe detects which crates have uncommitted or staged changes and runs tests only for those. This is the recommended workflow before pushing.
+
+**Bypass the pre-push hook** (for WIP commits): `git push --no-verify`
+
 ## Headless / Automated Issue Resolution
 
 When running in headless mode (`claude -p`) or via Agent Orchestrator (`ao`), follow this exact workflow:
