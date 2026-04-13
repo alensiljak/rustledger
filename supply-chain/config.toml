@@ -805,7 +805,7 @@ version = "1.11.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio]]
-version = "1.51.0"
+version = "1.51.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-stream]]
@@ -997,7 +997,7 @@ version = "0.11.5"
 criteria = "safe-to-deploy"
 
 [[exemptions.zip]]
-version = "8.5.0"
+version = "8.5.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.zopfli]]
