@@ -200,21 +200,20 @@ fn parse_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     if let Some(t) = stream.peek()
         && let Token::Number(s) = &t.token
     {
-        // Fast path: simple numbers without commas (99%+ of cases).
-        // Avoids Decimal::from_str overhead (whitespace handling, scientific
-        // notation, overflow checks) for common beancount number formats.
-        if !s.contains(',')
-            && let Some(num) = fast_parse_decimal(s)
-        {
+        let has_commas = s.contains(',');
+
+        // Fast path: simple numbers without commas — use our lightweight
+        // parser instead of Decimal::from_str.
+        if !has_commas && let Some(num) = fast_parse_decimal(s) {
             stream.advance();
             return Ok(num);
         }
 
-        // Slow path: commas or unusual format — use Decimal::from_str.
-        let cleaned = if s.contains(',') {
-            std::borrow::Cow::Owned(s.replace(',', ""))
+        // Slow path: commas or format fast_parse_decimal can't handle.
+        let cleaned = if has_commas {
+            Cow::Owned(s.replace(',', ""))
         } else {
-            std::borrow::Cow::Borrowed(*s)
+            Cow::Borrowed(*s)
         };
         if let Ok(num) = Decimal::from_str(&cleaned) {
             stream.advance();
