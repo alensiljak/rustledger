@@ -3220,6 +3220,7 @@ version = "0.12.0"
 dependencies = [
  "chrono",
  "glob",
+ "rayon",
  "rkyv 0.8.15",
  "rust_decimal",
  "rust_decimal_macros",

@@ -38,6 +38,15 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// For virtual filesystems, this just cleans up the path.
     fn normalize(&self, path: &Path) -> PathBuf;
 
+    /// Whether this filesystem supports parallel file reads.
+    ///
+    /// Disk filesystems return `true` — multiple files can be read
+    /// concurrently from different threads. Virtual filesystems return
+    /// `false` since they may use shared mutable state.
+    fn supports_parallel_read(&self) -> bool {
+        false
+    }
+
     /// Expand a glob pattern and return matching paths.
     ///
     /// # Errors
@@ -80,13 +89,16 @@ impl FileSystem for DiskFileSystem {
         match path.extension().and_then(|e| e.to_str()) {
             Some("gpg") => true,
             Some("asc") => {
-                // Check for PGP header in first 1024 bytes
-                if let Ok(content) = fs::read_to_string(path) {
-                    let check_len = 1024.min(content.len());
-                    content[..check_len].contains("-----BEGIN PGP MESSAGE-----")
-                } else {
-                    false
-                }
+                // Check for PGP header in the first 1024 bytes.
+                // Only read what we need instead of the entire file.
+                use std::io::Read;
+                let Ok(file) = std::fs::File::open(path) else {
+                    return false;
+                };
+                let mut buf = [0u8; 1024];
+                let n = file.take(1024).read(&mut buf).unwrap_or(0);
+                let header = String::from_utf8_lossy(&buf[..n]);
+                header.contains("-----BEGIN PGP MESSAGE-----")
             }
             _ => false,
         }
@@ -136,6 +148,10 @@ impl FileSystem for DiskFileSystem {
         let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
         matched.sort();
         Ok(matched)
+    }
+
+    fn supports_parallel_read(&self) -> bool {
+        true
     }
 }
 

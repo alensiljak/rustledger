@@ -959,3 +959,82 @@ fn test_plugin_output_directives_visible_in_ledger() {
         "Total directives should be at least 5 (2 txn + 3 opens). Got {total}"
     );
 }
+
+/// Test that parallel loading of multiple sibling includes produces
+/// the same results as sequential loading. The fixture has a root file
+/// with 3 includes (triggering the parallel path on `DiskFileSystem`).
+#[test]
+fn test_parallel_loading_multiple_includes() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("parallel_main.beancount");
+    let ledger = load(&path, &LoadOptions::default()).expect("should load parallel fixture");
+
+    // All 3 accounts should be opened (from parallel_a and parallel_b)
+    let opens: Vec<_> = ledger
+        .directives
+        .iter()
+        .filter_map(|d| {
+            if let rustledger_core::Directive::Open(o) = &d.value {
+                Some(o.account.to_string())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    assert!(
+        opens.iter().any(|a| a == "Assets:Bank"),
+        "Should have Assets:Bank from parallel_a. Opens: {opens:?}"
+    );
+    assert!(
+        opens.iter().any(|a| a == "Expenses:Food"),
+        "Should have Expenses:Food from parallel_a. Opens: {opens:?}"
+    );
+    assert!(
+        opens.iter().any(|a| a == "Income:Salary"),
+        "Should have Income:Salary from parallel_b. Opens: {opens:?}"
+    );
+
+    // 2 transactions (from parallel_a and parallel_b)
+    let txn_count = ledger
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Transaction(_)))
+        .count();
+    assert_eq!(
+        txn_count, 2,
+        "Should have 2 transactions from included files"
+    );
+
+    // 1 balance assertion (from parallel_c)
+    let balance_count = ledger
+        .directives
+        .iter()
+        .filter(|d| matches!(d.value, rustledger_core::Directive::Balance(_)))
+        .count();
+    assert_eq!(
+        balance_count, 1,
+        "Should have 1 balance assertion from parallel_c"
+    );
+
+    // Options from root file should be preserved
+    assert_eq!(
+        ledger.options.title,
+        Some("Parallel Test Ledger".to_string())
+    );
+
+    // No errors expected
+    assert!(
+        ledger.errors.is_empty(),
+        "Parallel loading should produce no errors. Got: {:?}",
+        ledger.errors
+    );
+
+    // Source map should have 4 files (root + 3 includes)
+    assert_eq!(
+        ledger.source_map.files().len(),
+        4,
+        "Source map should have 4 files"
+    );
+}

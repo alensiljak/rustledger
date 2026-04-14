@@ -1,0 +1,6 @@
+2024-01-01 open Assets:Bank USD
+2024-01-01 open Expenses:Food USD
+
+2024-01-15 * "Groceries"
+  Expenses:Food  50 USD
+  Assets:Bank   -50 USD
