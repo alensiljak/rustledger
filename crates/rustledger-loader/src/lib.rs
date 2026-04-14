@@ -582,23 +582,18 @@ impl Loader {
                 // We keep the original index to merge results in order,
                 // ensuring option/directive precedence matches the declared
                 // include sequence.
+                let fs = &*self.fs;
                 let pre_parsed: Vec<Option<(std::sync::Arc<str>, rustledger_parser::ParseResult)>> =
                     valid_paths
                         .par_iter()
                         .map(|p| {
                             // Skip encrypted files — they need sequential GPG decryption
-                            if p.extension()
-                                .and_then(|e| e.to_str())
-                                .is_some_and(|e| e == "gpg" || e == "asc")
-                            {
+                            if fs.is_encrypted(p) {
                                 return None;
                             }
-                            let bytes = std::fs::read(p).ok()?;
-                            let content = match String::from_utf8(bytes) {
-                                Ok(s) => s,
-                                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
-                            };
-                            let source: std::sync::Arc<str> = content.into();
+                            // Read through the FileSystem trait so all I/O goes
+                            // through one code path (UTF-8 handling, error types, etc.)
+                            let source = fs.read(p).ok()?;
                             let parsed = rustledger_parser::parse(&source);
                             Some((source, parsed))
                         })
