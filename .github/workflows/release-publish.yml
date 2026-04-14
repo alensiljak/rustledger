@@ -101,7 +101,7 @@ jobs:
               # Wait for crates.io to index the crate before publishing dependents
               echo "Waiting 30s for crates.io indexing..."
               sleep 30
-            elif grep -q "already been uploaded" /tmp/publish.log; then
+            elif grep -qE "already (been uploaded|exists on)" /tmp/publish.log; then
               echo "✓ $crate already published (skipping)"
             elif grep -q "Trusted Publishing tokens do not support creating new crates" /tmp/publish.log; then
               echo "⚠ $crate is a new crate - must be published manually first"
