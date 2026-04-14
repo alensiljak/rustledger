@@ -38,6 +38,15 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     /// For virtual filesystems, this just cleans up the path.
     fn normalize(&self, path: &Path) -> PathBuf;
 
+    /// Whether this filesystem supports parallel file reads.
+    ///
+    /// Disk filesystems return `true` — multiple files can be read
+    /// concurrently from different threads. Virtual filesystems return
+    /// `false` since they may use shared mutable state.
+    fn supports_parallel_read(&self) -> bool {
+        false
+    }
+
     /// Expand a glob pattern and return matching paths.
     ///
     /// # Errors
@@ -136,6 +145,10 @@ impl FileSystem for DiskFileSystem {
         let mut matched: Vec<PathBuf> = entries.filter_map(Result::ok).collect();
         matched.sort();
         Ok(matched)
+    }
+
+    fn supports_parallel_read(&self) -> bool {
+        true
     }
 }
 

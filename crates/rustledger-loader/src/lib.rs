@@ -330,10 +330,177 @@ impl Loader {
         self
     }
 
+    /// Merge a pre-parsed file into the loading state.
+    #[allow(clippy::too_many_arguments)]
+    ///
+    /// Used by the parallel loading path: files are read + parsed in parallel,
+    /// then merged sequentially to preserve include order and handle nested
+    /// includes via recursive calls.
+    fn merge_parsed_file(
+        &mut self,
+        path: &Path,
+        source: &std::sync::Arc<str>,
+        result: rustledger_parser::ParseResult,
+        directives: &mut Vec<Spanned<Directive>>,
+        options: &mut Options,
+        plugins: &mut Vec<Plugin>,
+        source_map: &mut SourceMap,
+        errors: &mut Vec<LoadError>,
+    ) -> Result<(), LoadError> {
+        let path_buf = path.to_path_buf();
+
+        // Cycle and duplicate detection
+        if self.include_stack_set.contains(&path_buf) {
+            let cycle: Vec<String> = self
+                .include_stack
+                .iter()
+                .map(|p| p.display().to_string())
+                .chain(std::iter::once(path.display().to_string()))
+                .collect();
+            return Err(LoadError::IncludeCycle { cycle });
+        }
+        if self.loaded_files.contains(&path_buf) {
+            return Ok(());
+        }
+
+        // Register in source map and tracking sets
+        let file_id = source_map.add_file(path_buf.clone(), source.clone());
+        self.include_stack_set.insert(path_buf.clone());
+        self.include_stack.push(path_buf.clone());
+        self.loaded_files.insert(path_buf);
+
+        // Collect parse errors
+        if !result.errors.is_empty() {
+            errors.push(LoadError::ParseErrors {
+                path: path.to_path_buf(),
+                errors: result.errors,
+            });
+        }
+
+        // Process options
+        for (key, value, _span) in &result.options {
+            options.set(key, value);
+        }
+
+        // Process plugins
+        for (name, config, span) in &result.plugins {
+            let (actual_name, force_python) = if let Some(stripped) = name.strip_prefix("python:") {
+                (stripped.to_string(), true)
+            } else {
+                (name.clone(), false)
+            };
+            plugins.push(Plugin {
+                name: actual_name,
+                config: config.clone(),
+                span: *span,
+                file_id,
+                force_python,
+            });
+        }
+
+        // Process includes recursively (nested includes are handled here)
+        let base_dir = path.parent().unwrap_or(Path::new("."));
+        for (include_path, _span) in &result.includes {
+            let has_glob = include_path.contains('*')
+                || include_path.contains('?')
+                || include_path.contains('[');
+            let full_path = base_dir.join(include_path);
+
+            // Path traversal protection
+            if self.enforce_path_security
+                && let Some(ref root) = self.root_dir
+            {
+                let path_to_check = if has_glob {
+                    let glob_start = include_path
+                        .find(['*', '?', '['])
+                        .unwrap_or(include_path.len());
+                    let prefix = &include_path[..glob_start];
+                    let prefix_path = if let Some(last_sep) = prefix.rfind('/') {
+                        base_dir.join(&include_path[..=last_sep])
+                    } else {
+                        base_dir.to_path_buf()
+                    };
+                    normalize_path(&prefix_path)
+                } else {
+                    normalize_path(&full_path)
+                };
+
+                if !path_to_check.starts_with(root) {
+                    errors.push(LoadError::PathTraversal {
+                        include_path: include_path.clone(),
+                        base_dir: root.clone(),
+                    });
+                    continue;
+                }
+            }
+
+            let full_path_str = full_path.to_string_lossy();
+            let paths_to_load: Vec<PathBuf> = if has_glob {
+                match self.fs.glob(&full_path_str) {
+                    Ok(matched) => matched,
+                    Err(e) => {
+                        errors.push(LoadError::GlobError {
+                            pattern: include_path.clone(),
+                            message: e,
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                vec![full_path.clone()]
+            };
+
+            if has_glob && paths_to_load.is_empty() {
+                errors.push(LoadError::GlobNoMatch {
+                    pattern: include_path.clone(),
+                });
+                continue;
+            }
+
+            // Recurse into nested includes (sequential — they may have
+            // their own nested includes)
+            for matched_path in paths_to_load {
+                let canonical = self.fs.normalize(&matched_path);
+                if self.enforce_path_security
+                    && let Some(ref root) = self.root_dir
+                    && !canonical.starts_with(root)
+                {
+                    errors.push(LoadError::PathTraversal {
+                        include_path: matched_path.to_string_lossy().into_owned(),
+                        base_dir: root.clone(),
+                    });
+                    continue;
+                }
+                if let Err(e) = self
+                    .load_recursive(&canonical, directives, options, plugins, source_map, errors)
+                {
+                    errors.push(e);
+                }
+            }
+        }
+
+        // Add directives from this file
+        directives.extend(
+            result
+                .directives
+                .into_iter()
+                .map(|d| d.with_file_id(file_id)),
+        );
+
+        // Pop from stack
+        if let Some(popped) = self.include_stack.pop() {
+            self.include_stack_set.remove(&popped);
+        }
+
+        Ok(())
+    }
+
     /// Load a beancount file and all its includes.
     ///
-    /// Parses the file, processes options and plugin directives, and recursively
-    /// loads any included files.
+    /// Uses parallel file parsing when multiple files are discovered via
+    /// include directives. The root file is parsed first to resolve the
+    /// include tree, then all included files are read and parsed in
+    /// parallel using rayon.
     ///
     /// # Errors
     ///
@@ -360,6 +527,8 @@ impl Loader {
             self.root_dir = canonical.parent().map(Path::to_path_buf);
         }
 
+        // Phase 1: Parse the root file to discover includes.
+        // The root file is typically small (just includes + options).
         self.load_recursive(
             &canonical,
             &mut directives,
@@ -533,13 +702,12 @@ impl Loader {
                 continue;
             }
 
-            // Load each matched file
+            // Normalize and security-check all matched paths first.
+            let mut valid_paths = Vec::with_capacity(paths_to_load.len());
             for matched_path in paths_to_load {
-                // Use filesystem-specific normalization (VFS vs disk)
                 let canonical = self.fs.normalize(&matched_path);
 
-                // Additional security check for each matched file
-                // (glob could still match files outside root via symlinks)
+                // Security check: glob could match files outside root via symlinks
                 if self.enforce_path_security
                     && let Some(ref root) = self.root_dir
                     && !canonical.starts_with(root)
@@ -551,10 +719,47 @@ impl Loader {
                     continue;
                 }
 
-                if let Err(e) = self
-                    .load_recursive(&canonical, directives, options, plugins, source_map, errors)
-                {
-                    errors.push(e);
+                valid_paths.push(canonical);
+            }
+
+            // Parallel optimization: when loading multiple sibling includes
+            // from disk, read and parse them in parallel. The expensive work
+            // (I/O + tokenize + parse) runs on rayon's thread pool while the
+            // main thread coordinates the include tree walk.
+            //
+            // Each file is read and parsed independently. Results are then
+            // merged sequentially to preserve include order and process any
+            // nested includes via recursive calls.
+            if valid_paths.len() > 1 && self.fs.supports_parallel_read() {
+                use rayon::prelude::*;
+
+                // Read + parse all sibling includes in parallel.
+                let parse_results: Vec<_> = valid_paths
+                    .par_iter()
+                    .map(|p| {
+                        let source: std::sync::Arc<str> =
+                            std::fs::read_to_string(p).unwrap_or_default().into();
+                        let parsed = rustledger_parser::parse(&source);
+                        (p.clone(), source, parsed)
+                    })
+                    .collect();
+
+                // Merge results sequentially (preserves include order,
+                // handles nested includes, updates shared state).
+                for (canonical, source, result) in parse_results {
+                    self.merge_parsed_file(
+                        &canonical, &source, result, directives, options, plugins, source_map,
+                        errors,
+                    )?;
+                }
+            } else {
+                // Sequential fallback: single file, VFS, or encrypted files.
+                for canonical in valid_paths {
+                    if let Err(e) = self.load_recursive(
+                        &canonical, directives, options, plugins, source_map, errors,
+                    ) {
+                        errors.push(e);
+                    }
                 }
             }
         }
