@@ -1,0 +1,7 @@
+; Root file with multiple includes to exercise parallel loading.
+option "title" "Parallel Test Ledger"
+option "operating_currency" "USD"
+
+include "parallel_a.beancount"
+include "parallel_b.beancount"
+include "parallel_c.beancount"
