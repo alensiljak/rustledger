@@ -1334,13 +1334,11 @@ mod tests {
             "Equity:Opening-Balances",
             "Income:Salary2024",
             "Expenses:Food:Restaurant",
-            "Assets:401k",          // Component starting with digit
-            "Assets:CORP✨",        // Emoji in component (beancount UTF-8-ONLY support)
-            "Assets:沪深300",       // CJK characters
-            "Assets:Café",          // Non-ASCII letter (é)
-            "Assets:日本銀行",      // Full non-ASCII component
-            "Assets:Test💰Account", // Emoji in middle
-            "Assets:€uro",          // Currency symbol at start of component
+            "Assets:401k",     // Component starting with digit
+            "Assets:沪深300",  // CJK characters
+            "Assets:Café",     // Non-ASCII letter (é)
+            "Assets:日本銀行", // Full non-ASCII component
+            "Assets:Капитал",  // Cyrillic sub-account
         ];
 
         for name in valid_names {

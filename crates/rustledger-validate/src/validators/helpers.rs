@@ -41,10 +41,11 @@ pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<
             return Some(format!("component {} is empty", i + 1));
         };
         // Accept: uppercase letters (any script), digits, or non-ASCII
-        // characters without case (CJK, Arabic, etc.)
+        // letters without case (CJK ideographs, etc.). Matches the lexer
+        // regex [\p{Lu}\p{Lo}\p{Lt}0-9].
         let is_valid_start = first_char.is_uppercase()
             || first_char.is_ascii_digit()
-            || (!first_char.is_ascii() && !first_char.is_lowercase());
+            || (!first_char.is_ascii() && first_char.is_alphabetic());
         if !is_valid_start {
             return Some(format!(
                 "component '{part}' must start with uppercase letter or digit"

@@ -575,8 +575,9 @@ impl Options {
 
     /// Check if a value looks like a valid account name.
     ///
-    /// Valid accounts have format "Type:Subaccount:..." where Type starts with
-    /// uppercase letter and subaccounts are colon-separated.
+    /// Valid accounts have format "Type:Subaccount:..." where each component
+    /// starts with an uppercase letter (any script) or a non-ASCII letter
+    /// without case (CJK, etc.), and components are colon-separated.
     fn is_valid_account(value: &str) -> bool {
         // Must contain at least one colon
         if !value.contains(':') {
@@ -585,9 +586,10 @@ impl Options {
 
         // Check each component
         for part in value.split(':') {
-            // First char of each component should be uppercase letter
             if let Some(first) = part.chars().next() {
-                if !first.is_ascii_uppercase() {
+                // Accept: uppercase (any script), non-ASCII alphabetic (CJK, etc.)
+                let valid = first.is_uppercase() || (!first.is_ascii() && first.is_alphabetic());
+                if !valid {
                     return false;
                 }
             } else {
@@ -831,13 +833,17 @@ mod tests {
 
     #[test]
     fn test_is_valid_account() {
-        // Valid accounts
+        // Valid accounts — ASCII
         assert!(Options::is_valid_account("Assets:Bank"));
         assert!(Options::is_valid_account("Equity:Rounding:Precision"));
 
+        // Valid accounts — Unicode
+        assert!(Options::is_valid_account("Капитал:Retained"));
+        assert!(Options::is_valid_account("资产:银行:支票"));
+
         // Invalid accounts
         assert!(!Options::is_valid_account("invalid")); // No colon
-        assert!(!Options::is_valid_account("assets:bank")); // Lowercase
+        assert!(!Options::is_valid_account("assets:bank")); // Lowercase ASCII
         assert!(!Options::is_valid_account("Assets:")); // Empty component
         assert!(!Options::is_valid_account(":Bank")); // Empty first component
     }

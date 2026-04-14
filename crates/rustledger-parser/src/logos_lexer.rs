@@ -58,17 +58,15 @@ pub enum Token<'src> {
     /// An account name like Assets:Bank:Checking, Капитал:Retained-Earnings,
     /// or 资产:银行:支票.
     ///
-    /// Each component starts with an uppercase letter (Unicode `\p{Lu}`) or
-    /// digit, followed by letters, digits, or hyphens. Full Unicode is
-    /// supported in all positions — Cyrillic, CJK, Arabic, etc.
+    /// The first component starts with an uppercase letter (`\p{Lu}`), a
+    /// letter without case like CJK ideographs (`\p{Lo}`), or a titlecase
+    /// letter (`\p{Lt}`). Sub-components may also start with a digit.
+    /// Subsequent characters can be any Unicode letter, digit, or hyphen.
     ///
     /// Note: The beancount v3 spec restricts the first character to ASCII
     /// `[A-Z]`, but this is an artifact of the C flex lexer's poor Unicode
-    /// support, not a meaningful language design choice. Every non-Latin
-    /// user is affected (see beancount/beancount#161, #398, #733). Python
-    /// beancount v2 partially supports `\p{Lu}` but is inconsistent
-    /// (beancount/beancount#377). Rustledger uses `\p{Lu}` throughout for
-    /// correct Unicode uppercase handling.
+    /// support, not a meaningful language design choice (see
+    /// beancount/beancount#161, #398, #733).
     ///
     /// The account type prefix is validated later against options (`name_assets`, etc.).
     #[regex(r"[\p{Lu}\p{Lo}\p{Lt}][\p{L}0-9-]*(:([\p{Lu}\p{Lo}\p{Lt}0-9][\p{L}0-9-]*)+)+")]
