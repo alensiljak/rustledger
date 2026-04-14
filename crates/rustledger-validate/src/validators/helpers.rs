@@ -31,20 +31,18 @@ pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<
             return Some(format!("component {} is empty", i + 1));
         }
 
-        // First character must be uppercase ASCII letter, ASCII digit, or any non-ASCII character.
-        // This matches beancount's lexer.l: `([A-Z]|UTF-8-ONLY)` for account type start,
-        // and `([A-Z0-9]|UTF-8-ONLY)` for sub-account start.
-        // Non-ASCII includes CJK, emojis, symbols, and any other Unicode character.
-        // Safety: we just checked part.is_empty() above, so this is guaranteed to succeed
+        // First character must be an uppercase letter (any script) or digit.
+        // Unicode uppercase (\p{Lu}) covers Latin A-Z, Cyrillic А-Я, etc.
+        // Non-ASCII non-letter characters (CJK ideographs, etc.) are also
+        // accepted as they have no case distinction.
         let Some(first_char) = part.chars().next() else {
-            // This branch is unreachable due to the is_empty check above,
-            // but we handle it defensively to avoid unwrap
             return Some(format!("component {} is empty", i + 1));
         };
-        // Accept: uppercase ASCII letters, ASCII digits, or any non-ASCII character
-        let is_valid_start = first_char.is_ascii_uppercase()
+        // Accept: uppercase letters (any script), digits, or non-ASCII
+        // characters without case (CJK, Arabic, etc.)
+        let is_valid_start = first_char.is_uppercase()
             || first_char.is_ascii_digit()
-            || !first_char.is_ascii();
+            || (!first_char.is_ascii() && !first_char.is_lowercase());
         if !is_valid_start {
             return Some(format!(
                 "component '{part}' must start with uppercase letter or digit"

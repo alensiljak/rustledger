@@ -55,23 +55,23 @@ pub enum Token<'src> {
     #[regex(r#""([^"\\]|\\.)*""#)]
     String(&'src str),
 
-    /// An account name like Assets:Bank:Checking, Aktiva:Banque-Épargne, or Assets:Müller.
-    /// Must start with a capitalized word (account type prefix) and have at least one sub-account.
+    /// An account name like Assets:Bank:Checking, Капитал:Retained-Earnings,
+    /// or 资产:银行:支票.
     ///
-    /// Per the beancount v3 spec (`formats/beancount/v3/spec/lexical.md`):
+    /// Each component starts with an uppercase letter (Unicode `\p{Lu}`) or
+    /// digit, followed by letters, digits, or hyphens. Full Unicode is
+    /// supported in all positions — Cyrillic, CJK, Arabic, etc.
     ///
-    /// ```text
-    /// component = ascii_start (alphanumeric_dash | utf8_char)*
-    /// ```
-    ///
-    /// Each segment must START with an ASCII uppercase letter (or digit, for
-    /// sub-segments), but subsequent characters may include Unicode letters —
-    /// e.g. `Banque-Épargne` (French), `Müller` (German), `CorpJP日本` after an
-    /// ASCII start. Symbols, emoji, and non-letter Unicode are not allowed, and
-    /// segments starting with non-ASCII are still rejected (matching beancount).
+    /// Note: The beancount v3 spec restricts the first character to ASCII
+    /// `[A-Z]`, but this is an artifact of the C flex lexer's poor Unicode
+    /// support, not a meaningful language design choice. Every non-Latin
+    /// user is affected (see beancount/beancount#161, #398, #733). Python
+    /// beancount v2 partially supports `\p{Lu}` but is inconsistent
+    /// (beancount/beancount#377). Rustledger uses `\p{Lu}` throughout for
+    /// correct Unicode uppercase handling.
     ///
     /// The account type prefix is validated later against options (`name_assets`, etc.).
-    #[regex(r"[A-Z][\p{L}0-9-]*(:([A-Z0-9][\p{L}0-9-]*)+)+")]
+    #[regex(r"[\p{Lu}\p{Lo}\p{Lt}][\p{L}0-9-]*(:([\p{Lu}\p{Lo}\p{Lt}0-9][\p{L}0-9-]*)+)+")]
     Account(&'src str),
 
     /// A currency/commodity code like USD, EUR, AAPL, BTC, or single-char tickers like T, V, F.
@@ -561,12 +561,10 @@ mod tests {
 
     #[test]
     fn test_tokenize_account_unicode() {
-        // Per the beancount v3 spec, account name segments must START with an
-        // ASCII uppercase letter (or digit for sub-segments), but subsequent
-        // characters may include Unicode letters. Symbols/emoji and segments
-        // that start with non-ASCII remain invalid.
+        // Unicode uppercase letters and CJK characters are valid at the
+        // start of account components. Emoji and symbols are not.
 
-        // Non-letter (emoji) after valid ASCII start - tokenizes as partial Account + Error
+        // Non-letter (emoji) after valid ASCII start — still invalid
         let tokens = tokenize("Assets:CORP✨");
         assert!(
             !matches!(tokens[0].0, Token::Account("Assets:CORP✨")),
@@ -577,26 +575,32 @@ mod tests {
             "Unicode emoji should produce at least one Error token"
         );
 
-        // Sub-component starts with non-ASCII (CJK) — should be rejected
+        // CJK sub-component start — now valid (CJK ideographs are \p{Lo})
         let tokens = tokenize("Assets:沪深300");
         assert!(
-            !matches!(tokens[0].0, Token::Account("Assets:沪深300")),
-            "CJK characters at the start of a sub-component should not tokenize as a valid Account"
-        );
-        assert!(
-            tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
-            "CJK start should produce at least one Error token"
+            matches!(tokens[0].0, Token::Account("Assets:沪深300")),
+            "CJK characters at the start of a sub-component should tokenize as Account"
         );
 
-        // Full CJK component - sub-component starts with non-ASCII, should be rejected
+        // Full CJK sub-component — valid
         let tokens = tokenize("Assets:日本銀行");
         assert!(
-            !matches!(tokens[0].0, Token::Account("Assets:日本銀行")),
-            "CJK sub-component start should not tokenize as a valid Account"
+            matches!(tokens[0].0, Token::Account("Assets:日本銀行")),
+            "CJK sub-component should tokenize as Account"
         );
+
+        // Cyrillic account type — valid (Cyrillic uppercase is \p{Lu})
+        let tokens = tokenize("Капитал:Retained");
         assert!(
-            tokens.iter().any(|(t, _)| matches!(t, Token::Error(_))),
-            "CJK sub-component start should produce at least one Error token"
+            matches!(tokens[0].0, Token::Account("Капитал:Retained")),
+            "Cyrillic-starting account should tokenize as Account"
+        );
+
+        // Fully CJK account — valid
+        let tokens = tokenize("资产:银行:支票");
+        assert!(
+            matches!(tokens[0].0, Token::Account("资产:银行:支票")),
+            "Fully CJK account should tokenize as Account"
         );
     }
 
