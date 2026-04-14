@@ -6,9 +6,35 @@ use rustledger_core::{Amount, Balance, Pad, Position};
 use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
 
+use rustc_hash::FxHashMap;
+use rustledger_core::{InternedStr, Inventory};
+
 /// Multiplier for balance assertion tolerance (matches Python beancount).
 /// Balance assertions use 2x the `tolerance_multiplier` option.
 const BALANCE_TOLERANCE_MULTIPLIER: Decimal = Decimal::TWO;
+
+/// Sum the units of a given currency across an account and all its sub-accounts.
+///
+/// In beancount, `balance Assets:Bank` includes `Assets:Bank:Checking`,
+/// `Assets:Bank:Savings`, etc. This function checks for exact match or
+/// sub-account prefix (account followed by `:`) without allocating.
+fn sum_account_and_subaccounts(
+    inventories: &FxHashMap<InternedStr, Inventory>,
+    account: &InternedStr,
+    currency: &InternedStr,
+) -> Decimal {
+    let account_str = account.as_str();
+    let mut total = Decimal::ZERO;
+    for (inv_account, inv) in inventories {
+        if inv_account == account
+            || (inv_account.starts_with(account_str)
+                && inv_account.as_bytes().get(account_str.len()) == Some(&b':'))
+        {
+            total += inv.units(currency);
+        }
+    }
+    total
+}
 
 /// Base 10 for tolerance scale calculation.
 const DECIMAL_TEN: Decimal = Decimal::TEN;
@@ -89,17 +115,8 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
         if let Some(pending_pad) = pending_pads.last_mut() {
             // Apply padding: calculate difference and add to both accounts
             // Balance assertions include sub-accounts, so sum them all up
-            let mut actual = Decimal::ZERO;
-            // Check for sub-accounts without allocating a prefix string
-            let account_str = bal.account.as_str();
-            for (account, inv) in &state.inventories {
-                if account == &bal.account
-                    || (account.starts_with(account_str)
-                        && account.as_bytes().get(account_str.len()) == Some(&b':'))
-                {
-                    actual += inv.units(&bal.amount.currency);
-                }
-            }
+            let actual =
+                sum_account_and_subaccounts(&state.inventories, &bal.account, &bal.amount.currency);
             {
                 let expected = bal.amount.number;
                 let difference = expected - actual;
@@ -131,21 +148,11 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
         return;
     }
 
-    // Get inventory and check balance (no padding case)
+    // Get inventory and check balance (no padding case).
     // In beancount, balance assertions include sub-accounts
-    // e.g., balance Assets:Checking includes Assets:Checking:Sub1, Assets:Checking:Sub2, etc.
-    let mut actual = Decimal::ZERO;
-    // Check for sub-accounts without allocating a prefix string
-    let account_str = bal.account.as_str();
-    for (account, inv) in &state.inventories {
-        // Include exact match or sub-accounts (account:*)
-        if account == &bal.account
-            || (account.starts_with(account_str)
-                && account.as_bytes().get(account_str.len()) == Some(&b':'))
-        {
-            actual += inv.units(&bal.amount.currency);
-        }
-    }
+    // e.g., balance Assets:Checking includes Assets:Checking:Sub1, etc.
+    let actual =
+        sum_account_and_subaccounts(&state.inventories, &bal.account, &bal.amount.currency);
 
     // Always check balance assertions, even for accounts with no transactions.
     // This matches Python beancount behavior where `balance Account 1 USD` fails

@@ -21,12 +21,13 @@ pub fn validate_transaction(
     // Check each posting's account lifecycle and currency constraints
     validate_posting_accounts(state, txn, errors);
 
-    // Check transaction balance
-    validate_transaction_balance(txn, &state.options, errors);
+    // Calculate tolerances once — used for both balance checking and accumulation.
+    let tolerances = calculate_tolerances(txn, &state.options);
+
+    // Check transaction balance (reuses pre-computed tolerances)
+    validate_transaction_balance(txn, &tolerances, errors);
 
     // Accumulate tolerances for balance assertions (Python beancount behavior).
-    // Balance assertions use the accumulated tolerances from transactions.
-    let tolerances = calculate_tolerances(txn, &state.options);
     for (currency, tolerance) in tolerances {
         state
             .tolerances
@@ -205,7 +206,7 @@ pub fn validate_posting_currency(
 ///    `tolerance = units_quantum * cost_per_unit * tolerance_multiplier`
 pub fn validate_transaction_balance(
     txn: &Transaction,
-    options: &ValidationOptions,
+    tolerances: &HashMap<InternedStr, Decimal>,
     errors: &mut Vec<ValidationError>,
 ) {
     // Skip balance checking if there are any empty cost specs (e.g., `{}`).
@@ -214,23 +215,32 @@ pub fn validate_transaction_balance(
     // This matches Python beancount behavior where booking runs before balance checking.
     let has_empty_cost_spec = txn.postings.iter().any(|p| {
         if let Some(cost) = &p.cost {
-            // Empty cost spec: no per-unit cost, no total cost
             cost.number_per.is_none() && cost.number_total.is_none()
         } else {
             false
         }
     });
     if has_empty_cost_spec {
-        return; // Lot matching will validate this transaction
+        return;
     }
 
-    // Use arbitrary-precision arithmetic for balance checking.
-    // rust_decimal is limited to 28-29 significant digits, which can miss tiny
-    // residuals when amounts have near-maximum precision (e.g., 28 decimal places).
-    let residuals = rustledger_booking::calculate_residual_precise(txn);
+    // Fast path: use rust_decimal first. If ALL residuals are exactly zero,
+    // the transaction definitely balances — skip the expensive BigDecimal
+    // calculation. We only skip on exact zero (not "within tolerance")
+    // because Decimal arithmetic can lose precision during cost/price
+    // multiplication, potentially under-reporting a non-zero residual.
+    let fast_residuals = rustledger_booking::calculate_residual(txn);
+    let all_zero = fast_residuals
+        .values()
+        .all(|residual| *residual == Decimal::ZERO);
 
-    // Calculate per-currency tolerance based on postings
-    let tolerances = calculate_tolerances(txn, options);
+    if all_zero {
+        return;
+    }
+
+    // Slow path: use arbitrary-precision arithmetic for edge cases where
+    // Decimal's 28-digit precision causes false positives.
+    let residuals = rustledger_booking::calculate_residual_precise(txn);
 
     for (currency, residual) in &residuals {
         // Get the tolerance for this currency, defaulting to 0 (exact balance).
