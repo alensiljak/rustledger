@@ -230,13 +230,13 @@ rledger check ledger.beancount             # Use cache (default)
 - **Cow strings** — `parse_string` returns `Cow<str>`, zero-alloc for no-escape strings
 - **Result**: Parser 1K txns: 1,204μs → 700μs (**-42%**)
 
-### 6.4 Validation Fast Paths ✅ DONE (April 2026)
-- **Eliminate duplicate `calculate_tolerances()`** — was called twice per transaction
+### 6.4 Validation Fast Paths (April 2026, PR #814)
+- **Compute tolerances once** — pass pre-computed tolerances to balance checker
 - **Fast-path BigDecimal bypass** — skip expensive arbitrary-precision when Decimal residual is zero
 - **Remove Vec allocation** in `validate_account_name` — iterate without collecting
 - **Result**: Validation 1K txns: 210μs → 90μs (**-57%**)
 
-### 6.5 Parallel File Loading ✅ DONE (April 2026)
+### 6.5 Parallel File Loading (April 2026, PR #813)
 - When multiple sibling includes are found, read + parse files in parallel via rayon
 - Sequential merge preserves include order and handles nested includes
 - Only for DiskFileSystem (VFS uses sequential fallback)
@@ -268,9 +268,9 @@ rledger check ledger.beancount             # Use cache (default)
 | 5 | Binary cache (rkyv) | ✅ Done | 2.3x on cache hit |
 | 6.1 | Logos + Winnow parser | ✅ Done | Replaced Chumsky |
 | 6.2 | Bumpalo arena | 🔮 Future | +20% projected |
-| 6.3 | Parser fast paths | ✅ Done | +42% parser (Apr 2026) |
-| 6.4 | Validation fast paths | ✅ Done | +57% validation (Apr 2026) |
-| 6.5 | Parallel file loading | ✅ Done | Multi-file I/O parallelized |
+| 6.3 | Parser fast paths | ✅ Done | +42% parser (Apr 2026, PR #812) |
+| 6.4 | Validation fast paths | 🔄 PR #814 | +57% validation (Apr 2026) |
+| 6.5 | Parallel file loading | 🔄 PR #813 | Multi-file I/O parallelized |
 | 7 | Memory-mapped files | 🔮 Future | Large files only |
 
 ## Actual Performance

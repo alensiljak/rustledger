@@ -200,7 +200,7 @@ Or use `rledger doctor missing-open` to generate them.
 
 **Cause**: A cost specification resolves to a negative amount.
 
-**Fix**: Ensure cost values are positive (e.g., `{10 USD}` not `{-10 USD}`).
+**Fix**: Ensure cost values are non-negative (e.g., `{10 USD}` not `{-10 USD}`). Zero cost is allowed.
 
 ## Currency Errors (E5xxx)
 
