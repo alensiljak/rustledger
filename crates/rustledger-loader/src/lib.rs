@@ -574,48 +574,43 @@ impl Loader {
             if valid_paths.len() > 1 && self.fs.supports_parallel_read() {
                 use rayon::prelude::*;
 
-                // Filter out encrypted files — they need sequential decryption.
-                let (encrypted, plaintext): (Vec<_>, Vec<_>) = valid_paths
-                    .into_iter()
-                    .partition(|p| self.fs.is_encrypted(p));
+                // Read + parse non-encrypted files in parallel, preserving
+                // original include order. Each entry becomes either
+                // Some((source, parsed)) for successful reads, or None for
+                // encrypted/failed files (which fall back to sequential).
+                //
+                // We keep the original index to merge results in order,
+                // ensuring option/directive precedence matches the declared
+                // include sequence.
+                let pre_parsed: Vec<Option<(std::sync::Arc<str>, rustledger_parser::ParseResult)>> =
+                    valid_paths
+                        .par_iter()
+                        .map(|p| {
+                            // Skip encrypted files — they need sequential GPG decryption
+                            if p.extension()
+                                .and_then(|e| e.to_str())
+                                .is_some_and(|e| e == "gpg" || e == "asc")
+                            {
+                                return None;
+                            }
+                            let bytes = std::fs::read(p).ok()?;
+                            let content = match String::from_utf8(bytes) {
+                                Ok(s) => s,
+                                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+                            };
+                            let source: std::sync::Arc<str> = content.into();
+                            let parsed = rustledger_parser::parse(&source);
+                            Some((source, parsed))
+                        })
+                        .collect();
 
-                // Read + parse plaintext files in parallel.
-                // Uses DiskFileSystem::read logic (UTF-8 with lossy fallback).
-                let parse_results: Vec<_> = plaintext
-                    .par_iter()
-                    .filter_map(|p| {
-                        let source: std::sync::Arc<str> = match std::fs::read(p) {
-                            Ok(bytes) => match String::from_utf8(bytes) {
-                                Ok(s) => s.into(),
-                                Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned().into(),
-                            },
-                            Err(_) => return None, // I/O error — will be caught by load_recursive
-                        };
-                        let parsed = rustledger_parser::parse(&source);
-                        Some((p.clone(), source, parsed))
-                    })
-                    .collect();
-
-                // Merge parallel results sequentially (preserves include
-                // order, handles nested includes, updates shared state).
-                for (canonical, source, result) in parse_results {
+                // Merge in original include order. Files that were
+                // pre-parsed pass their data to load_recursive; files
+                // that weren't (encrypted or I/O error) are loaded
+                // sequentially as a fallback.
+                for (canonical, pre) in valid_paths.iter().zip(pre_parsed) {
                     if let Err(e) = self.load_recursive(
-                        &canonical,
-                        Some((source, result)),
-                        directives,
-                        options,
-                        plugins,
-                        source_map,
-                        errors,
-                    ) {
-                        errors.push(e);
-                    }
-                }
-
-                // Process encrypted files sequentially.
-                for canonical in encrypted {
-                    if let Err(e) = self.load_recursive(
-                        &canonical, None, directives, options, plugins, source_map, errors,
+                        canonical, pre, directives, options, plugins, source_map, errors,
                     ) {
                         errors.push(e);
                     }
