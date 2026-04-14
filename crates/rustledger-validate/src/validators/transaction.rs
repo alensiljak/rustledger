@@ -224,19 +224,17 @@ pub fn validate_transaction_balance(
         return;
     }
 
-    // Fast path: use rust_decimal first. If the residual is zero with Decimal
-    // precision, skip the expensive BigDecimal calculation.
+    // Fast path: use rust_decimal first. If ALL residuals are exactly zero,
+    // the transaction definitely balances — skip the expensive BigDecimal
+    // calculation. We only skip on exact zero (not "within tolerance")
+    // because Decimal arithmetic can lose precision during cost/price
+    // multiplication, potentially under-reporting a non-zero residual.
     let fast_residuals = rustledger_booking::calculate_residual(txn);
-    let needs_precise = fast_residuals.iter().any(|(currency, &residual)| {
-        if residual == Decimal::ZERO {
-            return false;
-        }
-        let tolerance = tolerances.get(currency).copied().unwrap_or(Decimal::ZERO);
-        residual.abs() > tolerance
-    });
+    let all_zero = fast_residuals
+        .values()
+        .all(|residual| *residual == Decimal::ZERO);
 
-    if !needs_precise {
-        // Fast residual says balanced (or within tolerance) — no error
+    if all_zero {
         return;
     }
 
