@@ -844,15 +844,21 @@ fn test_reject_pad_without_source_account() {
 }
 
 /// Case: unicode-account-name
-/// Account name segments must use only ASCII letters, digits, and hyphens
-/// per the beancount v3 spec. Unicode characters are rejected.
+/// Unicode letters (CJK, Cyrillic, etc.) are valid in account names.
+/// This extends beyond the beancount v3 spec's ASCII restriction, which
+/// was an artifact of the C flex lexer's poor Unicode support.
 #[test]
-fn test_reject_unicode_account_name() {
+fn test_accept_unicode_account_name() {
     let source = "2024-01-01 open Assets:銀行口座\n";
     let result = parse(source);
     assert!(
-        !result.errors.is_empty(),
-        "expected parse error for Unicode characters in account name"
+        result.errors.is_empty(),
+        "Unicode account names should parse successfully, got: {:?}",
+        result
+            .errors
+            .iter()
+            .map(rustledger_parser::ParseError::message)
+            .collect::<Vec<_>>()
     );
 }
 

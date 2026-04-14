@@ -902,8 +902,8 @@ mod tests {
     /// previous behavior where Unicode was accepted.
     #[test]
     fn test_unicode_account_names_issue_572() {
-        // File with Russian account type names — these now produce parse errors
-        // because beancount v3 restricts account names to ASCII characters only.
+        // File with Russian account type names — Unicode account names are
+        // fully supported (Cyrillic, CJK, etc.). See issue #816.
         let source = r#"option "name_assets" "Активы"
 option "name_liabilities" "Обязательства"
 option "name_income" "Доходы"
@@ -917,23 +917,21 @@ option "name_equity" "Капитал"
 "#;
 
         let result = parse(source);
-        // Per beancount v3, Unicode account names are rejected at parse time.
         assert!(
-            !result.errors.is_empty(),
-            "Unicode account names should produce parse errors per the beancount v3 spec"
+            result.errors.is_empty(),
+            "Unicode account names should parse without errors: {:?}",
+            result
+                .errors
+                .iter()
+                .map(|e| e.message())
+                .collect::<Vec<_>>()
         );
 
-        // Verify the diagnostics layer produces ERROR diagnostics (not just parse errors).
+        // No parse errors means no diagnostics from this layer.
         let diagnostics = parse_errors_to_diagnostics(&result, source);
         assert!(
-            !diagnostics.is_empty(),
-            "Unicode account name errors should produce LSP diagnostics"
-        );
-        assert!(
-            diagnostics
-                .iter()
-                .any(|d| d.severity == Some(DiagnosticSeverity::ERROR)),
-            "At least one diagnostic should be ERROR severity"
+            diagnostics.is_empty(),
+            "Valid Unicode accounts should produce no diagnostics"
         );
     }
 

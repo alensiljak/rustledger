@@ -301,6 +301,8 @@ Type:Category:Subcategory:Detail
 
 ### Root Types
 
+The defaults are English, but can be customized to any language via options:
+
 | Type | Purpose |
 |------|---------|
 | `Assets` | What you own (positive = good) |
@@ -308,6 +310,16 @@ Type:Category:Subcategory:Detail
 | `Equity` | Net worth adjustments |
 | `Income` | Money coming in (negative in ledger) |
 | `Expenses` | Money going out (positive in ledger) |
+
+Account names support full Unicode — Cyrillic, CJK, Arabic, etc.:
+
+```beancount
+option "name_equity" "Капитал"
+option "name_assets" "资产"
+
+2024-01-01 open Капитал:Opening-Balances
+2024-01-01 open 资产:银行:支票 CNY
+```
 
 ### Naming Conventions
 

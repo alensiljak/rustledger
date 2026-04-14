@@ -2180,18 +2180,21 @@ mod tests {
     }
 
     #[test]
-    fn test_unicode_account_produces_invalid_account_error() {
+    fn test_unicode_account_parses_successfully() {
+        // Cyrillic accounts are valid — Unicode uppercase letters (\p{Lu})
+        // and CJK ideographs (\p{Lo}) are accepted at component start.
         let source = "2024-01-01 open Активы:Банк\n";
         let result = parse(source);
         assert!(
-            !result.errors.is_empty(),
-            "Unicode account should produce a parse error"
+            result.errors.is_empty(),
+            "Cyrillic account should parse without errors, got: {:?}",
+            result
+                .errors
+                .iter()
+                .map(ParseError::message)
+                .collect::<Vec<_>>()
         );
-        let msg = result.errors[0].message();
-        assert!(
-            msg.contains("Invalid account"),
-            "Unicode account error should contain 'Invalid account', got: {msg}"
-        );
+        assert_eq!(result.directives.len(), 1, "Should have 1 directive");
     }
 
     // ============================================================================
