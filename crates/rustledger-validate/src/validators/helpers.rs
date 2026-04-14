@@ -11,13 +11,14 @@ pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<
         return Some("account name is empty".to_string());
     }
 
-    let parts: Vec<&str> = account.split(':').collect();
-    if parts.is_empty() {
-        return Some("account name has no components".to_string());
-    }
+    // Iterate components without allocating a Vec
+    let mut components = account.split(':');
 
-    // Check root account type
-    let root = parts[0];
+    // Check root account type (first component)
+    let root = components.next()?;
+    if root.is_empty() {
+        return Some("component 1 is empty".to_string());
+    }
     if !account_types.iter().any(|t| t == root) {
         return Some(format!(
             "account must start with one of: {}",
@@ -25,8 +26,9 @@ pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<
         ));
     }
 
-    // Check each component
-    for (i, part) in parts.iter().enumerate() {
+    // Check each component (starting from root)
+    // We already validated root's content will be checked below
+    for (i, part) in std::iter::once(root).chain(components).enumerate() {
         if part.is_empty() {
             return Some(format!("component {} is empty", i + 1));
         }

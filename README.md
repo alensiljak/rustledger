@@ -194,9 +194,10 @@ rledger format --in-place ledger.beancount
 | `rustledger-parser` | Lexer and parser with error recovery |
 | `rustledger-loader` | File loading and includes |
 | `rustledger-booking` | Interpolation and 7 booking methods |
-| `rustledger-validate` | 27 validation error codes |
+| `rustledger-validate` | 28 validation error codes |
 | `rustledger-query` | BQL query engine |
 | `rustledger-plugin` | 30 built-in plugins + Python plugin support |
+| `rustledger-plugin-types` | Shared plugin type definitions |
 | `rustledger-importer` | CSV/OFX import framework |
 | `rustledger-lsp` | Language Server Protocol for editor integration |
 | `rustledger-wasm` | WebAssembly bindings for JavaScript/TypeScript |

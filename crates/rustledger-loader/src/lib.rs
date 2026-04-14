@@ -332,8 +332,10 @@ impl Loader {
 
     /// Load a beancount file and all its includes.
     ///
-    /// Parses the file, processes options and plugin directives, and recursively
-    /// loads any included files.
+    /// Uses parallel file parsing when multiple files are discovered via
+    /// include directives. The root file is parsed first to resolve the
+    /// include tree, then all included files are read and parsed in
+    /// parallel using rayon.
     ///
     /// # Errors
     ///
@@ -360,8 +362,11 @@ impl Loader {
             self.root_dir = canonical.parent().map(Path::to_path_buf);
         }
 
+        // Phase 1: Parse the root file to discover includes.
+        // The root file is typically small (just includes + options).
         self.load_recursive(
             &canonical,
+            None,
             &mut directives,
             &mut options,
             &mut plugins,
@@ -382,9 +387,11 @@ impl Loader {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn load_recursive(
         &mut self,
         path: &Path,
+        pre_parsed: Option<(std::sync::Arc<str>, rustledger_parser::ParseResult)>,
         directives: &mut Vec<Spanned<Directive>>,
         options: &mut Options,
         plugins: &mut Vec<Plugin>,
@@ -415,12 +422,18 @@ impl Loader {
             return Ok(());
         }
 
-        // Read file (decrypting if necessary)
-        // Try fast UTF-8 conversion first, fall back to lossy for non-UTF-8 files
-        let source: std::sync::Arc<str> = if self.fs.is_encrypted(path) {
-            decrypt_gpg_file(path)?.into()
+        // Use pre-parsed data if available (from parallel loading path),
+        // otherwise read and parse the file.
+        let (source, result) = if let Some(pre) = pre_parsed {
+            pre
         } else {
-            self.fs.read(path)?
+            let src: std::sync::Arc<str> = if self.fs.is_encrypted(path) {
+                decrypt_gpg_file(path)?.into()
+            } else {
+                self.fs.read(path)?
+            };
+            let parsed = rustledger_parser::parse(&src);
+            (src, parsed)
         };
 
         // Add to source map (Arc::clone is cheap - just increments refcount)
@@ -430,9 +443,6 @@ impl Loader {
         self.include_stack_set.insert(path_buf.clone());
         self.include_stack.push(path_buf.clone());
         self.loaded_files.insert(path_buf);
-
-        // Parse (borrows from Arc, no allocation)
-        let result = rustledger_parser::parse(&source);
 
         // Collect parse errors
         if !result.errors.is_empty() {
@@ -533,13 +543,12 @@ impl Loader {
                 continue;
             }
 
-            // Load each matched file
+            // Normalize and security-check all matched paths first.
+            let mut valid_paths = Vec::with_capacity(paths_to_load.len());
             for matched_path in paths_to_load {
-                // Use filesystem-specific normalization (VFS vs disk)
                 let canonical = self.fs.normalize(&matched_path);
 
-                // Additional security check for each matched file
-                // (glob could still match files outside root via symlinks)
+                // Security check: glob could match files outside root via symlinks
                 if self.enforce_path_security
                     && let Some(ref root) = self.root_dir
                     && !canonical.starts_with(root)
@@ -551,10 +560,64 @@ impl Loader {
                     continue;
                 }
 
-                if let Err(e) = self
-                    .load_recursive(&canonical, directives, options, plugins, source_map, errors)
-                {
-                    errors.push(e);
+                valid_paths.push(canonical);
+            }
+
+            // Parallel optimization: when loading multiple sibling includes
+            // from disk, read and parse them in parallel. The expensive work
+            // (I/O + tokenize + parse) runs on rayon's thread pool while the
+            // main thread coordinates the include tree walk.
+            //
+            // Each file is read and parsed independently. Results are then
+            // merged sequentially to preserve include order and process any
+            // nested includes via recursive calls.
+            if valid_paths.len() > 1 && self.fs.supports_parallel_read() {
+                use rayon::prelude::*;
+
+                // Read + parse non-encrypted files in parallel, preserving
+                // original include order. Each entry becomes either
+                // Some((source, parsed)) for successful reads, or None for
+                // encrypted/failed files (which fall back to sequential).
+                //
+                // We keep the original index to merge results in order,
+                // ensuring option/directive precedence matches the declared
+                // include sequence.
+                let fs = &*self.fs;
+                let pre_parsed: Vec<Option<(std::sync::Arc<str>, rustledger_parser::ParseResult)>> =
+                    valid_paths
+                        .par_iter()
+                        .map(|p| {
+                            // Skip encrypted files — they need sequential GPG decryption
+                            if fs.is_encrypted(p) {
+                                return None;
+                            }
+                            // Read through the FileSystem trait so all I/O goes
+                            // through one code path (UTF-8 handling, error types, etc.)
+                            let source = fs.read(p).ok()?;
+                            let parsed = rustledger_parser::parse(&source);
+                            Some((source, parsed))
+                        })
+                        .collect();
+
+                // Merge in original include order. Files that were
+                // pre-parsed pass their data to load_recursive; files
+                // that weren't (encrypted or I/O error) are loaded
+                // sequentially as a fallback.
+                for (canonical, pre) in valid_paths.iter().zip(pre_parsed) {
+                    if let Err(e) = self.load_recursive(
+                        canonical, pre, directives, options, plugins, source_map, errors,
+                    ) {
+                        errors.push(e);
+                    }
+                }
+            } else {
+                // Sequential fallback: single file or VFS.
+                for canonical in valid_paths {
+                    if let Err(e) = self.load_recursive(
+                        &canonical, None, directives, options, plugins, source_map, errors,
+                    ) {
+                        errors.push(e);
+                    }
                 }
             }
         }

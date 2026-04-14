@@ -64,8 +64,10 @@ Values:
 | Method | Description |
 |--------|-------------|
 | `STRICT` | Exact lot match required (default) |
+| `STRICT_WITH_SIZE` | Like STRICT, but exact-size matches accept oldest lot |
 | `FIFO` | First-in, first-out |
 | `LIFO` | Last-in, first-out |
+| `HIFO` | Highest-in, first-out (highest cost lots reduced first) |
 | `AVERAGE` | Average cost |
 | `NONE` | No booking |
 
