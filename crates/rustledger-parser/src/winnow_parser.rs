@@ -273,27 +273,35 @@ fn parse_signed_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     Ok(if negate { -n } else { n })
 }
 
-fn parse_string(stream: &mut TokenStream<'_>) -> ParseRes<String> {
+fn parse_string<'a>(stream: &mut TokenStream<'a>) -> ParseRes<Cow<'a, str>> {
     if let Some(t) = stream.peek()
         && let Token::String(s) = &t.token
     {
         let inner = &s[1..s.len() - 1];
-        let result = process_string_escapes(inner);
+        // Fast path: no escape sequences — borrow directly from source (zero alloc).
+        // Slow path: process escapes into owned String.
+        let result = if inner.contains('\\') {
+            Cow::Owned(process_string_escapes(inner))
+        } else {
+            Cow::Borrowed(inner)
+        };
         stream.advance();
         return Ok(result);
     }
     Err(())
 }
 
-fn process_string_escapes(s: &str) -> String {
-    // Fast path: if no backslash, the string needs no escape processing.
-    // This avoids a String allocation + char-by-char copy for the ~99%
-    // of narrations/payees that contain no escape sequences.
-    if !s.contains('\\') {
-        return s.to_string();
-    }
+/// Parse a quoted string, returning an owned String.
+///
+/// Convenience wrapper around `parse_string` for callers that need
+/// a `String` rather than `Cow<str>`.
+fn parse_string_owned(stream: &mut TokenStream<'_>) -> ParseRes<String> {
+    parse_string(stream).map(Cow::into_owned)
+}
 
-    // Slow path: process escape sequences
+/// Process escape sequences in a string. Only called for strings that
+/// contain backslashes (the fast path is handled by `parse_string`).
+fn process_string_escapes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
@@ -645,7 +653,7 @@ fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
         // Try to parse different component types
         if let Ok(date) = parse_date(stream) {
             spec.date = Some(date);
-        } else if let Ok(label) = parse_string(stream) {
+        } else if let Ok(label) = parse_string_owned(stream) {
             spec.label = Some(label);
         } else if let Ok(number) = parse_expr(stream) {
             // Check if this is followed by # (total cost marker)
@@ -855,7 +863,7 @@ fn parse_posting_metadata(stream: &mut TokenStream<'_>) -> Metadata {
 // ============================================================================
 
 fn parse_meta_value(stream: &mut TokenStream<'_>) -> ParseRes<MetaValue> {
-    if let Ok(s) = parse_string(stream) {
+    if let Ok(s) = parse_string_owned(stream) {
         return Ok(MetaValue::String(s));
     }
     if let Ok(b) = parse_boolean(stream) {
@@ -968,8 +976,8 @@ enum ParsedItem {
 fn parse_option_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Option_)?;
-    let key = parse_string(stream)?;
-    let value = parse_string(stream)?;
+    let key = parse_string_owned(stream)?;
+    let value = parse_string_owned(stream)?;
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Option(key, value, span))
 }
@@ -977,7 +985,7 @@ fn parse_option_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
 fn parse_include_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Include)?;
-    let path = parse_string(stream)?;
+    let path = parse_string_owned(stream)?;
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Include(path, span))
 }
@@ -985,8 +993,8 @@ fn parse_include_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem>
 fn parse_plugin_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Plugin)?;
-    let name = parse_string(stream)?;
-    let config = parse_string(stream).ok();
+    let name = parse_string_owned(stream)?;
+    let config = parse_string_owned(stream).ok();
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Plugin(name, config, span))
 }
@@ -1046,8 +1054,8 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
         return Err(());
     };
 
-    // Parse payee/narration strings
-    let mut strings = Vec::with_capacity(2);
+    // Parse payee/narration strings (Cow avoids allocation for no-escape case)
+    let mut strings: Vec<Cow<'_, str>> = Vec::with_capacity(2);
     let mut has_pipe = false;
 
     while let Ok(s) = parse_string(stream) {
@@ -1168,13 +1176,22 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     let txn_trailing_comments = pending_comments;
 
     // Build transaction
-    let (payee, narration) = if has_pipe && strings.len() >= 2 {
-        (Some(strings.remove(0)), strings.remove(0))
+    let (payee, narration): (Option<InternedStr>, InternedStr) = if has_pipe && strings.len() >= 2 {
+        let p: InternedStr = strings.remove(0).as_ref().into();
+        let n: InternedStr = strings.remove(0).as_ref().into();
+        (Some(p), n)
     } else {
         match strings.len() {
-            0 => (None, String::new()),
-            1 => (None, strings.remove(0)),
-            _ => (Some(strings.remove(0)), strings.remove(0)),
+            0 => (None, InternedStr::from("")),
+            1 => {
+                let n: InternedStr = strings.remove(0).as_ref().into();
+                (None, n)
+            }
+            _ => {
+                let p: InternedStr = strings.remove(0).as_ref().into();
+                let n: InternedStr = strings.remove(0).as_ref().into();
+                (Some(p), n)
+            }
         }
     };
 
@@ -1267,7 +1284,7 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
         }
     }
 
-    let booking = if let Ok(s) = parse_string(stream) {
+    let booking = if let Ok(s) = parse_string_owned(stream) {
         // Validate booking method: must be one of the valid uppercase methods per beancount v3.
         const VALID_BOOKING_METHODS: &[&str] =
             &["FIFO", "STRICT", "LIFO", "HIFO", "NONE", "AVERAGE"];
@@ -1367,8 +1384,8 @@ fn parse_event_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Event)?;
-    let event_type = parse_string(stream)?;
-    let value = parse_string(stream)?;
+    let event_type = parse_string_owned(stream)?;
+    let value = parse_string_owned(stream)?;
     skip_comment(stream);
 
     let meta = parse_metadata_with_comments(stream);
@@ -1388,8 +1405,8 @@ fn parse_query_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Query)?;
-    let name = parse_string(stream)?;
-    let query = parse_string(stream)?;
+    let name = parse_string_owned(stream)?;
+    let query = parse_string_owned(stream)?;
     skip_comment(stream);
 
     // Parse directive metadata
@@ -1414,7 +1431,7 @@ fn parse_note_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Note)?;
     let account = parse_account(stream)?;
-    let comment = parse_string(stream)?;
+    let comment = parse_string_owned(stream)?;
     skip_comment(stream);
 
     // Parse directive metadata (and skip any trailing indented comments)
@@ -1436,7 +1453,7 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Document)?;
     let account = parse_account(stream)?;
-    let path = parse_string(stream)?;
+    let path = parse_string_owned(stream)?;
 
     // Optional tags and links (rarely present on documents)
     let mut tags: Vec<InternedStr> = Vec::new();
@@ -1493,12 +1510,12 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Custom)?;
-    let name = parse_string(stream)?;
+    let name = parse_string_owned(stream)?;
 
     let mut values = Vec::with_capacity(4);
     loop {
         // String
-        if let Ok(s) = parse_string(stream) {
+        if let Ok(s) = parse_string_owned(stream) {
             values.push(MetaValue::String(s));
             continue;
         }
