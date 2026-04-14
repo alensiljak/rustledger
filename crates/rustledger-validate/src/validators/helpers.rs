@@ -49,8 +49,7 @@ pub fn validate_account_name(account: &str, account_types: &[String]) -> Option<
             ));
         }
 
-        // Remaining characters: ASCII letters, ASCII digits, hyphens, or any non-ASCII character.
-        // This matches beancount's lexer.l: `([A-Za-z0-9-]|UTF-8-ONLY)*`
+        // Remaining characters: letters (any script), digits, or hyphens.
         for c in part.chars().skip(1) {
             if !c.is_ascii_alphanumeric() && c != '-' && c.is_ascii() {
                 return Some(format!(
