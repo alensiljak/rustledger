@@ -1,11 +1,11 @@
 # Rustledger Performance Optimization Roadmap
 
-## Current Performance (10K transactions)
+## Current Performance (10K transactions, April 2026)
 
 | Benchmark | rustledger | beancount | Speedup |
 |-----------|------------|-----------|---------|
-| Validation (parse + check) | 35ms | 754ms | **22x faster** |
-| Balance report (parse + compute) | 118ms | 1280ms | **11x faster** |
+| Validation (parse + check) | 40ms | 797ms | **20x faster** |
+| Balance report (parse + compute) | 32ms | 1093ms | **34x faster** |
 
 ## Target
 
@@ -25,6 +25,9 @@
 | Phase 4: Rayon parallelization | 113ms | 108ms | **~5% faster** |
 | Phase 0.2: PGO | 108ms | 94ms | **13% faster** |
 | Phase 5: rkyv cache | 30ms | 13ms | **2.3x faster** (cache hit) |
+| Phase 6.3: Parser fast paths | 1204μs | 700μs | **42% faster** (per 1K txns) |
+| Phase 6.4: Validation fast paths | 210μs | 90μs | **57% faster** (per 1K txns) |
+| Phase 6.5: Parallel file loading | — | — | Multi-file I/O parallelized |
 
 **Combined improvement**: 160ms → 94ms = **41% faster** (1.7x speedup on top of existing gains)
 
@@ -218,6 +221,27 @@ rledger check ledger.beancount             # Use cache (default)
 - Perfect for phase-oriented allocation (parse → use → discard)
 - **Projected**: +20% parsing improvement
 
+### 6.3 Parser Fast Paths ✅ DONE (April 2026)
+- **Vec::new()** for tags/links/comments — avoid allocating empty collections
+- **String escape SIMD fast path** — `contains('\\')` before char-by-char processing
+- **StringInterner** in parser — deduplicate repeated accounts/currencies
+- **Fast Decimal parser** — hand-rolled `[0-9]+(\.[0-9]+)?` bypassing `Decimal::from_str`
+- **Fast date parsing** — `from_ymd_opt(y,m,d)` for canonical `YYYY-MM-DD`
+- **Cow strings** — `parse_string` returns `Cow<str>`, zero-alloc for no-escape strings
+- **Result**: Parser 1K txns: 1,204μs → 700μs (**-42%**)
+
+### 6.4 Validation Fast Paths ✅ DONE (April 2026)
+- **Eliminate duplicate `calculate_tolerances()`** — was called twice per transaction
+- **Fast-path BigDecimal bypass** — skip expensive arbitrary-precision when Decimal residual is zero
+- **Remove Vec allocation** in `validate_account_name` — iterate without collecting
+- **Result**: Validation 1K txns: 210μs → 90μs (**-57%**)
+
+### 6.5 Parallel File Loading ✅ DONE (April 2026)
+- When multiple sibling includes are found, read + parse files in parallel via rayon
+- Sequential merge preserves include order and handles nested includes
+- Only for DiskFileSystem (VFS uses sequential fallback)
+- **Result**: Multi-file ledgers load 2-4x faster depending on core count
+
 ---
 
 ## Phase 7: Memory-Mapped Files (Future)
@@ -244,21 +268,24 @@ rledger check ledger.beancount             # Use cache (default)
 | 5 | Binary cache (rkyv) | ✅ Done | 2.3x on cache hit |
 | 6.1 | Logos + Winnow parser | ✅ Done | Replaced Chumsky |
 | 6.2 | Bumpalo arena | 🔮 Future | +20% projected |
+| 6.3 | Parser fast paths | ✅ Done | +42% parser (Apr 2026) |
+| 6.4 | Validation fast paths | ✅ Done | +57% validation (Apr 2026) |
+| 6.5 | Parallel file loading | ✅ Done | Multi-file I/O parallelized |
 | 7 | Memory-mapped files | 🔮 Future | Large files only |
 
 ## Actual Performance
 
-Measured on 10K transaction ledgers (January 2026):
+Measured on 10K transaction ledgers (April 2026):
 
 | Benchmark | rustledger | beancount | ledger (C++) | hledger |
 |-----------|------------|-----------|--------------|---------|
-| Validation | 35ms | 754ms | 97ms | 467ms |
-| Balance report | 118ms | 1280ms | 84ms | 571ms |
+| Validation | 40ms | 797ms | 97ms | 467ms |
+| Balance report | 32ms | 1093ms | 84ms | 571ms |
 
 **Key results:**
-- **22x faster** than beancount for validation
-- **11x faster** than beancount for balance reports
-- Competitive with ledger (C++): 2.8x slower validation, 1.4x slower balance
+- **20x faster** than beancount for validation
+- **34x faster** than beancount for balance reports
+- Competitive with ledger (C++): 2.4x slower validation, 2.6x faster balance
 - Cache hit: ~13ms for repeated runs
 
 ---

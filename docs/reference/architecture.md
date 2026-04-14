@@ -66,7 +66,7 @@ This document describes rustledger's crate structure and data flow.
 |-------|---------|-----------|
 | `rustledger-loader` | File loading, includes, caching | `Loader`, `LoadedLedger`, `Options` |
 | `rustledger-booking` | Cost basis and lot matching | `BookingMethod` (FIFO, LIFO, HIFO, etc.) |
-| `rustledger-validate` | Validation rules | `ValidationError`, 27 error codes (E0001-E0702) |
+| `rustledger-validate` | Validation rules | `ValidationError`, 28 error codes (E1001-E10002) |
 
 ### Feature Layer
 

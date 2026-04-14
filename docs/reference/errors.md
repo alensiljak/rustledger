@@ -196,6 +196,12 @@ Or use `rledger doctor missing-open` to generate them.
 
 **Fix**: Check that you have sufficient holdings before selling.
 
+### E4005: Negative Cost
+
+**Cause**: A cost specification resolves to a negative amount.
+
+**Fix**: Ensure cost values are positive (e.g., `{10 USD}` not `{-10 USD}`).
+
 ## Currency Errors (E5xxx)
 
 ### E5001: Currency Not Declared
