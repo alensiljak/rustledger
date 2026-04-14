@@ -57,14 +57,18 @@ struct TokenStream<'src> {
     /// calendar values (e.g., Feb 29 in a non-leap year). Used in place of
     /// the generic "unexpected input" error during error recovery.
     deferred_error: Option<ParseError>,
+    /// String interner for deduplicating repeated strings (accounts, currencies).
+    /// Typical ledger: ~10 unique accounts × 1000 txns = 10K lookups vs 10K allocations.
+    interner: rustledger_core::intern::StringInterner,
 }
 
 impl<'src> TokenStream<'src> {
-    const fn new(tokens: &'src [SpannedToken<'src>]) -> Self {
+    fn new(tokens: &'src [SpannedToken<'src>]) -> Self {
         Self {
             tokens,
             pos: 0,
             deferred_error: None,
+            interner: rustledger_core::intern::StringInterner::new(),
         }
     }
 
@@ -123,8 +127,24 @@ fn parse_date(stream: &mut TokenStream<'_>) -> ParseRes<NaiveDate> {
         && let Token::Date(s) = &t.token
     {
         let span = Span::new(t.span.0, t.span.1);
-        // Normalize: replace '/' separators with '-' and zero-pad single-digit
-        // month/day so chrono can parse with "%Y-%m-%d".
+
+        // Fast path: canonical "YYYY-MM-DD" (10 chars, no '/')
+        // avoids normalize_date_str + chrono's format parser overhead.
+        if s.len() == 10
+            && s.as_bytes()[4] == b'-'
+            && s.as_bytes()[7] == b'-'
+            && let (Ok(y), Ok(m), Ok(d)) = (
+                s[0..4].parse::<i32>(),
+                s[5..7].parse::<u32>(),
+                s[8..10].parse::<u32>(),
+            )
+            && let Some(date) = NaiveDate::from_ymd_opt(y, m, d)
+        {
+            stream.advance();
+            return Ok(date);
+        }
+
+        // Slow path: normalize separators and zero-pad, then parse
         let normalized = normalize_date_str(s);
         if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
             stream.advance();
@@ -180,13 +200,61 @@ fn parse_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     if let Some(t) = stream.peek()
         && let Token::Number(s) = &t.token
     {
-        let cleaned = s.replace(',', "");
+        let has_commas = s.contains(',');
+
+        // Fast path: simple numbers without commas — use our lightweight
+        // parser instead of Decimal::from_str.
+        if !has_commas && let Some(num) = fast_parse_decimal(s) {
+            stream.advance();
+            return Ok(num);
+        }
+
+        // Slow path: commas or format fast_parse_decimal can't handle.
+        let cleaned = if has_commas {
+            Cow::Owned(s.replace(',', ""))
+        } else {
+            Cow::Borrowed(*s)
+        };
         if let Ok(num) = Decimal::from_str(&cleaned) {
             stream.advance();
             return Ok(num);
         }
     }
     Err(())
+}
+
+/// Fast decimal parser for simple beancount number formats.
+///
+/// Handles `[0-9]+(\.[0-9]+)?` — no sign, no commas, no exponent.
+/// Returns `None` for anything more complex, falling through to
+/// `Decimal::from_str`.
+fn fast_parse_decimal(s: &str) -> Option<Decimal> {
+    let bytes = s.as_bytes();
+    if bytes.is_empty() {
+        return None;
+    }
+
+    let mut mantissa: i64 = 0;
+    let mut scale: u32 = 0;
+    let mut in_decimal = false;
+
+    for &b in bytes {
+        match b {
+            b'0'..=b'9' => {
+                // Check for overflow before multiplying
+                mantissa = mantissa.checked_mul(10)?.checked_add(i64::from(b - b'0'))?;
+                if in_decimal {
+                    scale += 1;
+                }
+            }
+            b'.' if !in_decimal => {
+                in_decimal = true;
+            }
+            _ => return None, // Unexpected character — fall back to Decimal::from_str
+        }
+    }
+
+    Some(Decimal::new(mantissa, scale))
 }
 
 /// Parse a number with optional leading minus sign.
@@ -204,18 +272,34 @@ fn parse_signed_number(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
     Ok(if negate { -n } else { n })
 }
 
-fn parse_string(stream: &mut TokenStream<'_>) -> ParseRes<String> {
+fn parse_string<'a>(stream: &mut TokenStream<'a>) -> ParseRes<Cow<'a, str>> {
     if let Some(t) = stream.peek()
         && let Token::String(s) = &t.token
     {
         let inner = &s[1..s.len() - 1];
-        let result = process_string_escapes(inner);
+        // Fast path: no escape sequences — borrow directly from source (zero alloc).
+        // Slow path: process escapes into owned String.
+        let result = if inner.contains('\\') {
+            Cow::Owned(process_string_escapes(inner))
+        } else {
+            Cow::Borrowed(inner)
+        };
         stream.advance();
         return Ok(result);
     }
     Err(())
 }
 
+/// Parse a quoted string, returning an owned String.
+///
+/// Convenience wrapper around `parse_string` for callers that need
+/// a `String` rather than `Cow<str>`.
+fn parse_string_owned(stream: &mut TokenStream<'_>) -> ParseRes<String> {
+    parse_string(stream).map(Cow::into_owned)
+}
+
+/// Process escape sequences in a string. Only called for strings that
+/// contain backslashes (the fast path is handled by `parse_string`).
 fn process_string_escapes(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut chars = s.chars();
@@ -244,7 +328,7 @@ fn parse_account(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Account(s) = &t.token
     {
-        let result: InternedStr = (*s).into();
+        let result = stream.interner.intern(s);
         stream.advance();
         return Ok(result);
     }
@@ -255,7 +339,7 @@ fn parse_currency(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Currency(s) = &t.token
     {
-        let result: InternedStr = (*s).into();
+        let result = stream.interner.intern(s);
         stream.advance();
         return Ok(result);
     }
@@ -266,7 +350,7 @@ fn parse_tag(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Tag(s) = &t.token
     {
-        let result: InternedStr = s[1..].into(); // Skip #
+        let result = stream.interner.intern(&s[1..]); // Skip #
         stream.advance();
         return Ok(result);
     }
@@ -277,7 +361,7 @@ fn parse_link(stream: &mut TokenStream<'_>) -> ParseRes<InternedStr> {
     if let Some(t) = stream.peek()
         && let Token::Link(s) = &t.token
     {
-        let result: InternedStr = s[1..].into(); // Skip ^
+        let result = stream.interner.intern(&s[1..]); // Skip ^
         stream.advance();
         return Ok(result);
     }
@@ -568,7 +652,7 @@ fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
         // Try to parse different component types
         if let Ok(date) = parse_date(stream) {
             spec.date = Some(date);
-        } else if let Ok(label) = parse_string(stream) {
+        } else if let Ok(label) = parse_string_owned(stream) {
             spec.label = Some(label);
         } else if let Ok(number) = parse_expr(stream) {
             // Check if this is followed by # (total cost marker)
@@ -778,7 +862,7 @@ fn parse_posting_metadata(stream: &mut TokenStream<'_>) -> Metadata {
 // ============================================================================
 
 fn parse_meta_value(stream: &mut TokenStream<'_>) -> ParseRes<MetaValue> {
-    if let Ok(s) = parse_string(stream) {
+    if let Ok(s) = parse_string_owned(stream) {
         return Ok(MetaValue::String(s));
     }
     if let Ok(b) = parse_boolean(stream) {
@@ -891,8 +975,8 @@ enum ParsedItem {
 fn parse_option_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Option_)?;
-    let key = parse_string(stream)?;
-    let value = parse_string(stream)?;
+    let key = parse_string_owned(stream)?;
+    let value = parse_string_owned(stream)?;
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Option(key, value, span))
 }
@@ -900,7 +984,7 @@ fn parse_option_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
 fn parse_include_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Include)?;
-    let path = parse_string(stream)?;
+    let path = parse_string_owned(stream)?;
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Include(path, span))
 }
@@ -908,8 +992,8 @@ fn parse_include_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem>
 fn parse_plugin_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     expect_token!(stream, Token::Plugin)?;
-    let name = parse_string(stream)?;
-    let config = parse_string(stream).ok();
+    let name = parse_string_owned(stream)?;
+    let config = parse_string_owned(stream).ok();
     let span = stream.span_from(start_pos);
     Ok(ParsedItem::Plugin(name, config, span))
 }
@@ -969,8 +1053,8 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
         return Err(());
     };
 
-    // Parse payee/narration strings
-    let mut strings = Vec::with_capacity(2);
+    // Parse payee/narration strings (Cow avoids allocation for no-escape case)
+    let mut strings: Vec<Cow<'_, str>> = Vec::with_capacity(2);
     let mut has_pipe = false;
 
     while let Ok(s) = parse_string(stream) {
@@ -983,9 +1067,10 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
         }
     }
 
-    // Tags and links
-    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
+    // Tags and links — Vec::new() avoids an upfront heap allocation
+    // when no tags/links are present (the common case).
+    let mut tags: Vec<InternedStr> = Vec::new();
+    let mut links: Vec<InternedStr> = Vec::new();
 
     loop {
         if let Ok(tag) = parse_tag(stream) {
@@ -1002,8 +1087,9 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     // Parse transaction-level metadata, tags/links, and postings
     let mut txn_meta: Metadata = Metadata::default();
     let mut postings = Vec::with_capacity(4);
-    // Track comments that appear before the next posting (can be multiple lines)
-    let mut pending_comments: Vec<String> = Vec::with_capacity(4);
+    // Track comments between postings. Vec::new() avoids allocation
+    // when no inter-posting comments are present.
+    let mut pending_comments: Vec<String> = Vec::new();
 
     loop {
         // Skip newlines between lines
@@ -1089,13 +1175,22 @@ fn parse_transaction_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedI
     let txn_trailing_comments = pending_comments;
 
     // Build transaction
-    let (payee, narration) = if has_pipe && strings.len() >= 2 {
-        (Some(strings.remove(0)), strings.remove(0))
+    let (payee, narration): (Option<InternedStr>, InternedStr) = if has_pipe && strings.len() >= 2 {
+        let p: InternedStr = strings.remove(0).as_ref().into();
+        let n: InternedStr = strings.remove(0).as_ref().into();
+        (Some(p), n)
     } else {
         match strings.len() {
-            0 => (None, String::new()),
-            1 => (None, strings.remove(0)),
-            _ => (Some(strings.remove(0)), strings.remove(0)),
+            0 => (None, InternedStr::from("")),
+            1 => {
+                let n: InternedStr = strings.remove(0).as_ref().into();
+                (None, n)
+            }
+            _ => {
+                let p: InternedStr = strings.remove(0).as_ref().into();
+                let n: InternedStr = strings.remove(0).as_ref().into();
+                (Some(p), n)
+            }
         }
     };
 
@@ -1188,7 +1283,7 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
         }
     }
 
-    let booking = if let Ok(s) = parse_string(stream) {
+    let booking = if let Ok(s) = parse_string_owned(stream) {
         // Validate booking method: must be one of the valid uppercase methods per beancount v3.
         const VALID_BOOKING_METHODS: &[&str] =
             &["FIFO", "STRICT", "LIFO", "HIFO", "NONE", "AVERAGE"];
@@ -1288,8 +1383,8 @@ fn parse_event_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Event)?;
-    let event_type = parse_string(stream)?;
-    let value = parse_string(stream)?;
+    let event_type = parse_string_owned(stream)?;
+    let value = parse_string_owned(stream)?;
     skip_comment(stream);
 
     let meta = parse_metadata_with_comments(stream);
@@ -1309,8 +1404,8 @@ fn parse_query_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Query)?;
-    let name = parse_string(stream)?;
-    let query = parse_string(stream)?;
+    let name = parse_string_owned(stream)?;
+    let query = parse_string_owned(stream)?;
     skip_comment(stream);
 
     // Parse directive metadata
@@ -1335,7 +1430,7 @@ fn parse_note_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Note)?;
     let account = parse_account(stream)?;
-    let comment = parse_string(stream)?;
+    let comment = parse_string_owned(stream)?;
     skip_comment(stream);
 
     // Parse directive metadata (and skip any trailing indented comments)
@@ -1357,11 +1452,11 @@ fn parse_document_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Document)?;
     let account = parse_account(stream)?;
-    let path = parse_string(stream)?;
+    let path = parse_string_owned(stream)?;
 
-    // Optional tags and links
-    let mut tags: Vec<InternedStr> = Vec::with_capacity(8);
-    let mut links: Vec<InternedStr> = Vec::with_capacity(4);
+    // Optional tags and links — Vec::new() avoids allocation when absent
+    let mut tags: Vec<InternedStr> = Vec::new();
+    let mut links: Vec<InternedStr> = Vec::new();
     loop {
         if let Ok(tag) = parse_tag(stream) {
             tags.push(tag);
@@ -1414,12 +1509,12 @@ fn parse_custom_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> 
     let start_pos = stream.pos;
     let date = parse_date(stream)?;
     expect_token!(stream, Token::Custom)?;
-    let name = parse_string(stream)?;
+    let name = parse_string_owned(stream)?;
 
     let mut values = Vec::with_capacity(4);
     loop {
         // String
-        if let Ok(s) = parse_string(stream) {
+        if let Ok(s) = parse_string_owned(stream) {
             values.push(MetaValue::String(s));
             continue;
         }
