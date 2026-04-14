@@ -28,7 +28,7 @@ option "title" "My Finances"
 
 ```beancount
 ; Semicolon comment (anywhere on line)
-* Star comment (must be at start of line)
+* Org-mode header (treated as comment at start of line)
 ```
 
 ## Directives
