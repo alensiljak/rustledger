@@ -318,10 +318,10 @@ impl Executor<'_> {
             "posting_flag" => Ok(posting
                 .flag
                 .map_or(Value::Null, |f| Value::String(f.to_string()))),
-            // Description: "payee narration" or just narration
+            // Description: "payee | narration" or just narration (matches beancount)
             "description" => {
                 let desc = match &ctx.transaction.payee {
-                    Some(payee) => format!("{} {}", payee, ctx.transaction.narration),
+                    Some(payee) => format!("{} | {}", payee, ctx.transaction.narration),
                     None => ctx.transaction.narration.to_string(),
                 };
                 Ok(Value::String(desc))
@@ -463,6 +463,10 @@ impl Executor<'_> {
             // type - directive type (matches Python beancount's type column)
             // For SELECT FROM (default), this is always "Transaction"
             "type" => Ok(Value::String("Transaction".to_string())),
+            // id - directive index (matches Python beancount's id column)
+            "id" => Ok(ctx
+                .directive_index
+                .map_or(Value::Null, |idx| Value::Integer(idx as i64))),
             _ => Err(QueryError::UnknownColumn(name.to_string())),
         }
     }
