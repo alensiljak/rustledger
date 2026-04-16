@@ -26,6 +26,7 @@ impl Executor<'_> {
                     Value::Position(p) => Ok(Value::Number(p.units.number)),
                     Value::Number(n) => Ok(Value::Number(n)),
                     Value::Integer(i) => Ok(Value::Number(Decimal::from(i))),
+                    Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type(
                         "NUMBER expects an amount or position".to_string(),
                     )),
@@ -37,6 +38,7 @@ impl Executor<'_> {
                 match val {
                     Value::Amount(a) => Ok(Value::String(a.currency.to_string())),
                     Value::Position(p) => Ok(Value::String(p.units.currency.to_string())),
+                    Value::Null => Ok(Value::Null),
                     _ => Err(QueryError::Type(
                         "CURRENCY expects an amount or position".to_string(),
                     )),
@@ -207,18 +209,36 @@ impl Executor<'_> {
             Value::Inventory(inv) => {
                 let mut total = Decimal::ZERO;
                 let mut currency: Option<InternedStr> = None;
+                let mut has_cost = false;
                 for pos in inv.positions() {
                     if let Some(cost) = &pos.cost {
                         total += pos.units.number * cost.number;
                         if currency.is_none() {
                             currency = Some(cost.currency.clone());
                         }
+                        has_cost = true;
                     }
                 }
-                if let Some(curr) = currency {
-                    Ok(Value::Amount(Amount::new(total, curr)))
+                if has_cost {
+                    if let Some(curr) = currency {
+                        Ok(Value::Amount(Amount::new(total, curr)))
+                    } else {
+                        Ok(Value::Null)
+                    }
                 } else {
-                    Ok(Value::Null)
+                    let mut total = Decimal::ZERO;
+                    let mut currency: Option<InternedStr> = None;
+                    for pos in inv.positions() {
+                        total += pos.units.number;
+                        if currency.is_none() {
+                            currency = Some(pos.units.currency.clone());
+                        }
+                    }
+                    if let Some(curr) = currency {
+                        Ok(Value::Amount(Amount::new(total, curr)))
+                    } else {
+                        Ok(Value::Null)
+                    }
                 }
             }
             _ => Err(QueryError::Type(
