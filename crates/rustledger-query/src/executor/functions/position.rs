@@ -200,7 +200,7 @@ impl Executor<'_> {
                     let total = p.units.number * cost.number;
                     Ok(Value::Amount(Amount::new(total, cost.currency.clone())))
                 } else {
-                    Ok(Value::Null)
+                    Ok(Value::Amount(p.units))
                 }
             }
             Value::Amount(a) => Ok(Value::Amount(a)),
