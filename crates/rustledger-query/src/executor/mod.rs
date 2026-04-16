@@ -2249,7 +2249,8 @@ impl<'a> Executor<'a> {
             "price".to_string(),
             "weight".to_string(),
             "balance".to_string(),
-            // Collection columns
+            // Metadata and collection columns
+            "meta".to_string(),
             "accounts".to_string(),
             // Hidden metadata columns for META/ENTRY_META functions
             "_entry_meta".to_string(),
@@ -2465,7 +2466,8 @@ impl<'a> Executor<'a> {
                     price_val,
                     weight_val,
                     balance_val,
-                    // Collection
+                    // Metadata and collection
+                    Value::Metadata(Box::new(posting.meta.clone())),
                     Value::StringSet(all_accounts.clone()),
                     // Hidden metadata columns
                     Self::metadata_to_value(&txn.meta),

@@ -979,6 +979,7 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                         println!("  price (amount)");
                         println!("  weight (amount)");
                         println!("  balance (inventory)");
+                        println!("  meta (dict)");
                         println!("  accounts (set[str])");
                     }
                     _ => eprintln!("error: unknown table \"{}\"", args[0]),

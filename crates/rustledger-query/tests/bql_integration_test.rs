@@ -5915,6 +5915,7 @@ fn test_postings_table_all_beancount_columns() {
         "price",
         "weight",
         "balance",
+        "meta",
         "accounts",
     ];
     for col in &expected_columns {
