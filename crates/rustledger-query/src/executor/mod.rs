@@ -1996,7 +1996,7 @@ impl<'a> Executor<'a> {
 
         // Sort accounts by name for consistent output
         let mut account_list: Vec<_> = accounts.into_iter().collect();
-        account_list.sort_by(|(a, _), (b, _)| a.cmp(b));
+        account_list.sort_by_key(|(a, _)| *a);
 
         for (account, (open_date, close_date, currencies, booking)) in account_list {
             let row = vec![
