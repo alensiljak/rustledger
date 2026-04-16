@@ -951,16 +951,35 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                     }
                     "postings" => {
                         println!("table postings:");
+                        println!("  type (str)");
+                        println!("  id (str)");
                         println!("  date (date)");
+                        println!("  year (int)");
+                        println!("  month (int)");
+                        println!("  day (int)");
+                        println!("  filename (str)");
+                        println!("  lineno (int)");
+                        println!("  location (str)");
                         println!("  flag (str)");
                         println!("  payee (str)");
                         println!("  narration (str)");
-                        println!("  account (str)");
-                        println!("  units (amount)");
-                        println!("  cost (amount)");
-                        println!("  price (amount)");
+                        println!("  description (str)");
                         println!("  tags (set)");
                         println!("  links (set)");
+                        println!("  posting_flag (str)");
+                        println!("  account (str)");
+                        println!("  other_accounts (set)");
+                        println!("  number (decimal)");
+                        println!("  currency (str)");
+                        println!("  cost_number (decimal)");
+                        println!("  cost_currency (str)");
+                        println!("  cost_date (date)");
+                        println!("  cost_label (str)");
+                        println!("  position (position)");
+                        println!("  price (amount)");
+                        println!("  weight (amount)");
+                        println!("  balance (inventory)");
+                        println!("  accounts (set[str])");
                     }
                     _ => eprintln!("error: unknown table \"{}\"", args[0]),
                 }
