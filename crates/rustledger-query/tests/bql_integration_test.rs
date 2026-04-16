@@ -2871,6 +2871,41 @@ fn test_number_cost_position_without_cost() {
 }
 
 #[test]
+fn test_cost_mixed_inventory_with_and_without_cost() {
+    // Regression test: cost() on an inventory with mixed positions
+    // (some with cost, some without) should sum cost for positions with cost
+    // and units for positions without cost.
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy AAPL")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(100))
+                            .with_currency("USD"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD"))),
+        ),
+    ];
+    // cost(sum(position)) for Cash: no cost basis, returns units = -1000 USD
+    let result = execute_query(
+        r#"SELECT number(cost(sum(position))) as cost_num
+           WHERE account = "Assets:Cash"
+           GROUP BY account"#,
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    if let Value::Number(n) = &result.rows[0][0] {
+        assert_eq!(*n, dec!(-1000));
+    } else {
+        panic!("Expected Number, got {:?}", &result.rows[0][0]);
+    }
+}
+
+#[test]
 fn test_unary_negation_on_aggregate() {
     // Test -number(cost(sum(position))) - unary operator on aggregate
     let directives = make_holdings_directives();

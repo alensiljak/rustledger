@@ -209,36 +209,23 @@ impl Executor<'_> {
             Value::Inventory(inv) => {
                 let mut total = Decimal::ZERO;
                 let mut currency: Option<InternedStr> = None;
-                let mut has_cost = false;
                 for pos in inv.positions() {
                     if let Some(cost) = &pos.cost {
                         total += pos.units.number * cost.number;
                         if currency.is_none() {
                             currency = Some(cost.currency.clone());
                         }
-                        has_cost = true;
-                    }
-                }
-                if has_cost {
-                    if let Some(curr) = currency {
-                        Ok(Value::Amount(Amount::new(total, curr)))
                     } else {
-                        Ok(Value::Null)
-                    }
-                } else {
-                    let mut total = Decimal::ZERO;
-                    let mut currency: Option<InternedStr> = None;
-                    for pos in inv.positions() {
                         total += pos.units.number;
                         if currency.is_none() {
                             currency = Some(pos.units.currency.clone());
                         }
                     }
-                    if let Some(curr) = currency {
-                        Ok(Value::Amount(Amount::new(total, curr)))
-                    } else {
-                        Ok(Value::Null)
-                    }
+                }
+                if let Some(curr) = currency {
+                    Ok(Value::Amount(Amount::new(total, curr)))
+                } else {
+                    Ok(Value::Null)
                 }
             }
             _ => Err(QueryError::Type(
