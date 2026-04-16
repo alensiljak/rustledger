@@ -2382,8 +2382,11 @@ impl<'a> Executor<'a> {
                     .and_then(|p| p.amount())
                     .map_or(Value::Null, |a| Value::Amount(a.clone()));
 
-                // Weight: the cost-converted amount.
-                // If there's a cost, weight = units.number * cost; otherwise weight = units.
+                // Weight: the cost-converted amount used for transaction balancing.
+                // With cost: units × cost (in cost currency)
+                // With @ price: units × price (in price currency)
+                // With @@ price: the total price directly (already in target currency)
+                // Otherwise: units as-is
                 let weight_val = if let Some(units) = posting.amount() {
                     if let Some(cost_spec) = &posting.cost {
                         if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
@@ -2393,10 +2396,16 @@ impl<'a> Executor<'a> {
                         }
                     } else if let Some(price_ann) = &posting.price {
                         if let Some(price_amt) = price_ann.amount() {
-                            Value::Amount(Amount::new(
-                                units.number * price_amt.number,
-                                price_amt.currency.clone(),
-                            ))
+                            if price_ann.is_unit() {
+                                // @ per-unit price: weight = units × price
+                                Value::Amount(Amount::new(
+                                    units.number * price_amt.number,
+                                    price_amt.currency.clone(),
+                                ))
+                            } else {
+                                // @@ total price: the amount IS the total weight
+                                Value::Amount(price_amt.clone())
+                            }
                         } else {
                             Value::Amount(units.clone())
                         }

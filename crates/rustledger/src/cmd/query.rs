@@ -952,7 +952,7 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                     "postings" => {
                         println!("table postings:");
                         println!("  type (str)");
-                        println!("  id (str)");
+                        println!("  id (int)");
                         println!("  date (date)");
                         println!("  year (int)");
                         println!("  month (int)");

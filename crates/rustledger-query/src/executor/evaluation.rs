@@ -267,9 +267,11 @@ impl Executor<'_> {
                 Ok(Value::Null)
             }
             "weight" => {
-                // Weight is the amount used for transaction balancing
-                // With cost: units × cost currency
-                // Without cost: units amount
+                // Weight is the cost-converted amount used for transaction balancing.
+                // With cost: units × cost (in cost currency)
+                // With @ price: units × price (in price currency)
+                // With @@ price: the total price directly
+                // Otherwise: units as-is
                 if let Some(units) = posting.amount() {
                     if let Some(cost) = &posting.cost
                         && let Some(number_per) = &cost.number_per
@@ -278,7 +280,18 @@ impl Executor<'_> {
                         let total = units.number * number_per;
                         return Ok(Value::Amount(Amount::new(total, currency.clone())));
                     }
-                    // No cost, use units
+                    if let Some(price_ann) = &posting.price {
+                        if let Some(price_amt) = price_ann.amount() {
+                            return if price_ann.is_unit() {
+                                Ok(Value::Amount(Amount::new(
+                                    units.number * price_amt.number,
+                                    price_amt.currency.clone(),
+                                )))
+                            } else {
+                                Ok(Value::Amount(price_amt.clone()))
+                            };
+                        }
+                    }
                     Ok(Value::Amount(units.clone()))
                 } else {
                     Ok(Value::Null)

@@ -5793,6 +5793,85 @@ fn test_postings_table_weight_no_cost() {
 }
 
 #[test]
+fn test_postings_table_weight_per_unit_price() {
+    // Weight with @ per-unit price: units × price
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.10), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, weight FROM #postings WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    // 100 EUR @ 1.10 USD → weight = 110 USD
+    assert_eq!(
+        result.rows[0][1],
+        Value::Amount(Amount::new(dec!(110.00), "USD"))
+    );
+}
+
+#[test]
+fn test_postings_table_weight_total_price() {
+    // Weight with @@ total price: the total price IS the weight
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Total(Amount::new(dec!(110), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, weight FROM #postings WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    // 100 EUR @@ 110 USD → weight = 110 USD (total, not 100 × 110)
+    assert_eq!(
+        result.rows[0][1],
+        Value::Amount(Amount::new(dec!(110), "USD"))
+    );
+}
+
+#[test]
+fn test_weight_column_total_price_default_from() {
+    // Verify weight via evaluate_column (default FROM) matches table builder
+    // for @@ total price
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Total(Amount::new(dec!(110), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    // Default FROM (uses evaluate_column)
+    let result = execute_query(
+        "SELECT weight WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    assert_eq!(
+        result.rows[0][0],
+        Value::Amount(Amount::new(dec!(110), "USD"))
+    );
+}
+
+#[test]
 fn test_postings_table_lineno_query() {
     // The original issue (#820) mentions SELECT lineno should work
     let directives = make_postings_test_directives();
