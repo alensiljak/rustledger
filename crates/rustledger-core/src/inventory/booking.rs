@@ -788,11 +788,17 @@ impl Inventory {
     /// Example: 10 AAPL {150 USD} + 10 AAPL {160 USD} merged = 20 AAPL {155 USD}.
     /// Reducing 5 AAPL {*} takes 5 from the merged 20 AAPL {155 USD} lot.
     pub(super) fn reduce_merge(&mut self, units: &Amount) -> Result<BookingResult, BookingError> {
+        // Only merge lots with opposite sign (same as other reduce methods).
+        // This prevents accidentally netting long and short positions.
         let matching: Vec<(usize, &Position)> = self
             .positions
             .iter()
             .enumerate()
-            .filter(|(_, p)| p.units.currency == units.currency && !p.is_empty())
+            .filter(|(_, p)| {
+                p.units.currency == units.currency
+                    && !p.is_empty()
+                    && p.units.number.is_sign_positive() != units.number.is_sign_positive()
+            })
             .collect();
 
         if matching.is_empty() {
@@ -814,7 +820,7 @@ impl Inventory {
             });
         }
 
-        // Compute weighted-average cost across all lots
+        // Compute weighted-average cost across matching lots
         let book_values = self.book_value(&units.currency);
         let (avg_cost, cost_currency) = if let Some((curr, &total_cost)) = book_values.iter().next()
         {
@@ -826,25 +832,36 @@ impl Inventory {
 
         let cost_basis = Some(Amount::new(reduction * avg_cost, cost_currency.clone()));
 
-        // Collect matched positions before mutation
-        let matched: Vec<Position> = matching.iter().map(|(_, p)| (*p).clone()).collect();
+        // Return a single synthetic matched position representing the merged lot.
+        // This prevents the booking engine from expanding the posting into multiple
+        // postings (one per original lot), which would be incorrect for {*}.
+        let avg_cost_obj = Cost {
+            number: avg_cost,
+            currency: cost_currency.clone(),
+            date: None,
+            label: None,
+        };
+        let matched = vec![Position::with_cost(
+            Amount::new(units.number.abs(), units.currency.clone()),
+            avg_cost_obj.clone(),
+        )];
 
-        // Remove all lots of this currency
-        self.positions
-            .retain(|p| p.units.currency != units.currency);
+        // Remove all matching lots of this currency
+        let matching_indices: std::collections::HashSet<usize> =
+            matching.iter().map(|(i, _)| *i).collect();
+        let mut idx = 0;
+        self.positions.retain(|_| {
+            let keep = !matching_indices.contains(&idx);
+            idx += 1;
+            keep
+        });
 
         // Add back a single merged lot with the remainder
         let remaining = total_units + units.number; // units.number is negative for reductions
         if !remaining.is_zero() {
-            let merged_cost = Cost {
-                number: avg_cost,
-                currency: cost_currency,
-                date: None,
-                label: None,
-            };
             self.positions.push(Position::with_cost(
                 Amount::new(remaining, units.currency.clone()),
-                merged_cost,
+                avg_cost_obj,
             ));
         }
 
