@@ -164,6 +164,8 @@ fn test_execute_balances_where() {
     for row in &result.rows {
         if let Value::String(account) = &row[0] {
             assert!(account.starts_with("Expenses:"), "got {account}");
+        } else {
+            panic!("expected Value::String, got {:?}", row[0]);
         }
     }
 }

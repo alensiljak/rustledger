@@ -863,11 +863,12 @@ impl Executor<'_> {
         let columns = vec!["account".to_string(), "balance".to_string()];
         let mut result = QueryResult::new(columns.clone());
 
-        // Build column map for WHERE clause evaluation
+        // Build column map for WHERE clause evaluation (lowercase keys for
+        // consistent lookup with evaluate_subquery_filter)
         let column_map: FxHashMap<String, usize> = columns
             .iter()
             .enumerate()
-            .map(|(i, c)| (c.clone(), i))
+            .map(|(i, c)| (c.to_lowercase(), i))
             .collect();
 
         // Sort accounts for consistent output
@@ -902,10 +903,10 @@ impl Executor<'_> {
             let row = vec![Value::String(account.to_string()), balance_value];
 
             // Apply WHERE clause filter if present
-            if let Some(where_expr) = &query.where_clause {
-                if !self.evaluate_subquery_filter(where_expr, &row, &column_map)? {
-                    continue;
-                }
+            if let Some(where_expr) = &query.where_clause
+                && !self.evaluate_subquery_filter(where_expr, &row, &column_map)?
+            {
+                continue;
             }
 
             result.add_row(row);
