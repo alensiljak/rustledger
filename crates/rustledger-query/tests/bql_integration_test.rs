@@ -299,8 +299,8 @@ fn test_group_by_month_alias() {
     assert!(!result.is_empty());
     // Month values should be 1-12
     for row in &result.rows {
-        if let Value::Integer(m) = row[0] {
-            assert!((1..=12).contains(&m));
+        if let Value::Integer(m) = &row[0] {
+            assert!((1..=12).contains(m));
         } else {
             panic!("Expected integer month");
         }
