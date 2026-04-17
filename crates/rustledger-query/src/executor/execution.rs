@@ -64,8 +64,27 @@ impl Executor<'_> {
             // - If explicit GROUP BY is provided, use it
             // - Otherwise, implicitly group by non-aggregate columns in SELECT
             //   (matches Python beancount behavior)
-            let group_by_exprs: Option<Vec<Expr>> = if query.group_by.is_some() {
-                query.group_by.clone()
+            let group_by_exprs: Option<Vec<Expr>> = if let Some(ref group_exprs) = query.group_by {
+                // Resolve alias references: if a GROUP BY expr is a column name
+                // matching a SELECT alias, replace it with the aliased expression.
+                let alias_expr_map: std::collections::HashMap<String, Expr> = query
+                    .targets
+                    .iter()
+                    .filter_map(|t| t.alias.as_ref().map(|a| (a.to_uppercase(), t.expr.clone())))
+                    .collect();
+                let resolved = group_exprs
+                    .iter()
+                    .map(|expr| {
+                        if let Expr::Column(name) = expr
+                            && let Some(target_expr) = alias_expr_map.get(&name.to_uppercase())
+                        {
+                            target_expr.clone()
+                        } else {
+                            expr.clone()
+                        }
+                    })
+                    .collect();
+                Some(resolved)
             } else {
                 let implicit = Self::extract_implicit_group_by_exprs(&query.targets);
                 if implicit.is_empty() {
