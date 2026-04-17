@@ -2131,18 +2131,18 @@ impl<'a> Executor<'a> {
         source_loc: Option<&SourceLocation>,
     ) -> Vec<Value> {
         let type_name = match directive {
-            Directive::Transaction(_) => "Transaction",
-            Directive::Balance(_) => "Balance",
-            Directive::Open(_) => "Open",
-            Directive::Close(_) => "Close",
-            Directive::Commodity(_) => "Commodity",
-            Directive::Pad(_) => "Pad",
-            Directive::Event(_) => "Event",
-            Directive::Query(_) => "Query",
-            Directive::Note(_) => "Note",
-            Directive::Document(_) => "Document",
-            Directive::Price(_) => "Price",
-            Directive::Custom(_) => "Custom",
+            Directive::Transaction(_) => "transaction",
+            Directive::Balance(_) => "balance",
+            Directive::Open(_) => "open",
+            Directive::Close(_) => "close",
+            Directive::Commodity(_) => "commodity",
+            Directive::Pad(_) => "pad",
+            Directive::Event(_) => "event",
+            Directive::Query(_) => "query",
+            Directive::Note(_) => "note",
+            Directive::Document(_) => "document",
+            Directive::Price(_) => "price",
+            Directive::Custom(_) => "custom",
         };
 
         let date = match directive {
@@ -2215,30 +2215,43 @@ impl<'a> Executor<'a> {
 
     /// Build the #postings table from transaction postings.
     ///
-    /// The table has columns:
-    /// - `date`, `flag`, `payee`, `narration`: from parent transaction
-    /// - `account`: posting account
-    /// - `position`: posting units with cost (as `Value::Position`)
-    /// - `number`, `currency`: posting units
-    /// - `cost_number`, `cost_currency`, `cost_date`, `cost_label`: cost basis info
-    /// - `price`: posting price
-    /// - `balance`: running balance for the account
+    /// Column schema matches Python beancount's `postings` table for compatibility.
     fn build_postings_table(&self) -> Table {
         let columns = vec![
+            // Entry-level columns
+            "type".to_string(),
+            "id".to_string(),
             "date".to_string(),
+            "year".to_string(),
+            "month".to_string(),
+            "day".to_string(),
+            "filename".to_string(),
+            "lineno".to_string(),
+            "location".to_string(),
+            // Transaction-level columns
             "flag".to_string(),
             "payee".to_string(),
             "narration".to_string(),
+            "description".to_string(),
+            "tags".to_string(),
+            "links".to_string(),
+            // Posting-level columns
+            "posting_flag".to_string(),
             "account".to_string(),
-            "position".to_string(),
+            "other_accounts".to_string(),
             "number".to_string(),
             "currency".to_string(),
             "cost_number".to_string(),
             "cost_currency".to_string(),
             "cost_date".to_string(),
             "cost_label".to_string(),
+            "position".to_string(),
             "price".to_string(),
+            "weight".to_string(),
             "balance".to_string(),
+            // Metadata and collection columns
+            "meta".to_string(),
+            "accounts".to_string(),
             // Hidden metadata columns for META/ENTRY_META functions
             "_entry_meta".to_string(),
             "_posting_meta".to_string(),
@@ -2248,27 +2261,66 @@ impl<'a> Executor<'a> {
         // Track running balances per account
         let mut running_balances: FxHashMap<InternedStr, Inventory> = FxHashMap::default();
 
-        // Process directives
-        let iter: Box<dyn Iterator<Item = &Directive>> =
+        // Collect transactions with their directive indices for source location lookup
+        let mut transactions: Vec<(usize, &rustledger_core::Transaction)> =
             if let Some(spanned) = self.spanned_directives {
-                Box::new(spanned.iter().map(|s| &s.value))
+                spanned
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, s)| {
+                        if let Directive::Transaction(txn) = &s.value {
+                            Some((idx, txn))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
             } else {
-                Box::new(self.directives.iter())
+                self.directives
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, d)| {
+                        if let Directive::Transaction(txn) = d {
+                            Some((idx, txn))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            };
+        transactions.sort_by_key(|(_, t)| t.date);
+
+        for (dir_idx, txn) in &transactions {
+            // Pre-compute transaction-level values shared across all postings
+            let source_loc = self.get_source_location(*dir_idx);
+            let filename =
+                source_loc.map_or(Value::Null, |loc| Value::String(loc.filename.clone()));
+            let lineno = source_loc.map_or(Value::Null, |loc| Value::Integer(loc.lineno as i64));
+            let location = source_loc.map_or(Value::Null, |loc| {
+                Value::String(format!("{}:{}", loc.filename, loc.lineno))
+            });
+
+            let tags: Vec<String> = txn.tags.iter().map(ToString::to_string).collect();
+            let links: Vec<String> = txn.links.iter().map(ToString::to_string).collect();
+
+            let mut all_accounts: Vec<String> = txn
+                .postings
+                .iter()
+                .map(|p| p.account.to_string())
+                .collect::<std::collections::HashSet<_>>()
+                .into_iter()
+                .collect();
+            all_accounts.sort();
+
+            let description = match &txn.payee {
+                Some(payee) => format!("{} | {}", payee, txn.narration),
+                None => txn.narration.to_string(),
             };
 
-        // Collect transactions sorted by date
-        let mut transactions: Vec<_> = iter
-            .filter_map(|d| {
-                if let Directive::Transaction(txn) = d {
-                    Some(txn)
-                } else {
-                    None
-                }
-            })
-            .collect();
-        transactions.sort_by_key(|t| t.date);
+            let year = Value::Integer(i64::from(txn.date.year()));
+            let month = Value::Integer(i64::from(txn.date.month() as i32));
+            let day = Value::Integer(i64::from(txn.date.day() as i32));
 
-        for txn in transactions {
             for posting in &txn.postings {
                 // Update running balance
                 if let Some(units) = posting.amount() {
@@ -2313,8 +2365,6 @@ impl<'a> Executor<'a> {
                     (Value::Null, Value::Null, Value::Null, Value::Null)
                 };
 
-                // Build position using resolve() to handle both per-unit and
-                // total cost syntax, matching evaluate_column("position")
                 let position_val = if let Some(units) = posting.amount() {
                     if let Some(cost_spec) = &posting.cost
                         && let Some(cost) = cost_spec.resolve(units.number, txn.date)
@@ -2333,27 +2383,92 @@ impl<'a> Executor<'a> {
                     .and_then(|p| p.amount())
                     .map_or(Value::Null, |a| Value::Amount(a.clone()));
 
+                // Weight: the cost-converted amount used for transaction balancing.
+                // With cost: units × cost (in cost currency)
+                // With @ price: units × price (in price currency)
+                // With @@ price: the total price directly (already in target currency)
+                // Otherwise: units as-is
+                let weight_val = if let Some(units) = posting.amount() {
+                    if let Some(cost_spec) = &posting.cost {
+                        if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
+                            Value::Amount(Amount::new(units.number * cost.number, cost.currency))
+                        } else {
+                            Value::Amount(units.clone())
+                        }
+                    } else if let Some(price_ann) = &posting.price {
+                        if let Some(price_amt) = price_ann.amount() {
+                            if price_ann.is_unit() {
+                                // @ per-unit price: weight = units × price
+                                Value::Amount(Amount::new(
+                                    units.number * price_amt.number,
+                                    price_amt.currency.clone(),
+                                ))
+                            } else {
+                                // @@ total price: the amount IS the total weight
+                                Value::Amount(price_amt.clone())
+                            }
+                        } else {
+                            Value::Amount(units.clone())
+                        }
+                    } else {
+                        Value::Amount(units.clone())
+                    }
+                } else {
+                    Value::Null
+                };
+
                 let balance_val = running_balances
                     .get(&posting.account)
                     .map_or(Value::Null, |inv| Value::Inventory(Box::new(inv.clone())));
 
+                // Other accounts: all accounts in the transaction except this posting's
+                let other_accounts: Vec<String> = all_accounts
+                    .iter()
+                    .filter(|a| a.as_str() != posting.account.as_ref())
+                    .cloned()
+                    .collect();
+
+                let posting_flag = posting
+                    .flag
+                    .map_or(Value::Null, |f| Value::String(f.to_string()));
+
                 let row = vec![
+                    // Entry-level
+                    Value::String("transaction".to_string()),
+                    Value::Integer(*dir_idx as i64),
                     Value::Date(txn.date),
+                    year.clone(),
+                    month.clone(),
+                    day.clone(),
+                    filename.clone(),
+                    lineno.clone(),
+                    location.clone(),
+                    // Transaction-level
                     Value::String(txn.flag.to_string()),
                     txn.payee
                         .as_ref()
                         .map_or(Value::Null, |p| Value::String(p.to_string())),
                     Value::String(txn.narration.to_string()),
+                    Value::String(description.clone()),
+                    Value::StringSet(tags.clone()),
+                    Value::StringSet(links.clone()),
+                    // Posting-level
+                    posting_flag,
                     Value::String(posting.account.to_string()),
-                    position_val,
+                    Value::StringSet(other_accounts),
                     number,
                     currency,
                     cost_number,
                     cost_currency,
                     cost_date,
                     cost_label,
+                    position_val,
                     price_val,
+                    weight_val,
                     balance_val,
+                    // Metadata and collection
+                    Value::Metadata(Box::new(posting.meta.clone())),
+                    Value::StringSet(all_accounts.clone()),
                     // Hidden metadata columns
                     Self::metadata_to_value(&txn.meta),
                     Self::metadata_to_value(&posting.meta),
@@ -2696,7 +2811,7 @@ mod tests {
         let result = executor.execute(&query).unwrap();
         // Only transactions in the sample data
         assert_eq!(result.len(), 1);
-        assert_eq!(result.rows[0][0], Value::String("Transaction".to_string()));
+        assert_eq!(result.rows[0][0], Value::String("transaction".to_string()));
         assert_eq!(result.rows[0][1], Value::Integer(2));
     }
 

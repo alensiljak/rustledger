@@ -267,9 +267,11 @@ impl Executor<'_> {
                 Ok(Value::Null)
             }
             "weight" => {
-                // Weight is the amount used for transaction balancing
-                // With cost: units × cost currency
-                // Without cost: units amount
+                // Weight is the cost-converted amount used for transaction balancing.
+                // With cost: units × cost (in cost currency)
+                // With @ price: units × price (in price currency)
+                // With @@ price: the total price directly
+                // Otherwise: units as-is
                 if let Some(units) = posting.amount() {
                     if let Some(cost) = &posting.cost
                         && let Some(number_per) = &cost.number_per
@@ -278,7 +280,18 @@ impl Executor<'_> {
                         let total = units.number * number_per;
                         return Ok(Value::Amount(Amount::new(total, currency.clone())));
                     }
-                    // No cost, use units
+                    if let Some(price_ann) = &posting.price
+                        && let Some(price_amt) = price_ann.amount()
+                    {
+                        return if price_ann.is_unit() {
+                            Ok(Value::Amount(Amount::new(
+                                units.number * price_amt.number,
+                                price_amt.currency.clone(),
+                            )))
+                        } else {
+                            Ok(Value::Amount(price_amt.clone()))
+                        };
+                    }
                     Ok(Value::Amount(units.clone()))
                 } else {
                     Ok(Value::Null)
@@ -305,10 +318,10 @@ impl Executor<'_> {
             "posting_flag" => Ok(posting
                 .flag
                 .map_or(Value::Null, |f| Value::String(f.to_string()))),
-            // Description: "payee narration" or just narration
+            // Description: "payee | narration" or just narration (matches beancount)
             "description" => {
                 let desc = match &ctx.transaction.payee {
-                    Some(payee) => format!("{} {}", payee, ctx.transaction.narration),
+                    Some(payee) => format!("{} | {}", payee, ctx.transaction.narration),
                     None => ctx.transaction.narration.to_string(),
                 };
                 Ok(Value::String(desc))
@@ -450,6 +463,10 @@ impl Executor<'_> {
             // type - directive type (matches Python beancount's type column)
             // For SELECT FROM (default), this is always "Transaction"
             "type" => Ok(Value::String("Transaction".to_string())),
+            // id - directive index (matches Python beancount's id column)
+            "id" => Ok(ctx
+                .directive_index
+                .map_or(Value::Null, |idx| Value::Integer(idx as i64))),
             _ => Err(QueryError::UnknownColumn(name.to_string())),
         }
     }

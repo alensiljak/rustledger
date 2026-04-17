@@ -5094,18 +5094,18 @@ fn test_entries_table_type_column() {
     let result = execute_query("SELECT type FROM #entries", &directives);
 
     let types: Vec<&Value> = result.rows.iter().map(|r| &r[0]).collect();
-    assert!(types.contains(&&Value::String("Open".to_string())));
-    assert!(types.contains(&&Value::String("Commodity".to_string())));
-    assert!(types.contains(&&Value::String("Transaction".to_string())));
-    assert!(types.contains(&&Value::String("Note".to_string())));
-    assert!(types.contains(&&Value::String("Event".to_string())));
+    assert!(types.contains(&&Value::String("open".to_string())));
+    assert!(types.contains(&&Value::String("commodity".to_string())));
+    assert!(types.contains(&&Value::String("transaction".to_string())));
+    assert!(types.contains(&&Value::String("note".to_string())));
+    assert!(types.contains(&&Value::String("event".to_string())));
 }
 
 #[test]
 fn test_entries_table_with_where_clause() {
     let directives = make_entries_test_directives();
     let result = execute_query(
-        "SELECT * FROM #entries WHERE type = 'Transaction'",
+        "SELECT * FROM #entries WHERE type = 'transaction'",
         &directives,
     );
 
@@ -5116,7 +5116,7 @@ fn test_entries_table_with_where_clause() {
 fn test_entries_table_transaction_fields() {
     let directives = make_entries_test_directives();
     let result = execute_query(
-        "SELECT flag, payee, narration, tags, accounts FROM #entries WHERE type = 'Transaction'",
+        "SELECT flag, payee, narration, tags, accounts FROM #entries WHERE type = 'transaction'",
         &directives,
     );
 
@@ -5136,7 +5136,7 @@ fn test_entries_table_transaction_fields() {
 fn test_entries_table_non_transaction_nulls() {
     let directives = make_entries_test_directives();
     let result = execute_query(
-        "SELECT flag, payee, narration FROM #entries WHERE type = 'Open'",
+        "SELECT flag, payee, narration FROM #entries WHERE type = 'open'",
         &directives,
     );
 
@@ -5631,6 +5631,299 @@ fn test_postings_table_position_in_select_star() {
         result.columns.contains(&"position".to_string()),
         "position should be in SELECT * columns"
     );
+}
+
+// ============================================================================
+// Postings Table New Columns Tests (issue #820)
+// ============================================================================
+
+#[test]
+fn test_postings_table_type_and_id_columns() {
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT type, id FROM #postings LIMIT 1", &directives);
+    assert_eq!(result.rows[0][0], Value::String("transaction".to_string()));
+    // id is an integer index
+    assert!(matches!(result.rows[0][1], Value::Integer(_)));
+}
+
+#[test]
+fn test_postings_table_date_parts() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT year, month, day FROM #postings WHERE narration = 'Groceries' LIMIT 1",
+        &directives,
+    );
+    assert_eq!(result.rows[0][0], Value::Integer(2024));
+    assert_eq!(result.rows[0][1], Value::Integer(1));
+    assert_eq!(result.rows[0][2], Value::Integer(15));
+}
+
+#[test]
+fn test_postings_table_description_column() {
+    let directives = make_postings_test_directives();
+    // Transaction with payee: "Store | Groceries"
+    let result = execute_query(
+        "SELECT description FROM #postings WHERE payee = 'Store' LIMIT 1",
+        &directives,
+    );
+    assert_eq!(
+        result.rows[0][0],
+        Value::String("Store | Groceries".to_string())
+    );
+
+    // Transaction without payee: just narration
+    let result = execute_query(
+        "SELECT description FROM #postings WHERE narration = 'More food' LIMIT 1",
+        &directives,
+    );
+    assert_eq!(result.rows[0][0], Value::String("More food".to_string()));
+}
+
+#[test]
+fn test_postings_table_posting_flag_column() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Test")
+                .with_posting(
+                    Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")).with_flag('!'),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, posting_flag FROM #postings ORDER BY account",
+        &directives,
+    );
+    // Assets:Bank has no posting flag
+    assert_eq!(result.rows[0][1], Value::Null);
+    // Expenses:Food has '!' flag
+    assert_eq!(result.rows[1][1], Value::String("!".to_string()));
+}
+
+#[test]
+fn test_postings_table_other_accounts_column() {
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT account, other_accounts FROM #postings WHERE account = 'Expenses:Food' LIMIT 1",
+        &directives,
+    );
+    assert_eq!(
+        result.rows[0][1],
+        Value::StringSet(vec!["Assets:Bank".to_string()])
+    );
+}
+
+#[test]
+fn test_postings_table_accounts_column() {
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT accounts FROM #postings LIMIT 1", &directives);
+    assert_eq!(
+        result.rows[0][0],
+        Value::StringSet(vec!["Assets:Bank".to_string(), "Expenses:Food".to_string(),])
+    );
+}
+
+#[test]
+fn test_postings_table_tags_links_columns() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Tagged")
+                .with_tag("trip")
+                .with_link("receipt-123")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+    let result = execute_query("SELECT tags, links FROM #postings LIMIT 1", &directives);
+    assert_eq!(
+        result.rows[0][0],
+        Value::StringSet(vec!["trip".to_string()])
+    );
+    assert_eq!(
+        result.rows[0][1],
+        Value::StringSet(vec!["receipt-123".to_string()])
+    );
+}
+
+#[test]
+fn test_postings_table_weight_column() {
+    // Weight should be the cost-converted amount
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Brokerage")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy stock")
+                .with_posting(
+                    Posting::new("Assets:Brokerage", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-1500), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, weight FROM #postings WHERE account = 'Assets:Brokerage'",
+        &directives,
+    );
+    // Weight for 10 AAPL @ 150 USD = 1500 USD
+    assert_eq!(
+        result.rows[0][1],
+        Value::Amount(Amount::new(dec!(1500), "USD"))
+    );
+}
+
+#[test]
+fn test_postings_table_weight_no_cost() {
+    // Without cost, weight = units
+    let directives = make_postings_test_directives();
+    let result = execute_query(
+        "SELECT account, number, weight FROM #postings WHERE account = 'Expenses:Food' LIMIT 1",
+        &directives,
+    );
+    assert_eq!(
+        result.rows[0][2],
+        Value::Amount(Amount::new(dec!(50), "USD"))
+    );
+}
+
+#[test]
+fn test_postings_table_weight_per_unit_price() {
+    // Weight with @ per-unit price: units × price
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.10), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, weight FROM #postings WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    // 100 EUR @ 1.10 USD → weight = 110 USD
+    assert_eq!(
+        result.rows[0][1],
+        Value::Amount(Amount::new(dec!(110.00), "USD"))
+    );
+}
+
+#[test]
+fn test_postings_table_weight_total_price() {
+    // Weight with @@ total price: the total price IS the weight
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Total(Amount::new(dec!(110), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    let result = execute_query(
+        "SELECT account, weight FROM #postings WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    // 100 EUR @@ 110 USD → weight = 110 USD (total, not 100 × 110)
+    assert_eq!(
+        result.rows[0][1],
+        Value::Amount(Amount::new(dec!(110), "USD"))
+    );
+}
+
+#[test]
+fn test_weight_column_total_price_default_from() {
+    // Verify weight via evaluate_column (default FROM) matches table builder
+    // for @@ total price
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Foreign")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Buy euros")
+                .with_posting(
+                    Posting::new("Assets:Foreign", Amount::new(dec!(100), "EUR"))
+                        .with_price(PriceAnnotation::Total(Amount::new(dec!(110), "USD"))),
+                )
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-110), "USD"))),
+        ),
+    ];
+    // Default FROM (uses evaluate_column)
+    let result = execute_query(
+        "SELECT weight WHERE account = 'Assets:Foreign'",
+        &directives,
+    );
+    assert_eq!(
+        result.rows[0][0],
+        Value::Amount(Amount::new(dec!(110), "USD"))
+    );
+}
+
+#[test]
+fn test_postings_table_lineno_query() {
+    // The original issue (#820) mentions SELECT lineno should work
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT lineno FROM #postings LIMIT 1", &directives);
+    assert_eq!(result.columns, vec!["lineno"]);
+    // Without spanned directives, lineno will be Null, but the query should not error
+    assert_eq!(result.rows.len(), 1);
+}
+
+#[test]
+fn test_postings_table_all_beancount_columns() {
+    // Verify all columns from Python beancount's postings table are present
+    let directives = make_postings_test_directives();
+    let result = execute_query("SELECT * FROM #postings LIMIT 1", &directives);
+    let expected_columns = [
+        "type",
+        "id",
+        "date",
+        "year",
+        "month",
+        "day",
+        "filename",
+        "lineno",
+        "location",
+        "flag",
+        "payee",
+        "narration",
+        "description",
+        "tags",
+        "links",
+        "posting_flag",
+        "account",
+        "other_accounts",
+        "number",
+        "currency",
+        "cost_number",
+        "cost_currency",
+        "cost_date",
+        "cost_label",
+        "position",
+        "price",
+        "weight",
+        "balance",
+        "meta",
+        "accounts",
+    ];
+    for col in &expected_columns {
+        assert!(
+            result.columns.contains(&col.to_string()),
+            "Missing column: {col}"
+        );
+    }
 }
 
 // ============================================================================
@@ -7089,7 +7382,7 @@ fn test_entry_meta_from_entries_table() {
     ];
 
     let result = execute_query(
-        "SELECT type, entry_meta('source') FROM #entries WHERE type = 'Transaction'",
+        "SELECT type, entry_meta('source') FROM #entries WHERE type = 'transaction'",
         &directives,
     );
 
