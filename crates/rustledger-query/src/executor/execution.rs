@@ -861,7 +861,14 @@ impl Executor<'_> {
         self.build_balances_with_filter(query.from.as_ref())?;
 
         let columns = vec!["account".to_string(), "balance".to_string()];
-        let mut result = QueryResult::new(columns);
+        let mut result = QueryResult::new(columns.clone());
+
+        // Build column map for WHERE clause evaluation
+        let column_map: FxHashMap<String, usize> = columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (c.clone(), i))
+            .collect();
 
         // Sort accounts for consistent output
         let mut accounts: Vec<_> = self.balances.keys().collect();
@@ -893,6 +900,14 @@ impl Executor<'_> {
             };
 
             let row = vec![Value::String(account.to_string()), balance_value];
+
+            // Apply WHERE clause filter if present
+            if let Some(where_expr) = &query.where_clause {
+                if !self.evaluate_subquery_filter(where_expr, &row, &column_map)? {
+                    continue;
+                }
+            }
+
             result.add_row(row);
         }
 
