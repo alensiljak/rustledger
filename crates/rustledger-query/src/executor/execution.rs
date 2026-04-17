@@ -64,8 +64,8 @@ impl Executor<'_> {
             // - If explicit GROUP BY is provided, use it
             // - Otherwise, implicitly group by non-aggregate columns in SELECT
             //   (matches Python beancount behavior)
-            let group_by_exprs: Option<Vec<Expr>> = if query.group_by.is_some() {
-                query.group_by.clone()
+            let group_by_exprs: Option<Vec<Expr>> = if let Some(ref group_exprs) = query.group_by {
+                Some(Self::resolve_group_by_aliases(group_exprs, &query.targets))
             } else {
                 let implicit = Self::extract_implicit_group_by_exprs(&query.targets);
                 if implicit.is_empty() {
@@ -456,29 +456,8 @@ impl Executor<'_> {
 
         // Determine GROUP BY expressions.
         // If no explicit GROUP BY, implicitly group by non-aggregate columns (beancount compat).
-        // Build alias -> expression map so GROUP BY can reference SELECT aliases.
-        let alias_expr_map: std::collections::HashMap<String, Expr> = query
-            .targets
-            .iter()
-            .filter_map(|t| t.alias.as_ref().map(|a| (a.to_uppercase(), t.expr.clone())))
-            .collect();
-
         let group_by_exprs: Option<Vec<Expr>> = if let Some(ref exprs) = query.group_by {
-            // Resolve alias references: if a GROUP BY expr is a column name matching
-            // a SELECT alias, replace it with the aliased expression.
-            let resolved = exprs
-                .iter()
-                .map(|expr| {
-                    if let Expr::Column(name) = expr
-                        && let Some(target_expr) = alias_expr_map.get(&name.to_uppercase())
-                    {
-                        target_expr.clone()
-                    } else {
-                        expr.clone()
-                    }
-                })
-                .collect();
-            Some(resolved)
+            Some(Self::resolve_group_by_aliases(exprs, &query.targets))
         } else {
             let implicit = Self::extract_implicit_group_by_exprs(&query.targets);
             if implicit.is_empty() {

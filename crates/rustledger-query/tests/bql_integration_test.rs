@@ -272,6 +272,52 @@ fn test_execute_group_by_account() {
     assert_eq!(accounts.len(), unique_accounts.len());
 }
 
+#[test]
+fn test_group_by_function_alias() {
+    // GROUP BY should resolve SELECT aliases to the original expression
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT year(date) AS y, COUNT(*) AS cnt GROUP BY y ORDER BY y",
+        &directives,
+    );
+    assert!(!result.is_empty());
+    assert_eq!(result.columns[0], "y");
+    assert_eq!(result.columns[1], "cnt");
+    // All rows should have integer year values
+    for row in &result.rows {
+        assert!(matches!(row[0], Value::Integer(_)));
+    }
+}
+
+#[test]
+fn test_group_by_month_alias() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT month(date) AS m, COUNT(*) AS cnt GROUP BY m ORDER BY m",
+        &directives,
+    );
+    assert!(!result.is_empty());
+    // Month values should be 1-12
+    for row in &result.rows {
+        if let Value::Integer(m) = &row[0] {
+            assert!((1..=12).contains(m));
+        } else {
+            panic!("Expected integer month");
+        }
+    }
+}
+
+#[test]
+fn test_group_by_parent_alias() {
+    let directives = make_test_directives();
+    let result = execute_query(
+        "SELECT PARENT(account) AS parent, COUNT(*) AS cnt GROUP BY parent ORDER BY parent",
+        &directives,
+    );
+    assert!(!result.is_empty());
+    assert_eq!(result.columns[0], "parent");
+}
+
 // ============================================================================
 // Ordering Tests
 // ============================================================================
