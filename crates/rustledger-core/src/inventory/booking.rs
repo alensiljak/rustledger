@@ -820,15 +820,35 @@ impl Inventory {
             });
         }
 
-        // Compute weighted-average cost across matching lots
-        let book_values = self.book_value(&units.currency);
-        let (avg_cost, cost_currency) = if let Some((curr, &total_cost)) = book_values.iter().next()
-        {
-            (total_cost / total_units, curr.clone())
-        } else {
-            // No cost info — fall back to simple reduction
-            return self.reduce_average(units);
+        // Compute weighted-average cost directly from matching lots.
+        // Only count lots that have cost info; if any lot lacks cost, error
+        // rather than silently computing an incorrect average.
+        let mut total_cost = Decimal::ZERO;
+        let mut cost_currency: Option<crate::InternedStr> = None;
+        for (_, pos) in &matching {
+            if let Some(cost) = &pos.cost {
+                if let Some(ref cc) = cost_currency {
+                    if *cc != cost.currency {
+                        // Multiple cost currencies — cannot merge
+                        return Err(BookingError::CurrencyMismatch {
+                            expected: cc.clone(),
+                            got: cost.currency.clone(),
+                        });
+                    }
+                } else {
+                    cost_currency = Some(cost.currency.clone());
+                }
+                total_cost += pos.units.number * cost.number;
+            } else {
+                // Lot without cost — cannot compute meaningful average
+                return self.reduce_average(units);
+            }
+        }
+        let cost_currency = match cost_currency {
+            Some(c) => c,
+            None => return self.reduce_average(units),
         };
+        let avg_cost = total_cost / total_units;
 
         let cost_basis = Some(Amount::new(reduction * avg_cost, cost_currency.clone()));
 

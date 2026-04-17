@@ -1612,6 +1612,32 @@ mod tests {
     }
 
     #[test]
+    fn test_reduce_merge_mixed_cost_currencies_errors() {
+        // Lots with different cost currencies cannot be merged
+        let mut inv = Inventory::new();
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(150), "USD"),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(130), "EUR"),
+        ));
+
+        let merge_spec = CostSpec::empty().with_merge();
+        let result = inv.reduce(
+            &Amount::new(dec!(-5), "AAPL"),
+            Some(&merge_spec),
+            BookingMethod::Strict,
+        );
+
+        assert!(
+            matches!(result, Err(BookingError::CurrencyMismatch { .. })),
+            "expected CurrencyMismatch, got {result:?}"
+        );
+    }
+
+    #[test]
     fn test_reduce_merge_empty_inventory() {
         let mut inv = Inventory::new();
 
