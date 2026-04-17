@@ -280,17 +280,17 @@ impl Executor<'_> {
                         let total = units.number * number_per;
                         return Ok(Value::Amount(Amount::new(total, currency.clone())));
                     }
-                    if let Some(price_ann) = &posting.price {
-                        if let Some(price_amt) = price_ann.amount() {
-                            return if price_ann.is_unit() {
-                                Ok(Value::Amount(Amount::new(
-                                    units.number * price_amt.number,
-                                    price_amt.currency.clone(),
-                                )))
-                            } else {
-                                Ok(Value::Amount(price_amt.clone()))
-                            };
-                        }
+                    if let Some(price_ann) = &posting.price
+                        && let Some(price_amt) = price_ann.amount()
+                    {
+                        return if price_ann.is_unit() {
+                            Ok(Value::Amount(Amount::new(
+                                units.number * price_amt.number,
+                                price_amt.currency.clone(),
+                            )))
+                        } else {
+                            Ok(Value::Amount(price_amt.clone()))
+                        };
                     }
                     Ok(Value::Amount(units.clone()))
                 } else {
