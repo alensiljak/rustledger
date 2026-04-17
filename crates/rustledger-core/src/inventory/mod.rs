@@ -1555,6 +1555,80 @@ mod tests {
     }
 
     #[test]
+    fn test_reduce_merge_single_lot() {
+        // {*} with a single lot should work trivially
+        let mut inv = Inventory::new();
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(150), "USD"),
+        ));
+
+        let merge_spec = CostSpec::empty().with_merge();
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-3), "AAPL"),
+                Some(&merge_spec),
+                BookingMethod::Strict,
+            )
+            .expect("single-lot merge should succeed");
+
+        assert_eq!(result.cost_basis, Some(Amount::new(dec!(450), "USD")));
+        assert_eq!(inv.positions.len(), 1);
+        assert_eq!(inv.positions[0].units.number, dec!(7));
+    }
+
+    #[test]
+    fn test_reduce_merge_three_lots() {
+        // {*} with three lots at different costs
+        let mut inv = Inventory::new();
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(100), "USD"),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(150), "USD"),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            Cost::new(dec!(200), "USD"),
+        ));
+
+        // Average cost: (1000 + 1500 + 2000) / 30 = 150 USD
+        let merge_spec = CostSpec::empty().with_merge();
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-6), "AAPL"),
+                Some(&merge_spec),
+                BookingMethod::Strict,
+            )
+            .expect("three-lot merge should succeed");
+
+        assert_eq!(result.cost_basis, Some(Amount::new(dec!(900), "USD")));
+        assert_eq!(inv.positions.len(), 1);
+        assert_eq!(inv.positions[0].units.number, dec!(24));
+        let cost = inv.positions[0].cost.as_ref().expect("should have cost");
+        assert_eq!(cost.number, dec!(150));
+    }
+
+    #[test]
+    fn test_reduce_merge_empty_inventory() {
+        let mut inv = Inventory::new();
+
+        let merge_spec = CostSpec::empty().with_merge();
+        let result = inv.reduce(
+            &Amount::new(dec!(-5), "AAPL"),
+            Some(&merge_spec),
+            BookingMethod::Strict,
+        );
+
+        assert!(matches!(
+            result,
+            Err(BookingError::InsufficientUnits { .. })
+        ));
+    }
+
+    #[test]
     fn test_inventory_display_sorted() {
         let mut inv = Inventory::new();
 
