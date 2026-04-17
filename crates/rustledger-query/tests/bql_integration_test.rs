@@ -135,6 +135,42 @@ fn test_parse_balances_query() {
 }
 
 #[test]
+fn test_parse_balances_where_query() {
+    let query = parse(r#"BALANCES WHERE account ~ "Assets:""#).expect("should parse");
+    if let rustledger_query::Query::Balances(b) = query {
+        assert!(b.where_clause.is_some());
+    } else {
+        panic!("Expected BALANCES query");
+    }
+}
+
+#[test]
+fn test_parse_balances_at_cost_where_query() {
+    let query = parse(r#"BALANCES AT cost WHERE account ~ "Assets:""#).expect("should parse");
+    if let rustledger_query::Query::Balances(b) = query {
+        assert_eq!(b.at_function, Some("cost".to_string()));
+        assert!(b.where_clause.is_some());
+    } else {
+        panic!("Expected BALANCES query");
+    }
+}
+
+#[test]
+fn test_execute_balances_where() {
+    let directives = make_test_directives();
+    let result = execute_query(r#"BALANCES WHERE account ~ "Expenses:""#, &directives);
+    assert!(!result.is_empty());
+    // All accounts should match the filter
+    for row in &result.rows {
+        if let Value::String(account) = &row[0] {
+            assert!(account.starts_with("Expenses:"), "got {account}");
+        } else {
+            panic!("expected Value::String, got {:?}", row[0]);
+        }
+    }
+}
+
+#[test]
 fn test_parse_print_query() {
     let query = parse("PRINT").expect("should parse");
     assert!(matches!(query, rustledger_query::Query::Print(_)));
@@ -455,6 +491,27 @@ fn test_execute_balances_with_from() {
 
     // Should have balances
     assert!(!result.is_empty());
+}
+
+#[test]
+fn test_execute_balances_with_where() {
+    let directives = make_test_directives();
+    let query = parse("BALANCES WHERE account ~ 'Assets:'").expect("should parse");
+    let mut executor = Executor::new(&directives);
+    let result = executor.execute(&query).expect("should execute");
+
+    // Should only have Assets: accounts (Checking and Savings)
+    assert_eq!(result.len(), 2);
+    for row in &result.rows {
+        if let Value::String(acct) = &row[0] {
+            assert!(
+                acct.starts_with("Assets:"),
+                "Expected Assets: account, got {acct}"
+            );
+        } else {
+            panic!("Expected string account");
+        }
+    }
 }
 
 // ============================================================================
