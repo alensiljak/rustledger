@@ -26,10 +26,10 @@ The TLA+ specs found a real bug in the Rust implementation:
 These specs are designed to **actually run and find bugs**:
 
 1. **Conservation.tla** - Catches bugs where units appear from nothing or disappear
-2. **DoubleEntry.tla** - Catches broken transaction balancing
-3. **LotSelection.tla** - Catches wrong lot selection in FIFO/LIFO/HIFO
-4. **AccountStateMachine.tla** - Catches invalid state transitions
-5. **Interpolation.tla** - Catches NULL posting interpolation bugs
+1. **DoubleEntry.tla** - Catches broken transaction balancing
+1. **LotSelection.tla** - Catches wrong lot selection in FIFO/LIFO/HIFO
+1. **AccountStateMachine.tla** - Catches invalid state transitions
+1. **Interpolation.tla** - Catches NULL posting interpolation bugs
 
 ## Running the Specs
 
@@ -51,16 +51,16 @@ java -XX:+UseParallelGC -Xmx1g -jar tools/tla2tools.jar \
 Potential specs that could be added:
 
 1. **Multi-currency conservation** - Track units per currency
-2. **Price database** - Price lookups and triangulation
-3. **Pad directive** - Balance padding algorithm
-4. **Query execution** - BQL query correctness
+1. **Price database** - Price lookups and triangulation
+1. **Pad directive** - Balance padding algorithm
+1. **Query execution** - BQL query correctness
 
 ## Design Principles
 
 These TLA+ specs follow principles that make them practical:
 
 1. **Actually run** - No unsupported operators (LAMBDA, FoldSeq, etc.)
-2. **Small state space** - Use small bounds (3-5) to avoid explosion
-3. **Simple models** - Model essence, not implementation details
-4. **Testable invariants** - Invariants that catch real bugs
-5. **Counterexample-driven** - TLC traces convert to test cases
+1. **Small state space** - Use small bounds (3-5) to avoid explosion
+1. **Simple models** - Model essence, not implementation details
+1. **Testable invariants** - Invariants that catch real bugs
+1. **Counterexample-driven** - TLC traces convert to test cases

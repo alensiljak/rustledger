@@ -4,7 +4,6 @@
 # Uses same dataset size as nightly for accurate "vs main" comparison.
 #
 name: PR Benchmarks
-
 on:
   pull_request:
     branches: [main]
@@ -12,14 +11,11 @@ on:
       - 'crates/**/*.rs'
       - 'Cargo.toml'
       - 'Cargo.lock'
-
 permissions:
   contents: read
   pull-requests: write
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   pr-benchmark:
     name: PR Benchmark
@@ -27,21 +23,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           cache-on-failure: true
           prefix-key: bench-pr
-
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: |
           pip install beancount
@@ -50,10 +42,8 @@ jobs:
           HYPERFINE_VERSION=$(curl -s https://api.github.com/repos/sharkdp/hyperfine/releases/latest | jq -r '.tag_name')
           curl -sL "https://github.com/sharkdp/hyperfine/releases/download/${HYPERFINE_VERSION}/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz -C /tmp
           sudo mv "/tmp/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu/hyperfine" /usr/local/bin/
-
       - name: Build rustledger
         run: cargo build --release -p rustledger --no-default-features
-
       - name: Generate test ledger (10K transactions)
         run: |
           python3 << 'EOF'
@@ -85,7 +75,6 @@ jobs:
 
           print("Generated benchmark.beancount (10K transactions)")
           EOF
-
       - name: Run PR benchmark
         id: benchmark
         run: |
@@ -130,7 +119,6 @@ jobs:
           print(f"beancount:  {beancount['mean']}ms ± {beancount['stddev']}ms")
           print(f"speedup:    {speedup:.1f}x")
           EOF
-
       - name: Measure memory usage
         id: memory
         run: |
@@ -146,10 +134,8 @@ jobs:
 
           echo "rustledger: ${rustledger_mb}MB"
           echo "beancount:  ${beancount_mb}MB"
-
       # Note: Criterion benchmarks removed - they're tracked in ci.yml on main branch pushes
       # and weren't being reported in the PR comment anyway
-
       - name: Fetch baseline from main branch
         id: baseline
         run: |
@@ -171,7 +157,6 @@ jobs:
             echo "has_baseline=false" >> $GITHUB_OUTPUT
             echo "Could not fetch baseline history"
           fi
-
       - name: Post PR comment
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:

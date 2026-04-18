@@ -20,12 +20,13 @@ fi
 ### Workflow Rules
 
 1. **Before starting any new work**, check if you're already in a worktree:
+
    - If YES → Work directly in this worktree (don't create another)
    - If NO → Create a worktree for your branch using `./scripts/worktree new <branch>`
 
-2. **Never use `git checkout -b` in the main repo** - always use worktrees instead
+1. **Never use `git checkout -b` in the main repo** - always use worktrees instead
 
-3. **Each task/branch gets its own worktree** at `../<repo>-<branch-name>`
+1. **Each task/branch gets its own worktree** at `../<repo>-<branch-name>`
 
 ### Commands
 
@@ -59,7 +60,7 @@ cd /path/to/main/rustledger
 - **Clean state**: Each worktree is isolated, no cross-contamination
 - **Faster CI feedback**: Work on fixes while waiting for CI on another branch
 
----
+______________________________________________________________________
 
 ## Project Overview
 
@@ -128,13 +129,13 @@ The project is a Cargo workspace with 13 crates plus editor extensions:
 When reviewing PRs, check each of these areas:
 
 1. **Correctness**: Does the code do what it claims?
-2. **Beancount Compatibility**: Does it match Python beancount behavior?
-3. **Error Handling**: Are errors handled gracefully with good messages?
-4. **Tests**: Are there sufficient tests for new functionality?
-5. **Performance**: Any obvious performance issues?
-6. **Security**: Any potential security concerns (especially in parser/loader)?
-7. **Documentation**: Are public APIs documented?
-8. **Style**: Does it follow project conventions?
+1. **Beancount Compatibility**: Does it match Python beancount behavior?
+1. **Error Handling**: Are errors handled gracefully with good messages?
+1. **Tests**: Are there sufficient tests for new functionality?
+1. **Performance**: Any obvious performance issues?
+1. **Security**: Any potential security concerns (especially in parser/loader)?
+1. **Documentation**: Are public APIs documented?
+1. **Style**: Does it follow project conventions?
 
 ### Review Standards by PR Type
 
@@ -149,11 +150,11 @@ When reviewing PRs, check each of these areas:
 ### Review Process
 
 1. **Read the PR description** - Understand the intent
-2. **Check CI status** - All checks should pass
-3. **Review file changes** - Focus on logic, not just style
-4. **Run locally if needed** - For complex changes
-5. **Leave constructive feedback** - Suggest improvements, explain concerns
-6. **Approve or request changes** - Be clear about blockers vs suggestions
+1. **Check CI status** - All checks should pass
+1. **Review file changes** - Focus on logic, not just style
+1. **Run locally if needed** - For complex changes
+1. **Leave constructive feedback** - Suggest improvements, explain concerns
+1. **Approve or request changes** - Be clear about blockers vs suggestions
 
 ### Common Review Comments
 
@@ -166,6 +167,7 @@ When reviewing PRs, check each of these areas:
 ### Auto-merge Rules
 
 PRs can auto-merge after CI passes if:
+
 - Single approval obtained
 - No "request changes" reviews pending
 - PR is not marked as draft
@@ -186,12 +188,14 @@ This triggers a fresh review against the current diff. Copilot leaves "Comment" 
 You can use [opencode](https://opencode.ai) with Together AI's GLM-5 model for additional PR review perspectives.
 
 **Setup:**
+
 ```bash
 # Ensure Together AI API key is available
 export TOGETHER_API_KEY="your-api-key"
 ```
 
 **Review a PR:**
+
 ```bash
 # Save PR diff to a file (opencode can't run gh in non-interactive mode)
 gh pr diff <PR_NUMBER> > /tmp/pr-diff.txt
@@ -202,6 +206,7 @@ opencode run -m togetherai/zai-org/GLM-5 -f /tmp/pr-diff.txt -- \
 ```
 
 **Available models:**
+
 ```bash
 opencode models | grep togetherai  # List all Together AI models
 ```
@@ -242,17 +247,20 @@ Common models: `togetherai/zai-org/GLM-5`, `togetherai/deepseek-ai/DeepSeek-V3`,
 The VS Code extension (`packages/vscode`) is a **thin wrapper** around `rledger-lsp`. All language features come from the LSP.
 
 **Design principles:**
+
 - No TextMate grammar — semantic highlighting provided by LSP
 - No syntax validation — diagnostics provided by LSP
 - No indentation rules — keep it minimal
 - Only provide: file associations, LSP client connection, auto-update
 
 **What the extension contains:**
+
 - `extension.ts` — LSP client + GitHub Releases auto-update
 - `language-configuration.json` — comment character (`;`) and bracket pairs only
 - `package.json` — file associations (`.beancount`, `.bean`) and settings
 
 **Building locally:**
+
 ```bash
 cd packages/vscode
 npm ci
@@ -295,32 +303,39 @@ The `just test-changed` recipe detects which crates have uncommitted or staged c
 When running in headless mode (`claude -p`) or via Agent Orchestrator (`ao`), follow this exact workflow:
 
 ### 1. Understand the Issue
+
 - Read the full GitHub issue including all comments
 - Identify acceptance criteria — what does "done" look like?
 - If the issue is ambiguous, make reasonable assumptions and document them in the PR description
 
 ### 2. Plan Before Coding
+
 - Identify which crates are affected
 - Check existing tests for the area you're changing
 - If it's a parser or booking change, check Beancount compatibility test suite
 
 ### 3. Implement
+
 - Work in a git worktree (ao handles this automatically)
 - Make minimal, focused changes — one issue per PR
 - Follow existing patterns in the crate you're modifying
 - Add tests for every code path you change or add
 
 ### 4. Verify Before PR
+
 Run the commands from the **Build Commands** section above in order, and fix any failures before proceeding.
 
 ### 5. Create the PR
+
 - Title: `fix: <description>` or `feat: <description>` (conventional commits)
 - Body must include: what changed, why, how to test, and `Closes #<issue>`
 - Request review if the change touches parser, booking, or public API
 - If CI fails, read the error and fix it — do not open the PR with failing CI
 
 ### 6. Self-Review Checklist
+
 Before marking the PR as ready:
+
 - [ ] Changes are minimal and focused on the issue
 - [ ] All new code has tests
 - [ ] No `.unwrap()` in library code
@@ -335,6 +350,7 @@ Before marking the PR as ready:
 **Issue**: `rust_decimal` has a maximum precision of 28 digits, while Python's `decimal.Decimal` has arbitrary precision. This causes 1 compatibility test failure out of 694 (99.86% pass rate).
 
 **Affected file**: `beancount-lazy-plugins/tests_data_output_some_fund_output.beancount`
+
 - Contains amounts with 28 decimal places (e.g., `0.7142857142857142857142857143`)
 - Python detects a `2×10⁻²⁵ USD` residual imbalance
 - Rust considers it balanced due to precision limits
@@ -342,4 +358,3 @@ Before marking the PR as ready:
 **TODO**: Replace `rust_decimal` with an arbitrary-precision decimal library (e.g., `bigdecimal`) to achieve 100% compatibility with Python beancount's balance checking. This is a significant refactor affecting `rustledger-core` and all downstream crates.
 
 **Practical impact**: None for real-world usage. No legitimate ledger has 28-decimal-place amounts.
-

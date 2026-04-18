@@ -435,7 +435,7 @@ mod tests {
     use rustledger_core::{CostSpec, IncompleteAmount, NaiveDate, Posting, PriceAnnotation};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        rustledger_core::naive_date(year, month, day).unwrap()
     }
 
     // =========================================================================

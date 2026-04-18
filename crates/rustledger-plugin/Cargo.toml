@@ -15,7 +15,15 @@ readme = "README.md"
 [features]
 default = ["wasm-runtime"]
 wasm-runtime = ["wasmtime"]
-python-plugins = ["wasm-runtime", "wasmtime-wasi", "ureq", "zip", "sha2", "dirs", "tempfile"]
+python-plugins = [
+  "wasm-runtime",
+  "wasmtime-wasi",
+  "ureq",
+  "zip",
+  "sha2",
+  "dirs",
+  "tempfile",
+]
 
 [dependencies]
 rustledger-core.workspace = true

@@ -52,6 +52,7 @@ java -XX:+UseParallelGC -Xmx1g -jar tools/tla2tools.jar \
 ## Key Invariants
 
 ### Conservation.tla
+
 ```tla
 (* What's in inventory + what's been taken out = what was put in *)
 ConservationInvariant ==
@@ -59,6 +60,7 @@ ConservationInvariant ==
 ```
 
 ### DoubleEntry.tla
+
 ```tla
 (* Every transaction must balance: debits = credits *)
 TransactionsBalance ==
@@ -70,6 +72,7 @@ NoSelfTransfer ==
 ```
 
 ### FIFOCorrect.tla
+
 ```tla
 (* After a FIFO reduction, the selected date must be <= all remaining dates *)
 FIFOSelectsOldest ==
@@ -78,6 +81,7 @@ FIFOSelectsOldest ==
 ```
 
 ### LIFOCorrect.tla
+
 ```tla
 (* After a LIFO reduction, the selected date must be >= all remaining dates *)
 LIFOSelectsNewest ==
@@ -86,6 +90,7 @@ LIFOSelectsNewest ==
 ```
 
 ### HIFOCorrect.tla
+
 ```tla
 (* After a HIFO reduction, the selected cost must be >= all remaining costs *)
 HIFOSelectsHighest ==
@@ -94,6 +99,7 @@ HIFOSelectsHighest ==
 ```
 
 ### AccountStateMachine.tla
+
 ```tla
 (* Closed accounts must have zero balance *)
 ClosedHaveZeroBalance ==
@@ -102,6 +108,7 @@ ClosedHaveZeroBalance ==
 ```
 
 ### Interpolation.tla
+
 ```tla
 (* At most one NULL posting per transaction *)
 AtMostOneNull ==
@@ -113,6 +120,7 @@ CompleteImpliesBalanced ==
 ```
 
 ### ValidationCorrect.tla
+
 ```tla
 (* If error was detected, the first error assertion was indeed a mismatch *)
 ErrorMeansFirstMismatch ==
@@ -124,6 +132,7 @@ ErrorDetailsConsistent ==
 ```
 
 ### PluginCorrect.tla
+
 ```tla
 (* Plugins execute in order: plugin p+1 doesn't start before p completes *)
 PluginsInOrder ==
@@ -137,6 +146,7 @@ DirectivesInOrder ==
 ```
 
 ### ConcurrentAccess.tla
+
 ```tla
 (* No data race: readers and writers are mutually exclusive *)
 NoDataRace ==
@@ -148,6 +158,7 @@ ExclusiveWriteLock ==
 ```
 
 ### QueryExecution.tla
+
 ```tla
 (* Filter correctness: selected IDs only include matching postings *)
 FilterCorrectness ==
@@ -166,10 +177,13 @@ CountAccuracy ==
 We use two complementary approaches to verify booking methods:
 
 ### 1. Bug-Finding Specs (model buggy behavior)
+
 `FIFOCheck.tla` models the **OLD buggy behavior** (insertion order selection) and is expected to FAIL when run with TLC. This proves the bug exists.
 
 ### 2. Correctness Specs (model correct behavior)
+
 All booking methods now have correctness specs that PASS TLC:
+
 - `FIFOCorrect.tla` - First-In First-Out (select oldest by date)
 - `LIFOCorrect.tla` - Last-In First-Out (select newest by date)
 - `HIFOCorrect.tla` - Highest-In First-Out (select highest cost)
@@ -184,12 +198,14 @@ The FIFOCheck spec discovered a real bug in `inventory.rs`:
 **Problem**: FIFO was selecting lots by insertion order, not by acquisition date.
 
 **Counterexample from TLC**:
+
 1. Add lot: 10 AAPL @ $150 (date: 2024-01-02) - inserted first
-2. Add lot: 10 AAPL @ $100 (date: 2024-01-01) - inserted second
-3. Reduce 5 AAPL using FIFO
-4. **Bug**: Selected $150 lot (inserted first) instead of $100 lot (oldest by date)
+1. Add lot: 10 AAPL @ $100 (date: 2024-01-01) - inserted second
+1. Reduce 5 AAPL using FIFO
+1. **Bug**: Selected $150 lot (inserted first) instead of $100 lot (oldest by date)
 
 **Fix**: Added date sorting to `reduce_ordered()` in `inventory.rs:330`:
+
 ```rust
 indices.sort_by_key(|&i| self.positions[i].cost.as_ref().and_then(|c| c.date));
 ```
@@ -199,11 +215,11 @@ See `crates/rustledger-core/tests/tla_fifo_bug_test.rs` for the test case.
 ## Practical TLA+ Workflow
 
 1. **Write Spec**: Model the algorithm abstractly in TLA+
-2. **Run TLC**: Model checker exhaustively explores state space
-3. **Get Counterexample**: If invariant violated, TLC shows exact sequence
-4. **Write Test**: Convert counterexample to Rust test
-5. **Fix Bug**: Update Rust code until test passes
-6. **Verify**: All TLC states pass, test passes
+1. **Run TLC**: Model checker exhaustively explores state space
+1. **Get Counterexample**: If invariant violated, TLC shows exact sequence
+1. **Write Test**: Convert counterexample to Rust test
+1. **Fix Bug**: Update Rust code until test passes
+1. **Verify**: All TLC states pass, test passes
 
 ## Configuration Files
 
@@ -225,6 +241,7 @@ INVARIANTS
 ## State Space Bounds
 
 TLC uses bounded model checking. Keep bounds small to avoid state explosion:
+
 - `MaxUnits = 1-3` for amounts
 - `MaxLots = 2-3` for lot counts
 - `MaxDate = 3` for date values

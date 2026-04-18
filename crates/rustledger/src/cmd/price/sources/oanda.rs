@@ -5,7 +5,6 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::Utc;
 use rust_decimal::Decimal;
 use std::env;
 use std::str::FromStr;
@@ -120,7 +119,7 @@ impl PriceSource for OandaSource {
         let price = Decimal::from_str(close_str)
             .with_context(|| format!("Failed to parse price: {close_str}"))?;
 
-        let date = request.date.unwrap_or_else(|| Utc::now().date_naive());
+        let date = request.date.unwrap_or_else(|| jiff::Zoned::now().date());
 
         let target_currency = if instrument.contains('_') {
             instrument

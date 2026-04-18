@@ -4,8 +4,8 @@
 
 | Version | Supported |
 |---------|-----------|
-| 0.10.x  | Yes |
-| < 0.10  | No |
+| 0.10.x | Yes |
+| < 0.10 | No |
 
 Only the latest minor version receives security fixes.
 
@@ -16,8 +16,8 @@ Only the latest minor version receives security fixes.
 Instead, use GitHub's private vulnerability reporting:
 
 1. Go to the [Security tab](https://github.com/rustledger/rustledger/security)
-2. Click "Report a vulnerability"
-3. Fill out the form
+1. Click "Report a vulnerability"
+1. Fill out the form
 
 Or [contact us directly](https://rustledger.github.io/#contact).
 
@@ -34,9 +34,9 @@ Or [contact us directly](https://rustledger.github.io/#contact).
 | Severity | Response | Fix Timeline |
 |----------|----------|--------------|
 | Critical | 24 hours | 24-72 hours |
-| High     | 48 hours | 7 days |
-| Medium   | 7 days   | 30 days |
-| Low      | 14 days  | 90 days |
+| High | 48 hours | 7 days |
+| Medium | 7 days | 30 days |
+| Low | 14 days | 90 days |
 
 We'll credit you in the release notes (unless you prefer anonymity).
 
@@ -64,38 +64,48 @@ Out of scope:
 We use multiple layers of protection for our dependency supply chain:
 
 #### cargo-vet
+
 All dependencies are audited using [cargo-vet](https://mozilla.github.io/cargo-vet/). We import trusted audits from:
+
 - Mozilla
 - Bytecode Alliance
 
 Run `cargo vet` locally to verify all dependencies are audited.
 
 #### cargo-deny
+
 Dependencies are checked against:
+
 - RustSec advisory database (known vulnerabilities)
 - License compliance (allowed licenses only)
 - Banned crates list
 
 #### Dependency Review
+
 Pull requests automatically check for:
+
 - New vulnerable dependencies
 - License violations
 - Dependency confusion attacks
 
 #### SBOM Generation
+
 Software Bill of Materials (CycloneDX format) is generated for each release.
 
 ### Code Security
 
 #### Pre-commit Hooks
+
 - `detect-private-keys` - Blocks commits containing private keys
 - `gitleaks` - Comprehensive secret scanning with pattern matching
 
 #### Static Analysis
+
 - `clippy` - Strict linting with security-relevant warnings
 - `cargo-deny` - Dependency security checks
 
 #### CI/CD
+
 - All PRs require passing security checks
 - Main branch is protected
 - Automated dependency updates via Dependabot

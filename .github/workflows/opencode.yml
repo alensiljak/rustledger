@@ -1,5 +1,4 @@
 name: opencode
-
 on:
   issue_comment:
     types: [created]
@@ -22,7 +21,6 @@ on:
         description: 'Issue number (leave empty for review-all-open)'
         required: false
         type: number
-
 jobs:
   # Triggered by /oc or /opencode in comments
   opencode-comment:
@@ -46,14 +44,12 @@ jobs:
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
-
       - name: Run opencode
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab # latest as of 2026-03-30
         env:
           TOGETHER_API_KEY: ${{ secrets.TOGETHER_API_KEY }}
         with:
           model: togetherai/zai-org/GLM-5
-
   # Triggered by adding 'opencode:fix' label to an issue
   opencode-label-fix:
     if: github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'opencode:fix'
@@ -68,7 +64,6 @@ jobs:
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
-
       - name: Run opencode (review and fix)
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab
         env:
@@ -92,13 +87,11 @@ jobs:
                - Implement a fix on a new branch
                - Include appropriate tests
                - Open a PR that closes the issue
-
       - name: Remove trigger label
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh issue edit ${{ github.event.issue.number }} --remove-label "opencode:fix"
-
   # Triggered by adding 'opencode:review' label to an issue
   opencode-label-review:
     if: github.event_name == 'issues' && github.event.action == 'labeled' && github.event.label.name == 'opencode:review'
@@ -113,7 +106,6 @@ jobs:
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
-
       - name: Run opencode (review only)
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab
         env:
@@ -131,13 +123,11 @@ jobs:
             5. Which files would likely need changes
 
             Do NOT create a PR - only add a comment to the issue.
-
       - name: Remove trigger label
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh issue edit ${{ github.event.issue.number }} --remove-label "opencode:review"
-
   # Manual trigger for single issue
   opencode-review-issue:
     if: github.event_name == 'workflow_dispatch' && inputs.action != 'review-all-open'
@@ -152,7 +142,6 @@ jobs:
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
-
       - name: Run opencode (review and fix)
         if: inputs.action == 'review-and-fix'
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab
@@ -177,7 +166,6 @@ jobs:
                - Implement a fix on a new branch
                - Include appropriate tests
                - Open a PR that closes the issue
-
       - name: Run opencode (review only)
         if: inputs.action == 'review-only'
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab
@@ -196,7 +184,6 @@ jobs:
             5. Which files would likely need changes
 
             Do NOT create a PR - only add a comment to the issue.
-
   # Batch review of all open issues
   get-open-issues:
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'review-all-open'
@@ -214,7 +201,6 @@ jobs:
           issues=$(gh issue list --repo ${{ github.repository }} --state open --json number --jq '[.[].number]')
           echo "issues=$issues" >> $GITHUB_OUTPUT
           echo "Found issues: $issues"
-
   opencode-review-all:
     needs: get-open-issues
     if: github.event_name == 'workflow_dispatch' && inputs.action == 'review-all-open'
@@ -227,14 +213,13 @@ jobs:
     strategy:
       matrix:
         issue: ${{ fromJson(needs.get-open-issues.outputs.issues) }}
-      max-parallel: 1  # Process one at a time to avoid conflicts
+      max-parallel: 1 # Process one at a time to avoid conflicts
       fail-fast: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           persist-credentials: false
-
       - name: Run opencode on issue #${{ matrix.issue }}
         uses: anomalyco/opencode/github@21d7a85e76983026bdd131b045f197386ef4c7ab
         env:

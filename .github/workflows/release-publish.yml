@@ -120,7 +120,6 @@ jobs:
           fi
 
           echo "All crates published successfully!"
-
   # Publish WASM package to npm
   publish-npm-wasm:
     name: Publish to npm (@rustledger/wasm)
@@ -157,7 +156,6 @@ jobs:
         run: |
           cd crates/rustledger-wasm/pkg
           npm publish --access public --provenance || true
-
   # Trigger website rebuild to use new WASM package
   trigger-website:
     name: Trigger website rebuild
@@ -172,14 +170,12 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: rustledger.github.io
-
       - name: Trigger website rebuild
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
           token: ${{ steps.app-token.outputs.token }}
           repository: rustledger/rustledger.github.io
           event-type: wasm-release
-
   # Publish MCP server to npm
   publish-npm-mcp:
     name: Publish MCP server to npm
@@ -222,7 +218,6 @@ jobs:
         run: |
           cd packages/mcp-server
           npm publish --access public --provenance || true
-
   # Build and push Docker images
   publish-docker:
     name: Build Docker images
@@ -279,7 +274,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
   # Submit PR to homebrew-core
   update-homebrew:
     name: Bump Homebrew formula
@@ -293,7 +287,6 @@ jobs:
           tag: ${{ env.RELEASE_TAG }}
           # Don't fail the workflow if homebrew-core PR fails (e.g., already exists)
         continue-on-error: true
-
   # Update Scoop bucket
   update-scoop:
     name: Update Scoop bucket
@@ -307,7 +300,6 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: scoop-rustledger
-
       - name: Trigger Scoop bucket update
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
@@ -315,7 +307,6 @@ jobs:
           repository: rustledger/scoop-rustledger
           event-type: release
           client-payload: '{"version": "${{ env.RELEASE_TAG }}"}'
-
   # Trigger COPR build (Fedora/RHEL)
   update-copr:
     name: Trigger COPR build
@@ -343,7 +334,6 @@ jobs:
           copr-cli build-package robcohen/rustledger \
             --name rustledger \
             --nowait || true
-
   # Trigger Rustfava WASM update
   update-rustfava:
     name: Update Rustfava WASM version
@@ -358,7 +348,6 @@ jobs:
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: rustfava
-
       - name: Trigger Rustfava WASM update
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
@@ -366,7 +355,6 @@ jobs:
           repository: rustledger/rustfava
           event-type: rustledger-release
           client-payload: '{"version": "${{ env.RELEASE_TAG }}"}'
-
   # Update AUR packages (Arch Linux)
   # Uses KSXGitHub/github-actions-deploy-aur which properly handles:
   # - Non-root user creation (makepkg refuses to run as root)
@@ -379,7 +367,6 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
-
       - name: Prepare PKGBUILD
         run: |
           VERSION=${RELEASE_TAG#v}
@@ -400,7 +387,6 @@ jobs:
 
           echo "Generated PKGBUILD:"
           cat ./PKGBUILD
-
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@abe8ac26b51011c88be58c8809fd2ac674068ea5 # v4.1.2
         with:
@@ -410,7 +396,6 @@ jobs:
           commit_email: bot@rustledger.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to ${{ env.RELEASE_TAG }}"
-
   update-aur-bin:
     name: Update AUR (rustledger-bin)
     runs-on: ubuntu-latest
@@ -418,7 +403,6 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
-
       - name: Prepare PKGBUILD
         run: |
           VERSION=${RELEASE_TAG#v}
@@ -444,7 +428,6 @@ jobs:
 
           echo "Generated PKGBUILD:"
           cat ./PKGBUILD
-
       - name: Publish to AUR
         uses: KSXGitHub/github-actions-deploy-aur@abe8ac26b51011c88be58c8809fd2ac674068ea5 # v4.1.2
         with:
@@ -454,4 +437,3 @@ jobs:
           commit_email: bot@rustledger.dev
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
           commit_message: "Update to ${{ env.RELEASE_TAG }}"
-

@@ -6,8 +6,8 @@
 use super::sources::PriceSource;
 use super::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -119,7 +119,7 @@ impl ExternalCommandSource {
         let date = json
             .get("date")
             .and_then(|v| v.as_str())
-            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+            .and_then(|s| s.parse::<NaiveDate>().ok());
 
         Ok((price, currency, date))
     }
@@ -128,7 +128,8 @@ impl ExternalCommandSource {
     fn parse_beancount_format(&self, line: &str) -> Result<(Decimal, String, NaiveDate)> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 5 && parts[1] == "price" {
-            let date = NaiveDate::parse_from_str(parts[0], "%Y-%m-%d")
+            let date = parts[0]
+                .parse::<NaiveDate>()
                 .with_context(|| format!("Invalid date: {}", parts[0]))?;
             let price = Decimal::from_str(parts[3])
                 .with_context(|| format!("Invalid price: {}", parts[3]))?;
@@ -192,7 +193,7 @@ impl PriceSource for ExternalCommandSource {
 
         if let Some(date) = request.date {
             cmd.arg("--date");
-            cmd.arg(date.format("%Y-%m-%d").to_string());
+            cmd.arg(date.to_string());
         }
 
         cmd.arg("--currency");
@@ -241,8 +242,9 @@ impl PriceSource for ExternalCommandSource {
                 return Ok(PriceResponse {
                     price,
                     currency,
-                    date: date
-                        .unwrap_or_else(|| request.date.unwrap_or_else(|| Utc::now().date_naive())),
+                    date: date.unwrap_or_else(|| {
+                        request.date.unwrap_or_else(|| jiff::Zoned::now().date())
+                    }),
                     source: self.source_name.clone(),
                 });
             }
@@ -263,7 +265,7 @@ impl PriceSource for ExternalCommandSource {
             return Ok(PriceResponse {
                 price,
                 currency,
-                date: request.date.unwrap_or_else(|| Utc::now().date_naive()),
+                date: request.date.unwrap_or_else(|| jiff::Zoned::now().date()),
                 source: self.source_name.clone(),
             });
         }
@@ -302,7 +304,10 @@ mod tests {
             .unwrap();
         assert_eq!(price, Decimal::from_str("150.00").unwrap());
         assert_eq!(currency, "USD");
-        assert_eq!(date, Some(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap()));
+        assert_eq!(
+            date,
+            Some(rustledger_core::naive_date(2024, 1, 15).unwrap())
+        );
 
         let (price, currency, date) = source.parse_json_format(r#"{"price": "99.99"}"#).unwrap();
         assert_eq!(price, Decimal::from_str("99.99").unwrap());
@@ -319,7 +324,7 @@ mod tests {
             .unwrap();
         assert_eq!(price, Decimal::from_str("150.00").unwrap());
         assert_eq!(currency, "USD");
-        assert_eq!(date, NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+        assert_eq!(date, rustledger_core::naive_date(2024, 1, 15).unwrap());
     }
 
     #[test]

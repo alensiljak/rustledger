@@ -1,7 +1,6 @@
----
-title: rustledger Documentation
-description: A blazing-fast Rust implementation of Beancount
----
+______________________________________________________________________
+
+## title: rustledger Documentation description: A blazing-fast Rust implementation of Beancount
 
 # rustledger Documentation
 
@@ -36,21 +35,27 @@ rledger report balances ledger.beancount
 ## Documentation Sections
 
 ### [Getting Started](getting-started/index.md)
+
 Installation, configuration, and your first steps with rustledger.
 
 ### [Commands](commands/index.md)
+
 Complete CLI reference for all rustledger commands.
 
 ### [Guides](guides/index.md)
+
 Practical guides for common workflows and advanced usage.
 
 ### [Migration](migration/index.md)
+
 Moving to rustledger from Python beancount, ledger-cli, or hledger.
 
 ### [Reference](reference/index.md)
+
 BQL query language, plugins, error codes, and options.
 
 ### [Development](development/index.md)
+
 Contributing to rustledger - testing, benchmarking, and roadmaps.
 
 ## Getting Help

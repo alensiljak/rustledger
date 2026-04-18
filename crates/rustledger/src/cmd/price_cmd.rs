@@ -7,8 +7,8 @@ use crate::cmd::price::sources::PriceSource;
 use crate::cmd::price::{PriceRequest, PriceSourceRegistry};
 use crate::config::{CommodityMapping, Config, PriceConfig};
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
 use clap::Parser;
+use rustledger_core::NaiveDate;
 use rustledger_loader::Loader;
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -187,7 +187,7 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
     // Parse target date
     let date = if let Some(ref d) = args.date {
         Some(
-            NaiveDate::parse_from_str(d, "%Y-%m-%d")
+            d.parse::<NaiveDate>()
                 .with_context(|| format!("Invalid date: {d}"))?,
         )
     } else {
@@ -296,7 +296,7 @@ fn write_price(
     beancount: bool,
 ) -> Result<()> {
     if beancount {
-        let date_str = response.date.format("%Y-%m-%d");
+        let date_str = response.date.to_string();
         writeln!(
             handle,
             "{date_str} price {symbol} {} {}",
@@ -343,7 +343,7 @@ fn run_with_external_command(
         match source.fetch_price(&request) {
             Ok(response) => {
                 if args.beancount {
-                    let date_str = response.date.format("%Y-%m-%d");
+                    let date_str = response.date.to_string();
                     writeln!(
                         handle,
                         "{date_str} price {symbol} {} {}",

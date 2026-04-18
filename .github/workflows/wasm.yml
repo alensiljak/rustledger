@@ -7,7 +7,6 @@
 # Also builds and checks the npm package.
 #
 name: WASM
-
 on:
   push:
     branches: [main]
@@ -21,13 +20,10 @@ on:
       - 'crates/rustledger-parser/**'
       - 'crates/rustledger-core/**'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   # Test in Node.js environment (fast)
   test-node:
@@ -35,93 +31,75 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           prefix-key: wasm
-
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
-
       - name: Run WASM tests (Node.js)
         run: |
           cd crates/rustledger-wasm
           wasm-pack test --node
-
   # Test in headless browser (more realistic but slower)
   # DISABLED: Tests timeout after ~6/21 complete. See Issue #261.
   # Node.js tests provide equivalent coverage.
   test-browser:
     name: Test (Browser)
     runs-on: ubuntu-latest
-    if: false  # Disabled - see Issue #261
+    if: false # Disabled - see Issue #261
     continue-on-error: true
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           prefix-key: wasm
-
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
-
       - name: Run WASM tests (headless Chrome)
         run: |
           cd crates/rustledger-wasm
           # Increase timeout for slow CI environments
           WASM_BINDGEN_TEST_TIMEOUT=120 wasm-pack test --headless --chrome
-
   # Build the npm package and verify it's valid
   build-package:
     name: Build Package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
           targets: wasm32-unknown-unknown
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           prefix-key: wasm
-
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '22'
-
       - name: Install wasm-pack
         run: cargo install wasm-pack --locked
-
       - name: Build WASM package (bundler target)
         run: |
           cd crates/rustledger-wasm
           wasm-pack build --target bundler --release
-
       - name: Build WASM package (web target)
         run: |
           cd crates/rustledger-wasm
           wasm-pack build --target web --release --out-dir pkg-web
-
       - name: Build WASM package (nodejs target)
         run: |
           cd crates/rustledger-wasm
           wasm-pack build --target nodejs --release --out-dir pkg-node
-
       - name: Verify package.json
         run: |
           cd crates/rustledger-wasm/pkg
@@ -134,7 +112,6 @@ jobs:
           # Verify it's valid JSON
           node -e "JSON.parse(require('fs').readFileSync('package.json'))"
           echo "package.json is valid"
-
       - name: Check WASM binary size
         run: |
           cd crates/rustledger-wasm/pkg
@@ -146,7 +123,6 @@ jobs:
           if [ "$WASM_SIZE_KB" -gt 2048 ]; then
             echo "::warning::WASM binary is over 2MB (${WASM_SIZE_KB}KB). Consider optimizing."
           fi
-
       - name: Upload package artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -156,7 +132,6 @@ jobs:
             crates/rustledger-wasm/pkg-web/
             crates/rustledger-wasm/pkg-node/
           retention-days: 7
-
       - name: Summary
         run: |
           echo "## WASM Build Results" >> $GITHUB_STEP_SUMMARY

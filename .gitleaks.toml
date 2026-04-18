@@ -12,15 +12,11 @@ useDefault = true
 paths = [
   '''tests/fixtures/.*''',
   '''testdata/.*''',
-  '''\.github/workflows/.*\.yml''',  # Workflow files may have token placeholders
+  '''\.github/workflows/.*\.yml''', # Workflow files may have token placeholders
 ]
 
 # Regex patterns to ignore (false positives)
-regexes = [
-  '''EXAMPLE_.*''',
-  '''example[-_]?key''',
-  '''test[-_]?token''',
-]
+regexes = ['''EXAMPLE_.*''', '''example[-_]?key''', '''test[-_]?token''']
 
 # Specific rules to customize
 [[rules]]

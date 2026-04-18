@@ -1,7 +1,6 @@
----
-title: Options Reference
-description: Beancount file options
----
+______________________________________________________________________
+
+## title: Options Reference description: Beancount file options
 
 # Options Reference
 
@@ -140,6 +139,7 @@ option "plugin_processing_mode" "raw"
 ```
 
 Values:
+
 - `default`: Normal processing
 - `raw`: Skip some validations
 

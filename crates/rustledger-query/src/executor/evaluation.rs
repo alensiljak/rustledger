@@ -2,7 +2,6 @@
 
 use std::collections::BTreeMap;
 
-use chrono::Datelike;
 use rustledger_core::{Amount, Position, Transaction};
 
 use crate::ast::{Expr, Literal, Target};
@@ -58,7 +57,6 @@ impl Executor<'_> {
             }
             Expr::BinaryOp(op) => {
                 use crate::ast::BinaryOperator;
-                use chrono::Datelike;
                 // Handle YEAR = N, MONTH = N, etc.
                 match (&op.left, &op.right) {
                     (Expr::Column(col), Expr::Literal(lit)) if col.to_uppercase() == "YEAR" => {
@@ -69,7 +67,7 @@ impl Executor<'_> {
                             _ => None,
                         };
                         if let Some(n) = year_val {
-                            let matches = txn.date.year() == n;
+                            let matches = i32::from(txn.date.year()) == n;
                             Ok(if op.op == BinaryOperator::Eq {
                                 matches
                             } else {
@@ -87,7 +85,7 @@ impl Executor<'_> {
                             _ => None,
                         };
                         if let Some(n) = month_val {
-                            let matches = txn.date.month() == n;
+                            let matches = txn.date.month() as u32 == n;
                             Ok(if op.op == BinaryOperator::Eq {
                                 matches
                             } else {

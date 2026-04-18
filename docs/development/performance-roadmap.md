@@ -11,7 +11,7 @@
 
 ~~Push the speedup from 5x to **10-20x** through systematic optimization.~~ **Achieved!**
 
----
+______________________________________________________________________
 
 ## Measured Results
 
@@ -37,7 +37,7 @@
 
 **Note**: Local benchmarks run on 10K transaction ledger. Rc and SmallVec add overhead that outweighs benefits. Phase 3 extends InternedStr to payee/narration/tags/links for memory deduplication. Cache provides 2.3x speedup on subsequent runs.
 
----
+______________________________________________________________________
 
 ## Phase 0: Quick Wins (Day 1)
 
@@ -45,10 +45,12 @@
 **Expected Impact**: 15-25% faster
 
 ### 0.1 Eliminate Source Code Double Allocation
+
 - **File**: `crates/rustledger-loader/src/lib.rs`
 - **Line**: 308
 - **Problem**: `fs::read_to_string()` then `source.clone()` = 2x memory
 - **Fix**: Use `Arc\<str\>` instead of cloning
+
 ```rust
 // Before
 let source = fs::read_to_string(path)?;
@@ -58,14 +60,16 @@ source_map.add_file(path, source.clone());  // CLONE!
 let source: Arc<str> = fs::read_to_string(path)?.into();
 source_map.add_file(path, Arc::clone(&source));  // Cheap refcount
 ```
+
 - **Impact**: 50% reduction in source memory, faster loading
 
 ### 0.2 Enable Profile-Guided Optimization (PGO)
+
 - **File**: `.cargo/config.toml` (new), `.github/workflows/release.yml`
 - **Change**: Build release binaries with PGO data from benchmarks
 - **Impact**: 5-15% overall speedup (free optimization)
 
----
+______________________________________________________________________
 
 ## Phase 1: Parser Allocation Fixes (Week 1)
 
@@ -73,10 +77,12 @@ source_map.add_file(path, Arc::clone(&source));  // Cheap refcount
 **Expected Impact**: 20-30% faster
 
 ### 1.1 Zero-Copy String Parsing
+
 - **File**: `crates/rustledger-parser/src/parser.rs`
 - **Lines**: 622, 886, 922, 934, 942
 - **Problem**: Parser calls `.to_string()` on slices that could stay borrowed
 - **Fix**: Return `&'a str` instead of `String`, intern at directive construction
+
 ```rust
 // Before
 .map(|s: &str| s.to_string())  // Allocates!
@@ -84,21 +90,24 @@ source_map.add_file(path, Arc::clone(&source));  // Cheap refcount
 // After
 .map(|s: &str| s)  // Zero-copy, intern later
 ```
+
 - **Impact**: ~15% parsing improvement
 
 ### 1.2 Fix Vector Cloning
+
 - **File**: `crates/rustledger-parser/src/parser.rs`
 - **Lines**: 1055, 1080
 - **Change**: Use `.into_iter()` instead of `.clone().into_iter()`
 - **Impact**: ~5% improvement
 
 ### 1.3 Use Rc for Metadata in Closures
+
 - **File**: `crates/rustledger-parser/src/parser.rs`
 - **Lines**: 1271, 1305, 1329, etc.
 - **Change**: Wrap metadata in `Rc<Metadata>` to avoid cloning
 - **Impact**: ~10% improvement
 
----
+______________________________________________________________________
 
 ## Phase 2: Collection Optimizations (Week 2)
 
@@ -106,12 +115,14 @@ source_map.add_file(path, Arc::clone(&source));  // Cheap refcount
 **Expected Impact**: 15-25% faster
 
 ### 2.1 Add SmallVec Dependency
+
 ```toml
 # crates/rustledger-core/Cargo.toml
 smallvec = "1.11"
 ```
 
 ### 2.2 Convert Small Vectors
+
 ```rust
 // crates/rustledger-core/src/directive.rs
 pub tags: SmallVec<[InternedStr; 4]>,    // was Vec<String>
@@ -120,10 +131,11 @@ pub postings: SmallVec<[Posting; 4]>,    // was Vec<Posting>
 ```
 
 ### 2.3 Pre-allocate HashMaps
+
 - Add `.with_capacity()` calls in validation and query execution
 - **Files**: `rustledger-validate/src/lib.rs`, `rustledger-query/src/executor.rs`
 
----
+______________________________________________________________________
 
 ## Phase 3: String Interning (Week 3-4) ✅ DONE
 
@@ -131,6 +143,7 @@ pub postings: SmallVec<[Posting; 4]>,    // was Vec<Posting>
 **Result**: ~6% faster, memory deduplication via `Arc<str>`
 
 ### 3.1 Extend InternedStr Usage ✅
+
 ```rust
 // crates/rustledger-core/src/directive.rs
 pub struct Transaction {
@@ -147,11 +160,12 @@ pub struct Document {
 ```
 
 ### 3.2 Cache Re-interning ✅
+
 - `reintern_directives()` deduplicates strings after cache load
 - Typical deduplication: 150+ strings per ledger
 - Memory savings from `Arc<str>` sharing
 
----
+______________________________________________________________________
 
 ## Phase 4: Parallelization (Week 5-6)
 
@@ -160,17 +174,19 @@ pub struct Document {
 **Breaking Changes**: None (internal)
 
 ### 4.1 Add Rayon Dependency
+
 ```toml
 # crates/rustledger-validate/Cargo.toml
 rayon = "1.8"
 ```
 
 ### 4.2 Parallel Transaction Processing
+
 - Interpolate transactions in parallel
 - Validate independent checks in parallel
 - Keep sorting single-threaded (required for correctness)
 
----
+______________________________________________________________________
 
 ## Phase 5: Binary Cache Format (Week 5-6) ✅ DONE
 
@@ -178,29 +194,33 @@ rayon = "1.8"
 **Result**: 2.3x faster on cache hit (30ms → 13ms)
 
 ### 5.1 Implement Cache Format ✅
+
 - **File**: `crates/rustledger-loader/src/cache.rs`
 - **Format**: [rkyv](https://github.com/rkyv/rkyv) for zero-copy deserialization
 - **Cache key**: SHA256 hash of file mtime + size
 - **Location**: `ledger.beancount` → `ledger.beancount.cache`
 
 Custom rkyv wrappers for non-rkyv types:
+
 - `AsDecimal` - Decimal as 16-byte binary
 - `AsNaiveDate` - Date as i32 days since epoch
 - `AsInternedStr` - InternedStr as ArchivedString
 
 ### 5.2 Cache Invalidation ✅
+
 - Hash computed from all included files' mtime + size
 - Graceful fallback on cache errors
 - `invalidate_cache()` API for manual invalidation
 
 ### 5.3 CLI Integration ✅
+
 ```bash
 rledger check --no-cache ledger.beancount  # Skip cache
 rledger check -C ledger.beancount          # Short form
 rledger check ledger.beancount             # Use cache (default)
 ```
 
----
+______________________________________________________________________
 
 ## Phase 6: Lexer + Arena Allocator ✅ PARTIAL
 
@@ -208,6 +228,7 @@ rledger check ledger.beancount             # Use cache (default)
 **Expected Impact**: 30-50% faster parsing
 
 ### 6.1 Logos Lexer + Winnow Parser ✅ DONE
+
 - Using [Logos](https://github.com/maciejhirsz/logos) for SIMD-accelerated tokenization
 - Using [Winnow](https://github.com/winnow-rs/winnow) for manual recursive descent parsing
 - Replaced Chumsky parser combinators (legacy parser removed)
@@ -215,6 +236,7 @@ rledger check ledger.beancount             # Use cache (default)
 - Implemented in `logos_lexer.rs` and `winnow_parser.rs`
 
 ### 6.2 Bumpalo Arena for AST Nodes 🔮 FUTURE
+
 - Use [bumpalo](https://github.com/fitzgen/bumpalo) for AST allocation
 - Only 11 instructions per allocation (vs ~100 for malloc)
 - Mass deallocation: just reset the bump pointer
@@ -222,6 +244,7 @@ rledger check ledger.beancount             # Use cache (default)
 - **Projected**: +20% parsing improvement
 
 ### 6.3 Parser Fast Paths ✅ DONE (April 2026)
+
 - **Vec::new()** for tags/links/comments — avoid allocating empty collections
 - **String escape SIMD fast path** — `contains('\\')` before char-by-char processing
 - **StringInterner** in parser — deduplicate repeated accounts/currencies
@@ -231,18 +254,20 @@ rledger check ledger.beancount             # Use cache (default)
 - **Result**: Parser 1K txns: 1,204μs → 700μs (**-42%**)
 
 ### 6.4 Validation Fast Paths (April 2026, PR #814)
+
 - **Compute tolerances once** — pass pre-computed tolerances to balance checker
 - **Fast-path BigDecimal bypass** — skip expensive arbitrary-precision when Decimal residual is zero
 - **Remove Vec allocation** in `validate_account_name` — iterate without collecting
 - **Result**: Validation 1K txns: 210μs → 90μs (**-57%**)
 
 ### 6.5 Parallel File Loading (April 2026, PR #813)
+
 - When multiple sibling includes are found, read + parse files in parallel via rayon
 - Sequential merge preserves include order and handles nested includes
 - Only for DiskFileSystem (VFS uses sequential fallback)
 - **Result**: Multi-file ledgers load 2-4x faster depending on core count
 
----
+______________________________________________________________________
 
 ## Phase 7: Memory-Mapped Files (Future)
 
@@ -250,11 +275,12 @@ rledger check ledger.beancount             # Use cache (default)
 **Expected Impact**: 10-20% for files >100MB
 
 ### 7.1 Optional mmap for Large Files
+
 - Only enable for files > threshold (e.g., 50MB)
 - Fallback to standard read for smaller files
 - Cross-platform support (memmap2 crate)
 
----
+______________________________________________________________________
 
 ## Roadmap Summary
 
@@ -283,12 +309,13 @@ Measured on 10K transaction ledgers (April 2026):
 | Balance report | 32ms | 1093ms | 84ms | 571ms |
 
 **Key results:**
+
 - **20x faster** than beancount for validation
 - **34x faster** than beancount for balance reports
 - Competitive with ledger (C++): 2.4x slower validation, 2.6x faster balance
 - Cache hit: ~13ms for repeated runs
 
----
+______________________________________________________________________
 
 ## Benchmark Evaluation (January 2026)
 
@@ -339,6 +366,7 @@ The varying speedup is explained by startup overhead:
 Both tools exhibit O(n) scaling:
 
 **rustledger:**
+
 - 5K → 10K: 16.2ms → 30.4ms (1.9x for 2x input) ✓
 - 10K → 50K: 30.4ms → 147ms (4.8x for 5x input) ✓
 - 50K → 100K: 147ms → 304ms (2.1x for 2x input) ✓
@@ -346,6 +374,7 @@ Both tools exhibit O(n) scaling:
 Throughput: ~330K transactions/second (after warmup)
 
 **beancount:**
+
 - 1K → 10K: 149ms → 744ms (5.0x for 10x input) ✓
 - 10K → 100K: 744ms → 3,099ms (4.2x for 10x input) ✓
 
@@ -356,13 +385,13 @@ Throughput: ~32K transactions/second (at scale)
 The benchmark claims are **accurate and fair**:
 
 1. ✅ Both tools perform equivalent validation work
-2. ✅ Both exhibit linear O(n) scaling
-3. ✅ rustledger is genuinely 10-33x faster
-4. ✅ Speedup variation explained by startup overhead (2ms vs 100ms)
+1. ✅ Both exhibit linear O(n) scaling
+1. ✅ rustledger is genuinely 10-33x faster
+1. ✅ Speedup variation explained by startup overhead (2ms vs 100ms)
 
 The "10x faster" claim is conservative (applies to 100K+ transactions). For typical ledgers (1K-10K transactions), rustledger is **20-30x faster**.
 
----
+______________________________________________________________________
 
 ## Measurement Plan
 
@@ -376,36 +405,41 @@ cargo bench --bench pipeline_bench
 # Results in benchmarks branch
 ```
 
----
+______________________________________________________________________
 
 ## Decision Points
 
 1. **After Phase 0**: Measure baseline improvement before deeper work
-2. **After Phase 3**: Evaluate if 12x is sufficient or continue to parallelization
-3. **Phase 5 (Cache)**: High value for development workflows, optional for CI
-4. **Phase 6-7**: Only pursue if profiling shows remaining bottlenecks
+1. **After Phase 3**: Evaluate if 12x is sufficient or continue to parallelization
+1. **Phase 5 (Cache)**: High value for development workflows, optional for CI
+1. **Phase 6-7**: Only pursue if profiling shows remaining bottlenecks
 
----
+______________________________________________________________________
 
 ## Research & References
 
 ### Parser Performance
+
 - [Logos](https://github.com/maciejhirsz/logos) - current lexer, SIMD-accelerated DFA
 - [Winnow](https://github.com/winnow-rs/winnow) - current parser, manual recursive descent
 - [Chumsky](https://github.com/zesterer/chumsky) - former parser, replaced by Winnow (removed)
 
 ### Serialization
+
 - [rkyv](https://github.com/rkyv/rkyv) - zero-copy deserialization, [faster than bincode](https://david.kolo.ski/blog/rkyv-is-faster-than/)
 - [rust_serialization_benchmark](https://github.com/djkoloski/rust_serialization_benchmark) - comprehensive comparison
 
 ### Memory Management
+
 - [bumpalo](https://github.com/fitzgen/bumpalo) - fast arena allocator (11 instructions/alloc)
 - [Guide to arenas in Rust](https://blog.logrocket.com/guide-using-arenas-rust/)
 
 ### String Processing
+
 - [memchr](https://github.com/BurntSushi/memchr) - SIMD-accelerated string search
 - [aho-corasick](https://github.com/BurntSushi/aho-corasick) - SIMD multi-pattern matching
 
 ### Compiler Optimizations
+
 - [PGO in Rust](https://doc.rust-lang.org/rustc/profile-guided-optimization.html) - 10-30% improvement
 - [Rust compiler performance 2025](https://blog.rust-lang.org/2025/09/10/rust-compiler-performance-survey-2025-results/) - 6x faster builds

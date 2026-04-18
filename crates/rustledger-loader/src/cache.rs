@@ -527,8 +527,8 @@ fn reintern_directive(directive: &mut Directive, interner: &mut StringInterner) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
     use rust_decimal_macros::dec;
+    use rustledger_core::NaiveDate;
     use rustledger_core::{Amount, Posting, Transaction};
     use rustledger_parser::Span;
 
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn test_serialize_deserialize_roundtrip() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
 
         let txn = Transaction::new(date, "Test transaction")
             .with_payee("Test Payee")
@@ -597,7 +597,7 @@ mod tests {
     #[ignore = "manual benchmark - run with: cargo test -p rustledger-loader --release -- --ignored --nocapture"]
     fn bench_cache_performance() {
         // Generate test directives
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let mut directives = Vec::with_capacity(10000);
 
         for i in 0..10000 {
@@ -664,7 +664,7 @@ mod tests {
         drop(f);
 
         // Create a cache entry
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let txn = Transaction::new(date, "Test").with_posting(Posting::auto("Assets:Test"));
         let directives = vec![Spanned::new(Directive::Transaction(txn), Span::new(0, 50))];
 
@@ -763,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_reintern_directives_deduplication() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
 
         // Create multiple transactions with the same account
         let mut directives = vec![];
@@ -825,7 +825,7 @@ mod tests {
     fn test_reintern_balance_directive() {
         use rustledger_core::Balance;
 
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let balance = Balance::new(date, "Assets:Checking", Amount::new(dec!(1000.00), "USD"));
 
         let mut directives = vec![
@@ -842,7 +842,7 @@ mod tests {
     fn test_reintern_open_close_directives() {
         use rustledger_core::{Close, Open};
 
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let open = Open::new(date, "Assets:Checking");
         let close = Close::new(date, "Assets:Checking");
 

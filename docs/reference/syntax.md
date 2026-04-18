@@ -1,7 +1,6 @@
----
-title: Beancount Syntax Reference
-description: Complete guide to beancount file syntax
----
+______________________________________________________________________
+
+## title: Beancount Syntax Reference description: Complete guide to beancount file syntax
 
 # Beancount Syntax Reference
 
@@ -10,6 +9,7 @@ Complete reference for the beancount file format.
 ## File Structure
 
 A beancount file is a plain text file (typically `.beancount` extension) containing:
+
 - Directives (dated entries)
 - Options (configuration)
 - Comments
@@ -85,6 +85,7 @@ Record a financial transaction.
 ```
 
 Full syntax:
+
 ```
 DATE [FLAG] ["PAYEE"] "NARRATION" [TAGS] [LINKS]
   [METADATA]

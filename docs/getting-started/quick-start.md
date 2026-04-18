@@ -1,7 +1,6 @@
----
-title: Quick Start
-description: Your first rustledger commands
----
+______________________________________________________________________
+
+## title: Quick Start description: Your first rustledger commands
 
 # Quick Start
 

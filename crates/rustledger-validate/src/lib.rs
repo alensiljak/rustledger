@@ -55,8 +55,8 @@ use validators::{
     validate_pad, validate_transaction,
 };
 
-use chrono::{Local, NaiveDate};
 use rayon::prelude::*;
+use rustledger_core::NaiveDate;
 
 /// Threshold for using parallel sort. For small collections, sequential sort
 /// is faster due to reduced threading overhead.
@@ -223,7 +223,7 @@ pub fn validate_with_options(
     let mut state = LedgerState::with_options(options);
     let mut errors = Vec::new();
 
-    let today = Local::now().date_naive();
+    let today = jiff::Zoned::now().date();
 
     // Sort directives by date, then by type priority
     // (e.g., balance assertions before transactions on the same day)
@@ -331,7 +331,7 @@ pub fn validate_spanned_with_options(
     let mut state = LedgerState::with_options(options);
     let mut errors = Vec::new();
 
-    let today = Local::now().date_naive();
+    let today = jiff::Zoned::now().date();
 
     // Sort directives by date, then by type priority
     // Use parallel sort only for large collections (threading overhead otherwise)
@@ -448,7 +448,7 @@ mod tests {
     };
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        rustledger_core::naive_date(year, month, day).unwrap()
     }
 
     #[test]
@@ -702,7 +702,10 @@ mod tests {
     #[test]
     fn test_validate_future_date_warning() {
         // Create a date in the future
-        let future_date = Local::now().date_naive() + chrono::Duration::days(30);
+        let future_date = jiff::Zoned::now()
+            .date()
+            .checked_add(jiff::ToSpan::days(30))
+            .unwrap();
 
         let directives = vec![Directive::Open(Open {
             date: future_date,

@@ -19,9 +19,11 @@ The output will be at `target/wasm32-unknown-unknown/release/example_plugin.wasm
 Plugins must export two functions:
 
 ### `alloc(size: u32) -> *mut u8`
+
 Allocates memory for the host to write input data.
 
 ### `process(input_ptr: u32, input_len: u32) -> u64`
+
 Main entry point. Receives MessagePack-encoded `PluginInput`, returns a packed
 pointer and length to MessagePack-encoded `PluginOutput`.
 

@@ -13,9 +13,9 @@
 //!   Income:Capital-Losses  -500 USD
 //! ```
 
-use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
+use rustledger_core::NaiveDate;
 
 use crate::types::{
     AmountData, DirectiveData, DirectiveWrapper, MetaValueData, PluginInput, PluginOutput,
@@ -52,8 +52,8 @@ impl NativePlugin for BoxAccrualPlugin {
                     .iter()
                     .find(|(k, _)| k == "synthetic_loan_expiry")
                     .and_then(|(_, v)| match v {
-                        MetaValueData::Date(d) => NaiveDate::parse_from_str(d, "%Y-%m-%d").ok(),
-                        MetaValueData::String(s) => NaiveDate::parse_from_str(s, "%Y-%m-%d").ok(),
+                        MetaValueData::Date(d) => d.parse::<NaiveDate>().ok(),
+                        MetaValueData::String(s) => s.parse::<NaiveDate>().ok(),
                         _ => None,
                     });
 
@@ -90,13 +90,12 @@ impl NativePlugin for BoxAccrualPlugin {
                     continue;
                 };
 
-                let start_date =
-                    if let Ok(d) = NaiveDate::parse_from_str(&directive.date, "%Y-%m-%d") {
-                        d
-                    } else {
-                        new_directives.push(directive);
-                        continue;
-                    };
+                let start_date = if let Ok(d) = directive.date.parse::<NaiveDate>() {
+                    d
+                } else {
+                    new_directives.push(directive);
+                    continue;
+                };
 
                 // If same year, no splitting needed
                 if start_date.year() == expiry_date.year() {
@@ -105,7 +104,7 @@ impl NativePlugin for BoxAccrualPlugin {
                 }
 
                 // Calculate total days (inclusive)
-                let total_days = (expiry_date - start_date).num_days() + 1;
+                let total_days = i64::from(expiry_date.since(start_date).unwrap().get_days()) + 1;
                 if total_days <= 0 {
                     new_directives.push(directive);
                     continue;
@@ -113,18 +112,18 @@ impl NativePlugin for BoxAccrualPlugin {
 
                 // Build year splits
                 let mut fractions: Vec<(i32, i64, NaiveDate)> = Vec::new();
-                for year in start_date.year()..=expiry_date.year() {
-                    let seg_start = if year == start_date.year() {
+                for year in i32::from(start_date.year())..=i32::from(expiry_date.year()) {
+                    let seg_start = if year == i32::from(start_date.year()) {
                         start_date
                     } else {
-                        NaiveDate::from_ymd_opt(year, 1, 1).unwrap()
+                        rustledger_core::naive_date(year, 1, 1).unwrap()
                     };
-                    let seg_end = if year == expiry_date.year() {
+                    let seg_end = if year == i32::from(expiry_date.year()) {
                         expiry_date
                     } else {
-                        NaiveDate::from_ymd_opt(year, 12, 31).unwrap()
+                        rustledger_core::naive_date(year, 12, 31).unwrap()
                     };
-                    let seg_days = (seg_end - seg_start).num_days() + 1;
+                    let seg_days = i64::from(seg_end.since(seg_start).unwrap().get_days()) + 1;
                     if seg_days > 0 {
                         fractions.push((year, seg_days, seg_end));
                     }
@@ -162,7 +161,7 @@ impl NativePlugin for BoxAccrualPlugin {
                         flag: None,
                         metadata: vec![(
                             "effective_date".to_string(),
-                            MetaValueData::Date(seg_end.format("%Y-%m-%d").to_string()),
+                            MetaValueData::Date(seg_end.to_string()),
                         )],
                     });
                 }

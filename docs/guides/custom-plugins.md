@@ -1,7 +1,6 @@
----
-title: Custom Plugins Guide
-description: How to write custom WASM plugins for rustledger
----
+______________________________________________________________________
+
+## title: Custom Plugins Guide description: How to write custom WASM plugins for rustledger
 
 # Custom Plugins Guide
 
@@ -12,6 +11,7 @@ This guide walks you through creating custom plugins for rustledger using WebAss
 WASM plugins let you extend rustledger without modifying its source code. You write your plugin in Rust, compile it to WebAssembly, and reference it in your beancount file.
 
 **Why WASM?**
+
 - **Sandboxed**: Plugins run in isolation, can't access your filesystem or network
 - **Portable**: Same binary works on any platform
 - **Fast**: Near-native performance after compilation
@@ -317,6 +317,7 @@ rledger check ledger.beancount
 ```
 
 Output:
+
 ```
 warning: Large transaction: 25000.00 USD in Expenses:Transport
   --> ledger.beancount:10
@@ -507,6 +508,7 @@ rledger check test.beancount
 ## Debugging Tips
 
 1. **Return detailed errors**: WASM plugins run in a sandbox without access to stderr, so include context in error messages for debugging:
+
    ```rust
    errors.push(PluginError {
        message: format!("Account '{}' has {} postings", account, count),
@@ -516,18 +518,19 @@ rledger check test.beancount
    });
    ```
 
-2. **Test incrementally**: Start with a minimal plugin and add features one at a time.
+1. **Test incrementally**: Start with a minimal plugin and add features one at a time.
 
 ## Performance Tips
 
 1. **Minimize allocations**: Reuse vectors when possible
-2. **Use `&str` over `String`**: For comparisons and lookups
-3. **Optimize for size**: Use `opt-level = "s"` in release profile
-4. **Enable LTO**: Link-time optimization reduces binary size
+1. **Use `&str` over `String`**: For comparisons and lookups
+1. **Optimize for size**: Use `opt-level = "s"` in release profile
+1. **Enable LTO**: Link-time optimization reduces binary size
 
 ## More Examples
 
 See the rustledger repository for more examples:
+
 - [`examples/wasm-plugin`](https://github.com/rustledger/rustledger/tree/main/examples/wasm-plugin) - Basic example
 - [`examples/wasm-plugin-currency-check`](https://github.com/rustledger/rustledger/tree/main/examples/wasm-plugin-currency-check) - Currency validation
 - [`examples/wasm-plugin-duplicate-detect`](https://github.com/rustledger/rustledger/tree/main/examples/wasm-plugin-duplicate-detect) - Duplicate detection

@@ -1,20 +1,16 @@
 # Miri - detect undefined behavior in unsafe code
 # Runs weekly (too slow for every PR)
 name: Miri
-
 on:
   schedule:
     # Weekly on Sunday at 5 AM UTC
     - cron: '0 5 * * 0'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
   RUST_MIN_STACK: 8388608
-
 jobs:
   miri:
     name: Miri
@@ -28,10 +24,8 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           prefix-key: miri
-
       - name: Setup Miri
         run: cargo miri setup
-
       - name: Run Miri on core crates
         run: |
           echo "::group::rustledger-core"
@@ -47,7 +41,6 @@ jobs:
           echo "::endgroup::"
         env:
           MIRIFLAGS: -Zmiri-symbolic-alignment-check -Zmiri-strict-provenance
-
       - name: Summary
         run: |
           echo "## Miri Results" >> $GITHUB_STEP_SUMMARY

@@ -103,6 +103,7 @@ echo '{"jsonrpc":"2.0","method":"ledger.validate","params":{"source":"2024-01-01
 ```
 
 Response:
+
 ```json
 {"jsonrpc":"2.0","result":{"api_version":"1.0","valid":true,"errors":[]},"id":1}
 ```

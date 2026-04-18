@@ -7,9 +7,9 @@ This document describes how to release a new version of rustledger.
 Releases use [release-plz](https://release-plz.ieni.dev/) with **manual trigger**:
 
 1. **You**: Trigger the release workflow manually
-2. **Automatic**: release-plz creates a release PR from conventional commits
-3. **You**: Review and merge the release PR
-4. **Automatic**: Tag is created, triggering build and publish workflows
+1. **Automatic**: release-plz creates a release PR from conventional commits
+1. **You**: Review and merge the release PR
+1. **Automatic**: Tag is created, triggering build and publish workflows
 
 ## How It Works
 
@@ -80,6 +80,7 @@ git push origin main
 Go to **Actions** → **Release-plz** → **Run workflow** → Enable "Create release PR" → **Run**
 
 Or use the CLI:
+
 ```bash
 gh workflow run release-plz.yml -f create_pr=true
 ```
@@ -119,7 +120,7 @@ git push
 Merge via the merge queue. release-plz will:
 
 1. Create a git tag (e.g., `v0.9.0`)
-2. Create a GitHub Release with changelog
+1. Create a GitHub Release with changelog
 
 ### 5. Monitor the release
 
@@ -153,6 +154,7 @@ The release takes ~30-45 minutes to build all platforms.
 The VS Code extension (`rustledger-vscode.vsix`) is built and attached to the GitHub Release. The extension version is automatically synced from the release tag (e.g., `v0.11.0` → extension version `0.11.0`).
 
 The extension is distributed via GitHub Releases only (not the VS Code Marketplace). Users can:
+
 - Download manually from the [releases page](https://github.com/rustledger/rustledger/releases)
 - Use the extension's built-in auto-update feature
 
@@ -207,6 +209,7 @@ Release PRs from `release-plz` are automatically merged when CI passes (configur
 ### Release PR not created
 
 Check that commits follow conventional commit format:
+
 ```bash
 git log --oneline -10
 ```
@@ -214,6 +217,7 @@ git log --oneline -10
 ### Release publish failed
 
 Re-run just the publish workflow:
+
 ```bash
 gh run rerun <run-id>
 ```
@@ -292,7 +296,7 @@ release-plz may not always detect breaking changes from commit messages. This ha
 
 1. **Package comparison takes precedence**: release-plz compares the actual package contents between versions. If the package "looks the same" to cargo-semver-checks, it may not bump the version even with a `feat!:` commit.
 
-2. **cargo-semver-checks has limitations**: It doesn't catch all breaking changes (e.g., adding required fields to structs, behavioral changes).
+1. **cargo-semver-checks has limitations**: It doesn't catch all breaking changes (e.g., adding required fields to structs, behavioral changes).
 
 When the automatic release PR proposes the wrong version, use `release-plz set-version`:
 

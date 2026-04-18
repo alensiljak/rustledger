@@ -5,8 +5,8 @@ This is an example WASM plugin that demonstrates the plugin interface.
 ## What This Plugin Does
 
 1. Adds a "processed" tag to all transactions
-2. Warns about large transactions (configurable threshold)
-3. Warns about expense transactions without category tags
+1. Warns about large transactions (configurable threshold)
+1. Warns about expense transactions without category tags
 
 ## Building
 
@@ -45,8 +45,9 @@ WASM plugins must export:
 - `process(input_ptr: u32, input_len: u32) -> u64` - Process directives
 
 The `process` function:
+
 1. Receives MessagePack-encoded `PluginInput`
-2. Returns packed pointer/length to MessagePack-encoded `PluginOutput`
+1. Returns packed pointer/length to MessagePack-encoded `PluginOutput`
 
 ## Data Types
 

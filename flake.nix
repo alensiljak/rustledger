@@ -48,14 +48,13 @@
       ];
 
       perSystem =
-        {
-          config,
-          self',
-          inputs',
-          pkgs,
-          system,
-          lib,
-          ...
+        { config
+        , self'
+        , inputs'
+        , pkgs
+        , system
+        , lib
+        , ...
         }:
         let
           # Rust toolchain with all needed components

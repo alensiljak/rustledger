@@ -124,7 +124,7 @@ pub fn handle_folding_ranges(
 
 /// Format a transaction summary for collapsed text.
 fn format_transaction_summary(txn: &rustledger_core::Transaction) -> String {
-    let date = txn.date.format("%Y-%m-%d");
+    let date = txn.date.to_string();
 
     if let Some(ref payee) = txn.payee {
         format!("{} {} ...", date, payee)

@@ -3,8 +3,8 @@
 use crate::ImportResult;
 use crate::config::{ColumnSpec, CsvConfig, ImporterConfig};
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
 use std::collections::HashMap;
 use std::fs::File;
@@ -97,7 +97,8 @@ impl CsvImporter {
             return Ok(None); // Skip empty rows
         }
 
-        let date = NaiveDate::parse_from_str(date_str.trim(), &csv_config.date_format)
+        let date = jiff::fmt::strtime::parse(&csv_config.date_format, date_str.trim())
+            .and_then(|tm| tm.to_date())
             .with_context(|| {
                 format!(
                     "Row {}: failed to parse date '{}' with format '{}'",

@@ -5,10 +5,10 @@ This document specifies the public API for embedding rustledger and the serializ
 ## Design Principles
 
 1. **Zero-copy where possible** - Avoid allocations in hot paths
-2. **Builder pattern** - Fluent configuration
-3. **Error types over panics** - All errors are recoverable
-4. **Streaming support** - Process large ledgers incrementally
-5. **WASM-compatible** - No OS dependencies in core
+1. **Builder pattern** - Fluent configuration
+1. **Error types over panics** - All errors are recoverable
+1. **Streaming support** - Process large ledgers incrementally
+1. **WASM-compatible** - No OS dependencies in core
 
 ## Core API
 

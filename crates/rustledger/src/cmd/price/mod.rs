@@ -12,8 +12,8 @@ pub mod sources;
 
 use crate::config::{CommodityMapping, PriceConfig, PriceSourceConfig, SourceRef};
 use anyhow::{Context, Result};
-use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
@@ -306,7 +306,7 @@ mod tests {
         assert_eq!(request.currency, "USD");
         assert!(request.date.is_none());
 
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let request_with_date = PriceRequest::new("AAPL", "USD").with_date(date);
         assert_eq!(request_with_date.date, Some(date));
     }

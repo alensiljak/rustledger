@@ -80,6 +80,7 @@ The options must be placed at the beginning of the file before account usage.
 #### Trailing Decimal Numbers
 
 Some ledger2beancount conversions produce numbers like `1.` (integer with trailing decimal):
+
 ```beancount
 2024-01-01 * "Test"
   Assets:Test  1. USD   ; Python accepts, Rust rejects
@@ -95,7 +96,7 @@ Some ledger2beancount conversions produce numbers like `1.` (integer with traili
 rustledger does **not** support Python plugins. Users must:
 
 1. Port plugins to WASM (Rust, Go, AssemblyScript, etc.)
-2. Use built-in reimplementations of common plugins
+1. Use built-in reimplementations of common plugins
 
 ### Built-in Plugin Equivalents
 
@@ -235,13 +236,13 @@ diff <(python extract.py | jq -S .) <(rustledger ... | jq -S .)
 When you find a compatibility issue:
 
 1. **Create minimal reproducer**: Smallest beancount file that shows the difference
-2. **Document both behaviors**: Python output vs Rust output
-3. **Classify**: Is this a bug or intentional difference?
-4. **File issue**: Include reproducer and classification
+1. **Document both behaviors**: Python output vs Rust output
+1. **Classify**: Is this a bug or intentional difference?
+1. **File issue**: Include reproducer and classification
 
 ### Issue Template
 
-```markdown
+````markdown
 ## Compatibility Issue
 
 **File**: minimal.beancount
@@ -250,20 +251,23 @@ When you find a compatibility issue:
 2024-01-15 * "Test"
   Assets:Cash  100 USD
   ; <-- specific issue here
-```
+````
 
 **Python behavior**:
+
 ```
 [output]
 ```
 
 **Rust behavior**:
+
 ```
 [output]
 ```
 
 **Expected**: [Python/Rust/Neither] is correct because [reason]
-```
+
+````
 
 ## Version Compatibility
 
@@ -308,9 +312,10 @@ This ensures users can migrate to rustledger without modifying working ledger fi
 2024-01-15 * "Coffee Shop" | "Morning coffee"
   Expenses:Food  5.00 USD
   Assets:Cash
-```
+````
 
 **Preferred syntax**:
+
 ```beancount
 2024-01-15 * "Coffee Shop" "Morning coffee"
   Expenses:Food  5.00 USD
@@ -320,6 +325,7 @@ This ensures users can migrate to rustledger without modifying working ledger fi
 **Behavior**: rustledger parses both forms identically. The pipe symbol is simply ignored as a separator between payee and narration strings.
 
 **Warning**: When the pipe syntax is detected, a deprecation warning is emitted:
+
 ```
 warning: deprecated pipe separator '|' between payee and narration
   --> ledger.beancount:5:23
@@ -335,28 +341,32 @@ warning: deprecated pipe separator '|' between payee and narration
 When Python beancount deprecates additional syntax:
 
 1. Track the deprecation in beancount changelog
-2. Implement support with warning emission
-3. Document in this table
-4. Never remove support without major version bump
+1. Implement support with warning emission
+1. Document in this table
+1. Never remove support without major version bump
 
 ## Migration Guide
 
 ### From Python Beancount
 
 1. **Run compatibility check**:
+
    ```bash
    rustledger compat-check ledger.beancount
    ```
 
-2. **Address plugin dependencies**:
+1. **Address plugin dependencies**:
+
    - List used plugins: `grep "^plugin" ledger.beancount`
    - Find WASM equivalents or port
 
-3. **Update query scripts**:
+1. **Update query scripts**:
+
    - Replace `bean-query` with `rustledger query`
    - Check for BQL feature usage
 
-4. **Run parallel validation**:
+1. **Run parallel validation**:
+
    ```bash
    # Verify identical results
    diff <(bean-check ledger.beancount) <(rustledger check ledger.beancount)
@@ -367,6 +377,6 @@ When Python beancount deprecates additional syntax:
 Use rustledger for read-only operations first:
 
 1. **Phase 1**: Use for validation (`rustledger check`)
-2. **Phase 2**: Use for queries (`rustledger query`)
-3. **Phase 3**: Use for reporting
-4. **Phase 4**: Full replacement
+1. **Phase 2**: Use for queries (`rustledger query`)
+1. **Phase 3**: Use for reporting
+1. **Phase 4**: Full replacement

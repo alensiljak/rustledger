@@ -1,7 +1,6 @@
----
-title: rledger add
-description: Add transactions interactively
----
+______________________________________________________________________
+
+## title: rledger add description: Add transactions interactively
 
 # rledger add
 
@@ -55,6 +54,7 @@ Append to ledger.beancount? [Y/n]
 ```
 
 Features:
+
 - Tab completion for account names
 - Auto-balancing for the last posting
 - Date shortcuts: "today", "yesterday", "+1" (tomorrow), "-1" (yesterday)

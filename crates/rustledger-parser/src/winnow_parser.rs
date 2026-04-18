@@ -14,8 +14,8 @@
 
 use std::borrow::Cow;
 
-use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::str::FromStr;
 
 use rustledger_core::{
@@ -138,7 +138,7 @@ fn parse_date(stream: &mut TokenStream<'_>) -> ParseRes<NaiveDate> {
                 s[5..7].parse::<u32>(),
                 s[8..10].parse::<u32>(),
             )
-            && let Some(date) = NaiveDate::from_ymd_opt(y, m, d)
+            && let Some(date) = rustledger_core::naive_date(y, m, d)
         {
             stream.advance();
             return Ok(date);
@@ -146,7 +146,7 @@ fn parse_date(stream: &mut TokenStream<'_>) -> ParseRes<NaiveDate> {
 
         // Slow path: normalize separators and zero-pad, then parse
         let normalized = normalize_date_str(s);
-        if let Ok(date) = NaiveDate::parse_from_str(&normalized, "%Y-%m-%d") {
+        if let Ok(date) = normalized.parse::<NaiveDate>() {
             stream.advance();
             return Ok(date);
         }
@@ -2236,7 +2236,7 @@ mod tests {
         match &result.directives[0].value {
             Directive::Open(open) => assert_eq!(
                 open.date,
-                NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+                rustledger_core::naive_date(2024, 1, 15).unwrap(),
                 "Single-digit month should normalize to 2024-01-15"
             ),
             other => panic!("Expected Directive::Open, got: {other:?}"),

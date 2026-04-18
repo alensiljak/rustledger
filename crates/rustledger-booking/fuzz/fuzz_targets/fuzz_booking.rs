@@ -108,7 +108,8 @@ fn make_date(year_offset: u8, month: u8, day: u8) -> NaiveDate {
     let year = 2020 + (year_offset % 6) as i32;
     let month = ((month % 12) + 1) as u32;
     let day = ((day % 28) + 1) as u32;
-    NaiveDate::from_ymd_opt(year, month, day).unwrap_or(NaiveDate::from_ymd_opt(2020, 1, 1).unwrap())
+    rustledger_core::naive_date(year, month, day)
+        .unwrap_or(rustledger_core::naive_date(2020, 1, 1).unwrap())
 }
 
 fn make_decimal(cents: i32) -> Decimal {
@@ -158,10 +159,8 @@ fuzz_target!(|input: FuzzTransaction| {
 
         if fuzz_posting.missing_amount {
             // Posting with missing amount (for interpolation)
-            let posting = Posting::with_incomplete(
-                account,
-                IncompleteAmount::CurrencyOnly(currency.into()),
-            );
+            let posting =
+                Posting::with_incomplete(account, IncompleteAmount::CurrencyOnly(currency.into()));
             txn = txn.with_posting(posting);
         } else {
             let amount = Amount::new(make_decimal(fuzz_posting.amount_cents), currency);

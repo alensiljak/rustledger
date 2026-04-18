@@ -5,7 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes
@@ -149,7 +148,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Refactoring
 
-- consolidate rledger-* binaries into single rledger binary
+- consolidate rledger-\* binaries into single rledger binary
 
 ## [0.6.0](https://github.com/rustledger/rustledger/releases/tag/v0.6.0) - 2026-01-23
 
@@ -181,10 +180,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Features
 
-- [**breaking**] upgrade to Rust 2024 edition and MSRV 1.85
+- \[**breaking**\] upgrade to Rust 2024 edition and MSRV 1.85
 
 ## [0.5.0](https://github.com/rustledger/rustledger/compare/v0.4.0...v0.5.0) - 2026-01-19
 
 ### Features
 
-- [**breaking**] upgrade to Rust 2024 edition and MSRV 1.85
+- \[**breaking**\] upgrade to Rust 2024 edition and MSRV 1.85

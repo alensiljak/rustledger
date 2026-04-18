@@ -575,9 +575,9 @@ fn handle_filter_entries(params: &serde_json::Value) -> Result<serde_json::Value
     let params: FilterEntriesParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
 
-    let begin_date = rustledger_core::NaiveDate::parse_from_str(&params.begin_date, "%Y-%m-%d")
+    let begin_date = rustledger_core::&params.begin_date.parse::<NaiveDate>()
         .map_err(|e| RpcError::invalid_params(format!("Invalid begin_date: {e}")))?;
-    let end_date = rustledger_core::NaiveDate::parse_from_str(&params.end_date, "%Y-%m-%d")
+    let end_date = rustledger_core::&params.end_date.parse::<NaiveDate>()
         .map_err(|e| RpcError::invalid_params(format!("Invalid end_date: {e}")))?;
 
     let result = filter_entries(params.entries, begin_date, end_date);
@@ -593,7 +593,7 @@ fn handle_clamp_entries(params: &serde_json::Value) -> Result<serde_json::Value,
     let begin_date = params
         .begin_date
         .as_ref()
-        .map(|d| rustledger_core::NaiveDate::parse_from_str(d, "%Y-%m-%d"))
+        .map(|d| rustledger_core::d.parse::<NaiveDate>())
         .transpose()
         .map_err(|e| RpcError::invalid_params(format!("Invalid begin_date: {e}")))?
         .ok_or_else(|| RpcError::invalid_params("begin_date is required"))?;
@@ -601,7 +601,7 @@ fn handle_clamp_entries(params: &serde_json::Value) -> Result<serde_json::Value,
     let end_date = params
         .end_date
         .as_ref()
-        .map(|d| rustledger_core::NaiveDate::parse_from_str(d, "%Y-%m-%d"))
+        .map(|d| rustledger_core::d.parse::<NaiveDate>())
         .transpose()
         .map_err(|e| RpcError::invalid_params(format!("Invalid end_date: {e}")))?
         .ok_or_else(|| RpcError::invalid_params("end_date is required"))?;

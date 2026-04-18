@@ -1,7 +1,6 @@
----
-title: Shell Aliases
-description: Create shortcuts for common commands
----
+______________________________________________________________________
+
+## title: Shell Aliases description: Create shortcuts for common commands
 
 # Shell Aliases
 

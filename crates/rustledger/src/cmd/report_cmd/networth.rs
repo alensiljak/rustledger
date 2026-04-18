@@ -2,7 +2,6 @@
 
 use super::OutputFormat;
 use anyhow::Result;
-use chrono::Datelike;
 use rust_decimal::Decimal;
 use rustledger_core::{Directive, InternedStr};
 use std::collections::BTreeMap;

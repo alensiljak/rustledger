@@ -1,7 +1,6 @@
----
-title: BQL Reference
-description: Beancount Query Language syntax reference
----
+______________________________________________________________________
+
+## title: BQL Reference description: Beancount Query Language syntax reference
 
 # BQL Reference
 

@@ -1,6 +1,7 @@
 # BQL Functions Reference
 
 ## Aggregate Functions
+
 | Function | Description |
 |----------|-------------|
 | `sum(x)` | Sum of values |
@@ -11,6 +12,7 @@
 | `max(x)` | Maximum value |
 
 ## Date Functions
+
 | Function | Description |
 |----------|-------------|
 | `year(date)` | Extract year (integer) |
@@ -20,6 +22,7 @@
 | `weekday(date)` | Day of week (0=Monday) |
 
 ## String Functions
+
 | Function | Description |
 |----------|-------------|
 | `length(s)` | String length |
@@ -27,6 +30,7 @@
 | `lower(s)` | Lowercase string |
 
 ## Account Functions
+
 | Function | Description |
 |----------|-------------|
 | `root(account, n)` | First n components |
@@ -34,6 +38,7 @@
 | `parent(account)` | Parent account |
 
 ## Conversion Functions
+
 | Function | Description |
 |----------|-------------|
 | `cost(position)` | Convert to cost basis |

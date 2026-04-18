@@ -15,7 +15,6 @@ use std::sync::RwLock;
 
 use rustc_hash::FxHashMap;
 
-use chrono::Datelike;
 use regex::{Regex, RegexBuilder};
 use rust_decimal::Decimal;
 use rustledger_core::{Amount, Directive, InternedStr, Inventory, Metadata, Position};
@@ -40,7 +39,7 @@ pub struct Executor<'a> {
     /// Target currency for `VALUE()` conversions.
     target_currency: Option<String>,
     /// Query date for price lookups (defaults to today).
-    query_date: chrono::NaiveDate,
+    query_date: rustledger_core::NaiveDate,
     /// Cache for compiled regex patterns (`RwLock` for thread-safe parallel execution).
     regex_cache: RwLock<FxHashMap<String, Option<Regex>>>,
     /// Account info cache from Open/Close directives.
@@ -102,7 +101,7 @@ impl<'a> Executor<'a> {
             balances: FxHashMap::default(),
             price_db,
             target_currency: None,
-            query_date: chrono::Local::now().date_naive(),
+            query_date: jiff::Zoned::now().date(),
             regex_cache: RwLock::new(FxHashMap::default()),
             account_info,
             source_locations: None,
@@ -180,7 +179,7 @@ impl<'a> Executor<'a> {
             balances: FxHashMap::default(),
             price_db,
             target_currency: None,
-            query_date: chrono::Local::now().date_naive(),
+            query_date: jiff::Zoned::now().date(),
             regex_cache: RwLock::new(FxHashMap::default()),
             account_info,
             source_locations: Some(source_locations),
@@ -445,7 +444,7 @@ impl<'a> Executor<'a> {
         let name_upper = name.to_uppercase();
         match name_upper.as_str() {
             // Date functions
-            "TODAY" => Ok(Value::Date(chrono::Local::now().date_naive())),
+            "TODAY" => Ok(Value::Date(jiff::Zoned::now().date())),
             "YEAR" => {
                 Self::require_args_count(&name_upper, args, 1)?;
                 match &args[0] {
@@ -962,7 +961,7 @@ impl<'a> Executor<'a> {
                 };
 
                 // Optional date argument
-                let date: Option<chrono::NaiveDate> = if args.len() == 3 {
+                let date: Option<rustledger_core::NaiveDate> = if args.len() == 3 {
                     match &args[2] {
                         Value::Date(d) => Some(*d),
                         Value::Null => None, // NULL date uses latest price
@@ -1070,7 +1069,7 @@ impl<'a> Executor<'a> {
             "WEEKDAY" => {
                 Self::require_args_count(&name_upper, args, 1)?;
                 match &args[0] {
-                    Value::Date(d) => Ok(Value::Integer(d.weekday().num_days_from_monday().into())),
+                    Value::Date(d) => Ok(Value::Integer(d.weekday().to_monday_zero_offset() as u32.into())),
                     _ => Err(QueryError::Type("WEEKDAY expects a date".to_string())),
                 }
             }
@@ -1213,7 +1212,7 @@ impl<'a> Executor<'a> {
                 Self::require_args_count(&name_upper, args, 2)?;
                 match (&args[0], &args[1]) {
                     (Value::Date(d1), Value::Date(d2)) => {
-                        Ok(Value::Integer(d1.signed_duration_since(*d2).num_days()))
+                        Ok(Value::Integer(i64::from(d1.since(*d2).unwrap_or_default().get_days())))
                     }
                     _ => Err(QueryError::Type("DATE_DIFF expects two dates".to_string())),
                 }
@@ -1953,8 +1952,8 @@ impl<'a> Executor<'a> {
         let mut accounts: FxHashMap<
             &str,
             (
-                Option<chrono::NaiveDate>,
-                Option<chrono::NaiveDate>,
+                Option<rustledger_core::NaiveDate>,
+                Option<rustledger_core::NaiveDate>,
                 Vec<String>,
                 Option<&str>,
             ),
@@ -2489,7 +2488,7 @@ mod tests {
     use rustledger_core::Posting;
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        rustledger_core::naive_date(year, month, day).unwrap()
     }
 
     fn sample_directives() -> Vec<Directive> {
@@ -3497,7 +3496,7 @@ mod tests {
         // When using the regular constructor (without source location support),
         // the filename, lineno, and location columns should return Null
         let directives = vec![Directive::Transaction(Transaction {
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             flag: '*',
             payee: Some("Test".into()),
             narration: "Test transaction".into(),
@@ -3543,7 +3542,7 @@ mod tests {
 
         // Create a spanned directive
         let txn = Transaction {
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             flag: '*',
             payee: Some("Test".into()),
             narration: "Test transaction".into(),
@@ -3627,7 +3626,7 @@ mod tests {
         let result = executor.execute(&query).unwrap();
         assert_eq!(
             result.rows[0][0],
-            Value::Date(NaiveDate::from_ymd_opt(2024, 2, 15).unwrap())
+            Value::Date(rustledger_core::naive_date(2024, 2, 15).unwrap())
         );
 
         // Test date + interval using binary operator
@@ -3635,7 +3634,7 @@ mod tests {
         let result = executor.execute(&query).unwrap();
         assert_eq!(
             result.rows[0][0],
-            Value::Date(NaiveDate::from_ymd_opt(2025, 1, 15).unwrap())
+            Value::Date(rustledger_core::naive_date(2025, 1, 15).unwrap())
         );
 
         // Test date - interval
@@ -3643,7 +3642,7 @@ mod tests {
         let result = executor.execute(&query).unwrap();
         assert_eq!(
             result.rows[0][0],
-            Value::Date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap())
+            Value::Date(rustledger_core::naive_date(2024, 1, 15).unwrap())
         );
     }
 }

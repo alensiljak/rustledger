@@ -157,14 +157,15 @@ On tag push, the release workflow automatically:
 ### Creating a PR
 
 1. Create a feature branch from `main`
-2. Make your changes with clear, atomic commits
-3. Ensure all tests pass: `cargo test`
-4. Push and open a PR against `main`
-5. Fill out the PR template completely
+1. Make your changes with clear, atomic commits
+1. Ensure all tests pass: `cargo test`
+1. Push and open a PR against `main`
+1. Fill out the PR template completely
 
 ### Draft PRs
 
 Use draft PRs for:
+
 - Work in progress that needs early feedback
 - Large changes you want to discuss before finalizing
 - Experimental features
@@ -191,12 +192,12 @@ If your PR hasn't been reviewed, feel free to ping in the PR comments.
 ### What Reviewers Check
 
 1. **Correctness**: Does the code do what it claims?
-2. **Tests**: Are there sufficient tests for the changes?
-3. **Beancount compatibility**: Does it match Python beancount behavior?
-4. **Performance**: Any obvious performance regressions?
-5. **Security**: Any potential vulnerabilities (especially in parser/loader)?
-6. **Documentation**: Are public APIs documented?
-7. **Style**: Does it follow project conventions?
+1. **Tests**: Are there sufficient tests for the changes?
+1. **Beancount compatibility**: Does it match Python beancount behavior?
+1. **Performance**: Any obvious performance regressions?
+1. **Security**: Any potential vulnerabilities (especially in parser/loader)?
+1. **Documentation**: Are public APIs documented?
+1. **Style**: Does it follow project conventions?
 
 ### Merge Policy
 

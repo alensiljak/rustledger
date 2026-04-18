@@ -20,6 +20,7 @@ This crate provides a Beancount parser using Logos (lexer) + Chumsky (parser com
 ### Security: No Panics on Malformed Input
 
 The parser MUST handle any input gracefully:
+
 - Never use `.unwrap()` on user input
 - Use `recover_with()` for error recovery
 - Test with fuzz inputs (`cargo fuzz run parser`)
@@ -27,6 +28,7 @@ The parser MUST handle any input gracefully:
 ### Error Recovery
 
 The parser continues after errors to report multiple issues:
+
 ```rust
 // Good: Use recovery to skip bad input
 directive
@@ -36,6 +38,7 @@ directive
 ### Error Messages
 
 Error messages must include source location:
+
 ```rust
 ParseError {
     kind: ParseErrorKind::InvalidDate,
@@ -50,9 +53,9 @@ ParseError {
 ### Required Tests for Parser Changes
 
 1. **Valid input**: Parse known-good beancount files
-2. **Invalid input**: Verify error messages are helpful
-3. **Error recovery**: Multiple errors reported, parsing continues
-4. **Fuzz testing**: No panics on arbitrary input
+1. **Invalid input**: Verify error messages are helpful
+1. **Error recovery**: Multiple errors reported, parsing continues
+1. **Fuzz testing**: No panics on arbitrary input
 
 ### Test Commands
 
@@ -70,6 +73,7 @@ cargo +nightly fuzz run parser
 ## Beancount Compatibility
 
 When in doubt, check Python beancount behavior:
+
 ```bash
 # Compare outputs
 bean-check test.beancount
@@ -83,13 +87,13 @@ Reference files in `tests/fixtures/` for expected behavior.
 ### Adding a New Token
 
 1. Add variant to `Token` enum in `logos_lexer.rs`
-2. Add regex pattern with `#[regex(...)]` attribute
-3. Handle in `token_parser.rs`
-4. Add tests for lexing and parsing
+1. Add regex pattern with `#[regex(...)]` attribute
+1. Handle in `token_parser.rs`
+1. Add tests for lexing and parsing
 
 ### Improving Error Messages
 
 1. Add case to `ParseErrorKind` in `error.rs`
-2. Update `Display` impl with user-friendly message
-3. Add snapshot test for the error message
-4. Run `cargo insta review` to approve
+1. Update `Display` impl with user-friendly message
+1. Add snapshot test for the error message
+1. Run `cargo insta review` to approve

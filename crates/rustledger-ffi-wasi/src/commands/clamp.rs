@@ -38,7 +38,7 @@ pub fn filter_entries(
             let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
             let date_str = entry.get("date").and_then(|d| d.as_str()).unwrap_or("");
 
-            let Ok(entry_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+            let Ok(entry_date) = date_str.parse::<NaiveDate>() else {
                 // Drop entries without valid dates (consistent with clamp_entries)
                 return false;
             };
@@ -77,7 +77,7 @@ pub fn clamp_entries(
         let entry_type = entry.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let date_str = entry.get("date").and_then(|d| d.as_str()).unwrap_or("");
 
-        let Ok(entry_date) = NaiveDate::parse_from_str(date_str, "%Y-%m-%d") else {
+        let Ok(entry_date) = date_str.parse::<NaiveDate>() else {
             continue;
         };
 
@@ -230,7 +230,7 @@ fn create_earnings_transaction(
     pnl_totals: &HashMap<String, rustledger_core::Decimal>,
     date: NaiveDate,
 ) -> serde_json::Value {
-    let date_str = date.format("%Y-%m-%d").to_string();
+    let date_str = date.to_string();
 
     // Create postings for each currency
     let mut postings: Vec<Posting> = Vec::new();
@@ -359,7 +359,7 @@ fn parse_cost_and_create_position(
 
     let cost_date_str = cost.get("date").and_then(|d| d.as_str());
     let cost_label = cost.get("label").and_then(|l| l.as_str()).map(String::from);
-    let cost_date = cost_date_str.and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok());
+    let cost_date = cost_date_str.and_then(|s| s.parse::<NaiveDate>().ok());
 
     let cost = Cost {
         number: cost_number,
@@ -377,7 +377,7 @@ fn create_summary_transaction(
     inventory: &Inventory,
     date: NaiveDate,
 ) -> serde_json::Value {
-    let date_str = date.format("%Y-%m-%d").to_string();
+    let date_str = date.to_string();
 
     // Create postings for each position in the inventory
     let mut postings: Vec<Posting> = Vec::new();
@@ -392,7 +392,7 @@ fn create_summary_transaction(
             number: Some(c.number.to_string()),
             number_total: None,
             currency: Some(c.currency.to_string()),
-            date: c.date.map(|d| d.format("%Y-%m-%d").to_string()),
+            date: c.date.map(|d| d.to_string()),
             label: c.label.clone(),
         });
 
@@ -493,8 +493,8 @@ mod tests {
             make_entry("close", "2024-01-05"), // Before begin, should be excluded
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 1, 10).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 2, 20).unwrap();
+        let begin = rustledger_core::naive_date(2024, 1, 10).unwrap();
+        let end = rustledger_core::naive_date(2024, 2, 20).unwrap();
 
         let result = filter_entries(entries, begin, end);
 
@@ -510,8 +510,8 @@ mod tests {
             make_entry("transaction", "2024-01-15"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+        let begin = rustledger_core::naive_date(2024, 1, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 12, 31).unwrap();
 
         let result = filter_entries(entries, begin, end);
 
@@ -526,8 +526,8 @@ mod tests {
             make_entry("open", "2024-06-01"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 4, 1).unwrap();
+        let begin = rustledger_core::naive_date(2024, 3, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 4, 1).unwrap();
 
         let result = filter_entries(entries, begin, end);
 
@@ -544,8 +544,8 @@ mod tests {
             make_entry("close", "2024-06-01"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+        let begin = rustledger_core::naive_date(2024, 3, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 12, 31).unwrap();
 
         let result = filter_entries(entries, begin, end);
 
@@ -563,8 +563,8 @@ mod tests {
             serde_json::json!({"type": "transaction"}), // no date
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 12, 31).unwrap();
+        let begin = rustledger_core::naive_date(2024, 1, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 12, 31).unwrap();
 
         let result = filter_entries(entries, begin, end);
 
@@ -596,8 +596,8 @@ mod tests {
             ),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let begin = rustledger_core::naive_date(2024, 2, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 3, 1).unwrap();
 
         let result = clamp_entries(entries, begin, end);
 
@@ -637,8 +637,8 @@ mod tests {
             make_entry("transaction", "2024-02-15"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let begin = rustledger_core::naive_date(2024, 2, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 3, 1).unwrap();
 
         let result = clamp_entries(entries, begin, end);
 
@@ -660,8 +660,8 @@ mod tests {
             make_entry("open", "2024-02-15"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let begin = rustledger_core::naive_date(2024, 2, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 3, 1).unwrap();
 
         let result = clamp_entries(entries, begin, end);
 
@@ -678,8 +678,8 @@ mod tests {
             make_entry("transaction", "2024-02-15"),
         ];
 
-        let begin = NaiveDate::from_ymd_opt(2024, 2, 1).unwrap();
-        let end = NaiveDate::from_ymd_opt(2024, 3, 1).unwrap();
+        let begin = rustledger_core::naive_date(2024, 2, 1).unwrap();
+        let end = rustledger_core::naive_date(2024, 3, 1).unwrap();
 
         let result = clamp_entries(entries, begin, end);
 

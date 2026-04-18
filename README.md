@@ -19,7 +19,7 @@ Parse and validate your ledger faster than Python beancount.
 
 </div>
 
----
+______________________________________________________________________
 
 ## Why rustledger?
 
@@ -50,16 +50,19 @@ Parse and validate your ledger faster than Python beancount.
 | **Active development** | Yes | Maintenance | Yes | Limited |
 
 **When to use rustledger:**
+
 - You use Beancount syntax and want speed
 - You want a single binary with no runtime dependencies
 - You need LSP editor integration
 - You want to use existing Python plugins
 
 **When to use Python beancount:**
+
 - You need Fava web interface (until rustledger integration)
 - You have complex Python plugins with C extensions
 
 **When to use hledger:**
+
 - You prefer hledger's syntax and reports
 - You need time-tracking features
 
@@ -266,6 +269,7 @@ Additionally, `document_discovery` auto-discovers documents from `option "docume
 rustledger supports three types of plugins:
 
 **Native plugins** (built-in, fastest):
+
 ```bash
 # Run a native plugin from CLI
 rledger check --native-plugin implicit_prices ledger.beancount
@@ -275,24 +279,28 @@ rledger check --native-plugin implicit_prices ledger.beancount
 ```
 
 **Python file plugins** (via WASM sandbox):
+
 ```bash
 # Declare in your beancount file:
 # plugin "/path/to/my_plugin.py"
 ```
 
 **WASM plugins** (sandboxed WebAssembly):
+
 ```bash
 # Load a WASM plugin
 rledger check --plugin /path/to/plugin.wasm ledger.beancount
 ```
 
 **How Python plugins work:**
+
 - File-based plugins (`.py` files) run in a sandboxed CPython compiled to WebAssembly
 - No system Python installation required
 - Plugins cannot access the filesystem or network (sandbox isolation)
 - Compatible with most pure-Python beancount plugins
 
 **Limitations:**
+
 - Module-based plugins (`beancount.plugins.xyz`) only work if rustledger has a native implementation
 - Plugins with C extensions won't work (numpy, pandas, etc.)
 - No network access (price fetching plugins need alternatives)
@@ -332,6 +340,7 @@ See [LSP setup guide](crates/rustledger-lsp/README.md) for VS Code, Neovim, Heli
 <summary><strong>Benchmark details</strong></summary>
 
 **What's measured:**
+
 - **Validation**: Parse ledger + validate (balance assertions, account opens, etc.)
 - **Balance Report**: Parse + compute all account balances
 
@@ -339,6 +348,7 @@ See [LSP setup guide](crates/rustledger-lsp/README.md) for VS Code, Neovim, Heli
 rustledger typically uses 3-5x less memory than Python beancount thanks to Rust's zero-cost abstractions and efficient data structures.
 
 **Run locally:**
+
 ```bash
 # Quick comparison (requires nix)
 nix develop .#bench
@@ -358,6 +368,7 @@ See [BENCHMARKING.md](docs/BENCHMARKING.md) for detailed benchmark documentation
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 **Documentation:**
+
 - [Architecture](docs/ARCHITECTURE.md) - Crate structure and data flow
 - [BQL Reference](docs/BQL_REFERENCE.md) - Query language guide
 - [Importing](docs/IMPORTING.md) - CSV/OFX bank import tutorial

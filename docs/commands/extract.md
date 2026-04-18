@@ -1,7 +1,6 @@
----
-title: rledger extract
-description: Import transactions from bank statements
----
+______________________________________________________________________
+
+## title: rledger extract description: Import transactions from bank statements
 
 # rledger extract
 

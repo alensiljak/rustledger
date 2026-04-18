@@ -17,11 +17,13 @@ Assets | Liabilities | Equity | Income | Expenses
 ```
 
 **Rules for account components:**
+
 - Must start with a capital letter or number
 - Can contain letters, numbers, and dashes only
 - No spaces or special characters allowed
 
 Example hierarchy:
+
 ```
 Assets:US:BofA:Checking
 Assets:US:BofA:Savings
@@ -31,6 +33,7 @@ Expenses:Food:Groceries
 ## Commodities/Currencies
 
 Currency names are recognized by syntax alone (no pre-declaration required):
+
 - All capital letters
 - 1-24 characters long
 - Must start and end with capital letters or numbers
@@ -41,6 +44,7 @@ Examples: `USD`, `EUR`, `MSFT`, `VACHR` (vacation hours)
 ## Comments & Organization
 
 Lines after semicolon (`;`) are ignored:
+
 ```beancount
 ; This is a comment
 2015-01-01 * "Transaction"
@@ -61,10 +65,12 @@ YYYY-MM-DD open Account [Currency,...] ["BookingMethod"]
 ```
 
 **Optional features:**
+
 - Currency constraints (comma-separated): restrict postings to specified currencies
 - Booking methods: `STRICT` (default, exact lot matching), `FIFO`, `LIFO`, `AVERAGE`, `NONE`
 
 Example:
+
 ```beancount
 2014-05-01 open Assets:Checking USD
 2014-05-01 open Assets:Investments MSFT,AAPL
@@ -90,6 +96,7 @@ YYYY-MM-DD commodity Currency
 ```
 
 Example:
+
 ```beancount
 1867-07-01 commodity CAD
   name: "Canadian Dollar"
@@ -105,15 +112,18 @@ YYYY-MM-DD [txn|Flag] [[Payee] Narration] [Metadata] Postings
 ```
 
 **Flag options:**
+
 - `*` — Completed transaction (default)
 - `!` — Incomplete, needs review
 
 **Payee & Narration:**
+
 - Single string becomes narration only
 - Two strings: first is payee, second is narration
 - Empty string allowed for payee: `"Payee" ""`
 
 **Postings format:**
+
 ```
 [Flag] Account Amount [{Cost}] [@ Price] [Metadata]
 ```
@@ -121,6 +131,7 @@ YYYY-MM-DD [txn|Flag] [[Payee] Narration] [Metadata] Postings
 Multiple postings per transaction allowed. Amount can use arithmetic expressions: `( ) * / - +`
 
 Example:
+
 ```beancount
 2014-05-05 * "Cafe Mogador" "Lamb tagine"
   Liabilities:CreditCard     -37.45 USD
@@ -130,20 +141,25 @@ Example:
 ### Posting Amounts & Costs
 
 **Simple amount:**
+
 ```beancount
 Assets:Checking  100.00 USD
 ```
 
 **With price (currency conversion):**
+
 ```beancount
 Assets:Checking  -400.00 USD @ 1.09 CAD
 ```
+
 Per-unit conversion rate specified with `@`; total conversion with `@@`:
+
 ```beancount
 Assets:Checking  -400.00 USD @@ 436.01 CAD
 ```
 
 **With cost (for held commodities):**
+
 ```beancount
 Assets:Stocks  10 MSFT {45.30 USD}
 ```
@@ -151,13 +167,16 @@ Assets:Stocks  10 MSFT {45.30 USD}
 Cost held in curly braces `{}`; tracks basis for capital gains.
 
 **With both cost and price:**
+
 ```beancount
 Assets:Stocks  -10 MSFT {183.07 USD} @ 197.90 USD
 ```
+
 Cost used for balancing; price generates price entry only.
 
 **Amount interpolation:**
 Omit amount from at most one posting per transaction; calculated automatically:
+
 ```beancount
 2012-11-03 * "Transfer"
   Assets:Checking    -400.00 USD
@@ -167,21 +186,24 @@ Omit amount from at most one posting per transaction; calculated automatically:
 ### Balancing Rule
 
 The "weight" of each posting determines balance. Calculation:
+
 1. **Amount only** → amount + currency
-2. **Price only** → amount × price currency
-3. **Cost only** → amount × cost currency
-4. **Both cost & price** → cost currency (price ignored for balancing)
+1. **Price only** → amount × price currency
+1. **Cost only** → amount × cost currency
+1. **Both cost & price** → cost currency (price ignored for balancing)
 
 Sum of all posting weights must equal zero.
 
 ### Reducing Positions
 
 When posting a reduction to commodities held at cost:
+
 - Reduction must match existing lot(s)
 - Matching via cost specification, date, or label filters available lots
 - Ambiguous matches invoke account's booking method
 
 Example lot specification:
+
 ```beancount
 Assets:Stocks  -20 MSFT {43.40 USD}
 Assets:Stocks  -20 MSFT {2014-02-11}
@@ -201,6 +223,7 @@ Mark transactions with hash-prefixed strings for filtering:
 ```
 
 **Tag stack:**
+
 ```
 pushtag #berlin-trip-2014
 2014-04-23 * "Transaction"
@@ -238,6 +261,7 @@ Checks at **beginning of day** (midnight). Single assertion per commodity:
 ```
 
 **Features:**
+
 - Works on parent accounts (includes sub-account totals)
 - Aggregates across cost lots
 - Local tolerance override: `balance Account Amount ~ Tolerance`
@@ -251,6 +275,7 @@ YYYY-MM-DD pad Account SourceAccount
 ```
 
 Example:
+
 ```beancount
 2002-01-17 open Assets:Checking
 2002-01-17 pad Assets:Checking Equity:Opening-Balances
@@ -258,6 +283,7 @@ Example:
 ```
 
 Generates:
+
 ```
 2002-01-17 P "(Padding inserted...)"
   Assets:Checking        987.34 USD
@@ -265,6 +291,7 @@ Generates:
 ```
 
 **Constraints:**
+
 - Must have subsequent balance assertion
 - No multiple pads per account/commodity currently
 - No cost basis support
@@ -286,6 +313,7 @@ YYYY-MM-DD document Account "/path/to/file.pdf"
 ```
 
 **Directory option:**
+
 ```
 option "documents" "/home/user/stmts"
 ```
@@ -301,6 +329,7 @@ YYYY-MM-DD price Commodity PriceAmount
 ```
 
 Example:
+
 ```beancount
 2014-07-09 price HOOL  579.18 USD
 2014-07-09 price USD  1.08 CAD
@@ -318,6 +347,7 @@ YYYY-MM-DD event "Name" "Value"
 ```
 
 Example:
+
 ```beancount
 2014-07-09 event "location" "Paris, France"
 2014-08-15 event "location" "Berlin, Germany"
@@ -348,6 +378,7 @@ Attach arbitrary key-value pairs to directives and postings:
 **Keys:** Lowercase start, contain letters/numbers/dashes/underscores
 
 **Value types:**
+
 - Strings
 - Accounts
 - Currency
@@ -387,6 +418,7 @@ option "Name" "Value"
 ```
 
 **Notable options:**
+
 - `operating_currency` — Designates main currencies for reporting (multiple allowed)
 - `title` — Ledger title
 - `name_assets`, `name_liabilities`, etc. — Root account name overrides
@@ -414,5 +446,6 @@ Relative paths resolve to including file's directory.
 ## Entry Ordering
 
 Directives are automatically sorted chronologically after parsing, regardless of file order. Within the same date:
+
 1. Balance assertions and other non-transaction directives first
-2. Transactions after
+1. Transactions after

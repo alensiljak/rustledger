@@ -1,7 +1,6 @@
----
-title: rledger query
-description: Run BQL queries on your ledger
----
+______________________________________________________________________
+
+## title: rledger query description: Run BQL queries on your ledger
 
 # rledger query
 
