@@ -649,6 +649,15 @@ fn parse_cost_spec(stream: &mut TokenStream<'_>) -> ParseRes<CostSpec> {
             return Err(());
         }
 
+        // Check for merge operator {*}
+        if let Some(t) = stream.peek()
+            && matches!(t.token, Token::Star)
+        {
+            stream.advance();
+            spec.merge = true;
+            continue;
+        }
+
         // Try to parse different component types
         if let Ok(date) = parse_date(stream) {
             spec.date = Some(date);
@@ -2670,6 +2679,27 @@ mod tests {
 "#;
         let result = parse(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+    }
+
+    #[test]
+    fn test_parse_cost_spec_merge() {
+        let source = r#"
+2024-01-15 * "Test"
+  Assets:Stock  -10 AAPL {*}
+  Assets:Cash
+"#;
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        let txn = result.directives.iter().find_map(|d| {
+            if let Directive::Transaction(t) = &d.value {
+                Some(t)
+            } else {
+                None
+            }
+        });
+        let posting = &txn.unwrap().postings[0];
+        let cost = posting.cost.as_ref().expect("should have cost spec");
+        assert!(cost.merge, "merge flag should be true for {{*}}");
     }
 
     #[test]

@@ -95,7 +95,9 @@
           srcFilter = path: type:
             (craneLib.filterCargoSources path type) ||
             (builtins.match ".*\\.beancount$" path != null) ||
-            (builtins.match ".*/tests/fixtures(/.*)?$" path != null);
+            (builtins.match ".*\\.snap$" path != null) ||
+            (builtins.match ".*/tests/fixtures(/.*)?$" path != null) ||
+            (builtins.match ".*/tests/snapshots(/.*)?$" path != null);
 
           src = lib.cleanSourceWith {
             src = ./.;
