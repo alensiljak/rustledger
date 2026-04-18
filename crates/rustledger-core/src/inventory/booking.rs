@@ -7,7 +7,43 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::Signed;
 
 use super::{BookingError, BookingMethod, BookingResult, Inventory};
-use crate::{Amount, Cost, CostSpec, Position};
+use crate::{Amount, Cost, CostSpec, InternedStr, Position};
+
+/// Compute weighted-average cost from a set of positions.
+///
+/// Returns `(avg_cost_per_unit, cost_currency)` or `None` if no positions have cost info.
+/// Returns `Err(CurrencyMismatch)` if positions have costs in different currencies.
+fn average_cost_from_positions(
+    positions: &[&Position],
+    total_units: Decimal,
+) -> Result<Option<(Decimal, InternedStr)>, BookingError> {
+    let mut total_cost = Decimal::ZERO;
+    let mut cost_currency: Option<InternedStr> = None;
+    let mut has_any_cost = false;
+
+    for pos in positions {
+        if let Some(cost) = &pos.cost {
+            has_any_cost = true;
+            if let Some(ref cc) = cost_currency {
+                if *cc != cost.currency {
+                    return Err(BookingError::CurrencyMismatch {
+                        expected: cc.clone(),
+                        got: cost.currency.clone(),
+                    });
+                }
+            } else {
+                cost_currency = Some(cost.currency.clone());
+            }
+            total_cost += pos.units.number * cost.number;
+        }
+    }
+
+    if !has_any_cost || cost_currency.is_none() {
+        return Ok(None);
+    }
+
+    Ok(Some((total_cost / total_units, cost_currency.unwrap())))
+}
 
 impl Inventory {
     /// Try reducing positions without modifying the inventory.
@@ -271,12 +307,13 @@ impl Inventory {
 
     /// Try AVERAGE booking without modifying inventory.
     fn try_reduce_average(&self, units: &Amount) -> Result<BookingResult, BookingError> {
-        let total_units: Decimal = self
+        let matching: Vec<&Position> = self
             .positions
             .iter()
             .filter(|p| p.units.currency == units.currency && !p.is_empty())
-            .map(|p| p.units.number)
-            .sum();
+            .collect();
+
+        let total_units: Decimal = matching.iter().map(|p| p.units.number).sum();
 
         if total_units.is_zero() {
             return Err(BookingError::InsufficientUnits {
@@ -295,20 +332,12 @@ impl Inventory {
             });
         }
 
-        let book_values = self.book_value(&units.currency);
-        let cost_basis = if let Some((curr, &total)) = book_values.iter().next() {
-            let per_unit_cost = total / total_units;
-            Some(Amount::new(reduction * per_unit_cost, curr.clone()))
-        } else {
-            None
+        let cost_basis = match average_cost_from_positions(&matching, total_units)? {
+            Some((avg_cost, currency)) => Some(Amount::new(reduction * avg_cost, currency)),
+            None => None,
         };
 
-        let matched: Vec<Position> = self
-            .positions
-            .iter()
-            .filter(|p| p.units.currency == units.currency && !p.is_empty())
-            .cloned()
-            .collect();
+        let matched: Vec<Position> = matching.into_iter().cloned().collect();
 
         Ok(BookingResult {
             matched,
@@ -716,13 +745,13 @@ impl Inventory {
 
     /// AVERAGE booking: merge all lots of the currency.
     pub(super) fn reduce_average(&mut self, units: &Amount) -> Result<BookingResult, BookingError> {
-        // Calculate average cost
-        let total_units: Decimal = self
+        let matching: Vec<&Position> = self
             .positions
             .iter()
             .filter(|p| p.units.currency == units.currency && !p.is_empty())
-            .map(|p| p.units.number)
-            .sum();
+            .collect();
+
+        let total_units: Decimal = matching.iter().map(|p| p.units.number).sum();
 
         if total_units.is_zero() {
             return Err(BookingError::InsufficientUnits {
@@ -732,7 +761,6 @@ impl Inventory {
             });
         }
 
-        // Check sufficient units
         let reduction = units.number.abs();
         if reduction > total_units.abs() {
             return Err(BookingError::InsufficientUnits {
@@ -742,26 +770,15 @@ impl Inventory {
             });
         }
 
-        // Calculate total cost basis
-        let book_values = self.book_value(&units.currency);
-        let cost_basis = if let Some((curr, &total)) = book_values.iter().next() {
-            let per_unit_cost = total / total_units;
-            Some(Amount::new(reduction * per_unit_cost, curr.clone()))
-        } else {
-            None
+        let cost_basis = match average_cost_from_positions(&matching, total_units)? {
+            Some((avg_cost, currency)) => Some(Amount::new(reduction * avg_cost, currency)),
+            None => None,
         };
 
-        // Create merged position
+        let matched: Vec<Position> = matching.into_iter().cloned().collect();
         let new_units = total_units + units.number;
 
         // Remove all positions of this currency
-        let matched: Vec<Position> = self
-            .positions
-            .iter()
-            .filter(|p| p.units.currency == units.currency && !p.is_empty())
-            .cloned()
-            .collect();
-
         self.positions
             .retain(|p| p.units.currency != units.currency);
 
@@ -773,7 +790,6 @@ impl Inventory {
             )));
         }
 
-        // Rebuild index after modifications
         self.rebuild_index();
 
         Ok(BookingResult {
@@ -820,35 +836,13 @@ impl Inventory {
             });
         }
 
-        // Compute weighted-average cost directly from matching lots.
-        // Only count lots that have cost info; if any lot lacks cost, error
-        // rather than silently computing an incorrect average.
-        let mut total_cost = Decimal::ZERO;
-        let mut cost_currency: Option<crate::InternedStr> = None;
-        for (_, pos) in &matching {
-            if let Some(cost) = &pos.cost {
-                if let Some(ref cc) = cost_currency {
-                    if *cc != cost.currency {
-                        // Multiple cost currencies — cannot merge
-                        return Err(BookingError::CurrencyMismatch {
-                            expected: cc.clone(),
-                            got: cost.currency.clone(),
-                        });
-                    }
-                } else {
-                    cost_currency = Some(cost.currency.clone());
-                }
-                total_cost += pos.units.number * cost.number;
-            } else {
-                // Lot without cost — cannot compute meaningful average
-                return self.reduce_average(units);
-            }
-        }
-        let cost_currency = match cost_currency {
-            Some(c) => c,
-            None => return self.reduce_average(units),
-        };
-        let avg_cost = total_cost / total_units;
+        // Compute weighted-average cost from matching lots.
+        let matching_refs: Vec<&Position> = matching.iter().map(|(_, p)| *p).collect();
+        let (avg_cost, cost_currency) =
+            match average_cost_from_positions(&matching_refs, total_units)? {
+                Some(result) => result,
+                None => return self.reduce_average(units),
+            };
 
         let cost_basis = Some(Amount::new(reduction * avg_cost, cost_currency.clone()));
 
