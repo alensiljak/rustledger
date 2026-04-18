@@ -332,10 +332,8 @@ impl Inventory {
             });
         }
 
-        let cost_basis = match average_cost_from_positions(&matching, total_units)? {
-            Some((avg_cost, currency)) => Some(Amount::new(reduction * avg_cost, currency)),
-            None => None,
-        };
+        let cost_basis = average_cost_from_positions(&matching, total_units)?
+            .map(|(avg_cost, currency)| Amount::new(reduction * avg_cost, currency));
 
         let matched: Vec<Position> = matching.into_iter().cloned().collect();
 
@@ -770,10 +768,8 @@ impl Inventory {
             });
         }
 
-        let cost_basis = match average_cost_from_positions(&matching, total_units)? {
-            Some((avg_cost, currency)) => Some(Amount::new(reduction * avg_cost, currency)),
-            None => None,
-        };
+        let cost_basis = average_cost_from_positions(&matching, total_units)?
+            .map(|(avg_cost, currency)| Amount::new(reduction * avg_cost, currency));
 
         let matched: Vec<Position> = matching.into_iter().cloned().collect();
         let new_units = total_units + units.number;
@@ -849,15 +845,16 @@ impl Inventory {
         // Return a single synthetic matched position representing the merged lot.
         // This prevents the booking engine from expanding the posting into multiple
         // postings (one per original lot), which would be incorrect for {*}.
-        let avg_cost_obj = Cost {
+        let make_avg_cost = || Cost {
             number: avg_cost,
             currency: cost_currency.clone(),
             date: None,
             label: None,
         };
+
         let matched = vec![Position::with_cost(
             Amount::new(units.number.abs(), units.currency.clone()),
-            avg_cost_obj.clone(),
+            make_avg_cost(),
         )];
 
         // Remove all matching lots of this currency
@@ -875,7 +872,7 @@ impl Inventory {
         if !remaining.is_zero() {
             self.positions.push(Position::with_cost(
                 Amount::new(remaining, units.currency.clone()),
-                avg_cost_obj,
+                make_avg_cost(),
             ));
         }
 
