@@ -15,14 +15,13 @@
 //! ```
 //! use rustledger_core::{Amount, Cost, Position, Inventory, BookingMethod};
 //! use rust_decimal_macros::dec;
-//! use chrono::NaiveDate;
 //!
 //! // Create an inventory
 //! let mut inv = Inventory::new();
 //!
 //! // Add a stock position with cost
 //! let cost = Cost::new(dec!(150.00), "USD")
-//!     .with_date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+//!     .with_date(rustledger_core::naive_date(2024, 1, 15).unwrap());
 //! inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
 //!
 //! // Check holdings
@@ -75,8 +74,22 @@ pub use inventory::{AccountedBookingError, BookingError, BookingMethod, BookingR
 pub use position::Position;
 
 // Re-export commonly used external types
-pub use chrono::NaiveDate;
+/// Calendar date without timezone. Alias for `jiff::civil::Date`.
+pub type NaiveDate = jiff::civil::Date;
 pub use rust_decimal::Decimal;
+
+/// Construct a [`NaiveDate`] from `(year, month, day)` with i32/u32 arguments.
+///
+/// Wraps [`jiff::civil::date`] which takes `(i16, i8, i8)`.
+/// Returns `None` if the date is invalid.
+#[must_use]
+pub fn naive_date(year: i32, month: u32, day: u32) -> Option<NaiveDate> {
+    i16::try_from(year)
+        .ok()
+        .and_then(|y| i8::try_from(month).ok().map(|m| (y, m)))
+        .and_then(|(y, m)| i8::try_from(day).ok().map(|d| (y, m, d)))
+        .and_then(|(y, m, d)| NaiveDate::new(y, m, d).ok())
+}
 
 // Re-export rkyv wrappers when feature is enabled
 #[cfg(feature = "rkyv")]

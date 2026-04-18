@@ -5,9 +5,9 @@
 //!
 //! Run with: cargo test -p rustledger-core --test `synthetic_generation`
 
-use chrono::NaiveDate;
 use proptest::prelude::*;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use rustledger_core::{
     Amount, Balance, Close, Commodity, Custom, Directive, Document, Event, FormatConfig, MetaValue,
     Note, Open, Pad, Posting, Price, Query, Transaction, format_directive,
@@ -20,7 +20,7 @@ use rustledger_core::{
 /// Generate dates in a reasonable range
 fn arb_date() -> impl Strategy<Value = NaiveDate> {
     (2020i32..2026i32, 1u32..13u32, 1u32..29u32)
-        .prop_map(|(y, m, d)| NaiveDate::from_ymd_opt(y, m, d).unwrap())
+        .prop_map(|(y, m, d)| rustledger_core::naive_date(y, m, d).unwrap())
 }
 
 /// Generate reasonable decimal values
@@ -378,7 +378,7 @@ fn arb_synthetic_ledger() -> impl Strategy<Value = SyntheticLedger> {
         "Equity:Opening-Balances".to_string(),
     ];
 
-    let start_date = NaiveDate::from_ymd_opt(2020, 1, 1).unwrap();
+    let start_date = rustledger_core::naive_date(2020, 1, 1).unwrap();
 
     // Generate transactions
     (
@@ -414,7 +414,9 @@ fn arb_synthetic_ledger() -> impl Strategy<Value = SyntheticLedger> {
                 let to_account = &accounts[to_idx % accounts.len()];
 
                 if from_account != to_account {
-                    let txn_date = start_date + chrono::Duration::days(i64::from(day_offset));
+                    let txn_date = start_date
+                        .checked_add(jiff::ToSpan::days(i64::from(day_offset)))
+                        .unwrap();
                     let amt = Amount::new(amount, &currency);
 
                     let txn = Transaction::new(txn_date, &narration)
@@ -510,7 +512,7 @@ mod tests {
     #[test]
     fn test_synthetic_ledger_output() {
         // Create a simple test ledger
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         let directives = vec![
             Directive::Open(Open::new(date, "Assets:Bank")),
@@ -547,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_all_directive_types_have_format() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let config = FormatConfig::default();
 
         // Create one of each directive type and verify format works
@@ -608,7 +610,7 @@ mod tests {
         use std::io::Write;
         use std::process::Command;
 
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Create a valid ledger
         let directives = vec![
@@ -627,13 +629,16 @@ mod tests {
                     .with_posting(Posting::auto("Income:Salary")),
             ),
             Directive::Transaction(
-                Transaction::new(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), "Groceries")
-                    .with_flag('*')
-                    .with_posting(Posting::new(
-                        "Expenses:Food",
-                        Amount::new(Decimal::new(5000, 2), "USD"),
-                    ))
-                    .with_posting(Posting::auto("Assets:Bank:Checking")),
+                Transaction::new(
+                    rustledger_core::naive_date(2024, 1, 15).unwrap(),
+                    "Groceries",
+                )
+                .with_flag('*')
+                .with_posting(Posting::new(
+                    "Expenses:Food",
+                    Amount::new(Decimal::new(5000, 2), "USD"),
+                ))
+                .with_posting(Posting::auto("Assets:Bank:Checking")),
             ),
         ];
 

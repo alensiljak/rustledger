@@ -22,7 +22,7 @@ rustledger-booking.workspace = true
 rust_decimal.workspace = true
 bigdecimal = "0.4"
 thiserror.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 rayon.workspace = true
 rustc-hash.workspace = true
 

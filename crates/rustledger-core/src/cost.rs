@@ -6,7 +6,7 @@
 //! A [`CostSpec`] is used for matching against existing costs or specifying
 //! new costs when all fields may not be known.
 
-use chrono::NaiveDate;
+use crate::NaiveDate;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -36,10 +36,9 @@ use crate::intern::{AsDecimal, AsInternedStr, AsNaiveDate};
 /// ```
 /// use rustledger_core::Cost;
 /// use rust_decimal_macros::dec;
-/// use chrono::NaiveDate;
 ///
 /// let cost = Cost::new(dec!(150.00), "USD")
-///     .with_date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+///     .with_date(rustledger_core::naive_date(2024, 1, 15).unwrap());
 ///
 /// assert_eq!(cost.number, dec!(150.00));
 /// assert_eq!(cost.currency, "USD");
@@ -161,17 +160,16 @@ impl fmt::Display for Cost {
 /// ```
 /// use rustledger_core::{Cost, CostSpec};
 /// use rust_decimal_macros::dec;
-/// use chrono::NaiveDate;
 ///
 /// let cost = Cost::new(dec!(150.00), "USD")
-///     .with_date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+///     .with_date(rustledger_core::naive_date(2024, 1, 15).unwrap());
 ///
 /// // Match by date only
-/// let spec = CostSpec::default().with_date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+/// let spec = CostSpec::default().with_date(rustledger_core::naive_date(2024, 1, 15).unwrap());
 /// assert!(spec.matches(&cost));
 ///
 /// // Match by wrong date
-/// let spec2 = CostSpec::default().with_date(NaiveDate::from_ymd_opt(2024, 1, 16).unwrap());
+/// let spec2 = CostSpec::default().with_date(rustledger_core::naive_date(2024, 1, 16).unwrap());
 /// assert!(!spec2.matches(&cost));
 /// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -356,7 +354,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        crate::naive_date(year, month, day).unwrap()
     }
 
     #[test]

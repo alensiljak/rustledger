@@ -71,8 +71,8 @@ pub fn generate_all_edge_cases() -> Vec<EdgeCaseCollection> {
 /// - Metadata values
 /// - Event descriptions
 pub fn generate_unicode_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let open_date = base_date.pred_opt().unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
+    let open_date = base_date.yesterday().ok().unwrap();
 
     let directives = vec![
         // Open accounts first
@@ -168,8 +168,8 @@ pub fn generate_unicode_edge_cases() -> EdgeCaseCollection {
 /// - Very small numbers
 /// - Numbers with trailing zeros
 pub fn generate_decimal_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let open_date = base_date.pred_opt().unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
+    let open_date = base_date.yesterday().ok().unwrap();
 
     let directives = vec![
         // Open accounts first
@@ -256,8 +256,8 @@ pub fn generate_decimal_edge_cases() -> EdgeCaseCollection {
 ///
 /// Tests parsing of accounts with many segments.
 pub fn generate_hierarchy_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let open_date = base_date.pred_opt().unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
+    let open_date = base_date.yesterday().ok().unwrap();
 
     // Deep hierarchy accounts
     let deep_asset = "Assets:Bank:Region:Country:City:Branch:Department:Team:SubTeam:Account";
@@ -302,8 +302,8 @@ pub fn generate_hierarchy_edge_cases() -> EdgeCaseCollection {
 
 /// Generate edge cases with large transactions (many postings).
 pub fn generate_large_transaction_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let open_date = base_date.pred_opt().unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
+    let open_date = base_date.yesterday().ok().unwrap();
 
     // Generate open directives for accounts
     let mut directives: Vec<Directive> = (0..25)
@@ -358,23 +358,23 @@ pub fn generate_large_transaction_edge_cases() -> EdgeCaseCollection {
 /// Generate boundary date edge cases.
 pub fn generate_boundary_date_edge_cases() -> EdgeCaseCollection {
     // Early date (1900)
-    let early_date = NaiveDate::from_ymd_opt(1900, 1, 1).unwrap();
+    let early_date = crate::naive_date(1900, 1, 1).unwrap();
     // Late date
-    let late_date = NaiveDate::from_ymd_opt(2099, 12, 31).unwrap();
+    let late_date = crate::naive_date(2099, 12, 31).unwrap();
     // Leap year dates
-    let leap_date = NaiveDate::from_ymd_opt(2024, 2, 29).unwrap();
+    let leap_date = crate::naive_date(2024, 2, 29).unwrap();
     // End of months
-    let end_jan = NaiveDate::from_ymd_opt(2024, 1, 31).unwrap();
-    let end_apr = NaiveDate::from_ymd_opt(2024, 4, 30).unwrap();
+    let end_jan = crate::naive_date(2024, 1, 31).unwrap();
+    let end_apr = crate::naive_date(2024, 4, 30).unwrap();
 
     let directives = vec![
         // Open accounts at early date
         Directive::Open(Open::new(
-            NaiveDate::from_ymd_opt(1899, 12, 31).unwrap(),
+            crate::naive_date(1899, 12, 31).unwrap(),
             "Assets:Historical:Account",
         )),
         Directive::Open(Open::new(
-            NaiveDate::from_ymd_opt(1899, 12, 31).unwrap(),
+            crate::naive_date(1899, 12, 31).unwrap(),
             "Equity:Opening",
         )),
         // Early date transaction
@@ -435,8 +435,8 @@ pub fn generate_boundary_date_edge_cases() -> EdgeCaseCollection {
 ///
 /// Tests handling of escaped characters and special strings.
 pub fn generate_special_character_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
-    let open_date = base_date.pred_opt().unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
+    let open_date = base_date.yesterday().ok().unwrap();
 
     let directives = vec![
         Directive::Open(Open::new(open_date, "Assets:Bank:Checking")),
@@ -501,7 +501,7 @@ pub fn generate_special_character_edge_cases() -> EdgeCaseCollection {
 ///
 /// Tests handling of minimal valid directives.
 pub fn generate_minimal_edge_cases() -> EdgeCaseCollection {
-    let base_date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+    let base_date = crate::naive_date(2024, 1, 1).unwrap();
 
     let directives = vec![
         // Minimal open
@@ -511,7 +511,10 @@ pub fn generate_minimal_edge_cases() -> EdgeCaseCollection {
             Open::new(base_date, "Assets:WithCurrency").with_currencies(vec!["USD".into()]),
         ),
         // Close
-        Directive::Close(Close::new(base_date.succ_opt().unwrap(), "Assets:Minimal")),
+        Directive::Close(Close::new(
+            base_date.tomorrow().ok().unwrap(),
+            "Assets:Minimal",
+        )),
         // Minimal commodity
         Directive::Commodity(Commodity::new(base_date, "MINI")),
         // Minimal price
