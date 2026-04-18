@@ -1551,7 +1551,7 @@ mod tests {
         assert_eq!(result.cost_basis, Some(Amount::new(dec!(3100), "USD")));
 
         // Inventory should be empty
-        assert!(inv.positions.is_empty() || inv.positions.iter().all(|p| p.is_empty()));
+        assert!(inv.positions.is_empty() || inv.positions.iter().all(Position::is_empty));
     }
 
     #[test]
