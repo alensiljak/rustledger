@@ -544,7 +544,7 @@ pub fn run_plugins(
                                 errors.push(
                                     LedgerError::error(
                                         "PLUGIN",
-                                        format!("Plugin '{}' failed: {e}", raw_name),
+                                        format!("Plugin '{raw_name}' failed: {e}"),
                                     )
                                     .with_phase("plugin"),
                                 );
@@ -567,7 +567,7 @@ pub fn run_plugins(
                 } else {
                     // Completely unknown plugin name
                     errors.push(
-                        LedgerError::error("PLUGIN", format!("Plugin not found: '{}'", raw_name))
+                        LedgerError::error("PLUGIN", format!("Plugin not found: '{raw_name}'"))
                             .with_phase("plugin"),
                     );
                 }
@@ -780,7 +780,7 @@ fn run_python_plugin(
     } else {
         runtime
             .execute_module(module_name, &input, Some(base_dir))
-            .map_err(|e| format!("Python plugin '{}' execution failed: {e}", module_name))?
+            .map_err(|e| format!("Python plugin '{module_name}' execution failed: {e}"))?
     };
 
     let mut errors = Vec::new();
