@@ -23,7 +23,7 @@ default = ["bean-compat", "python-plugin-wasm"]
 bean-compat = []
 # Enable Python plugin support via WASM sandbox (adds ~30s to build time)
 # This allows running existing Python beancount plugins
-python-plugin-wasm = ["rustledger-plugin/python-plugins"]
+python-plugin-wasm = ["rustledger-plugin/python-plugins", "rustledger-loader/wasm-plugins", "rustledger-loader/python-plugins"]
 
 # Primary binary - unified CLI with subcommands
 [[bin]]

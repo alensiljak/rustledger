@@ -463,6 +463,139 @@ pub fn run_plugins(
                 }
 
                 wrappers = output.directives;
+            } else {
+                // Not a native plugin — categorize and handle
+                let plugin_path = std::path::Path::new(raw_name);
+                let ext = plugin_path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+
+                let resolve_path = |name: &str| -> Result<std::path::PathBuf, String> {
+                    let p = std::path::Path::new(name);
+                    let resolved = if p.is_absolute() {
+                        p.to_path_buf()
+                    } else {
+                        base_dir.join(name)
+                    };
+
+                    // Path security: prevent plugins from outside the ledger directory
+                    if options.path_security
+                        && let (Ok(canon_base), Ok(canon_plugin)) =
+                            (base_dir.canonicalize(), resolved.canonicalize())
+                        && !canon_plugin.starts_with(&canon_base)
+                    {
+                        return Err(format!(
+                            "plugin path '{name}' is outside the ledger directory"
+                        ));
+                    }
+
+                    Ok(resolved)
+                };
+
+                if ext == "wasm" {
+                    // WASM plugin
+                    #[cfg(feature = "wasm-plugins")]
+                    {
+                        let wasm_path = match resolve_path(raw_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                errors.push(LedgerError::error("PLUGIN", e).with_phase("plugin"));
+                                continue;
+                            }
+                        };
+                        match run_wasm_plugin(&wasm_path, &wrappers, &plugin_options, plugin_config)
+                        {
+                            Ok((output_directives, plugin_errors)) => {
+                                for err in plugin_errors {
+                                    errors.push(err);
+                                }
+                                wrappers = output_directives;
+                            }
+                            Err(e) => {
+                                errors.push(
+                                    LedgerError::error(
+                                        "PLUGIN",
+                                        format!("WASM plugin {} failed: {e}", wasm_path.display()),
+                                    )
+                                    .with_phase("plugin"),
+                                );
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "wasm-plugins"))]
+                    {
+                        errors.push(
+                            LedgerError::error(
+                                "PLUGIN",
+                                format!(
+                                    "WASM plugin '{}' requires the wasm-plugins feature",
+                                    raw_name
+                                ),
+                            )
+                            .with_phase("plugin"),
+                        );
+                    }
+                } else if ext == "py"
+                    || raw_name.contains(std::path::MAIN_SEPARATOR)
+                    || raw_name.contains('.')
+                {
+                    // Python module or file-based plugin
+                    #[cfg(feature = "python-plugins")]
+                    {
+                        let resolved = match resolve_path(raw_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                errors.push(LedgerError::error("PLUGIN", e).with_phase("plugin"));
+                                continue;
+                            }
+                        };
+                        match run_python_plugin(
+                            raw_name,
+                            &resolved,
+                            base_dir,
+                            &wrappers,
+                            &plugin_options,
+                            plugin_config,
+                        ) {
+                            Ok((output_directives, plugin_errors)) => {
+                                for err in plugin_errors {
+                                    errors.push(err);
+                                }
+                                wrappers = output_directives;
+                            }
+                            Err(e) => {
+                                errors.push(
+                                    LedgerError::error(
+                                        "PLUGIN",
+                                        format!("Plugin '{raw_name}' failed: {e}"),
+                                    )
+                                    .with_phase("plugin"),
+                                );
+                            }
+                        }
+                    }
+                    #[cfg(not(feature = "python-plugins"))]
+                    {
+                        errors.push(
+                            LedgerError::error(
+                                "PLUGIN",
+                                format!(
+                                    "Plugin '{}' not found. Python plugins require the python-plugins feature.",
+                                    raw_name
+                                ),
+                            )
+                            .with_phase("plugin"),
+                        );
+                    }
+                } else {
+                    // Completely unknown plugin name
+                    errors.push(
+                        LedgerError::error("PLUGIN", format!("Plugin not found: '{raw_name}'"))
+                            .with_phase("plugin"),
+                    );
+                }
             }
         }
     }
@@ -586,4 +719,110 @@ pub fn load(path: &Path, options: &LoadOptions) -> Result<Ledger, ProcessError> 
 /// Use this when you need the original parse output.
 pub fn load_raw(path: &Path) -> Result<LoadResult, LoadError> {
     crate::Loader::new().load(path)
+}
+
+/// Run a WASM plugin and return its output directives and errors.
+#[cfg(feature = "wasm-plugins")]
+fn run_wasm_plugin(
+    wasm_path: &std::path::Path,
+    directives: &[rustledger_plugin_types::DirectiveWrapper],
+    options: &rustledger_plugin::PluginOptions,
+    config: &Option<String>,
+) -> Result<
+    (
+        Vec<rustledger_plugin_types::DirectiveWrapper>,
+        Vec<LedgerError>,
+    ),
+    String,
+> {
+    use rustledger_plugin::{PluginInput, PluginManager};
+
+    let mut mgr = PluginManager::new();
+    let plugin_idx = mgr
+        .load(wasm_path)
+        .map_err(|e| format!("failed to load: {e}"))?;
+
+    let input = PluginInput {
+        directives: directives.to_vec(),
+        options: options.clone(),
+        config: config.clone(),
+    };
+
+    let output = mgr
+        .execute(plugin_idx, &input)
+        .map_err(|e| format!("execution failed: {e}"))?;
+
+    let mut errors = Vec::new();
+    for err in output.errors {
+        let ledger_err = match err.severity {
+            rustledger_plugin::PluginErrorSeverity::Error => {
+                LedgerError::error("PLUGIN", err.message).with_phase("plugin")
+            }
+            rustledger_plugin::PluginErrorSeverity::Warning => {
+                LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
+            }
+        };
+        errors.push(ledger_err);
+    }
+
+    Ok((output.directives, errors))
+}
+
+/// Run a Python module plugin via the WASI-based Python runtime.
+#[cfg(feature = "python-plugins")]
+fn run_python_plugin(
+    module_name: &str,
+    resolved_path: &std::path::Path,
+    base_dir: &std::path::Path,
+    directives: &[rustledger_plugin_types::DirectiveWrapper],
+    options: &rustledger_plugin::PluginOptions,
+    config: &Option<String>,
+) -> Result<
+    (
+        Vec<rustledger_plugin_types::DirectiveWrapper>,
+        Vec<LedgerError>,
+    ),
+    String,
+> {
+    use rustledger_plugin::{PluginInput, python::PythonRuntime};
+
+    let runtime = PythonRuntime::new().map_err(|e| format!("Python runtime unavailable: {e}"))?;
+
+    let input = PluginInput {
+        directives: directives.to_vec(),
+        options: options.clone(),
+        config: config.clone(),
+    };
+
+    // Try file-based execution first, then module-based
+    let is_file = resolved_path.exists()
+        || std::path::Path::new(module_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
+        || module_name.contains(std::path::MAIN_SEPARATOR);
+
+    let output = if is_file {
+        runtime
+            .execute_module(module_name, &input, Some(base_dir))
+            .map_err(|e| format!("Python plugin execution failed: {e}"))?
+    } else {
+        runtime
+            .execute_module(module_name, &input, Some(base_dir))
+            .map_err(|e| format!("Python plugin '{module_name}' execution failed: {e}"))?
+    };
+
+    let mut errors = Vec::new();
+    for err in output.errors {
+        let ledger_err = match err.severity {
+            rustledger_plugin::PluginErrorSeverity::Error => {
+                LedgerError::error("PLUGIN", err.message).with_phase("plugin")
+            }
+            rustledger_plugin::PluginErrorSeverity::Warning => {
+                LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
+            }
+        };
+        errors.push(ledger_err);
+    }
+
+    Ok((output.directives, errors))
 }

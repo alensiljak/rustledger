@@ -910,17 +910,18 @@ fn test_unknown_plugin_skipped_gracefully() {
     let ledger =
         load(&path, &LoadOptions::default()).expect("should load file with unknown plugin");
 
-    // The unknown plugin "some.unknown.plugin.module" should NOT crash
-    // the pipeline — it should be silently skipped (only native plugins
-    // are executed). Verify the ledger loaded successfully.
-    //
-    // Note: the current run_plugins() implementation silently skips
-    // non-native plugins. If/when Python plugin support is added to the
-    // loader pipeline, this test should be updated to check for an error
-    // like E8001 (plugin not found).
+    // Unknown plugins should NOT crash the pipeline — they report an error
+    // but loading continues with the remaining directives.
     assert!(
         !ledger.directives.is_empty(),
         "Ledger should still have directives even with unknown plugin"
+    );
+
+    // Should report the plugin as not found (not silently skip)
+    assert!(
+        ledger.errors.iter().any(|e| e.phase == "plugin"),
+        "expected a plugin error for unknown plugin, got: {:?}",
+        ledger.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
 
@@ -1036,5 +1037,119 @@ fn test_parallel_loading_multiple_includes() {
         ledger.source_map.files().len(),
         4,
         "Source map should have 4 files"
+    );
+}
+
+/// Test that WASM plugins are attempted during load (not silently skipped).
+///
+/// This is a regression test for issue #842: WASM plugins were parsed
+/// but never executed by the loader, only by `rledger check`.
+///
+/// Note: the passthrough WASM plugin may fail in some environments
+/// (e.g., coverage instrumentation), so we verify the plugin was
+/// *attempted* (not "not found"), not that execution succeeded.
+#[cfg(feature = "wasm-plugins")]
+#[test]
+fn test_wasm_plugin_executed_during_load() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("with_wasm_plugin.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load file with WASM plugin");
+
+    // The key assertion: the plugin was NOT reported as "not found".
+    // Before the fix, unknown plugins (including .wasm) were silently skipped
+    // with no error at all. Now they're either executed or report a WASM error.
+    let not_found_errors: Vec<_> = ledger
+        .errors
+        .iter()
+        .filter(|e| e.message.contains("not found") || e.message.contains("Not found"))
+        .collect();
+    assert!(
+        not_found_errors.is_empty(),
+        "WASM plugin should be recognized (not 'not found'), got: {not_found_errors:?}"
+    );
+
+    assert!(
+        !ledger.directives.is_empty(),
+        "directives should survive WASM plugin processing"
+    );
+}
+
+/// Test that unknown plugins report an error (not silently skipped).
+#[test]
+fn test_unknown_plugin_reports_error() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.beancount");
+    std::fs::write(
+        &path,
+        "plugin \"nonexistent_plugin\"\n2024-01-01 open Assets:Bank USD\n",
+    )
+    .unwrap();
+
+    let options = LoadOptions::default();
+    let ledger = load(&path, &options).expect("should not panic");
+
+    // Should have an error about the unknown plugin
+    assert!(
+        ledger
+            .errors
+            .iter()
+            .any(|e| e.message.contains("not found")),
+        "expected 'not found' error for unknown plugin, got: {:?}",
+        ledger.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+/// Test that Python module-style plugins report helpful errors when feature is disabled.
+#[test]
+fn test_python_module_plugin_reports_error() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.beancount");
+    std::fs::write(
+        &path,
+        "plugin \"beancount.plugins.my_custom_plugin\"\n2024-01-01 open Assets:Bank USD\n",
+    )
+    .unwrap();
+
+    let options = LoadOptions::default();
+    let ledger = load(&path, &options).expect("should not panic");
+
+    // Should have an error — not silently skip
+    assert!(
+        !ledger.errors.is_empty(),
+        "python module plugin should produce an error, not be silently skipped"
+    );
+}
+
+/// Test that missing WASM file produces a clear error.
+#[cfg(feature = "wasm-plugins")]
+#[test]
+fn test_missing_wasm_plugin_reports_error() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.beancount");
+    std::fs::write(
+        &path,
+        "plugin \"does_not_exist.wasm\"\n2024-01-01 open Assets:Bank USD\n",
+    )
+    .unwrap();
+
+    let options = LoadOptions::default();
+    let ledger = load(&path, &options).expect("should not panic");
+
+    assert!(
+        ledger
+            .errors
+            .iter()
+            .any(|e| e.message.contains("WASM") && e.message.contains("failed")),
+        "expected WASM error for missing file, got: {:?}",
+        ledger.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }

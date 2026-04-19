@@ -3286,6 +3286,7 @@ dependencies = [
  "rustledger-core",
  "rustledger-parser",
  "rustledger-plugin",
+ "rustledger-plugin-types",
  "rustledger-validate",
  "sha2 0.11.0",
  "tempfile",
