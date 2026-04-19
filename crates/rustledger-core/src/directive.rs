@@ -445,7 +445,7 @@ impl Directive {
                 p.cost.is_some()
                     && p.units
                         .as_ref()
-                        .and_then(|u| u.number())
+                        .and_then(IncompleteAmount::number)
                         .is_some_and(|n| n.is_sign_negative())
             })
         } else {
