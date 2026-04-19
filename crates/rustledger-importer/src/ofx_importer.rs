@@ -78,10 +78,10 @@ impl OfxImporter {
         txn: &ofxy::body::Transaction,
         currency: &str,
     ) -> Result<Transaction> {
-        // Get date from ofxy's DateTime<Utc> via ISO string roundtrip
+        // Get date from ofxy's DateTime<Utc> via formatted string roundtrip
         let date: NaiveDate = txn
             .date_posted
-            .to_string()
+            .format("%Y-%m-%d")
             .to_string()
             .parse()
             .with_context(|| "Invalid date")?;

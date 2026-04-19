@@ -603,7 +603,7 @@ mod rkyv_date {
         type Resolver = ();
 
         fn resolve_with(field: &NaiveDate, _resolver: Self::Resolver, out: Place<Self::Archived>) {
-            let days = field.since(UNIX_EPOCH).unwrap().get_days();
+            let days = field.since(UNIX_EPOCH).unwrap_or_default().get_days();
             rkyv::Archive::resolve(&days, (), out);
         }
     }

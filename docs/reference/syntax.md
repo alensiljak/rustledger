@@ -1,6 +1,7 @@
-______________________________________________________________________
-
-## title: Beancount Syntax Reference description: Complete guide to beancount file syntax
+---
+title: Beancount Syntax Reference
+description: Complete guide to beancount file syntax
+---
 
 # Beancount Syntax Reference
 
