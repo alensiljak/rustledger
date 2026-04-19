@@ -579,13 +579,7 @@ pub fn run_plugins(
                                 wrappers = output_directives;
                             }
                             Err(e) => {
-                                errors.push(
-                                    LedgerError::error(
-                                        "PLUGIN",
-                                        format!("Plugin '{raw_name}' failed: {e}"),
-                                    )
-                                    .with_phase("plugin"),
-                                );
+                                errors.push(LedgerError::error("E8002", e).with_phase("plugin"));
                             }
                         }
                     }
@@ -593,9 +587,9 @@ pub fn run_plugins(
                     {
                         errors.push(
                             LedgerError::error(
-                                "PLUGIN",
+                                "E8005",
                                 format!(
-                                    "Plugin '{}' not found. Python plugins require the python-plugins feature.",
+                                    "Python plugin \"{}\" requires python-plugin-wasm feature",
                                     raw_name
                                 ),
                             )
@@ -603,11 +597,45 @@ pub fn run_plugins(
                         );
                     }
                 } else {
-                    // Completely unknown plugin name
-                    errors.push(
-                        LedgerError::error("PLUGIN", format!("Plugin not found: '{raw_name}'"))
+                    // Completely unknown plugin name — try to suggest a module path
+                    #[cfg(feature = "python-plugins")]
+                    {
+                        use rustledger_plugin::python::{is_python_available, suggest_module_path};
+                        let suggestion = if is_python_available() {
+                            suggest_module_path(raw_name)
+                        } else {
+                            None
+                        };
+                        if let Some(module_path) = suggestion {
+                            errors.push(
+                                LedgerError::error(
+                                    "E8004",
+                                    format!(
+                                        "Cannot resolve Python module '{raw_name}'. Replace with: plugin \"{module_path}\""
+                                    ),
+                                )
+                                .with_phase("plugin"),
+                            );
+                        } else {
+                            errors.push(
+                                LedgerError::error(
+                                    "E8001",
+                                    format!("Plugin not found: \"{raw_name}\""),
+                                )
+                                .with_phase("plugin"),
+                            );
+                        }
+                    }
+                    #[cfg(not(feature = "python-plugins"))]
+                    {
+                        errors.push(
+                            LedgerError::error(
+                                "E8001",
+                                format!("Plugin not found: \"{raw_name}\""),
+                            )
                             .with_phase("plugin"),
-                    );
+                        );
+                    }
                 }
             }
         }
