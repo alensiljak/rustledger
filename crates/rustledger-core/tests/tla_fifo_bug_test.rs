@@ -4,7 +4,6 @@
 //! FIFO incorrectly selects based on insertion order rather than date.
 
 use rust_decimal_macros::dec;
-use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, BookingMethod, Cost, CostSpec, Inventory, Position};
 
 /// Reproduction of TLA+ counterexample:

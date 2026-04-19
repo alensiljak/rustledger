@@ -528,7 +528,6 @@ fn reintern_directive(directive: &mut Directive, interner: &mut StringInterner) 
 mod tests {
     use super::*;
     use rust_decimal_macros::dec;
-    use rustledger_core::NaiveDate;
     use rustledger_core::{Amount, Posting, Transaction};
     use rustledger_parser::Span;
 
