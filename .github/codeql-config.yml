@@ -1,8 +1,6 @@
 # CodeQL Configuration
 # Excludes upstream test fixtures from analysis
-
 name: "rustledger CodeQL config"
-
 # Exclude paths from analysis
 paths-ignore:
   # Upstream beancount example files (not our code)

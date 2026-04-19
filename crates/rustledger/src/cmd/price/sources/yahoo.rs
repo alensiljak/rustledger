@@ -5,7 +5,6 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::Utc;
 use rust_decimal::Decimal;
 use std::str::FromStr;
 use std::time::Duration;
@@ -100,7 +99,7 @@ impl PriceSource for YahooFinanceSource {
             .unwrap_or(&request.currency)
             .to_string();
 
-        let date = request.date.unwrap_or_else(|| Utc::now().date_naive());
+        let date = request.date.unwrap_or_else(|| jiff::Zoned::now().date());
 
         Ok(PriceResponse {
             price,

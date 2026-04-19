@@ -9,11 +9,13 @@ option "name" "value"
 ## Core Configuration
 
 ### title
+
 - **Type:** String
 - **Default:** (none)
 - **Description:** The title of this ledger. Shows up in reports.
 
 ### operating_currency
+
 - **Type:** String (repeatable)
 - **Default:** (none)
 - **Description:** Main currencies for reporting. Creates dedicated columns in reports. Can be specified multiple times.
@@ -36,6 +38,7 @@ Customize the five root account type names:
 | `name_expenses` | "Expenses" | Root name for expense accounts |
 
 Example:
+
 ```beancount
 option "name_income" "Revenue"
 option "name_equity" "Capital"
@@ -57,6 +60,7 @@ Used by OPEN/CLOSE statement operators in BQL:
 ## Tolerance & Precision
 
 ### inferred_tolerance_default
+
 - **Type:** Currency:Decimal mapping
 - **Default:** (per-currency defaults)
 - **Description:** Default tolerance when not inferrable from amounts.
@@ -67,11 +71,13 @@ option "inferred_tolerance_default" "JPY:1"
 ```
 
 ### inferred_tolerance_multiplier
+
 - **Type:** Decimal
 - **Default:** 1.1
 - **Description:** Multiplier applied to inferred tolerances.
 
 ### infer_tolerance_from_cost
+
 - **Type:** Boolean
 - **Default:** True
 - **Description:** Expand tolerance to include values inferred from cost currencies.
@@ -79,6 +85,7 @@ option "inferred_tolerance_default" "JPY:1"
 ## Booking
 
 ### booking_method
+
 - **Type:** String
 - **Default:** "STRICT"
 - **Values:** "STRICT", "FIFO", "LIFO", "AVERAGE", "NONE"
@@ -91,6 +98,7 @@ option "booking_method" "FIFO"
 ## Documents
 
 ### documents
+
 - **Type:** Path (repeatable)
 - **Description:** Directory roots to search for document files.
 
@@ -104,6 +112,7 @@ Document files must match pattern: `YYYY-MM-DD.description.extension`
 ## Rendering
 
 ### render_commas
+
 - **Type:** Boolean
 - **Default:** True
 - **Description:** Include thousand separators in number output.
@@ -111,6 +120,7 @@ Document files must match pattern: `YYYY-MM-DD.description.extension`
 ## Plugins
 
 ### plugin_processing_mode
+
 - **Type:** String
 - **Default:** "raw"
 - **Values:** "default", "raw"

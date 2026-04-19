@@ -274,20 +274,24 @@ curl -X POST https://bench.example.com/upload -d @bench-results.json
 ## Real-World Test Files
 
 ### Small (< 1K transactions)
+
 - Personal monthly ledger
 - Target: < 50ms
 
 ### Medium (1K - 10K transactions)
+
 - Personal yearly ledger
 - Small business books
 - Target: < 500ms
 
 ### Large (10K - 100K transactions)
+
 - Multi-year personal finance
 - Medium business books
 - Target: < 5 seconds
 
 ### Very Large (> 100K transactions)
+
 - Enterprise accounting
 - Decade of personal finance
 - Target: < 30 seconds
@@ -309,6 +313,7 @@ time rustledger check "$FILE"
 ```
 
 Expected output:
+
 ```
 Python beancount:
 real    0m4.523s

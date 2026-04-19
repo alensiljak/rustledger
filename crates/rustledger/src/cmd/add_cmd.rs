@@ -30,9 +30,9 @@
 //! - `--no-completion`: Disable account tab completion in interactive mode
 
 use anyhow::{Context, Result, bail};
-use chrono::{Local, NaiveDate};
 use clap::Parser;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use rustledger_core::format::{FormatConfig, format_directive};
 use rustledger_core::{Amount, Directive, Posting, Transaction};
 use rustledger_parser::parse;
@@ -191,14 +191,17 @@ impl Validator for AddHelper {}
 /// - "YYYY-MM-DD" → explicit date
 pub fn parse_date(input: &str) -> Result<NaiveDate> {
     let trimmed = input.trim().to_lowercase();
-    let today = Local::now().date_naive();
+    let today = jiff::Zoned::now().date();
 
     if trimmed.is_empty() || trimmed == "today" {
         return Ok(today);
     }
 
     if trimmed == "yesterday" {
-        return today.pred_opt().context("Cannot compute yesterday's date");
+        return today
+            .yesterday()
+            .ok()
+            .context("Cannot compute yesterday's date");
     }
 
     // Relative days: +N or -N
@@ -207,7 +210,8 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
             .parse()
             .with_context(|| format!("Invalid relative date: {input}"))?;
         return today
-            .checked_add_signed(chrono::Duration::days(days))
+            .checked_add(jiff::ToSpan::days(days))
+            .ok()
             .context("Date out of range");
     }
 
@@ -216,12 +220,14 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
             .parse()
             .with_context(|| format!("Invalid relative date: {input}"))?;
         return today
-            .checked_sub_signed(chrono::Duration::days(days))
+            .checked_add(jiff::ToSpan::days(-(days)))
+            .ok()
             .context("Date out of range");
     }
 
     // Explicit date: YYYY-MM-DD
-    NaiveDate::parse_from_str(&trimmed, "%Y-%m-%d")
+    trimmed
+        .parse::<NaiveDate>()
         .with_context(|| format!("Invalid date format: {input}. Use YYYY-MM-DD."))
 }
 
@@ -528,7 +534,7 @@ fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<
     rl.set_helper(Some(helper));
 
     // Prompt for date
-    let date_default = date.format("%Y-%m-%d").to_string();
+    let date_default = date.to_string();
     let date_input = prompt_with_default(&mut rl, "Date", &date_default)?;
     let transaction_date = parse_date(&date_input)?;
 
@@ -737,7 +743,7 @@ pub fn run(args: &Args, file: &PathBuf) -> Result<()> {
     let date = if let Some(ref d) = args.date {
         parse_date(d)?
     } else {
-        Local::now().date_naive()
+        jiff::Zoned::now().date()
     };
 
     // Check if file exists, offer to create if not
@@ -777,7 +783,7 @@ mod tests {
 
     #[test]
     fn test_parse_date_today() {
-        let today = Local::now().date_naive();
+        let today = jiff::Zoned::now().date();
         assert_eq!(parse_date("today").unwrap(), today);
         assert_eq!(parse_date("").unwrap(), today);
         assert_eq!(parse_date("TODAY").unwrap(), today);
@@ -785,22 +791,22 @@ mod tests {
 
     #[test]
     fn test_parse_date_yesterday() {
-        let yesterday = Local::now().date_naive().pred_opt().unwrap();
+        let yesterday = jiff::Zoned::now().date().yesterday().ok().unwrap();
         assert_eq!(parse_date("yesterday").unwrap(), yesterday);
         assert_eq!(parse_date("YESTERDAY").unwrap(), yesterday);
     }
 
     #[test]
     fn test_parse_date_relative() {
-        let today = Local::now().date_naive();
-        let tomorrow = today.succ_opt().unwrap();
-        let yesterday = today.pred_opt().unwrap();
+        let today = jiff::Zoned::now().date();
+        let tomorrow = today.tomorrow().ok().unwrap();
+        let yesterday = today.yesterday().ok().unwrap();
 
         assert_eq!(parse_date("+1").unwrap(), tomorrow);
         assert_eq!(parse_date("-1").unwrap(), yesterday);
         assert_eq!(
             parse_date("+7").unwrap(),
-            today.checked_add_signed(chrono::Duration::days(7)).unwrap()
+            today.checked_add(jiff::ToSpan::days(7)).ok().unwrap()
         );
     }
 
@@ -808,11 +814,11 @@ mod tests {
     fn test_parse_date_explicit() {
         assert_eq!(
             parse_date("2026-03-21").unwrap(),
-            NaiveDate::from_ymd_opt(2026, 3, 21).unwrap()
+            rustledger_core::naive_date(2026, 3, 21).unwrap()
         );
         assert_eq!(
             parse_date("2024-01-01").unwrap(),
-            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()
+            rustledger_core::naive_date(2024, 1, 1).unwrap()
         );
     }
 

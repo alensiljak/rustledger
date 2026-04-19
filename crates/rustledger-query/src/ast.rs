@@ -689,7 +689,7 @@ mod tests {
 
     #[test]
     fn test_expr_display_date() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         assert_eq!(Expr::date(date).to_string(), "2024-01-15");
     }
 

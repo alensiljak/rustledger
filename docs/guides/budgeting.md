@@ -1,7 +1,6 @@
----
-title: Budgeting
-description: Track budgets and compare against actual spending
----
+______________________________________________________________________
+
+## title: Budgeting description: Track budgets and compare against actual spending
 
 # Budgeting
 
@@ -111,6 +110,7 @@ rledger query ledger.beancount "
 ```
 
 Output:
+
 ```
 Assets:Budget:Entertainment    75.00 USD
 Assets:Budget:Food            120.00 USD

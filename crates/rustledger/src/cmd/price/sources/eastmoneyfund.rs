@@ -5,8 +5,8 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -96,22 +96,22 @@ impl PriceSource for EastMoneyFundSource {
             .and_then(serde_json::Value::as_str)
             .and_then(|s| {
                 // Try different date formats
-                NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                s.parse::<NaiveDate>()
                     .or_else(|_| {
                         // Try parsing just the date portion (first 10 chars)
                         // Use char_indices for UTF-8 safety
                         if let Some((idx, _)) = s.char_indices().nth(10) {
-                            NaiveDate::parse_from_str(&s[..idx], "%Y-%m-%d")
+                            s[..idx].parse::<NaiveDate>()
                         } else if s.len() >= 10 && s.is_char_boundary(10) {
-                            NaiveDate::parse_from_str(&s[..10], "%Y-%m-%d")
+                            s[..10].parse::<NaiveDate>()
                         } else {
                             // Return an error that will be converted to None by and_then
-                            NaiveDate::parse_from_str("", "%Y-%m-%d")
+                            "".parse::<NaiveDate>()
                         }
                     })
                     .ok()
             })
-            .unwrap_or_else(|| request.date.unwrap_or_else(|| Utc::now().date_naive()));
+            .unwrap_or_else(|| request.date.unwrap_or_else(|| jiff::Zoned::now().date()));
 
         Ok(PriceResponse {
             price,

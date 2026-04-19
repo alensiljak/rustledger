@@ -152,17 +152,20 @@ Install the LSP package, then add to LSP settings:
 ## Troubleshooting
 
 **LSP not starting?**
+
 - Ensure `rledger-lsp` is in your PATH: `which rledger-lsp`
 - Check logs: most editors have an LSP log panel
 - Try running manually: `echo '{"jsonrpc":"2.0","method":"initialize","id":1,"params":{}}' | rledger-lsp`
 
 **No completions?**
+
 - Ensure the file has `.beancount` extension
 - Check that your editor's LSP client is configured for the beancount filetype
 
 ## Architecture
 
 Based on rust-analyzer patterns:
+
 - Main loop handles LSP messages via stdio
 - Notifications processed synchronously
 - Requests dispatched to threadpool

@@ -18,7 +18,6 @@ updates:
     labels:
       - "dependencies"
     open-pull-requests-limit: 5
-
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"

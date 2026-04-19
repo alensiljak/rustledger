@@ -1,7 +1,6 @@
----
-title: Editor Integration
-description: VS Code, Vim, Neovim, and Emacs setup
----
+______________________________________________________________________
+
+## title: Editor Integration description: VS Code, Vim, Neovim, and Emacs setup
 
 # Editor Integration
 
@@ -81,13 +80,14 @@ All features are provided by `rledger-lsp`:
 If LSP features aren't working:
 
 1. Ensure `rledger-lsp` is in your PATH:
+
    ```bash
    which rledger-lsp
    ```
 
-2. Check the Output panel (`View > Output`) and select "rustledger" from the dropdown
+1. Check the Output panel (`View > Output`) and select "rustledger" from the dropdown
 
-3. If you installed via a package manager, you may need to restart VS Code after installation
+1. If you installed via a package manager, you may need to restart VS Code after installation
 
 ## Vim / Neovim
 
@@ -280,8 +280,8 @@ args = []
 ### LSP-rustledger
 
 1. Install Package Control
-2. Install "LSP" package
-3. Add to LSP settings:
+1. Install "LSP" package
+1. Add to LSP settings:
 
 ```json
 {

@@ -399,18 +399,18 @@ fn parse_config(
 
 /// Check if two dates are within a given range (in days).
 fn within_date_range(date1: &str, date2: &str, days: i64) -> bool {
-    use chrono::NaiveDate;
+    use rustledger_core::NaiveDate;
 
-    let d1 = match NaiveDate::parse_from_str(date1, "%Y-%m-%d") {
+    let d1 = match date1.parse::<NaiveDate>() {
         Ok(d) => d,
         Err(_) => return false,
     };
-    let d2 = match NaiveDate::parse_from_str(date2, "%Y-%m-%d") {
+    let d2 = match date2.parse::<NaiveDate>() {
         Ok(d) => d,
         Err(_) => return false,
     };
 
-    let diff = (d2 - d1).num_days().abs();
+    let diff = i64::from(d2.since(d1).unwrap_or_default().get_days()).abs();
     diff <= days
 }
 

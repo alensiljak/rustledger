@@ -11,7 +11,6 @@
 # See: https://mutants.rs/
 #
 name: Mutation Testing
-
 on:
   schedule:
     # Monthly on 1st at 6 AM UTC
@@ -37,13 +36,10 @@ on:
         required: false
         default: '300'
         type: string
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   mutants:
     name: Mutation Testing
@@ -51,18 +47,14 @@ jobs:
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           prefix-key: mutants
-
       - name: Install cargo-mutants
         run: cargo install cargo-mutants --locked
-
       - name: Determine packages
         id: packages
         run: |
@@ -81,7 +73,6 @@ jobs:
 
           echo "packages=$PACKAGES" >> $GITHUB_OUTPUT
           echo "timeout=$TIMEOUT" >> $GITHUB_OUTPUT
-
       - name: Run mutation testing
         run: |
           PACKAGES="${{ steps.packages.outputs.packages }}"
@@ -105,7 +96,6 @@ jobs:
             $PACKAGE_FLAGS \
             -- --all-features \
             2>&1 | tee mutants-output.txt
-
       - name: Parse results
         id: results
         run: |
@@ -140,7 +130,6 @@ jobs:
           echo "timeout=$TIMEOUT" >> $GITHUB_OUTPUT
           echo "total=$TOTAL" >> $GITHUB_OUTPUT
           echo "score=$SCORE" >> $GITHUB_OUTPUT
-
       - name: Summary
         run: |
           echo "## Mutation Testing Results" >> $GITHUB_STEP_SUMMARY
@@ -167,7 +156,6 @@ jobs:
             head -20 mutants.out/missed.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
           fi
-
       - name: Upload mutation results
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -176,7 +164,6 @@ jobs:
             mutants.out/
             mutants-output.txt
           retention-days: 30
-
       - name: Check mutation score threshold
         run: |
           SCORE="${{ steps.results.outputs.score }}"

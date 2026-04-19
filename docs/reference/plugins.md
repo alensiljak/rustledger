@@ -1,7 +1,6 @@
----
-title: Plugins Reference
-description: Plugin architecture, built-in plugins, and custom plugin development
----
+______________________________________________________________________
+
+## title: Plugins Reference description: Plugin architecture, built-in plugins, and custom plugin development
 
 # Plugins Reference
 
@@ -68,6 +67,7 @@ plugin "beancount.plugins.split_expenses" "alice bob"
 ### Plugin Execution Order
 
 Plugins execute in the order they appear in your file. This matters because:
+
 - Transformation plugins modify directives that subsequent plugins see
 - Validation plugins should typically run after transformation plugins
 
@@ -284,6 +284,7 @@ Options: None
 ### pedantic
 
 Enables strict validation:
+
 - Requires explicit tags on all transactions
 - Requires payees on all transactions
 - Other strict checks
@@ -334,7 +335,7 @@ plugin "beancount.plugins.unique_prices"
 
 Options: None
 
----
+______________________________________________________________________
 
 ## Additional Plugins
 
@@ -444,6 +445,7 @@ plugin "beancount.plugins.commodity_attr" "{'name': null, 'sector': ['Tech', 'Fi
 ```
 
 Options: Python dict where:
+
 - Keys are attribute names
 - `null` means required but any value allowed
 - `['a', 'b']` means required and must be one of the listed values
@@ -511,6 +513,7 @@ plugin "beancount.plugins.forecast"
 ```
 
 Patterns:
+
 - `[MONTHLY]` - Repeat monthly indefinitely
 - `[WEEKLY]` - Repeat weekly indefinitely
 - `[DAILY]` - Repeat daily indefinitely
@@ -665,6 +668,7 @@ For custom functionality, you can write plugins in two ways:
 Write plugins in Rust, compile to WebAssembly, and use them without modifying rustledger.
 
 **Quick start:**
+
 ```bash
 # Clone the template
 git clone https://github.com/rustledger/rustledger
@@ -729,8 +733,8 @@ Most Python beancount plugins have native equivalents:
 ### Migrating from Python Plugins
 
 1. Check if a native equivalent exists (see table above)
-2. If not, consider writing a [WASM plugin](../guides/custom-plugins.md)
-3. As a last resort, Python plugins may work but with limitations
+1. If not, consider writing a [WASM plugin](../guides/custom-plugins.md)
+1. As a last resort, Python plugins may work but with limitations
 
 ## See Also
 

@@ -4,9 +4,9 @@
 //!
 //! Run with: cargo test -p beancount-core --test `property_tests`
 
-use chrono::NaiveDate;
 use proptest::prelude::*;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, BookingMethod, Cost, CostSpec, InternedStr, Inventory, Position};
 
 // ============================================================================
@@ -42,7 +42,7 @@ fn arb_positive_amount() -> impl Strategy<Value = Amount> {
 
 fn arb_date() -> impl Strategy<Value = NaiveDate> {
     (2020u32..2025u32, 1u32..13u32, 1u32..29u32)
-        .prop_map(|(y, m, d)| NaiveDate::from_ymd_opt(y as i32, m, d).unwrap())
+        .prop_map(|(y, m, d)| rustledger_core::naive_date(y as i32, m, d).unwrap())
 }
 
 fn arb_cost() -> impl Strategy<Value = Cost> {

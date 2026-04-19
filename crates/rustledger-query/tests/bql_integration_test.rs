@@ -15,7 +15,7 @@ use rustledger_query::{Executor, QueryResult, Value, parse};
 
 #[allow(clippy::missing_const_for_fn)]
 fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    rustledger_core::naive_date(year, month, day).unwrap()
 }
 
 fn make_test_directives() -> Vec<Directive> {

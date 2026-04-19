@@ -5,8 +5,8 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -120,8 +120,8 @@ impl PriceSource for TspSource {
         let date = latest
             .get("date")
             .and_then(serde_json::Value::as_str)
-            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-            .unwrap_or_else(|| request.date.unwrap_or_else(|| Utc::now().date_naive()));
+            .and_then(|s| s.parse::<NaiveDate>().ok())
+            .unwrap_or_else(|| request.date.unwrap_or_else(|| jiff::Zoned::now().date()));
 
         Ok(PriceResponse {
             price,

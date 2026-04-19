@@ -1,7 +1,6 @@
----
-title: rledger config
-description: Manage rustledger configuration
----
+______________________________________________________________________
+
+## title: rledger config description: Manage rustledger configuration
 
 # rledger config
 
@@ -38,6 +37,7 @@ rledger config show
 ```
 
 Output:
+
 ```toml
 [default]
 file = "/home/user/finances/main.beancount"
@@ -56,6 +56,7 @@ rledger config path
 ```
 
 Output:
+
 ```
 Searching for config in:
   1. ./rledger.toml
@@ -89,6 +90,7 @@ rledger config aliases
 ```
 
 Output:
+
 ```
 Configured aliases:
   bal     -> query "BALANCES"

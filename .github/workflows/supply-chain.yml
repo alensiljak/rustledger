@@ -1,7 +1,6 @@
 # Supply Chain Security
 # Audits dependencies using cargo-vet and generates SBOM
 name: Supply Chain
-
 on:
   push:
     branches: [main]
@@ -19,10 +18,8 @@ on:
     # Weekly on Mondays at 00:00 UTC
     - cron: '0 0 * * 1'
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   # Audit dependencies with cargo-vet
   cargo-vet:
@@ -30,18 +27,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - name: Install cargo-vet
         run: cargo install cargo-vet
-
       - name: Run cargo vet
         run: cargo vet --locked
-
   # Generate SBOM on push to main
   sbom:
     name: Generate SBOM
@@ -49,25 +42,20 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx
-
       - name: Generate SBOM (CycloneDX)
         run: cargo cyclonedx --format json > sbom.cdx.json
-
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-cyclonedx
           path: sbom.cdx.json
           retention-days: 90
-
   # Dependency review for PRs (catches new vulnerable deps)
   #
   # License Policy:
@@ -85,17 +73,13 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Dependency Review
         uses: actions/dependency-review-action@46a3c492319c890177366b6ef46d6b4f89743ed4 # v4
         with:
           fail-on-severity: high
           # See License Policy comment above before adding new licenses
           allow-licenses: >-
-            MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception,
-            BSD-2-Clause, BSD-3-Clause, ISC, GPL-3.0-only, MPL-2.0,
-            Zlib, 0BSD, Unicode-3.0, CDLA-Permissive-2.0, LGPL-3.0,
-            CC0-1.0, MIT-0, NCSA
+            MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC, GPL-3.0-only, MPL-2.0, Zlib, 0BSD, Unicode-3.0, CDLA-Permissive-2.0, LGPL-3.0, CC0-1.0, MIT-0, NCSA
           # These packages use non-SPDX "MIT/Apache-2.0" license field that
           # the dependency review action can't parse. Both MIT and Apache-2.0
           # are in our allow list; exempt these packages from the license check.

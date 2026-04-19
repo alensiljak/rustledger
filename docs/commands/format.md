@@ -1,7 +1,6 @@
----
-title: rledger format
-description: Auto-format beancount files
----
+______________________________________________________________________
+
+## title: rledger format description: Auto-format beancount files
 
 # rledger format
 

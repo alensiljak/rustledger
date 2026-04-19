@@ -12,6 +12,7 @@ This document specifies the WASM-based plugin system for rustledger. Unlike Pyth
 ## Runtime
 
 We use **wasmtime** as the WASM runtime:
+
 - Bytecode Alliance project with strong security focus
 - Excellent WASI support for filesystem/environment access
 - Component Model support for rich type interfaces
@@ -34,6 +35,7 @@ fn process(input: PluginInput) -> PluginOutput;
 ### Data Serialization
 
 We use **MessagePack** (via `rmp-serde`) for the WASM boundary:
+
 - Compact binary format
 - Fast serialization/deserialization
 - Schema-less (flexible evolution)
@@ -162,18 +164,19 @@ plugin "path/to/plugin.wasm" "config=value"
 ### Loading Process
 
 1. Parse `plugin` directive, extract path and optional config string
-2. Resolve path relative to beancount file directory
-3. Load and compile WASM module (cache compiled modules)
-4. Instantiate module with WASI imports (limited capabilities)
-5. Call `process` function with serialized directives
-6. Deserialize results, merge into directive stream
+1. Resolve path relative to beancount file directory
+1. Load and compile WASM module (cache compiled modules)
+1. Instantiate module with WASI imports (limited capabilities)
+1. Call `process` function with serialized directives
+1. Deserialize results, merge into directive stream
 
 ### Plugin Discovery
 
 Standard locations (checked in order):
+
 1. Path relative to beancount file
-2. `~/.config/beancount/plugins/`
-3. `/usr/share/beancount/plugins/`
+1. `~/.config/beancount/plugins/`
+1. `/usr/share/beancount/plugins/`
 
 ## Sandboxing
 
@@ -184,6 +187,7 @@ Plugins have NO filesystem, network, or environment access by default.
 ### Optional Capabilities
 
 Via WASI, plugins can request:
+
 - **Read-only filesystem**: For document verification plugins
 - **Environment variables**: For configuration
 - **Random number generation**: For ID generation
@@ -206,8 +210,8 @@ env = ["BEANCOUNT_*"]     # Access env vars with prefix
 ## Plugin Execution Order
 
 1. Built-in implicit plugins (if enabled via options)
-2. User-declared plugins in file order
-3. Each plugin receives output of previous
+1. User-declared plugins in file order
+1. Each plugin receives output of previous
 
 ```
 directives → plugin1 → plugin2 → plugin3 → validated_directives
@@ -216,6 +220,7 @@ directives → plugin1 → plugin2 → plugin3 → validated_directives
 ## Error Handling
 
 Plugins return errors alongside directives. Errors are:
+
 - Collected and reported to user
 - Do not halt processing (unless severity is critical)
 - Include source location when available
@@ -246,6 +251,7 @@ These run as native Rust code, not WASM, for performance:
 | `coherent_cost` | Ensure consistent cost currencies |
 
 Enable via:
+
 ```beancount
 plugin "beancount.plugins.implicit_prices"  ; recognized as built-in
 ```

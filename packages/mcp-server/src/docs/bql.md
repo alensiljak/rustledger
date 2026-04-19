@@ -16,6 +16,7 @@ SELECT [DISTINCT] <target-spec>, ...
 ## Common Queries
 
 ### Account Balances
+
 ```sql
 BALANCES
 -- or equivalently:
@@ -23,18 +24,21 @@ SELECT account, sum(position) GROUP BY account
 ```
 
 ### Filter by Account
+
 ```sql
 SELECT date, narration, position
 WHERE account ~ "Expenses:Food"
 ```
 
 ### Filter by Date Range
+
 ```sql
 SELECT date, account, position
 WHERE date >= 2024-01-01 AND date < 2024-02-01
 ```
 
 ### Monthly Summary
+
 ```sql
 SELECT year(date), month(date), sum(position)
 WHERE account ~ "Expenses"
@@ -43,6 +47,7 @@ ORDER BY year(date), month(date)
 ```
 
 ### Journal Entries
+
 ```sql
 JOURNAL "Assets:Checking"
 ```

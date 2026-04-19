@@ -53,8 +53,8 @@ Interpolation fills in missing amounts so transactions balance.
 ### Rules
 
 1. At most ONE posting per currency may have a missing amount
-2. The missing amount is calculated from other postings
-3. Cost and price affect the calculation
+1. The missing amount is calculated from other postings
+1. Cost and price affect the calculation
 
 ### Algorithm
 
@@ -147,9 +147,9 @@ fn infer_units_from_weight(posting: &Posting, weight: Amount) -> Amount {
 ### Edge Cases
 
 1. **Total price (@@ syntax)**: The price is the total, not per-unit
-2. **Cost with missing units**: Must solve for units given cost
-3. **Multiple currencies**: Each currency balances independently
-4. **Tolerance**: Small residuals within tolerance are acceptable
+1. **Cost with missing units**: Must solve for units given cost
+1. **Multiple currencies**: Each currency balances independently
+1. **Tolerance**: Small residuals within tolerance are acceptable
 
 ## 3. Tolerance Calculation
 
@@ -184,6 +184,7 @@ fn decimal_places(n: Decimal) -> u32 {
 ### Default Tolerances
 
 From options:
+
 ```rust
 fn get_tolerance(currency: &str, options: &Options, inferred: &HashMap<Currency, Decimal>) -> Decimal {
     inferred.get(currency).copied()

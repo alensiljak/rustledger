@@ -17,6 +17,7 @@ Drop-in replacement for Beancount CLI tools. Pure Rust, 10-30x faster.
 ## Compatibility
 
 With default features, also installs `bean-*` commands for Python beancount compatibility:
+
 - `bean-check`, `bean-query`, `bean-format`, `bean-report`, `bean-doctor`, `bean-extract`, `bean-price`
 
 ## Install

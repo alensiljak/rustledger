@@ -925,7 +925,7 @@ fn date_literal<'a>() -> impl Parser<'a, ParserInput<'a>, NaiveDate, ParserExtra
                 .parse()
                 .map_err(|_| Rich::custom(span, "invalid month"))?;
             let day: u32 = day.parse().map_err(|_| Rich::custom(span, "invalid day"))?;
-            NaiveDate::from_ymd_opt(year, month, day)
+            rustledger_core::naive_date(year, month, day)
                 .ok_or_else(|| Rich::custom(span, "invalid date"))
         })
 }
@@ -1111,11 +1111,11 @@ mod tests {
                 let from = sel.from.unwrap();
                 assert_eq!(
                     from.open_on,
-                    Some(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap())
+                    Some(rustledger_core::naive_date(2024, 1, 1).unwrap())
                 );
                 assert_eq!(
                     from.close_on,
-                    Some(NaiveDate::from_ymd_opt(2024, 12, 31).unwrap())
+                    Some(rustledger_core::naive_date(2024, 12, 31).unwrap())
                 );
                 assert!(from.clear);
             }

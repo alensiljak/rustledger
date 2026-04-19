@@ -1,7 +1,6 @@
----
-title: Multi-file Ledgers
-description: Organizing large ledgers across multiple files
----
+______________________________________________________________________
+
+## title: Multi-file Ledgers description: Organizing large ledgers across multiple files
 
 # Multi-file Ledgers
 

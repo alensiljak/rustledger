@@ -587,22 +587,23 @@ pub use rkyv_date::AsNaiveDate;
 
 #[cfg(feature = "rkyv")]
 mod rkyv_date {
-    use chrono::{Datelike, NaiveDate};
+    use crate::NaiveDate;
     use rkyv::Place;
     use rkyv::rancor::Fallible;
     use rkyv::with::{ArchiveWith, DeserializeWith, SerializeWith};
 
-    /// Wrapper to serialize `NaiveDate` as i32 (days from Common Era) with rkyv.
+    /// Wrapper to serialize `NaiveDate` as i32 (days since Unix epoch) with rkyv.
     /// This is 4 bytes instead of 10+ for string, and faster to serialize.
     pub struct AsNaiveDate;
+
+    const UNIX_EPOCH: NaiveDate = jiff::civil::date(1970, 1, 1);
 
     impl ArchiveWith<NaiveDate> for AsNaiveDate {
         type Archived = rkyv::Archived<i32>;
         type Resolver = ();
 
         fn resolve_with(field: &NaiveDate, _resolver: Self::Resolver, out: Place<Self::Archived>) {
-            let days = field.num_days_from_ce();
-            // Use rkyv's Archive impl for i32 which handles endianness
+            let days = field.since(UNIX_EPOCH).unwrap_or_default().get_days();
             rkyv::Archive::resolve(&days, (), out);
         }
     }
@@ -615,7 +616,6 @@ mod rkyv_date {
             _field: &NaiveDate,
             _serializer: &mut S,
         ) -> Result<Self::Resolver, S::Error> {
-            // No extra serialization needed - data is inlined
             Ok(())
         }
     }
@@ -629,7 +629,9 @@ mod rkyv_date {
             _deserializer: &mut D,
         ) -> Result<NaiveDate, D::Error> {
             let days = field.to_native();
-            Ok(NaiveDate::from_num_days_from_ce_opt(days).expect("valid date"))
+            Ok(UNIX_EPOCH
+                .checked_add(jiff::Span::new().days(i64::from(days)))
+                .expect("valid date"))
         }
     }
 }

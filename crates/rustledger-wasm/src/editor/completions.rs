@@ -70,7 +70,7 @@ pub fn get_completions_cached(
 }
 
 /// Get completions at the given position (non-cached, used by tests).
-pub(crate) fn get_completions(
+pub fn get_completions(
     source: &str,
     line: u32,
     character: u32,
@@ -169,7 +169,7 @@ pub fn detect_context(source: &str, line: u32, character: u32) -> CompletionCont
 
 /// Complete at line start (date template).
 pub fn complete_line_start() -> Vec<EditorCompletion> {
-    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    let today = jiff::Zoned::now().date().to_string();
     vec![EditorCompletion {
         label: today.clone(),
         kind: CompletionKind::Date,

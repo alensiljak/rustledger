@@ -17,8 +17,8 @@ The Beancount language has a relatively simple grammar but with some complexitie
 Options considered:
 
 1. **Parser generator** (pest, lalrpop): Generate parser from grammar
-2. **Parser combinator** (nom, winnow, chumsky): Compose small parsers
-3. **Hand-written recursive descent**: Manual implementation
+1. **Parser combinator** (nom, winnow, chumsky): Compose small parsers
+1. **Hand-written recursive descent**: Manual implementation
 
 ## Decision
 
@@ -33,6 +33,7 @@ The lexer (`logos_lexer.rs`) uses Logos, a SIMD-accelerated lexer generator:
 - Produces `Vec<SpannedToken>` with byte offset spans
 
 Tokens include:
+
 - Keywords (open, close, balance, etc.)
 - Dates, numbers, strings, accounts, currencies
 - Operators and punctuation
@@ -47,6 +48,7 @@ The parser (`winnow_parser.rs`) uses a manual token stream with winnow-style par
 - Span tracking propagated through all parse results
 
 Architecture:
+
 ```text
 Source (&str) → Logos tokenize() → Vec<SpannedToken> → Winnow parser → Directives
 ```
@@ -77,11 +79,11 @@ Source (&str) → Logos tokenize() → Vec<SpannedToken> → Winnow parser → D
 The parser is organized into sections:
 
 1. Token stream types and helpers
-2. Primitive parsers (date, number, string, account)
-3. Expression parsers (arithmetic with checked overflow)
-4. Amount and cost parsers
-5. Directive parsers (transaction, balance, open, etc.)
-6. Top-level file parser with error recovery
+1. Primitive parsers (date, number, string, account)
+1. Expression parsers (arithmetic with checked overflow)
+1. Amount and cost parsers
+1. Directive parsers (transaction, balance, open, etc.)
+1. Top-level file parser with error recovery
 
 ## History
 

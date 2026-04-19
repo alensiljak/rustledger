@@ -29,6 +29,7 @@ When a transaction has exactly one posting without an amount per currency, that 
 ### Tolerance
 
 Decimal precision varies by currency. Tolerance is the maximum acceptable rounding error:
+
 - `0.005` for 2-decimal currencies (USD, EUR)
 - `0.00005` for 4-decimal currencies (BTC)
 
@@ -41,6 +42,7 @@ The imbalance after summing all postings. Must be within tolerance for a valid t
 ### Correctness is Paramount
 
 Booking affects financial calculations. Double-check:
+
 - Sign handling (positive/negative amounts)
 - Currency isolation (never mix different currencies)
 - Tolerance precision (use `Decimal`, not `f64`)
@@ -48,13 +50,15 @@ Booking affects financial calculations. Double-check:
 ### Match Python Beancount Behavior
 
 The booking logic MUST match Python beancount exactly. When implementing:
+
 1. Read the Python source in `beancount/parser/booking_full.py`
-2. Create test cases comparing both implementations
-3. Document any intentional differences
+1. Create test cases comparing both implementations
+1. Document any intentional differences
 
 ### No Floating Point
 
 Always use `rust_decimal::Decimal`:
+
 ```rust
 // Good
 let amount = Decimal::new(500, 2); // 5.00
@@ -68,10 +72,10 @@ let amount = 5.00_f64;
 ### Required Tests for Booking Changes
 
 1. **Simple transactions**: One currency, two postings
-2. **Multi-currency**: Each currency balances independently
-3. **Cost basis**: Stock purchases with cost specs
-4. **Price annotations**: Currency conversions
-5. **Edge cases**: Zero amounts, maximum precision
+1. **Multi-currency**: Each currency balances independently
+1. **Cost basis**: Stock purchases with cost specs
+1. **Price annotations**: Currency conversions
+1. **Edge cases**: Zero amounts, maximum precision
 
 ### Test Commands
 
@@ -88,12 +92,12 @@ cargo test -p rustledger-booking
 ### Adding a New Booking Method
 
 1. Add variant to booking method enum
-2. Implement interpolation logic in `interpolate.rs`
-3. Add comprehensive test cases
-4. Compare with Python beancount output
+1. Implement interpolation logic in `interpolate.rs`
+1. Add comprehensive test cases
+1. Compare with Python beancount output
 
 ### Debugging Balance Errors
 
 1. Print residuals: `dbg!(calculate_residual(&transaction))`
-2. Check tolerance: `dbg!(calculate_tolerance(&amounts))`
-3. Verify signs: positive = debit, negative = credit
+1. Check tolerance: `dbg!(calculate_tolerance(&amounts))`
+1. Verify signs: positive = debit, negative = credit

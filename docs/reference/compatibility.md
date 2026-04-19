@@ -13,6 +13,7 @@ This document describes the compatibility between rustledger and Python beancoun
 ## Test Sources
 
 Files were collected from:
+
 - beancount v2/v3 official repositories
 - beancount-parser-lima test suite
 - fava web interface fixtures
@@ -37,6 +38,7 @@ Files with expected Python-only errors (plugin configuration, deprecated options
 ### 1. Multi-Currency Transactions
 
 Python beancount allows transactions with multiple currencies without explicit conversion prices. Rustledger requires either:
+
 - A price (`@` or `@@`) annotation
 - All postings in the same currency
 - Explicit balancing
@@ -46,11 +48,13 @@ Python beancount allows transactions with multiple currencies without explicit c
 ### 2. Python Plugin Loading
 
 Rustledger does not execute Python plugins. Files using `plugin "some_python_plugin"` will:
+
 - Parse successfully
 - Report error E8001 "Plugin not found" for unknown plugins
 - This matches Python beancount's behavior of failing on missing plugins
 
 Rustledger supports 30 native plugins that match Python beancount behavior:
+
 - `auto_accounts`, `auto_tag`, `box_accrual`, `capital_gains_gain_loss`
 - `capital_gains_long_short`, `check_average_cost`, `check_closing`, `check_commodity`
 - `check_drained`, `close_tree`, `coherent_cost`, `commodity_attr`
@@ -105,11 +109,13 @@ BQL (Beancount Query Language) compatibility was tested with 11 standard queries
 **Results: 99% data match (544/550 queries)**
 
 Breakdown:
+
 - **542 exact matches** - Identical output
 - **2 precision differences** - Display precision only (acceptable)
 - **6 data differences** - Real calculation bugs (see Known Issues below)
 
 Acceptable differences:
+
 - Python's bean-query uses a "display context" that truncates decimals (e.g., shows `111 USD` for `111.11 USD`)
 - Rustledger shows the actual precision (e.g., `111.11 USD`)
 
@@ -119,7 +125,7 @@ The 6 failing queries involve **capital gains calculation** in cost lot sales:
 
 1. **Missing interpolated capital gains**: When selling lots with `Income:Capital-Gains` as an elided posting, rustledger doesn't compute the gain (sale price - cost basis)
 
-2. **Extra zero positions in inventory**: SUM(position) may show `0.000 CURRENCY` entries that Python filters out
+1. **Extra zero positions in inventory**: SUM(position) may show `0.000 CURRENCY` entries that Python filters out
 
 These affect files with options trading and HSA investments that have buy/sell transactions with cost tracking.
 
@@ -180,10 +186,10 @@ tests/compatibility-results/            # Test output (gitignored)
 If you encounter a file that works with Python beancount but not rustledger:
 
 1. Check if it uses Python plugins (expected to fail)
-2. Check for multi-currency transactions without prices
-3. File an issue at https://github.com/rustledger/rustledger/issues
+1. Check for multi-currency transactions without prices
+1. File an issue at https://github.com/rustledger/rustledger/issues
 
----
+______________________________________________________________________
 
 *Generated: February 2026*
 *Test environment: Beancount 3.2.0, beanquery 0.2.0, rustledger 0.10.0*

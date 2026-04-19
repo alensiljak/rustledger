@@ -1,7 +1,6 @@
----
-title: Migrating from Python Beancount
-description: Switch from Python beancount to rustledger
----
+______________________________________________________________________
+
+## title: Migrating from Python Beancount description: Switch from Python beancount to rustledger
 
 # Migrating from Python Beancount
 
@@ -52,9 +51,9 @@ See [Plugins Reference](../reference/plugins.md) for full list.
 
 1. **Decimal precision**: rustledger uses 28-digit precision vs Python's arbitrary precision. This only affects extreme edge cases (28+ decimal places).
 
-2. **Error messages**: Format differs but contains same information.
+1. **Error messages**: Format differs but contains same information.
 
-3. **Plugin loading**: Python plugins require WASM compilation.
+1. **Plugin loading**: Python plugins require WASM compilation.
 
 ## Migration Steps
 
@@ -116,8 +115,8 @@ If using VS Code or other editors with Python beancount LSP, switch to rustledge
 For custom Python plugins, you have options:
 
 1. **Rewrite in Rust**: Add to `rustledger-plugin/src/native/`
-2. **Compile to WASM**: Use [py2wasm](https://pywasm.org) (experimental)
-3. **Use pre/post hooks**: For simple transformations
+1. **Compile to WASM**: Use [py2wasm](https://pywasm.org) (experimental)
+1. **Use pre/post hooks**: For simple transformations
 
 ### Check Plugin Equivalents
 
@@ -164,6 +163,7 @@ If amounts differ by tiny fractions (e.g., 1e-20), it's a precision difference a
 ### Query Syntax Differences
 
 BQL is compatible, but check:
+
 - Date literals: Use `2024-01-15` not `"2024-01-15"`
 - Regex: Use `account ~ "pattern"` for regex matching
 

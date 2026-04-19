@@ -1,7 +1,6 @@
----
-title: Common Queries
-description: Useful BQL queries for everyday reporting
----
+______________________________________________________________________
+
+## title: Common Queries description: Useful BQL queries for everyday reporting
 
 # Common Queries
 

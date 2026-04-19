@@ -1,7 +1,6 @@
----
-title: Migrating from hledger
-description: Switch from hledger to rustledger
----
+______________________________________________________________________
+
+## title: Migrating from hledger description: Switch from hledger to rustledger
 
 # Migrating from hledger
 
@@ -25,6 +24,7 @@ hledger uses a format compatible with ledger-cli. Beancount has stricter syntax 
 ### Example Comparison
 
 **hledger:**
+
 ```journal
 2024-01-15 Coffee Shop
     expenses:food:coffee     $5.00
@@ -34,6 +34,7 @@ hledger uses a format compatible with ledger-cli. Beancount has stricter syntax 
 ```
 
 **Beancount:**
+
 ```beancount
 2020-01-01 open Assets:Cash              USD
 2020-01-01 open Assets:Checking          USD
@@ -85,19 +86,22 @@ done > accounts.beancount
 Key changes:
 
 1. **Add quotes around payees**
+
    ```
    2024-01-15 Coffee Shop
    →
    2024-01-15 * "Coffee Shop"
    ```
 
-2. **Convert commodities**
+1. **Convert commodities**
+
    ```
    $5.00  →  5.00 USD
    €10    →  10.00 EUR
    ```
 
-3. **Add explicit balance**
+1. **Add explicit balance**
+
    ```
    expenses:food    $5.00
    assets:cash
@@ -106,7 +110,8 @@ Key changes:
    Assets:Cash      -5.00 USD
    ```
 
-4. **Convert balance assertions**
+1. **Convert balance assertions**
+
    ```
    2024-01-15 balance assets:checking  = $1234.56
    →
@@ -136,11 +141,13 @@ rledger check ledger.beancount
 hledger uses its own query syntax; rustledger uses BQL:
 
 **hledger:**
+
 ```bash
 hledger reg expenses:food date:2024
 ```
 
 **rustledger (BQL):**
+
 ```bash
 rledger query ledger.beancount \
   "SELECT date, narration, position

@@ -1,19 +1,15 @@
 # Quality checks - API compatibility, MSRV, security, coverage
 name: Quality
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   # Semver check - detect breaking API changes
   semver:
@@ -43,7 +39,6 @@ jobs:
       - name: Skip semver check
         if: steps.changes.outputs.rust != 'true'
         run: echo "No Rust changes detected, skipping semver check"
-
   # MSRV check - verify minimum supported Rust version
   msrv:
     name: MSRV (1.94)
@@ -56,7 +51,6 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
       - name: Check MSRV compatibility
         run: cargo check --workspace --all-features
-
   # Security and license audit
   deny:
     name: Cargo Deny
@@ -66,7 +60,6 @@ jobs:
       - uses: taiki-e/install-action@0fc09cf1c2f18a9f700d18b3d6eb8f7ee877c7a2 # cargo-deny
       - name: Check advisories, licenses, and bans
         run: cargo deny check
-
   # Code coverage
   coverage:
     name: Code Coverage
@@ -102,7 +95,6 @@ jobs:
           fail_ci_if_error: false
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
   # Gate job - all quality checks must pass
   quality:
     name: quality

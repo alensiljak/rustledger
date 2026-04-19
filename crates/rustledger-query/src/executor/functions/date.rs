@@ -1,6 +1,5 @@
 //! Date function implementations for the BQL executor.
 
-use chrono::Datelike;
 use rustledger_core::NaiveDate;
 
 use crate::ast::FunctionCall;
@@ -24,7 +23,7 @@ impl Executor<'_> {
                     "expected 0 arguments".to_string(),
                 ));
             }
-            return Ok(Value::Date(chrono::Local::now().date_naive()));
+            return Ok(Value::Date(jiff::Zoned::now().date()));
         }
 
         // All other date functions expect exactly 1 argument
@@ -45,7 +44,9 @@ impl Executor<'_> {
             "YEAR" => Ok(Value::Integer(date.year().into())),
             "MONTH" => Ok(Value::Integer(date.month().into())),
             "DAY" => Ok(Value::Integer(date.day().into())),
-            "WEEKDAY" => Ok(Value::Integer(date.weekday().num_days_from_monday().into())),
+            "WEEKDAY" => Ok(Value::Integer(
+                (date.weekday().to_monday_zero_offset() as u32).into(),
+            )),
             "QUARTER" => {
                 let quarter = (date.month() - 1) / 3 + 1;
                 Ok(Value::Integer(quarter.into()))
@@ -163,7 +164,8 @@ impl Executor<'_> {
                 // DATE(string) - parse ISO date
                 let val = self.evaluate_expr(&func.args[0], ctx)?;
                 match val {
-                    Value::String(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                    Value::String(s) => s
+                        .parse::<NaiveDate>()
                         .map(Value::Date)
                         .map_err(|_| QueryError::Type(format!("DATE: cannot parse '{s}' as date"))),
                     Value::Date(d) => Ok(Value::Date(d)),
@@ -212,7 +214,7 @@ impl Executor<'_> {
                     }
                     _ => return Err(QueryError::Type("DATE: day must be an integer".to_string())),
                 };
-                NaiveDate::from_ymd_opt(year, month, day)
+                rustledger_core::naive_date(year, month, day)
                     .map(Value::Date)
                     .ok_or_else(|| {
                         QueryError::Type(format!("DATE: invalid date {year}-{month}-{day}"))
@@ -252,7 +254,7 @@ impl Executor<'_> {
             }
         };
 
-        let diff = date1.signed_duration_since(date2).num_days();
+        let diff = i64::from(date1.since(date2).unwrap_or_default().get_days());
         Ok(Value::Integer(diff))
     }
 
@@ -278,13 +280,13 @@ impl Executor<'_> {
 
         let second_arg = self.evaluate_expr(&func.args[1], ctx)?;
         let result = match second_arg {
-            Value::Integer(days) => date + chrono::Duration::days(days),
+            Value::Integer(days) => date.checked_add(jiff::ToSpan::days(days)).unwrap(),
             Value::Number(n) => {
                 use rust_decimal::prelude::ToPrimitive;
                 let days = n.to_i64().ok_or_else(|| {
                     QueryError::Type("DATE_ADD: days must be an integer".to_string())
                 })?;
-                date + chrono::Duration::days(days)
+                date.checked_add(jiff::ToSpan::days(days)).unwrap()
             }
             Value::Interval(interval) => interval
                 .add_to_date(date)
@@ -327,16 +329,16 @@ impl Executor<'_> {
         };
 
         let result = match field.as_str() {
-            "YEAR" => NaiveDate::from_ymd_opt(date.year(), 1, 1),
+            "YEAR" => rustledger_core::naive_date(i32::from(date.year()), 1, 1),
             "QUARTER" => {
-                let quarter = (date.month() - 1) / 3;
-                NaiveDate::from_ymd_opt(date.year(), quarter * 3 + 1, 1)
+                let quarter = (date.month() as u32 - 1) / 3;
+                rustledger_core::naive_date(i32::from(date.year()), quarter * 3 + 1, 1)
             }
-            "MONTH" => NaiveDate::from_ymd_opt(date.year(), date.month(), 1),
+            "MONTH" => rustledger_core::naive_date(i32::from(date.year()), date.month() as u32, 1),
             "WEEK" => {
                 // Start of week (Monday)
-                let days_from_monday = i64::from(date.weekday().num_days_from_monday());
-                Some(date - chrono::Duration::days(days_from_monday))
+                let days_from_monday = i64::from(date.weekday().to_monday_zero_offset() as u32);
+                date.checked_add(jiff::ToSpan::days(-days_from_monday)).ok()
             }
             "DAY" => Some(date),
             _ => {
@@ -383,9 +385,16 @@ impl Executor<'_> {
             "MONTH" => i64::from(date.month()),
             "DAY" => i64::from(date.day()),
             "QUARTER" => i64::from((date.month() - 1) / 3 + 1),
-            "WEEK" => i64::from(date.iso_week().week()),
-            "WEEKDAY" | "DOW" => i64::from(date.weekday().num_days_from_monday()),
-            "DOY" => i64::from(date.ordinal()),
+            "WEEK" => {
+                // ISO week number via strftime %V
+                let week_str = jiff::fmt::strtime::format("%V", date).unwrap_or_default();
+                week_str.trim().parse::<i64>().unwrap_or(0)
+            }
+            "WEEKDAY" | "DOW" => i64::from(date.weekday().to_monday_zero_offset()),
+            "DOY" => {
+                let jan1 = jiff::civil::date(date.year(), 1, 1);
+                i64::from(date.since(jan1).unwrap().get_days() + 1)
+            }
             _ => {
                 return Err(QueryError::Type(format!(
                     "DATE_PART: unknown field '{field}', expected YEAR, MONTH, DAY, QUARTER, WEEK, WEEKDAY, DOW, or DOY"
@@ -423,7 +432,8 @@ impl Executor<'_> {
             }
         };
 
-        NaiveDate::parse_from_str(&string, &format)
+        jiff::fmt::strtime::parse(&format, &string)
+            .and_then(|tm| tm.to_date())
             .map(Value::Date)
             .map_err(|e| {
                 QueryError::Type(format!(
@@ -493,44 +503,51 @@ impl Executor<'_> {
         };
 
         // Calculate days from origin to source
-        let days_diff = (source - origin).num_days();
+        let days_diff = i64::from(source.since(origin).unwrap_or_default().get_days());
+
+        let sy = i32::from(source.year());
+        let sm = i32::from(source.month());
+        let oy = i32::from(origin.year());
+        let om = i32::from(origin.month());
+        let od = origin.day() as u32;
+        let amt = amount as i32;
 
         // Calculate binned date based on unit
         let binned = match unit.trim_end_matches('s') {
             "day" => {
                 let bucket = days_diff / amount;
-                origin + chrono::Duration::days(bucket * amount)
+                origin
+                    .checked_add(jiff::ToSpan::days(bucket * amount))
+                    .unwrap()
             }
             "week" => {
                 let days_per_stride = amount * 7;
                 let bucket = days_diff / days_per_stride;
-                origin + chrono::Duration::days(bucket * days_per_stride)
+                origin
+                    .checked_add(jiff::ToSpan::days(bucket * days_per_stride))
+                    .unwrap()
             }
             "month" => {
-                // For months, we need to work with calendar months
-                let months_diff = (source.year() - origin.year()) * 12 + (source.month() as i32)
-                    - (origin.month() as i32);
-                let bucket = months_diff / (amount as i32);
-                let total_months = (origin.month() as i32) - 1 + bucket * (amount as i32);
-                let year = origin.year() + total_months / 12;
+                let months_diff = (sy - oy) * 12 + sm - om;
+                let bucket = months_diff / amt;
+                let total_months = om - 1 + bucket * amt;
+                let year = oy + total_months / 12;
                 let month = (total_months % 12 + 1) as u32;
-                NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(origin)
+                rustledger_core::naive_date(year, month, 1).unwrap_or(origin)
             }
             "quarter" => {
-                // 3-month buckets
-                let months_diff = (source.year() - origin.year()) * 12 + (source.month() as i32)
-                    - (origin.month() as i32);
-                let quarters = months_diff / (3 * amount as i32);
-                let total_months = (origin.month() as i32) - 1 + quarters * 3 * (amount as i32);
-                let year = origin.year() + total_months / 12;
+                let months_diff = (sy - oy) * 12 + sm - om;
+                let quarters = months_diff / (3 * amt);
+                let total_months = om - 1 + quarters * 3 * amt;
+                let year = oy + total_months / 12;
                 let month = (total_months % 12 + 1) as u32;
-                NaiveDate::from_ymd_opt(year, month, 1).unwrap_or(origin)
+                rustledger_core::naive_date(year, month, 1).unwrap_or(origin)
             }
             "year" => {
-                let years_diff = source.year() - origin.year();
-                let bucket = years_diff / (amount as i32);
-                let year = origin.year() + bucket * (amount as i32);
-                NaiveDate::from_ymd_opt(year, origin.month(), origin.day()).unwrap_or(origin)
+                let years_diff = sy - oy;
+                let bucket = years_diff / amt;
+                let year = oy + bucket * amt;
+                rustledger_core::naive_date(year, om as u32, od).unwrap_or(origin)
             }
             _ => {
                 return Err(QueryError::Type(format!(

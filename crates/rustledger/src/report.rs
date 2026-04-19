@@ -205,14 +205,13 @@ pub fn print_summary<W: Write>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
 
     #[test]
     fn test_report_validation_errors_warning_label() {
         let warning = ValidationError::new(
             ErrorCode::AccountCloseNotEmpty,
             "Cannot close account with non-zero balance".to_string(),
-            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            rustledger_core::naive_date(2024, 1, 1).unwrap(),
         );
 
         let mut output = Vec::new();
@@ -237,7 +236,7 @@ mod tests {
         let error = ValidationError::new(
             ErrorCode::AccountNotOpen,
             "Account was never opened".to_string(),
-            NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(),
+            rustledger_core::naive_date(2024, 1, 1).unwrap(),
         );
 
         let mut output = Vec::new();

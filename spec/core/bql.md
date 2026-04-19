@@ -45,12 +45,15 @@ Functions transform positions into derived quantities:
 ## Operators
 
 ### Comparison
+
 `=`, `!=`, `<`, `<=`, `>`, `>=`
 
 ### Logical
+
 `AND`, `OR`, `NOT`
 
 ### Special
+
 - `IN` — Set membership test
 - `~` — Regular expression match
 
@@ -72,7 +75,7 @@ Functions transform positions into derived quantities:
 | `payee` | String | Payee |
 | `tags` | Set | Transaction tags |
 | `links` | Set | Transaction links |
-| `flag` | String | Transaction flag (* or !) |
+| `flag` | String | Transaction flag (\* or !) |
 | `balance` | Inventory | Running balance after posting |
 
 ### Entry Columns (FROM clause)
@@ -91,12 +94,14 @@ Functions transform positions into derived quantities:
 ## Simple Functions
 
 ### Position/Amount Functions
+
 - `COST(Position|Inventory)` → Amount
 - `UNITS(Position|Inventory)` → Amount
 - `NUMBER(Amount)` → Decimal
 - `CURRENCY(Amount)` → String
 
 ### Date Functions
+
 - `DAY(date)` → Integer
 - `MONTH(date)` → Integer
 - `YEAR(date)` → Integer
@@ -104,16 +109,19 @@ Functions transform positions into derived quantities:
 - `WEEKDAY(date)` → Integer
 
 ### String Functions
+
 - `LENGTH(string)` → Integer
 - `UPPER(string)` → String
 - `LOWER(string)` → String
 
 ### Account Functions
+
 - `PARENT(account)` → String (parent account name)
 - `LEAF(account)` → String (last component)
 - `ROOT(account, n)` → String (first n components)
 
 ### Other
+
 - `LENGTH(set|list)` → Integer
 
 ## Aggregate Functions
@@ -132,14 +140,18 @@ Queries with aggregate functions require `GROUP BY` for non-aggregated columns.
 ## Query Types
 
 ### Simple Query
+
 One result row per matching posting:
+
 ```sql
 SELECT date, account, narration, position
 WHERE account ~ "Expenses:";
 ```
 
 ### Aggregate Query
+
 One result row per group:
+
 ```sql
 SELECT account, SUM(position)
 WHERE account ~ "Expenses:"
@@ -147,6 +159,7 @@ GROUP BY account;
 ```
 
 Group keys can reference:
+
 - Column names
 - Ordinal indices (1, 2, ...)
 - Expressions
@@ -154,30 +167,37 @@ Group keys can reference:
 ## Result Control Clauses
 
 ### DISTINCT
+
 ```sql
 SELECT DISTINCT account;
 ```
+
 Removes duplicate result rows.
 
 ### ORDER BY
+
 ```sql
 ORDER BY date DESC, account ASC;
 ```
+
 Default is `ASC`. Multiple columns supported.
 
 ### LIMIT
+
 ```sql
 LIMIT 100;
 ```
+
 Stops output after N rows.
 
 ## Statement Operators (FROM Extensions)
 
 These transform selected transactions before posting projection:
 
-### OPEN ON \<date\>
+### OPEN ON \<date>
 
 Replaces all entries before the date with summarization entries:
+
 - Asset/Liability balances → booked to Equity:Opening-Balances
 - Income/Expense balances → cleared to Equity:Earnings:Previous
 
@@ -185,7 +205,7 @@ Replaces all entries before the date with summarization entries:
 SELECT * FROM has_account("Invest") OPEN ON 2024-01-01;
 ```
 
-### CLOSE [ON \<date\>]
+### CLOSE [ON \<date>]
 
 Truncates entries after the date. Leaves income/expense balances untouched (used for income statements).
 
@@ -207,31 +227,39 @@ GROUP BY 1;
 ## High-Level Query Shortcuts
 
 ### JOURNAL
+
 ```sql
 JOURNAL <account-regexp> [AT <function>] [FROM ...]
 ```
+
 Generates account statement with optional aggregation function.
 
 Example:
+
 ```sql
 JOURNAL "Assets:Checking" AT cost
 ```
 
 ### BALANCES
+
 ```sql
 BALANCES [AT <function>] [FROM ...]
 ```
+
 Produces account balance table.
 
 Example:
+
 ```sql
 BALANCES AT units FROM year = 2024
 ```
 
 ### PRINT
+
 ```sql
 PRINT [FROM ...]
 ```
+
 Outputs filtered transactions in Beancount syntax.
 
 ## Wildcard Selection
@@ -239,6 +267,7 @@ Outputs filtered transactions in Beancount syntax.
 ```sql
 SELECT *;
 ```
+
 Selects sensible default columns.
 
 ## FROM Clause Filters
@@ -255,11 +284,11 @@ The FROM clause filters at the transaction level using special predicates:
 ## Key Distinctions from SQL
 
 1. **Two-level filtering**: FROM filters transactions, WHERE filters postings
-2. **Native inventory types**: Position and Inventory are first-class types
-3. **Cost operations**: Built-in functions for cost basis calculations
-4. **Accounting equation preservation**: Transaction-level filtering maintains balance
-5. **Running balance column**: `balance` without window functions
-6. **Simplified NULL**: Binary logic (NULL = NULL is TRUE)
+1. **Native inventory types**: Position and Inventory are first-class types
+1. **Cost operations**: Built-in functions for cost basis calculations
+1. **Accounting equation preservation**: Transaction-level filtering maintains balance
+1. **Running balance column**: `balance` without window functions
+1. **Simplified NULL**: Binary logic (NULL = NULL is TRUE)
 
 ## Grammar Summary
 

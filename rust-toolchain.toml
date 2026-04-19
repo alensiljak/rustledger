@@ -5,11 +5,11 @@
 [toolchain]
 channel = "stable"
 components = [
-    "cargo",
-    "clippy",
-    "rust-src",
-    "rustc",
-    "rustfmt",
-    "llvm-tools-preview",
+  "cargo",
+  "clippy",
+  "rust-src",
+  "rustc",
+  "rustfmt",
+  "llvm-tools-preview",
 ]
 targets = ["wasm32-unknown-unknown"]

@@ -1,7 +1,6 @@
----
-title: rledger report
-description: Generate financial reports
----
+______________________________________________________________________
+
+## title: rledger report description: Generate financial reports
 
 # rledger report
 
@@ -60,6 +59,7 @@ rledger report bal ledger.beancount
 ```
 
 Output:
+
 ```
 Assets
   Bank:Checking         5,234.00 USD
@@ -104,6 +104,7 @@ rledger report holdings ledger.beancount
 ```
 
 Output:
+
 ```
 Account                   Units     Cost Basis    Market Value    Gain/Loss
 ─────────────────────────────────────────────────────────────────────────────
@@ -124,6 +125,7 @@ rledger report stats ledger.beancount
 ```
 
 Output:
+
 ```
 Ledger Statistics
 ─────────────────

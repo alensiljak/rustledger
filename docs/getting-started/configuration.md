@@ -1,7 +1,6 @@
----
-title: Configuration
-description: Configure rustledger with profiles and options
----
+______________________________________________________________________
+
+## title: Configuration description: Configure rustledger with profiles and options
 
 # Configuration
 
@@ -26,8 +25,8 @@ export RLEDGER_FILE="$HOME/finances/main.beancount"
 rustledger looks for configuration in these locations (highest to lowest priority):
 
 1. `.rledger.toml` in the current directory (searching upward)
-2. `~/.config/rledger/config.toml` (user config)
-3. `/etc/rledger/config.toml` (system config, Unix only)
+1. `~/.config/rledger/config.toml` (user config)
+1. `/etc/rledger/config.toml` (system config, Unix only)
 
 Higher priority configs override lower ones. You can also generate a default config with:
 

@@ -7,7 +7,6 @@ body:
     attributes:
       value: |
         Report a case where rustledger behaves differently from Python Beancount.
-
   - type: textarea
     id: description
     attributes:
@@ -15,7 +14,6 @@ body:
       description: Describe the compatibility issue.
     validations:
       required: true
-
   - type: textarea
     id: beancount-file
     attributes:
@@ -24,7 +22,6 @@ body:
       render: text
     validations:
       required: true
-
   - type: textarea
     id: python-output
     attributes:
@@ -33,7 +30,6 @@ body:
       render: text
     validations:
       required: true
-
   - type: textarea
     id: rustledger-output
     attributes:
@@ -42,13 +38,11 @@ body:
       render: text
     validations:
       required: true
-
   - type: input
     id: python-version
     attributes:
       label: Python Beancount Version
       placeholder: "2.3.6"
-
   - type: input
     id: rustledger-version
     attributes:

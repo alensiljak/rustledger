@@ -1,7 +1,6 @@
----
-title: Contributing Plugins
-description: How to add native Rust plugins to rustledger
----
+______________________________________________________________________
+
+## title: Contributing Plugins description: How to add native Rust plugins to rustledger
 
 # Contributing Native Plugins
 
@@ -14,6 +13,7 @@ If you want to write a plugin for your own use without modifying rustledger, see
 ## When to Add a Native Plugin
 
 Add a native plugin when:
+
 - The functionality is generally useful to many users
 - You want to contribute to rustledger
 - Maximum performance is critical
@@ -44,7 +44,7 @@ crates/rustledger-plugin/
 
 Create a new file in `crates/rustledger-plugin/src/native/plugins/`:
 
-```rust
+````rust
 // crates/rustledger-plugin/src/native/plugins/my_plugin.rs
 
 use crate::native::NativePlugin;
@@ -82,7 +82,7 @@ impl NativePlugin for MyPlugin {
         PluginOutput { directives, errors }
     }
 }
-```
+````
 
 ### 2. Register the Plugin
 
@@ -385,8 +385,8 @@ fn process(&self, input: PluginInput) -> PluginOutput {
 ### Performance
 
 1. **Avoid cloning when possible**: Use references and iterators
-2. **Early returns**: Skip directives that don't need processing
-3. **Batch operations**: Collect changes before applying
+1. **Early returns**: Skip directives that don't need processing
+1. **Batch operations**: Collect changes before applying
 
 ```rust
 // Good: Filter first, then process
@@ -461,11 +461,11 @@ fn parse_config(config: &Option<String>) -> PluginConfig {
 ## Documentation Requirements
 
 1. **Module docs**: Explain what the plugin does
-2. **Example usage**: Show beancount syntax
-3. **Configuration**: Document all options
-4. **Error codes**: List possible errors
+1. **Example usage**: Show beancount syntax
+1. **Configuration**: Document all options
+1. **Error codes**: List possible errors
 
-```rust
+````rust
 //! Check that all accounts have a specific prefix.
 //!
 //! This plugin validates that all account names start with one of the
@@ -488,16 +488,16 @@ fn parse_config(config: &Option<String>) -> PluginConfig {
 //! # Errors
 //!
 //! - `E1001`: Account name does not start with an allowed prefix
-```
+````
 
 ## Submitting Your Plugin
 
 1. **Fork rustledger** and create a feature branch
-2. **Add your plugin** following this guide
-3. **Write tests** for all functionality
-4. **Update documentation** in `docs/reference/plugins.md`
-5. **Run the test suite**: `cargo test -p rustledger-plugin`
-6. **Submit a PR** with a clear description
+1. **Add your plugin** following this guide
+1. **Write tests** for all functionality
+1. **Update documentation** in `docs/reference/plugins.md`
+1. **Run the test suite**: `cargo test -p rustledger-plugin`
+1. **Submit a PR** with a clear description
 
 ## See Also
 

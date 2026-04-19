@@ -202,7 +202,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             postings,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
 
             let flag = match flag.as_str() {
@@ -232,10 +233,7 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
                             .as_ref()
                             .and_then(|n| rustledger_core::Decimal::from_str_exact(n).ok()),
                         currency: c.currency.clone().map(Into::into),
-                        date: c
-                            .date
-                            .as_ref()
-                            .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()),
+                        date: c.date.as_ref().and_then(|d| d.parse::<NaiveDate>().ok()),
                         label: c.label.clone(),
                         merge: false,
                     });
@@ -280,7 +278,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             booking,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Open(rustledger_core::Open {
                 date,
@@ -295,7 +294,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             account,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Close(rustledger_core::Close {
                 date,
@@ -309,7 +309,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             amount,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Balance(rustledger_core::Balance {
                 date,
@@ -329,7 +330,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             source_account,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Pad(rustledger_core::Pad {
                 date,
@@ -343,7 +345,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             currency,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Commodity(rustledger_core::Commodity {
                 date,
@@ -357,7 +360,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             amount,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Price(rustledger_core::Price {
                 date,
@@ -376,7 +380,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             value,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Event(rustledger_core::Event {
                 date,
@@ -391,7 +396,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             comment,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Note(rustledger_core::Note {
                 date,
@@ -406,7 +412,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             path,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Document(rustledger_core::Document {
                 date,
@@ -423,7 +430,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             query_string,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Query(rustledger_core::Query {
                 date,
@@ -438,7 +446,8 @@ pub fn input_entry_to_directive(entry: &InputEntry) -> Result<Directive, String>
             values,
             meta,
         } => {
-            let date = NaiveDate::parse_from_str(date, "%Y-%m-%d")
+            let date = date
+                .parse::<NaiveDate>()
                 .map_err(|e| format!("Invalid date '{date}': {e}"))?;
             Ok(Directive::Custom(rustledger_core::Custom {
                 date,

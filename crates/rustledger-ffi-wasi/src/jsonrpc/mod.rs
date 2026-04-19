@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_process_invalid_json() {
-        let input = r#"not valid json"#;
+        let input = r"not valid json";
         let response = process_request(input);
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"error\""));

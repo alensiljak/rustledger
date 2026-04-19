@@ -1,19 +1,20 @@
----
+______________________________________________________________________
+
 on:
-  schedule: weekly on friday
-  workflow_dispatch:
+schedule: weekly on friday
+workflow_dispatch:
 
 permissions:
-  contents: read
-  issues: read
-  pull-requests: read
-  discussions: write
+contents: read
+issues: read
+pull-requests: read
+discussions: write
 
 safe-outputs:
-  create-discussion:
-    max: 1
+create-discussion:
+max: 1
 
----
+______________________________________________________________________
 
 # Weekly Project Report
 
@@ -22,6 +23,7 @@ Generate a comprehensive weekly report for the rustledger project and post it to
 ## Context
 
 rustledger is a Rust implementation of Beancount (double-entry bookkeeping) with:
+
 - 12 crates in a cargo workspace
 - CLI tool (`rledger`) with multiple commands
 - WASM library target
@@ -30,6 +32,7 @@ rustledger is a Rust implementation of Beancount (double-entry bookkeeping) with
 - BQL query engine
 
 Key repositories and branches:
+
 - `main` - Primary development branch
 - `compatibility` - Compatibility test results
 - `benchmarks` - Performance benchmark data

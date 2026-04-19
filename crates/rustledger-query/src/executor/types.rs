@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
-use chrono::Datelike;
 use rust_decimal::Decimal;
 use rustledger_core::{Amount, Inventory, Metadata, NaiveDate, Position, Transaction};
 
@@ -74,37 +73,17 @@ impl Interval {
     }
 
     /// Add this interval to a date.
-    #[allow(clippy::missing_const_for_fn)] // chrono methods aren't const
     pub fn add_to_date(&self, date: NaiveDate) -> Option<NaiveDate> {
-        use chrono::Months;
+        use jiff::ToSpan;
 
-        match self.unit {
-            IntervalUnit::Day => date.checked_add_signed(chrono::Duration::days(self.count)),
-            IntervalUnit::Week => date.checked_add_signed(chrono::Duration::weeks(self.count)),
-            IntervalUnit::Month => {
-                if self.count >= 0 {
-                    date.checked_add_months(Months::new(self.count as u32))
-                } else {
-                    date.checked_sub_months(Months::new((-self.count) as u32))
-                }
-            }
-            IntervalUnit::Quarter => {
-                let months = self.count * 3;
-                if months >= 0 {
-                    date.checked_add_months(Months::new(months as u32))
-                } else {
-                    date.checked_sub_months(Months::new((-months) as u32))
-                }
-            }
-            IntervalUnit::Year => {
-                let months = self.count * 12;
-                if months >= 0 {
-                    date.checked_add_months(Months::new(months as u32))
-                } else {
-                    date.checked_sub_months(Months::new((-months) as u32))
-                }
-            }
-        }
+        let span = match self.unit {
+            IntervalUnit::Day => self.count.days(),
+            IntervalUnit::Week => self.count.weeks(),
+            IntervalUnit::Month => self.count.months(),
+            IntervalUnit::Quarter => (self.count * 3).months(),
+            IntervalUnit::Year => self.count.years(),
+        };
+        date.checked_add(span).ok()
     }
 }
 

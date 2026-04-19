@@ -30,16 +30,19 @@ This downloads ~800 beancount files from 10+ open source repositories.
 ## Running Tests
 
 ### Check Compatibility (bean-check vs rledger check)
+
 ```bash
 ./scripts/compat-test.sh
 ```
 
 ### BQL Query Compatibility (bean-query vs rledger query)
+
 ```bash
 ./scripts/compat-bql-test.sh
 ```
 
 ### AST Comparison
+
 ```bash
 python3 ./scripts/compat-ast-test.py
 ```
@@ -68,6 +71,7 @@ Files are cached to avoid re-downloading on every run.
 ## Results
 
 Test results are written to `tests/compatibility-results/` (also gitignored):
+
 - `results_*.jsonl` - Check compatibility results
 - `bql_results_*.jsonl` - BQL query results
 - `summary_*.md` - Human-readable summary

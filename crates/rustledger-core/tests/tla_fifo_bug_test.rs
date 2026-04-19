@@ -3,7 +3,6 @@
 //! TLC found that if lots are added out of chronological order,
 //! FIFO incorrectly selects based on insertion order rather than date.
 
-use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use rustledger_core::{Amount, BookingMethod, Cost, CostSpec, Inventory, Position};
 
@@ -18,13 +17,13 @@ fn tla_fifo_should_select_oldest_by_date_not_insertion_order() {
     // State 2: Add lot with date=2 (newer)
     inv.add(Position::with_cost(
         Amount::new(dec!(10), "AAPL"),
-        Cost::new(dec!(150), "USD").with_date(NaiveDate::from_ymd_opt(2024, 1, 2).unwrap()),
+        Cost::new(dec!(150), "USD").with_date(rustledger_core::naive_date(2024, 1, 2).unwrap()),
     ));
 
     // State 3: Add lot with date=1 (OLDER, but added second)
     inv.add(Position::with_cost(
         Amount::new(dec!(10), "AAPL"),
-        Cost::new(dec!(100), "USD").with_date(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap()),
+        Cost::new(dec!(100), "USD").with_date(rustledger_core::naive_date(2024, 1, 1).unwrap()),
     ));
 
     // State 4: Reduce using FIFO

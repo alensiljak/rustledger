@@ -85,6 +85,7 @@ This document catalogs all validation errors and warnings with their trigger con
 **Message:** `Invalid account name "{account}": {reason}`
 
 **Reasons:**
+
 - Does not start with valid root (Assets, Liabilities, Equity, Income, Expenses)
 - Contains invalid characters
 - Component doesn't start with capital letter
@@ -410,33 +411,41 @@ This document catalogs all validation errors and warnings with their trigger con
 Validation occurs in multiple phases:
 
 ### Phase 1: Syntax (during parsing)
+
 - PARSE errors
 - ACCOUNT_INVALID_NAME
 
 ### Phase 2: Structure (after parsing, before processing)
+
 - TXN_NO_POSTINGS
 - INCLUDE_FILE_NOT_FOUND
 - INCLUDE_CYCLE_DETECTED
 
 ### Phase 3: Accounts (chronological scan)
+
 - ACCOUNT_NOT_OPENED
 - ACCOUNT_ALREADY_OPEN
 - ACCOUNT_ALREADY_CLOSED
 
 ### Phase 4: Interpolation
+
 - TXN_MULTIPLE_MISSING_AMOUNTS
 
 ### Phase 5: Booking
+
 - All BOOKING errors
 
 ### Phase 6: Balancing
+
 - TXN_NOT_BALANCED
 
 ### Phase 7: Assertions
+
 - BALANCE_ASSERTION_FAILED
 - PAD_WITHOUT_BALANCE
 
 ### Phase 8: Optional Checks
+
 - DOCUMENT_FILE_NOT_FOUND
 - CURRENCY_NOT_DECLARED
 - DATE_IN_FUTURE

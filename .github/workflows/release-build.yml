@@ -27,7 +27,7 @@ on:
         type: string
 permissions:
   contents: write
-  id-token: write  # Required for crates.io trusted publishing (OIDC)
+  id-token: write # Required for crates.io trusted publishing (OIDC)
 env:
   CARGO_TERM_COLOR: always
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
@@ -72,7 +72,6 @@ jobs:
           fi
 
           echo "Version validated successfully!"
-
   build:
     name: Build ${{ matrix.target }}
     needs: validate-version
@@ -306,7 +305,6 @@ jobs:
             rustledger-*.tar.gz
             rustledger-*.zip
             rustledger-*.sha256
-
   build-wasm:
     name: Build WASM
     needs: validate-version
@@ -337,7 +335,6 @@ jobs:
         with:
           name: wasm-package
           path: crates/rustledger-wasm/pkg/
-
   build-ffi-wasi:
     name: Build FFI-WASI
     needs: validate-version
@@ -365,7 +362,6 @@ jobs:
           path: |
             rustledger-ffi-wasi-*.wasm
             rustledger-ffi-wasi-*.sha256
-
   build-vscode:
     name: Build VS Code Extension
     needs: validate-version
@@ -398,7 +394,6 @@ jobs:
           path: |
             packages/vscode/rustledger-vscode.vsix
             packages/vscode/rustledger-vscode.vsix.sha256
-
   release:
     name: Create Release
     needs: [build, build-wasm, build-ffi-wasi, build-vscode]
@@ -410,7 +405,6 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}

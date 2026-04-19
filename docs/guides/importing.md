@@ -1,7 +1,6 @@
----
-title: Importing Data
-description: Import transactions from bank statements
----
+______________________________________________________________________
+
+## title: Importing Data description: Import transactions from bank statements
 
 # Importing Data
 
@@ -67,8 +66,8 @@ rledger extract --importer chase chase-statement.csv
 The `importers.toml` file is searched for automatically in these locations (first found wins):
 
 1. Path specified via `--importers-config path/to/importers.toml`
-2. `importers.toml` in the current directory
-3. `~/.config/rledger/importers.toml`
+1. `importers.toml` in the current directory
+1. `~/.config/rledger/importers.toml`
 
 ### Account Mapping
 
@@ -153,6 +152,7 @@ rledger extract statement.csv -a Assets:Bank --existing ledger.beancount
 ```
 
 Duplicates are detected by matching:
+
 - Date
 - Amount
 - Payee/narration (fuzzy match)
@@ -188,8 +188,8 @@ rledger check ledger.beancount
 ### Categorization Tips
 
 1. **Start broad**: Use `Expenses:Unknown` for unmatched
-2. **Add patterns**: When you see repeated merchants, add mappings
-3. **Refine over time**: Your mappings improve with each import
+1. **Add patterns**: When you see repeated merchants, add mappings
+1. **Refine over time**: Your mappings improve with each import
 
 ## Troubleshooting
 

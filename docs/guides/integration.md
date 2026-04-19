@@ -1,7 +1,6 @@
----
-title: Integration Guide
-description: Embedding rustledger in applications and other languages
----
+______________________________________________________________________
+
+## title: Integration Guide description: Embedding rustledger in applications and other languages
 
 # Integration Guide
 
@@ -363,6 +362,7 @@ rledger-lsp
 ```
 
 The LSP supports:
+
 - Diagnostics (validation errors)
 - Go to definition (accounts, commodities)
 - Hover information (account details, balances)

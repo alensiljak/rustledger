@@ -5,6 +5,7 @@
 ### Positions and Lots
 
 A **Position** represents units of a commodity with optional acquisition metadata:
+
 - **Units**: The quantity of the commodity (Decimal + Currency)
 - **Cost**: Per-unit acquisition cost (cost basis)
 - **Date**: Acquisition date (defaults to transaction date)
@@ -30,6 +31,7 @@ When adding units to an account, a new position is created with provided lot spe
 ```
 
 The cost specification data is attached to the position and preserved indefinitely. You may specify:
+
 - Per-unit cost and currency
 - Acquisition date (overrides transaction date if provided)
 - Optional label string
@@ -81,30 +83,33 @@ Raises an error when ambiguous matches occur (unless a total match exception app
 Selects oldest (earliest-dated) matching lots first until the reduction is complete. Remaining volume carries forward to newer lots.
 
 **Algorithm:**
+
 1. Sort matching positions by acquisition date ascending
-2. Reduce from oldest lot
-3. If lot fully consumed, move to next oldest
-4. Repeat until reduction satisfied
+1. Reduce from oldest lot
+1. If lot fully consumed, move to next oldest
+1. Repeat until reduction satisfied
 
 ### LIFO (Last-In-First-Out)
 
 Selects newest (latest-dated) matching lots first, working backward chronologically through the inventory.
 
 **Algorithm:**
+
 1. Sort matching positions by acquisition date descending
-2. Reduce from newest lot
-3. If lot fully consumed, move to next newest
-4. Repeat until reduction satisfied
+1. Reduce from newest lot
+1. If lot fully consumed, move to next newest
+1. Repeat until reduction satisfied
 
 ### AVERAGE
 
 Merges all units of the affected commodity and recalculates average cost basis after every reduction.
 
 **Algorithm:**
+
 1. Compute total units and total cost across all matching positions
-2. Calculate weighted average cost = total cost / total units
-3. Replace all matching positions with single position at average cost
-4. Reduce from this averaged position
+1. Calculate weighted average cost = total cost / total units
+1. Replace all matching positions with single position at average cost
+1. Reduce from this averaged position
 
 ### NONE
 
@@ -115,11 +120,13 @@ Disables booking entirely. Reducing positions are appended unconditionally witho
 ### Syntax
 
 Cost specifications appear in curly braces `{}` and may contain (in any order):
+
 - **Amount**: `23.00 USD` — per-unit cost
 - **Date**: `2015-04-25` — acquisition date
 - **Label**: `"lot-id"` — user identifier
 
 Examples:
+
 ```beancount
 {23.00 USD}
 {2015-04-25}
@@ -131,6 +138,7 @@ Examples:
 ### For Augmentations
 
 Provide lot data to create new position:
+
 - Omitted date defaults to transaction date
 - Omitted cost must be inferred from other transaction postings (interpolation)
 - Omitted label remains null
@@ -138,6 +146,7 @@ Provide lot data to create new position:
 ### For Reductions
 
 The specification filters inventory contents by matching against stored lot attributes:
+
 - Only positions matching ALL specified criteria are candidates
 - Empty `{}` matches any position with cost basis
 - Omitted specification matches any position (including those without cost)
@@ -176,11 +185,13 @@ Mixed inventories (containing both positive and negative units of the same commo
 ## Partial Lot Reduction
 
 When a lot is partially reduced:
+
 1. Original position units decrease by reduction amount
-2. Cost basis per unit remains unchanged
-3. Position date and label remain unchanged
+1. Cost basis per unit remains unchanged
+1. Position date and label remain unchanged
 
 Example:
+
 ```
 Before: 25 HOOL {23.00 USD, 2015-04-01, "first-lot"}
 Reduce: -12 HOOL
@@ -190,9 +201,9 @@ After:  13 HOOL {23.00 USD, 2015-04-01, "first-lot"}
 ## Error Conditions
 
 1. **Insufficient units**: Reduction exceeds available matching positions
-2. **No matching lots**: No positions satisfy the cost specification filter
-3. **Ambiguous match with STRICT**: Multiple candidates, cannot determine which to reduce
-4. **Negative units**: Attempting to reduce below zero (unless NONE booking)
+1. **No matching lots**: No positions satisfy the cost specification filter
+1. **Ambiguous match with STRICT**: Multiple candidates, cannot determine which to reduce
+1. **Negative units**: Attempting to reduce below zero (unless NONE booking)
 
 ## Implementation Notes
 

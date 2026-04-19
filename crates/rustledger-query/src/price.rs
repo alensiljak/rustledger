@@ -414,7 +414,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+        rustledger_core::naive_date(y, m, d).unwrap()
     }
 
     #[test]

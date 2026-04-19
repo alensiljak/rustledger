@@ -41,10 +41,11 @@ All originally planned phases have been implemented:
 ## Remaining Gaps
 
 ### Not Yet Implemented
-1. **OSS-Fuzz integration** - Google's continuous fuzzing infrastructure
-2. **Incremental test running** - Only run tests affected by changes
 
----
+1. **OSS-Fuzz integration** - Google's continuous fuzzing infrastructure
+1. **Incremental test running** - Only run tests affected by changes
+
+______________________________________________________________________
 
 ## Phase 1: Quick Wins ✅ DONE
 
@@ -118,7 +119,7 @@ miri:
 
 **Effort**: 1 hour
 
----
+______________________________________________________________________
 
 ## Phase 2: Fuzzing Infrastructure ✅ DONE
 
@@ -170,9 +171,10 @@ jobs:
 **Why**: Google runs your fuzzers 24/7 for free, files bugs automatically.
 
 **Steps**:
+
 1. Create `projects/rustledger/` in google/oss-fuzz fork
-2. Add `Dockerfile`, `build.sh`, `project.yaml`
-3. Submit PR to google/oss-fuzz
+1. Add `Dockerfile`, `build.sh`, `project.yaml`
+1. Submit PR to google/oss-fuzz
 
 **File**: `oss-fuzz/Dockerfile` (to create in fork)
 
@@ -215,7 +217,7 @@ fuzz_target!(|data: &[u8]| {
 
 **Effort**: 2 hours
 
----
+______________________________________________________________________
 
 ## Phase 3: Compatibility Testing Enhancements ✅ DONE
 
@@ -272,6 +274,7 @@ def compare_errors(file: Path):
 **File**: `scripts/compat-bql-comprehensive.sh`
 
 Add tests for:
+
 - All aggregate functions (SUM, COUNT, FIRST, LAST, MIN, MAX, etc.)
 - Date functions (YEAR, MONTH, DAY, etc.)
 - String functions
@@ -285,13 +288,14 @@ Add tests for:
 **Why**: "Due to test execution time" comment suggests scaling problem.
 
 **Solution**:
+
 - Run BQL tests in parallel
 - Use sampling for nightly (all files) vs PR (subset)
 - Cache query results
 
 **Effort**: 4 hours
 
----
+______________________________________________________________________
 
 ## Phase 4: Formal Verification Bridge ✅ DONE
 
@@ -375,7 +379,7 @@ jobs:
 
 **Effort**: 4 hours
 
----
+______________________________________________________________________
 
 ## Phase 5: Mutation Testing ✅ DONE
 
@@ -428,7 +432,7 @@ jobs:
 
 **Effort**: 2 hours
 
----
+______________________________________________________________________
 
 ## Phase 6: WASM Testing ✅ DONE
 
@@ -467,7 +471,7 @@ wasm:
 
 **Effort**: 4 hours
 
----
+______________________________________________________________________
 
 ## Implementation Timeline
 
@@ -482,7 +486,7 @@ wasm:
 
 **All original phases completed.**
 
----
+______________________________________________________________________
 
 ## Success Metrics
 
@@ -499,19 +503,21 @@ wasm:
 
 **Achieved grade: A+** (top 1% of Rust projects)
 
----
+______________________________________________________________________
 
 ## Future Improvements
 
 ### Still Planned
 
 1. **OSS-Fuzz Integration** 🔮
+
    - Google's continuous fuzzing infrastructure (24/7 fuzzing, free)
    - Auto-files bugs when crashes found
    - Requires PR to google/oss-fuzz repo
    - **Effort**: 1 day
 
-2. **Incremental Test Running** 🔮
+1. **Incremental Test Running** 🔮
+
    - Only run tests affected by changed files
    - Use `cargo-nextest` file-to-test mapping
    - Significant CI time savings on partial changes
@@ -520,51 +526,60 @@ wasm:
 ### Brainstormed Ideas
 
 3. **Differential Testing Against Beancount**
+
    - Run both `rledger` and `bean-check` on same inputs
    - Auto-detect behavior divergence
    - Useful for catching subtle compatibility bugs
    - Could use the compatibility test corpus
 
-4. **Chaos Testing**
+1. **Chaos Testing**
+
    - Inject random failures (disk, network, memory pressure)
    - Test graceful degradation
    - Useful for cache and file loading code
 
-5. **Contract Testing for Plugins**
+1. **Contract Testing for Plugins**
+
    - Verify plugin API contracts with property testing
    - Ensure plugins can't crash the host
    - Test WASM sandbox isolation
 
-6. **Benchmark Regression Detection**
+1. **Benchmark Regression Detection**
+
    - Currently benchmarks run but don't fail on regression
    - Add statistical significance testing (like `criterion`'s `--baseline`)
    - Block PRs that cause >5% performance regression
 
-7. **Visual Regression Testing**
+1. **Visual Regression Testing**
+
    - Snapshot test CLI output formatting
    - Test error message rendering
    - Ensure colored output doesn't break
 
-8. **Cross-Platform Testing Matrix**
+1. **Cross-Platform Testing Matrix**
+
    - Currently: Linux x86_64 only in most CI
    - Add: macOS ARM64, Windows, Linux ARM64
    - Use matrix builds for critical paths
 
-9. **Load Testing**
+1. **Load Testing**
+
    - Test with very large ledgers (1M+ transactions)
    - Memory profiling under load
    - Detect memory leaks with long-running processes
 
-10. **API Stability Testing**
-    - Track public API surface
-    - Detect accidental breaking changes
-    - Use `cargo public-api` or similar
+1. **API Stability Testing**
 
----
+   - Track public API surface
+   - Detect accidental breaking changes
+   - Use `cargo public-api` or similar
+
+______________________________________________________________________
 
 ## Appendix: File Changes Summary
 
 ### New Files
+
 - `.github/workflows/fuzz.yml`
 - `.github/workflows/kani.yml`
 - `.github/workflows/mutation.yml`
@@ -573,10 +588,12 @@ wasm:
 - `scripts/compat-error-quality.py`
 
 ### Modified Files
+
 - `.github/workflows/ci.yml` (Miri, nextest, coverage, WASM)
 - `.github/workflows/bench-pr.yml` (Criterion)
 - `.github/workflows/tla.yml` (trace automation)
 - `scripts/compat-bql-test.sh` (expanded queries)
 
 ### External PRs
+
 - google/oss-fuzz (new project integration)

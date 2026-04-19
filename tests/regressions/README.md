@@ -5,13 +5,15 @@ This directory contains beancount files from user-reported issues to prevent reg
 ## Purpose
 
 When a user reports a bug with a reproducible beancount file, we:
+
 1. Add the file here (named after the issue number)
-2. Fix the bug
-3. Keep the test to prevent regressions
+1. Fix the bug
+1. Keep the test to prevent regressions
 
 ## File Format
 
 Each file should:
+
 - Be named `issue-NNN.beancount` where NNN is the GitHub issue number
 - Include a header comment with:
   - Link to the original issue
@@ -19,6 +21,7 @@ Each file should:
   - Expected behavior
 
 Example:
+
 ```beancount
 ; Issue: https://github.com/rustledger/rustledger/issues/123
 ; Description: Cost without currency should infer from context
@@ -62,10 +65,10 @@ which includes `tests/regressions` in its `TEST_DIRS` configuration in
 When adding a test from a new issue:
 
 1. Create `issue-NNN.beancount` with the minimal reproducer
-2. Verify it fails before fixing (if not yet fixed)
-3. Fix the bug
-4. Verify the test passes
-5. Commit both the fix and the test
+1. Verify it fails before fixing (if not yet fixed)
+1. Fix the bug
+1. Verify the test passes
+1. Commit both the fix and the test
 
 ## Index
 

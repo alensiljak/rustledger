@@ -3,10 +3,8 @@ name: Branch Name
 on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
-
 permissions:
   contents: read
-
 jobs:
   validate:
     name: Validate branch name
