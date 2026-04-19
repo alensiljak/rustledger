@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 
 use rustledger_booking::BookingEngine;
-use rustledger_core::Directive;
+use rustledger_core::{Directive, NaiveDate};
 use rustledger_loader::Loader;
 use rustledger_plugin::{
     NativePluginRegistry, PluginInput, PluginOptions, directive_to_wrapper, wrapper_to_directive,
@@ -597,7 +597,7 @@ fn handle_clamp_entries(params: &serde_json::Value) -> Result<serde_json::Value,
     let begin_date = params
         .begin_date
         .as_ref()
-        .map(|d| rustledger_core::d.parse::<NaiveDate>())
+        .map(|d| d.parse::<NaiveDate>())
         .transpose()
         .map_err(|e| RpcError::invalid_params(format!("Invalid begin_date: {e}")))?
         .ok_or_else(|| RpcError::invalid_params("begin_date is required"))?;
@@ -605,7 +605,7 @@ fn handle_clamp_entries(params: &serde_json::Value) -> Result<serde_json::Value,
     let end_date = params
         .end_date
         .as_ref()
-        .map(|d| rustledger_core::d.parse::<NaiveDate>())
+        .map(|d| d.parse::<NaiveDate>())
         .transpose()
         .map_err(|e| RpcError::invalid_params(format!("Invalid end_date: {e}")))?
         .ok_or_else(|| RpcError::invalid_params("end_date is required"))?;
