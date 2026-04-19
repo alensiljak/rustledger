@@ -589,10 +589,10 @@ include "accounts.beancount"
         );
         vfs.add_file(
             "accounts.beancount",
-            r#"
+            r"
 2024-01-01 open Assets:Bank USD
 2024-01-01 open Expenses:Food USD
-"#,
+",
         );
 
         let mut loader = Loader::new().with_filesystem(Box::new(vfs));
@@ -653,10 +653,10 @@ include "accounts.beancount"
         );
         vfs.add_file(
             "accounts.beancount",
-            r#"
+            r"
 2024-01-01 open Assets:Bank USD
 2024-01-01 open Expenses:Food USD
-"#,
+",
         );
 
         let mut loader = Loader::new().with_filesystem(Box::new(vfs));
@@ -669,24 +669,23 @@ include "accounts.beancount"
         let mut engine = BookingEngine::new();
         engine.register_account_methods(directives.iter());
         for directive in &mut directives {
-            if let Directive::Transaction(txn) = directive {
-                if let Ok(result) = engine.book_and_interpolate(txn) {
-                    engine.apply(&result.transaction);
-                    *txn = result.transaction;
-                }
+            if let Directive::Transaction(txn) = directive
+                && let Ok(result) = engine.book_and_interpolate(txn)
+            {
+                engine.apply(&result.transaction);
+                *txn = result.transaction;
             }
         }
         // Sort by date for proper validation
-        directives.sort_by_key(|d| d.date());
+        directives.sort_by_key(rustledger_core::Directive::date);
         let validation_errors = validate_ledger(&directives);
         assert!(
             validation_errors.is_empty(),
-            "ledger should be valid, but got: {:?}",
-            validation_errors
+            "ledger should be valid, but got: {validation_errors:?}"
         );
     }
 
-    /// Test ParsedLedger multi-file construction via process() pipeline.
+    /// Test `ParsedLedger` multi-file construction via `process()` pipeline.
     #[test]
     fn test_parsed_ledger_multi_file_via_process() {
         use rustledger_core::Directive;
@@ -706,10 +705,10 @@ include "accounts.beancount"
         );
         vfs.add_file(
             "accounts.beancount",
-            r#"
+            r"
 2024-01-01 open Assets:Bank USD
 2024-01-01 open Expenses:Food USD
-"#,
+",
         );
 
         assert!(vfs.exists(Path::new("main.beancount")));
@@ -729,7 +728,10 @@ include "accounts.beancount"
         assert_eq!(directives.len(), 3);
 
         // Should be sorted by date
-        let dates: Vec<_> = directives.iter().map(|d| d.date()).collect();
+        let dates: Vec<_> = directives
+            .iter()
+            .map(rustledger_core::Directive::date)
+            .collect();
         assert!(dates.windows(2).all(|w| w[0] <= w[1]));
 
         // Transaction should have interpolated bank amount
@@ -747,7 +749,10 @@ include "accounts.beancount"
             .find(|p| p.account.as_str().contains("Bank"))
             .expect("should have bank posting");
         assert!(
-            bank.units.as_ref().and_then(|u| u.number()).is_some(),
+            bank.units
+                .as_ref()
+                .and_then(rustledger_core::IncompleteAmount::number)
+                .is_some(),
             "bank amount should be interpolated"
         );
 
@@ -788,7 +793,7 @@ include "accounts.beancount"
             .find(|p| {
                 p.units
                     .as_ref()
-                    .map_or(false, |u| u.currency() == Some("PROP"))
+                    .is_some_and(|u| u.currency() == Some("PROP"))
             })
             .expect("should have PROP posting");
 
@@ -937,7 +942,9 @@ include "accounts.beancount"
                 .find_map(|d| match d {
                     rustledger_core::Directive::Transaction(t) => t.postings.iter().find_map(|p| {
                         if p.account.as_str().contains("Bank") {
-                            p.units.as_ref().and_then(|u| u.number())
+                            p.units
+                                .as_ref()
+                                .and_then(rustledger_core::IncompleteAmount::number)
                         } else {
                             None
                         }
@@ -959,13 +966,13 @@ include "accounts.beancount"
     fn test_parity_pad_expansion() {
         use rustledger_booking::expand_pads;
 
-        let source = r#"
+        let source = r"
 2024-01-01 open Assets:Bank USD
 2024-01-01 open Equity:Opening USD
 
 2024-01-01 pad Assets:Bank Equity:Opening
 2024-01-15 balance Assets:Bank 1000 USD
-"#;
+";
         let cli = cli_process(source);
         let wasm = wasm_process(source);
 

@@ -55,7 +55,15 @@ pub(super) fn report_networth<W: Write>(
     let format_period = |date: rustledger_core::NaiveDate, period: &str| -> String {
         match period {
             "daily" => date.to_string(),
-            "weekly" => format!("{}-W{:02}", date.year(), date.iso_week().week()),
+            "weekly" => format!(
+                "{}-W{:02}",
+                date.year(),
+                jiff::fmt::strtime::format("%V", date)
+                    .unwrap_or_default()
+                    .trim()
+                    .parse::<u32>()
+                    .unwrap_or(0)
+            ),
             "yearly" => format!("{}", date.year()),
             _ => format!("{}-{:02}", date.year(), date.month()),
         }

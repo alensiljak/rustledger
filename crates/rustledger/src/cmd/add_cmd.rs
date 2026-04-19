@@ -226,7 +226,7 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
     }
 
     // Explicit date: YYYY-MM-DD
-    &trimmed
+    trimmed
         .parse::<NaiveDate>()
         .with_context(|| format!("Invalid date format: {input}. Use YYYY-MM-DD."))
 }

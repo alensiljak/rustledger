@@ -74,7 +74,7 @@ impl PriceCache {
         }
 
         let price: Decimal = entry.price.parse().ok()?;
-        let date = &entry.date.parse::<NaiveDate>().ok()?;
+        let date = entry.date.parse::<NaiveDate>().ok()?;
 
         Some(PriceResponse {
             price,

@@ -145,10 +145,8 @@ pub fn count_currency_usages(currency: &str, parse_result: &ParseResult) -> usiz
                     }
                 }
             }
-            Directive::Balance(bal) => {
-                if bal.amount.currency.as_ref() == currency {
-                    count += 1;
-                }
+            Directive::Balance(bal) if bal.amount.currency.as_ref() == currency => {
+                count += 1;
             }
             _ => {}
         }

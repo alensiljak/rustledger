@@ -101,9 +101,9 @@ impl PriceSource for EastMoneyFundSource {
                         // Try parsing just the date portion (first 10 chars)
                         // Use char_indices for UTF-8 safety
                         if let Some((idx, _)) = s.char_indices().nth(10) {
-                            &s[..idx].parse::<NaiveDate>()
+                            s[..idx].parse::<NaiveDate>()
                         } else if s.len() >= 10 && s.is_char_boundary(10) {
-                            &s[..10].parse::<NaiveDate>()
+                            s[..10].parse::<NaiveDate>()
                         } else {
                             // Return an error that will be converted to None by and_then
                             "".parse::<NaiveDate>()
