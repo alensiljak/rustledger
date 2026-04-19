@@ -431,20 +431,40 @@ impl Directive {
             Self::Custom(_) => DirectivePriority::Custom,
         }
     }
+
+    /// Check if this directive has any cost-basis reductions.
+    ///
+    /// A transaction "reduces" inventory when it has a posting with a cost
+    /// spec and negative units (selling lots). Used to order same-date
+    /// transactions: augmentations (buying) should process before
+    /// reductions (selling) so lots exist when they're matched.
+    #[must_use]
+    pub fn has_cost_reduction(&self) -> bool {
+        if let Self::Transaction(txn) = self {
+            txn.postings.iter().any(|p| {
+                p.cost.is_some()
+                    && p.units
+                        .as_ref()
+                        .and_then(IncompleteAmount::number)
+                        .is_some_and(|n| n.is_sign_negative())
+            })
+        } else {
+            false
+        }
+    }
 }
 
-/// Sort directives by date, then by type priority.
+/// Sort directives by date, then type priority, then cost-basis reductions last.
 ///
 /// This is a stable sort that preserves file order for directives
-/// with the same date and type.
+/// with the same date, type, and reduction status.
+///
+/// Within the same date, transactions without cost-basis reductions
+/// (no negative-units + cost-spec postings) are processed before
+/// those that do reduce cost-basis lots. This ensures lots exist
+/// when they're matched, regardless of file ordering.
 pub fn sort_directives(directives: &mut [Directive]) {
-    directives.sort_by(|a, b| {
-        // Primary: date ascending
-        a.date()
-            .cmp(&b.date())
-            // Secondary: type priority
-            .then_with(|| a.priority().cmp(&b.priority()))
-    });
+    directives.sort_by_cached_key(|d| (d.date(), d.priority(), d.has_cost_reduction()));
 }
 
 /// A transaction directive.
@@ -1423,6 +1443,98 @@ mod tests {
 
         assert_eq!(directives[0].type_name(), "pad");
         assert_eq!(directives[1].type_name(), "balance");
+    }
+
+    #[test]
+    fn test_sort_augmentations_before_reductions_same_date() {
+        // Issue #841: same-date transactions should process augmentations
+        // (buying lots) before reductions (selling lots) so lots exist
+        // when they're matched.
+        let reduction = Directive::Transaction(
+            Transaction::new(date(2024, 9, 1), "Transfer Received")
+                .with_posting(
+                    Posting::new("Assets:AccountB", Amount::new(dec!(11.11), "USD")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(0.90))
+                            .with_currency("EUR"),
+                    ),
+                )
+                .with_posting(
+                    Posting::new("Assets:Transit", Amount::new(dec!(-11.11), "USD")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(0.90))
+                            .with_currency("EUR"),
+                    ),
+                ),
+        );
+
+        let augmentation = Directive::Transaction(
+            Transaction::new(date(2024, 9, 1), "Transfer Sent")
+                .with_posting(Posting::new(
+                    "Assets:AccountA",
+                    Amount::new(dec!(-10.00), "EUR"),
+                ))
+                .with_posting(
+                    Posting::new("Assets:Transit", Amount::new(dec!(11.11), "USD")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(0.90))
+                            .with_currency("EUR"),
+                    ),
+                ),
+        );
+
+        // Reduction first in file order — sort should fix this
+        let mut directives = vec![reduction, augmentation];
+        sort_directives(&mut directives);
+
+        // Augmentation (no negative cost posting) should come first
+        assert!(
+            !directives[0].has_cost_reduction(),
+            "first directive should be augmentation"
+        );
+        assert!(
+            directives[1].has_cost_reduction(),
+            "second directive should be reduction"
+        );
+    }
+
+    #[test]
+    fn test_has_cost_reduction() {
+        // Transaction with negative units + cost = reduction
+        let reduction = Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Sell")
+                .with_posting(
+                    Posting::new("Assets:Stock", Amount::new(dec!(-10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(1500), "USD"))),
+        );
+        assert!(reduction.has_cost_reduction());
+
+        // Transaction with positive units + cost = augmentation
+        let augmentation = Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Buy")
+                .with_posting(
+                    Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
+                        CostSpec::empty()
+                            .with_number_per(dec!(150))
+                            .with_currency("USD"),
+                    ),
+                )
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1500), "USD"))),
+        );
+        assert!(!augmentation.has_cost_reduction());
+
+        // Transaction without cost = not a reduction
+        let simple = Directive::Transaction(
+            Transaction::new(date(2024, 1, 1), "Payment")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(-50), "USD"))),
+        );
+        assert!(!simple.has_cost_reduction());
     }
 
     #[test]

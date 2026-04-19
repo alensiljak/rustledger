@@ -155,12 +155,14 @@ pub fn validation_errors_to_diagnostics(
     let line_index = LineIndex::new(source);
     let mut extra_diagnostics = Vec::new();
 
-    // Sort directives by date (required for correct lot matching during booking).
-    booked_directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    // Sort directives by date, type priority, then cost-basis reductions last
+    // (required for correct lot matching during booking).
+    booked_directives.sort_by_cached_key(|d| {
+        (
+            d.value.date(),
+            d.value.priority(),
+            d.value.has_cost_reduction(),
+        )
     });
 
     // Run booking/interpolation on transactions before validation.

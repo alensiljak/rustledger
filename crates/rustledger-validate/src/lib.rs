@@ -234,6 +234,7 @@ pub fn validate_with_options(
         a.date()
             .cmp(&b.date())
             .then_with(|| a.priority().cmp(&b.priority()))
+            .then_with(|| a.has_cost_reduction().cmp(&b.has_cost_reduction()))
     };
     if sorted.len() >= PARALLEL_SORT_THRESHOLD {
         sorted.par_sort_by(sort_fn);
@@ -342,6 +343,11 @@ pub fn validate_spanned_with_options(
             .date()
             .cmp(&b.value.date())
             .then_with(|| a.value.priority().cmp(&b.value.priority()))
+            .then_with(|| {
+                a.value
+                    .has_cost_reduction()
+                    .cmp(&b.value.has_cost_reduction())
+            })
     };
     if sorted.len() >= PARALLEL_SORT_THRESHOLD {
         sorted.par_sort_by(sort_fn);
