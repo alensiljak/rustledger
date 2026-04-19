@@ -2319,8 +2319,8 @@ impl<'a> Executor<'a> {
             };
 
             let year = Value::Integer(i64::from(txn.date.year()));
-            let month = Value::Integer(i64::from(txn.date.month() as i32));
-            let day = Value::Integer(i64::from(txn.date.day() as i32));
+            let month = Value::Integer(i64::from(txn.date.month()));
+            let day = Value::Integer(i64::from(txn.date.day()));
 
             for posting in &txn.postings {
                 // Update running balance

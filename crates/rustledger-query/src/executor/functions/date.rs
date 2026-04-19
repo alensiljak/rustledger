@@ -254,7 +254,7 @@ impl Executor<'_> {
             }
         };
 
-        let diff = date1.since(date2).unwrap_or_default().get_days() as i64;
+        let diff = i64::from(date1.since(date2).unwrap_or_default().get_days());
         Ok(Value::Integer(diff))
     }
 
@@ -506,9 +506,9 @@ impl Executor<'_> {
         let days_diff = i64::from(source.since(origin).unwrap_or_default().get_days());
 
         let sy = i32::from(source.year());
-        let sm = source.month() as i32;
+        let sm = i32::from(source.month());
         let oy = i32::from(origin.year());
-        let om = origin.month() as i32;
+        let om = i32::from(origin.month());
         let od = origin.day() as u32;
         let amt = amount as i32;
 
