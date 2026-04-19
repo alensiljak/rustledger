@@ -1069,7 +1069,9 @@ impl<'a> Executor<'a> {
             "WEEKDAY" => {
                 Self::require_args_count(&name_upper, args, 1)?;
                 match &args[0] {
-                    Value::Date(d) => Ok(Value::Integer(d.weekday().to_monday_zero_offset() as u32.into())),
+                    Value::Date(d) => Ok(Value::Integer(
+                        (d.weekday().to_monday_zero_offset() as u32).into(),
+                    )),
                     _ => Err(QueryError::Type("WEEKDAY expects a date".to_string())),
                 }
             }
@@ -1211,9 +1213,9 @@ impl<'a> Executor<'a> {
             "DATE_DIFF" => {
                 Self::require_args_count(&name_upper, args, 2)?;
                 match (&args[0], &args[1]) {
-                    (Value::Date(d1), Value::Date(d2)) => {
-                        Ok(Value::Integer(i64::from(d1.since(*d2).unwrap_or_default().get_days())))
-                    }
+                    (Value::Date(d1), Value::Date(d2)) => Ok(Value::Integer(i64::from(
+                        d1.since(*d2).unwrap_or_default().get_days(),
+                    ))),
                     _ => Err(QueryError::Type("DATE_DIFF expects two dates".to_string())),
                 }
             }

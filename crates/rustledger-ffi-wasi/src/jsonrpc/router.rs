@@ -575,9 +575,13 @@ fn handle_filter_entries(params: &serde_json::Value) -> Result<serde_json::Value
     let params: FilterEntriesParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
 
-    let begin_date: NaiveDate = params.begin_date.parse()
+    let begin_date: NaiveDate = params
+        .begin_date
+        .parse()
         .map_err(|e| RpcError::invalid_params(format!("Invalid begin_date: {e}")))?;
-    let end_date: NaiveDate = params.end_date.parse()
+    let end_date: NaiveDate = params
+        .end_date
+        .parse()
         .map_err(|e| RpcError::invalid_params(format!("Invalid end_date: {e}")))?;
 
     let result = filter_entries(params.entries, begin_date, end_date);

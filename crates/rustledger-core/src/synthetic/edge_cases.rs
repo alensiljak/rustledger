@@ -11,8 +11,8 @@
 //! - Special characters
 
 use crate::{
-    Amount, Balance, Close, Commodity, Directive, Event, NaiveDate, Note, Open, Pad, Posting,
-    Price, Transaction,
+    Amount, Balance, Close, Commodity, Directive, Event, Note, Open, Pad, Posting, Price,
+    Transaction,
     format::{FormatConfig, format_directive},
 };
 use rust_decimal::Decimal;

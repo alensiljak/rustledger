@@ -44,7 +44,9 @@ impl Executor<'_> {
             "YEAR" => Ok(Value::Integer(date.year().into())),
             "MONTH" => Ok(Value::Integer(date.month().into())),
             "DAY" => Ok(Value::Integer(date.day().into())),
-            "WEEKDAY" => Ok(Value::Integer(date.weekday().to_monday_zero_offset() as u32.into())),
+            "WEEKDAY" => Ok(Value::Integer(
+                (date.weekday().to_monday_zero_offset() as u32).into(),
+            )),
             "QUARTER" => {
                 let quarter = (date.month() - 1) / 3 + 1;
                 Ok(Value::Integer(quarter.into()))
@@ -162,7 +164,8 @@ impl Executor<'_> {
                 // DATE(string) - parse ISO date
                 let val = self.evaluate_expr(&func.args[0], ctx)?;
                 match val {
-                    Value::String(s) => s.parse::<NaiveDate>()
+                    Value::String(s) => s
+                        .parse::<NaiveDate>()
                         .map(Value::Date)
                         .map_err(|_| QueryError::Type(format!("DATE: cannot parse '{s}' as date"))),
                     Value::Date(d) => Ok(Value::Date(d)),
@@ -277,13 +280,13 @@ impl Executor<'_> {
 
         let second_arg = self.evaluate_expr(&func.args[1], ctx)?;
         let result = match second_arg {
-            Value::Integer(days) => date .checked_add(jiff::ToSpan::days(days)).unwrap(),
+            Value::Integer(days) => date.checked_add(jiff::ToSpan::days(days)).unwrap(),
             Value::Number(n) => {
                 use rust_decimal::prelude::ToPrimitive;
                 let days = n.to_i64().ok_or_else(|| {
                     QueryError::Type("DATE_ADD: days must be an integer".to_string())
                 })?;
-                date .checked_add(jiff::ToSpan::days(days)).unwrap()
+                date.checked_add(jiff::ToSpan::days(days)).unwrap()
             }
             Value::Interval(interval) => interval
                 .add_to_date(date)
@@ -513,12 +516,16 @@ impl Executor<'_> {
         let binned = match unit.trim_end_matches('s') {
             "day" => {
                 let bucket = days_diff / amount;
-                origin.checked_add(jiff::ToSpan::days(bucket * amount)).unwrap()
+                origin
+                    .checked_add(jiff::ToSpan::days(bucket * amount))
+                    .unwrap()
             }
             "week" => {
                 let days_per_stride = amount * 7;
                 let bucket = days_diff / days_per_stride;
-                origin.checked_add(jiff::ToSpan::days(bucket * days_per_stride)).unwrap()
+                origin
+                    .checked_add(jiff::ToSpan::days(bucket * days_per_stride))
+                    .unwrap()
             }
             "month" => {
                 let months_diff = (sy - oy) * 12 + sm - om;

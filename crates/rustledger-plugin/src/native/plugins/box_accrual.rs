@@ -104,7 +104,8 @@ impl NativePlugin for BoxAccrualPlugin {
                 }
 
                 // Calculate total days (inclusive)
-                let total_days = i64::from(expiry_date.since(start_date).unwrap_or_default().get_days()) + 1;
+                let total_days =
+                    i64::from(expiry_date.since(start_date).unwrap_or_default().get_days()) + 1;
                 if total_days <= 0 {
                     new_directives.push(directive);
                     continue;
