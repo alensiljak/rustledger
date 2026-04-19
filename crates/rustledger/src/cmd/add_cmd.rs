@@ -198,7 +198,10 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
     }
 
     if trimmed == "yesterday" {
-        return today.yesterday().ok().context("Cannot compute yesterday's date");
+        return today
+            .yesterday()
+            .ok()
+            .context("Cannot compute yesterday's date");
     }
 
     // Relative days: +N or -N
