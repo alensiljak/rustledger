@@ -182,10 +182,7 @@ fn process_long_short(input: PluginInput) -> PluginOutput {
                         let gain = (cost_number - price_number) * units_number.abs();
 
                         // Check if long-term (> 1 year)
-                        let days_held = entry_date
-                            .since(cost_date)
-                            .map(|s| s.get_days())
-                            .unwrap_or(0);
+                        let days_held = entry_date.since(cost_date).map_or(0, |s| s.get_days());
                         let years_held = (days_held / 365) as u32;
                         let is_long_term = years_held > 1
                             || (years_held == 1

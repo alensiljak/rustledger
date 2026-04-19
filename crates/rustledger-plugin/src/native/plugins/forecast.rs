@@ -208,9 +208,10 @@ fn generate_dates(
     dates
 }
 
+#[cfg(test)]
 /// Add months to a date, handling month-end overflow.
 fn add_months(date: NaiveDate, months: i32) -> NaiveDate {
-    date.checked_add(jiff::ToSpan::months(months as i64))
+    date.checked_add(jiff::ToSpan::months(i64::from(months)))
         .unwrap_or(date)
 }
 

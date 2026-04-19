@@ -4,7 +4,6 @@ use crate::ImportResult;
 use crate::config::{ColumnSpec, CsvConfig, ImporterConfig};
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
-use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
 use std::collections::HashMap;
 use std::fs::File;
