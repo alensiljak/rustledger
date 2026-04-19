@@ -19,8 +19,8 @@
 //! - `[MONTHLY UNTIL 2020-12-31]` - Repeat until specified date
 //! - `[MONTHLY SKIP 1 TIME]` - Skip every other month
 
-use chrono::{Datelike, NaiveDate};
 use regex::Regex;
+use rustledger_core::NaiveDate;
 use std::sync::LazyLock;
 
 use crate::types::{DirectiveData, PluginInput, PluginOutput};
@@ -81,8 +81,8 @@ impl NativePlugin for ForecastPlugin {
         }
 
         // Get current year end as default until date
-        let today = chrono::Local::now().naive_local().date();
-        let default_until = NaiveDate::from_ymd_opt(today.year(), 12, 31).unwrap();
+        let today = jiff::Zoned::now().date();
+        let default_until = rustledger_core::naive_date(i32::from(today.year()), 12, 31).unwrap();
 
         // Generate recurring transactions
         let mut new_entries = Vec::new();
@@ -100,7 +100,7 @@ impl NativePlugin for ForecastPlugin {
                         caps.get(4).and_then(|m| m.as_str().parse().ok());
                     let until_date: Option<NaiveDate> = caps
                         .get(5)
-                        .and_then(|m| NaiveDate::parse_from_str(m.as_str(), "%Y-%m-%d").ok());
+                        .and_then(|m| m.as_str().parse::<NaiveDate>().ok());
 
                     let interval = match interval_str {
                         "DAILY" => Interval::Daily,
@@ -110,14 +110,13 @@ impl NativePlugin for ForecastPlugin {
                     };
 
                     // Parse start date
-                    let start_date =
-                        if let Ok(date) = NaiveDate::parse_from_str(&directive.date, "%Y-%m-%d") {
-                            date
-                        } else {
-                            // Skip if date is unparsable
-                            new_entries.push(directive);
-                            continue;
-                        };
+                    let start_date = if let Ok(date) = directive.date.parse::<NaiveDate>() {
+                        date
+                    } else {
+                        // Skip if date is unparsable
+                        new_entries.push(directive);
+                        continue;
+                    };
 
                     // Determine end condition
                     let until = until_date.unwrap_or(default_until);
@@ -129,7 +128,7 @@ impl NativePlugin for ForecastPlugin {
                     // Create a transaction for each date
                     for date in dates {
                         let mut new_directive = directive.clone();
-                        new_directive.date = date.format("%Y-%m-%d").to_string();
+                        new_directive.date = date.to_string();
 
                         if let DirectiveData::Transaction(ref mut new_txn) = new_directive.data {
                             new_txn.narration = narration_prefix.to_string();
@@ -181,10 +180,18 @@ fn generate_dates(
 
         // Advance to next date
         current = match interval {
-            Interval::Daily => current + chrono::Duration::days(step as i64),
-            Interval::Weekly => current + chrono::Duration::weeks(step as i64),
-            Interval::Monthly => add_months(current, step as i32),
-            Interval::Yearly => add_months(current, (step * 12) as i32),
+            Interval::Daily => current
+                .checked_add(jiff::ToSpan::days(step as i64))
+                .unwrap_or(current),
+            Interval::Weekly => current
+                .checked_add(jiff::ToSpan::weeks(step as i64))
+                .unwrap_or(current),
+            Interval::Monthly => current
+                .checked_add(jiff::ToSpan::months(step as i64))
+                .unwrap_or(current),
+            Interval::Yearly => current
+                .checked_add(jiff::ToSpan::years(step as i64))
+                .unwrap_or(current),
         };
 
         // Check until date
@@ -201,35 +208,11 @@ fn generate_dates(
     dates
 }
 
+#[cfg(test)]
 /// Add months to a date, handling month-end overflow.
 fn add_months(date: NaiveDate, months: i32) -> NaiveDate {
-    let total_months = date.month0() as i32 + months;
-    let new_year = date.year() + total_months / 12;
-    // Normalize total_months to a 0–11 month index even when total_months is negative
-    // (Rust's % operator can return a negative remainder, so we use a double modulo).
-    let new_month = (total_months % 12 + 12) % 12 + 1;
-
-    // Try to keep the same day, but clamp to valid days in the new month
-    let max_day = days_in_month(new_year, new_month as u32);
-    let new_day = date.day().min(max_day);
-
-    NaiveDate::from_ymd_opt(new_year, new_month as u32, new_day).unwrap_or(date)
-}
-
-/// Get the number of days in a month.
-const fn days_in_month(year: i32, month: u32) -> u32 {
-    match month {
-        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-        4 | 6 | 9 | 11 => 30,
-        2 => {
-            if (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0) {
-                29
-            } else {
-                28
-            }
-        }
-        _ => 30, // Fallback
-    }
+    date.checked_add(jiff::ToSpan::months(i64::from(months)))
+        .unwrap_or(date)
 }
 
 #[cfg(test)]
@@ -414,20 +397,20 @@ mod tests {
     fn test_add_months() {
         // Regular case
         assert_eq!(
-            add_months(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(), 1),
-            NaiveDate::from_ymd_opt(2024, 2, 15).unwrap()
+            add_months(rustledger_core::naive_date(2024, 1, 15).unwrap(), 1),
+            rustledger_core::naive_date(2024, 2, 15).unwrap()
         );
 
         // Month-end overflow (Jan 31 -> Feb 28/29)
         assert_eq!(
-            add_months(NaiveDate::from_ymd_opt(2024, 1, 31).unwrap(), 1),
-            NaiveDate::from_ymd_opt(2024, 2, 29).unwrap() // 2024 is leap year
+            add_months(rustledger_core::naive_date(2024, 1, 31).unwrap(), 1),
+            rustledger_core::naive_date(2024, 2, 29).unwrap() // 2024 is leap year
         );
 
         // Year overflow
         assert_eq!(
-            add_months(NaiveDate::from_ymd_opt(2024, 11, 15).unwrap(), 3),
-            NaiveDate::from_ymd_opt(2025, 2, 15).unwrap()
+            add_months(rustledger_core::naive_date(2024, 11, 15).unwrap(), 3),
+            rustledger_core::naive_date(2025, 2, 15).unwrap()
         );
     }
 }

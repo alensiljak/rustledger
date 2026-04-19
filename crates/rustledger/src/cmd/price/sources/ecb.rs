@@ -5,8 +5,8 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::{NaiveDate, Utc};
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::str::FromStr;
 use std::time::Duration;
 
@@ -110,8 +110,8 @@ impl EcbSource {
             })
             .and_then(|v| v.get("id"))
             .and_then(serde_json::Value::as_str)
-            .and_then(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
-            .unwrap_or_else(|| Utc::now().date_naive());
+            .and_then(|s| s.parse::<NaiveDate>().ok())
+            .unwrap_or_else(|| jiff::Zoned::now().date());
 
         Ok((rate, date))
     }
@@ -136,7 +136,7 @@ impl PriceSource for EcbSource {
         // 2. ticker=X, currency=EUR: fetch X rate, invert it (EUR per X)
         // 3. ticker=X, currency=Y: fetch both, compute cross-rate (Y per X)
 
-        let date = request.date.unwrap_or_else(|| Utc::now().date_naive());
+        let date = request.date.unwrap_or_else(|| jiff::Zoned::now().date());
 
         if ticker == "EUR" && currency == "EUR" {
             // EUR to EUR = 1

@@ -57,6 +57,6 @@ diff python-output.txt rust-output.txt
 When adding test cases:
 
 1. Document the purpose with comments
-2. Note expected behavior (success/specific errors)
-3. Cover one concept per section
-4. Include edge cases for that concept
+1. Note expected behavior (success/specific errors)
+1. Cover one concept per section
+1. Include edge cases for that concept

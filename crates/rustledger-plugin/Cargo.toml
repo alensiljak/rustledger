@@ -15,7 +15,15 @@ readme = "README.md"
 [features]
 default = ["wasm-runtime"]
 wasm-runtime = ["wasmtime"]
-python-plugins = ["wasm-runtime", "wasmtime-wasi", "ureq", "zip", "sha2", "dirs", "tempfile"]
+python-plugins = [
+  "wasm-runtime",
+  "wasmtime-wasi",
+  "ureq",
+  "zip",
+  "sha2",
+  "dirs",
+  "tempfile",
+]
 
 [dependencies]
 rustledger-core.workspace = true
@@ -28,7 +36,7 @@ rmp-serde.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
 rust_decimal.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 regex.workspace = true
 
 # Python plugin support (optional)

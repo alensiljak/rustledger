@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use chrono::NaiveDate;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 use super::PriceResponse;
@@ -74,7 +74,7 @@ impl PriceCache {
         }
 
         let price: Decimal = entry.price.parse().ok()?;
-        let date = NaiveDate::parse_from_str(&entry.date, "%Y-%m-%d").ok()?;
+        let date = entry.date.parse::<NaiveDate>().ok()?;
 
         Some(PriceResponse {
             price,
@@ -91,7 +91,7 @@ impl PriceCache {
             CachedPrice {
                 price: response.price.to_string(),
                 currency: response.currency.clone(),
-                date: response.date.format("%Y-%m-%d").to_string(),
+                date: response.date.to_string(),
                 source: response.source.clone(),
                 cached_at: now_secs(),
             },
@@ -136,7 +136,7 @@ impl PriceCache {
 /// for the same symbol (matching Python bean-price behavior).
 pub fn cache_key(source: &str, ticker: &str, currency: &str, date: Option<NaiveDate>) -> String {
     let date_part = match date {
-        Some(d) => d.format("%Y-%m-%d").to_string(),
+        Some(d) => d.to_string(),
         None => "latest".to_string(),
     };
     format!("{source}:{ticker}:{currency}:{date_part}")
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn test_cache_key_with_date() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         assert_eq!(
             cache_key("yahoo", "AAPL", "USD", Some(date)),
             "yahoo:AAPL:USD:2024-01-15"
@@ -189,7 +189,7 @@ mod tests {
         let response = PriceResponse {
             price: Decimal::new(15000, 2),
             currency: "USD".to_string(),
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             source: "yahoo".to_string(),
         };
 
@@ -211,7 +211,7 @@ mod tests {
         let response = PriceResponse {
             price: Decimal::new(15000, 2), // 150.00
             currency: "USD".to_string(),
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             source: "yahoo".to_string(),
         };
 
@@ -238,7 +238,7 @@ mod tests {
         let response = PriceResponse {
             price: Decimal::new(15000, 2),
             currency: "USD".to_string(),
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             source: "yahoo".to_string(),
         };
 
@@ -267,7 +267,7 @@ mod tests {
         let response = PriceResponse {
             price: Decimal::new(15000, 2),
             currency: "USD".to_string(),
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             source: "yahoo".to_string(),
         };
 
@@ -312,7 +312,7 @@ mod tests {
         let response = PriceResponse {
             price: Decimal::new(15000, 2),
             currency: "USD".to_string(),
-            date: NaiveDate::from_ymd_opt(2024, 1, 15).unwrap(),
+            date: rustledger_core::naive_date(2024, 1, 15).unwrap(),
             source: "yahoo".to_string(),
         };
 

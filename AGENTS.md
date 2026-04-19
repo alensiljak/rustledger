@@ -38,6 +38,7 @@ This project uses a layered error handling approach:
 | Tests | All | `anyhow` or `.unwrap()` with clear context |
 
 **Error type conventions:**
+
 ```rust
 // In library code - use thiserror
 #[derive(Debug, thiserror::Error)]
@@ -57,6 +58,7 @@ fn main() -> anyhow::Result<()> {
 ```
 
 **Rules:**
+
 - Never use `.unwrap()` in library code unless mathematically impossible to fail
 - Use `.expect("reason")` only when failure indicates a bug
 - Propagate errors with `?`, add context with `.context()` or `.with_context()`
@@ -65,11 +67,13 @@ fn main() -> anyhow::Result<()> {
 ### Async Runtime
 
 This project is **synchronous** - no async runtime is used. Reasons:
+
 - File I/O is the only blocking operation, and it's fast enough sync
 - Simpler mental model for accounting calculations
 - WASM target doesn't support async well
 
 **If async is ever needed:**
+
 - Use `tokio` (not async-std)
 - Prefer `tokio::fs` over `std::fs` in async contexts
 - Use `#[tokio::main]` for CLI, `#[tokio::test]` for async tests
@@ -87,6 +91,7 @@ This project is **synchronous** - no async runtime is used. Reasons:
 
 **String interning:**
 The project uses string interning for frequently repeated values:
+
 - Account names (`Assets:Bank:Checking`)
 - Currency codes (`USD`, `EUR`)
 - Payee names
@@ -94,6 +99,7 @@ The project uses string interning for frequently repeated values:
 Interned strings are stored as `Arc<str>` in a global interner. Use `intern_string()` to intern.
 
 **Allocation guidelines:**
+
 - Prefer `SmallVec<[T; N]>` for small, bounded collections (e.g., posting legs)
 - Use `Vec::with_capacity()` when size is known
 - Avoid `clone()` in hot paths - prefer borrowing
@@ -102,12 +108,14 @@ Interned strings are stored as `Arc<str>` in a global interner. Use `intern_stri
 ### Type-First Development
 
 When implementing new features:
+
 1. **Define types first** - structs, enums, traits
-2. **Write trait bounds** - what capabilities are needed?
-3. **Let the compiler guide you** - fix errors iteratively
-4. **Implement logic last** - once types compile, logic is constrained
+1. **Write trait bounds** - what capabilities are needed?
+1. **Let the compiler guide you** - fix errors iteratively
+1. **Implement logic last** - once types compile, logic is constrained
 
 This approach works well with AI assistance because:
+
 - Rust's compiler provides structured feedback
 - Type errors are specific and actionable
 - The AI can iterate quickly on compiler output
@@ -135,6 +143,7 @@ This approach works well with AI assistance because:
 | Fuzzing | Parser, untrusted input | `cargo-fuzz` (nightly) |
 
 **Test naming:** `test_<function>_<scenario>`
+
 ```rust
 #[test]
 fn test_parse_amount_with_commodity() { }
@@ -180,20 +189,20 @@ cargo llvm-cov --html
 ### Adding a New Plugin
 
 1. Create struct implementing `NativePlugin` trait in `rustledger-plugin/src/native/`
-2. Register in `NativePluginRegistry::new()`
-3. Add tests in `tests/native_plugins_test.rs`
+1. Register in `NativePluginRegistry::new()`
+1. Add tests in `tests/native_plugins_test.rs`
 
 ### Adding a BQL Function
 
 1. Add case to `evaluate_function()` in `rustledger-query/src/executor.rs`
-2. Add completion in `rustledger-query/src/completions.rs`
-3. Add tests and documentation
+1. Add completion in `rustledger-query/src/completions.rs`
+1. Add tests and documentation
 
 ### Adding a Validation Error
 
 1. Add variant to `ValidationError` enum in `rustledger-validate/src/lib.rs`
-2. Implement detection in `validate_*` function
-3. Add tests covering the error case
+1. Implement detection in `validate_*` function
+1. Add tests covering the error case
 
 ## Git Workflow
 

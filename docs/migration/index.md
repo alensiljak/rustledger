@@ -1,7 +1,6 @@
----
-title: Migration Guides
-description: Migrating from other accounting tools
----
+______________________________________________________________________
+
+## title: Migration Guides description: Migrating from other accounting tools
 
 # Migration Guides
 
@@ -32,6 +31,7 @@ Guides for migrating to rustledger from other plain-text accounting tools.
 ### From Beancount
 
 If you're using Python beancount, rustledger is a drop-in replacement:
+
 - Same file format
 - Same syntax
 - Same plugins (most)
@@ -42,6 +42,7 @@ If you're using Python beancount, rustledger is a drop-in replacement:
 ### From Ledger/hledger
 
 If you're using ledger-cli or hledger:
+
 - Different file format (requires conversion)
 - Different syntax
 - Different query language

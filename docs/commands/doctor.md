@@ -1,7 +1,6 @@
----
-title: rledger doctor
-description: Debugging and diagnostic tools
----
+______________________________________________________________________
+
+## title: rledger doctor description: Debugging and diagnostic tools
 
 # rledger doctor
 
@@ -42,6 +41,7 @@ rledger doctor context ledger.beancount 42
 ```
 
 Output:
+
 ```
 Transaction at line 42:
   Date: 2024-01-15

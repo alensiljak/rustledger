@@ -1,7 +1,6 @@
----
-title: rledger check
-description: Validate beancount ledger files
----
+______________________________________________________________________
+
+## title: rledger check description: Validate beancount ledger files
 
 # rledger check
 
@@ -41,11 +40,13 @@ rledger check ledger.beancount
 ```
 
 Output on success:
+
 ```
 ✓ No errors found
 ```
 
 Output with errors:
+
 ```
 error[E3001]: Transaction does not balance
   --> ledger.beancount:42:1

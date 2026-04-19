@@ -17,7 +17,7 @@
 
 **Current version**: Basic import framework (Phase 1 partial)
 
----
+______________________________________________________________________
 
 ## Vision
 
@@ -25,7 +25,7 @@ Build a **dependable, multi-source validated** import system that eliminates the
 
 **Key Insight**: Reconciliation is the killer feature, not parsing. Two independent sources agreeing provides exponentially higher confidence than one source alone.
 
----
+______________________________________________________________________
 
 ## The Problem with Current Import Tools
 
@@ -39,7 +39,7 @@ Build a **dependable, multi-source validated** import system that eliminates the
 
 **Goal**: Import with confidence, not hope.
 
----
+______________________________________________________________________
 
 ## Architecture Overview
 
@@ -90,7 +90,7 @@ Build a **dependable, multi-source validated** import system that eliminates the
 └──────────────┘   └──────────────┘    └──────────────┘
 ```
 
----
+______________________________________________________________________
 
 ## Design Principles
 
@@ -144,6 +144,7 @@ pub struct ExtractionEnsemble {
 ```
 
 **Adding new engines**:
+
 ```bash
 # Install community engine
 rledger import engine add calamari-ocr
@@ -202,6 +203,7 @@ local_vision_llm:
 ```
 
 **Extraction prompt that works:**
+
 ```
 /no_think
 List each individual transaction line from this statement (not summary totals).
@@ -218,6 +220,7 @@ Copy amounts exactly as shown. Skip summary rows like "Total" or "Balance".
 | minicpm-v | 100 | ~20-30s/page | Medium | Preview/draft |
 
 **Implementation notes:**
+
 - Use `pdfplumber` for PDF→image (not pdf2image or PyMuPDF)
 - Qwen3 sometimes outputs to `thinking` field instead of `content` - check both
 - Sign handling: auto-detect from account type (`Liabilities:` → negate positive)
@@ -238,6 +241,7 @@ let outputs = session.run(inputs)?;
 ```
 
 **Benefits**:
+
 - Pure Rust inference, no Python subprocess
 - Models are portable files
 - Same interface for all engines
@@ -628,6 +632,7 @@ Inspired by [Sigstore Rekor](https://docs.sigstore.dev/logging/overview/), we ma
 ```
 
 **Log entry structure**:
+
 ```rust
 pub struct LogEntry {
     pub sequence: u64,
@@ -672,6 +677,7 @@ pub enum EntryType {
 ```
 
 **What this enables**:
+
 - **Tamper detection**: Any modification breaks the hash chain
 - **Audit trail**: Complete history of all import operations
 - **Consistency proofs**: Prove log hasn't been rewritten
@@ -679,6 +685,7 @@ pub enum EntryType {
 - **Disaster recovery**: Reconstruct ledger from log + original statements
 
 **CLI commands**:
+
 ```bash
 # Verify log integrity
 rledger import log verify
@@ -695,6 +702,7 @@ rledger import log proof --entry 42 > proof.json
 ```
 
 **Optional: Public attestation** (for businesses/compliance):
+
 ```bash
 # Publish log root to public transparency log (e.g., Sigstore Rekor)
 rledger import log attest --publish
@@ -845,18 +853,20 @@ Architecture compliant with SEC Rule 17a-4(f) Audit Trail Alternative
 If a user or business needs formal SEC 17a-4 compliance certification:
 
 1. **Documentation** - We provide architecture docs mapping each SEC requirement to implementation
-2. **Configuration Guide** - How to deploy in compliance mode with proper settings
-3. **Assessment Engagement** - User engages [Cohasset Associates](https://www.cohasset.com/) (or similar firm)
-4. **Testing** - Assessor verifies claims against actual implementation
-5. **Report** - Assessor issues compliance assessment letter
+1. **Configuration Guide** - How to deploy in compliance mode with proper settings
+1. **Assessment Engagement** - User engages [Cohasset Associates](https://www.cohasset.com/) (or similar firm)
+1. **Testing** - Assessor verifies claims against actual implementation
+1. **Report** - Assessor issues compliance assessment letter
 
 **What rledger provides**:
+
 - Compliant architecture (this document)
 - `--compliance-mode` configuration
 - `verify` and `audit-report` commands
 - Export formats suitable for examiners
 
 **What the user must arrange**:
+
 - Third-party assessment engagement (~$10-50k typically)
 - Designated Third Party (D3P) or Designated Executive Officer filing with SEC
 - Off-site backup infrastructure
@@ -932,11 +942,12 @@ CREATE TABLE pii_keys (
 ```
 
 **How cryptographic erasure works**:
+
 1. PII in documents is encrypted with a per-record key
-2. Keys are stored in `pii_keys` table
-3. On erasure request, the key is deleted (not the document)
-4. Document remains for audit trail, but PII is unrecoverable
-5. Audit log records that erasure was performed
+1. Keys are stored in `pii_keys` table
+1. On erasure request, the key is deleted (not the document)
+1. Document remains for audit trail, but PII is unrecoverable
+1. Audit log records that erasure was performed
 
 ```rust
 impl SourceArchive {
@@ -1046,24 +1057,28 @@ Result: 10 year retention with GDPR erasure support
 #### Framework-Specific References
 
 **Financial Regulations:**
+
 - [SEC Rule 17a-4](https://www.sec.gov/rules/final/34-38245.txt) - US Securities electronic recordkeeping
 - [SOX Section 802](https://pathlock.com/learn/sox-data-retention-requirements/) - US corporate audit records
 - [MiFID II Article 16(7)](https://www.skillcast.com/blog/mifid-data-retention-compliance) - EU financial transaction records
 - [GoBD](https://www.fiskaly.com/blog/understanding-gobd-compliant-archiving) - German electronic bookkeeping
 
 **Privacy Regulations:**
+
 - [GDPR Article 17](https://bigid.com/blog/what-is-data-retention/) - Right to erasure
 - [GDPR Article 5(1)(e)](https://gdpr-info.eu/art-5-gdpr/) - Storage limitation principle
 
 **Records Management Standards:**
+
 - [ISO 15489-1:2016](https://www.iso.org/standard/62542.html) - Records management concepts
 - [DoD 5015.02](https://www.laserfiche.com/resources/blog/why-you-need-to-care-about-dod-5015-2/) - US government electronic records
 
 **Audit Standards:**
+
 - [SOC 2 Type II](https://drata.com/grc-central/soc-2/type-2) - Processing integrity controls
 - [AICPA Trust Services Criteria](https://www.aicpa.org/) - Security, availability, integrity
 
----
+______________________________________________________________________
 
 ## Core Concepts
 
@@ -1080,6 +1095,7 @@ Every transaction can come from multiple sources:
 | **Manual entry** | Variable | Edge cases |
 
 **Confidence increases with agreement**:
+
 - 1 source = 60% confidence (could be parsing error)
 - 2 sources agree = 90% confidence (unlikely both wrong)
 - 3 sources agree = 99% confidence (verified)
@@ -1136,6 +1152,7 @@ The audit trail lives **in the ledger itself** using Beancount's native `documen
 | `sources` | Which sources agreed (e.g., "csv, pdf, api") |
 
 **Benefits:**
+
 - **Native Beancount**: Uses existing `document` directive
 - **Separation of concerns**: Extraction metadata on document, verification on balance
 - **Provenance chain**: Balance → hash → document → archived file
@@ -1153,6 +1170,7 @@ Different sources describe the same transaction differently:
 | API | `Amazon` |
 
 **Matching algorithm** (inspired by Splink/Plaid):
+
 - **Blocking**: Only compare transactions with same amount + date±3 days
 - **Field scoring**: Exact amount match (required), date proximity, description similarity
 - **Probabilistic output**: 95% match confidence, not binary yes/no
@@ -1224,7 +1242,7 @@ Level 5: AUDITED
   └─ External verification (tax filing accepted)
 ```
 
----
+______________________________________________________________________
 
 ## Prior Art & Inspiration
 
@@ -1318,12 +1336,14 @@ Key features:
 ```
 
 **Why we might use SQLite instead**:
+
 - immudb is Go-only (no Rust bindings)
 - SQLite is ubiquitous, battle-tested, single-file
 - We can enforce append-only semantics at application layer
 - immudb is overkill for single-user local use case
 
 **What we learn from immudb**:
+
 - Schema design: separate tables for data vs. audit entries
 - Verification: periodically verify Merkle root integrity
 - Time-travel queries: `SELECT * FROM sources AS OF TIMESTAMP '2024-01-15'`
@@ -1366,6 +1386,7 @@ Our system:      Store all source documents + extractions,
 ```
 
 **Benefits we inherit**:
+
 - Complete audit trail (required for accounting!)
 - Point-in-time reconstruction
 - Debug by replaying events
@@ -1416,7 +1437,7 @@ impl BlockStore {
 | [Consensus OCR Voting](https://dl.acm.org/doi/10.1006/cviu.1996.0502) | 20-50% error reduction with 3+ OCR engines |
 | [HITL for IDP](https://www.intelligentdocumentprocessing.com/can-idp-achieve-100-accuracy-yes-and-no/) | 82% → 98% accuracy with human review of low-confidence items |
 
----
+______________________________________________________________________
 
 ## Implementation Phases
 
@@ -1425,6 +1446,7 @@ impl BlockStore {
 **Goal**: Basic import with balance validation
 
 #### 1.1 Transaction Schema ✅
+
 ```rust
 pub struct ImportedTransaction {
     // Core fields
@@ -1451,6 +1473,7 @@ pub struct TransactionFingerprint {
 ```
 
 #### 1.2 CSV Parser Framework
+
 - [x] Generic CSV parser with column mapping ✅
 - [x] OFX/QFX parser ✅
 - [ ] Institution profile loader (YAML/TOML)
@@ -1458,12 +1481,14 @@ pub struct TransactionFingerprint {
 - [ ] Balance extraction and validation
 
 #### 1.3 Balance Assertions
+
 - [ ] Extract ending balance from CSV/statement
 - [ ] Compare against ledger computed balance
 - [ ] Generate `balance` directives automatically
 - [ ] Flag mismatches with diagnostic info
 
 #### 1.4 CLI Commands
+
 ```bash
 rledger import add <account>           # Configure new account
 rledger import sync [account]          # Sync from configured sources
@@ -1473,13 +1498,14 @@ rledger import validate <file>         # Validate CSV against ledger
 
 **Deliverable**: Import CSVs with balance validation, no code required.
 
----
+______________________________________________________________________
 
 ### Phase 2: Multi-Source Matching (v0.8.x)
 
 **Goal**: Cross-validate transactions from multiple sources
 
 #### 2.1 Matching Engine
+
 - [ ] Blocking rules (same amount + date window)
 - [ ] Probabilistic field comparison
 - [ ] Confidence scoring
@@ -1500,12 +1526,14 @@ pub enum MatchStatus {
 ```
 
 #### 2.2 API Integration
+
 - [ ] SimpleFIN client
 - [ ] Plaid client (optional, requires API key)
 - [ ] Teller client (optional)
 - [ ] Rate limiting and caching
 
 #### 2.3 Reconciliation UI
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ Chase Checking - January 2024                    [Verified] │
@@ -1523,23 +1551,26 @@ pub enum MatchStatus {
 
 **Deliverable**: Import from multiple sources with cross-validation.
 
----
+______________________________________________________________________
 
 ### Phase 3: Document Intelligence (v0.9.x)
 
 **Goal**: Extract transactions from PDF statements
 
 #### 3.1 PDF Processing Pipeline
+
 ```
 PDF → OCR/Text Extract → Layout Analysis → Table Detection → Parsing
 ```
 
 Options:
+
 - **Local**: `pdfplumber` + heuristics
 - **Cloud**: Azure Document AI / Google Document AI
 - **LLM**: Vision model for complex layouts
 
 #### 3.2 Statement Parser
+
 - [ ] Detect transaction tables
 - [ ] Extract header row
 - [ ] Parse transaction rows
@@ -1547,6 +1578,7 @@ Options:
 - [ ] Handle multi-page statements
 
 #### 3.3 Parser Registry
+
 ```yaml
 # parsers/chase-statement.yaml
 name: chase-statement-v2
@@ -1575,13 +1607,14 @@ fields:
 
 **Deliverable**: Parse PDF statements without code.
 
----
+______________________________________________________________________
 
 ### Phase 4: Intelligent Categorization (v1.0.x)
 
 **Goal**: Auto-categorize transactions accurately
 
 #### 4.1 Rule-Based Categorization
+
 ```yaml
 rules:
   - match: "AMAZON|AMZN"
@@ -1593,11 +1626,13 @@ rules:
 ```
 
 #### 4.2 ML-Assisted Categorization
+
 - [ ] Learn from user's existing ledger
 - [ ] Suggest categories for new merchants
 - [ ] Improve with corrections
 
 #### 4.3 Expected Transactions
+
 ```yaml
 expected:
   - name: "Rent"
@@ -1614,18 +1649,21 @@ expected:
 
 **Deliverable**: Minimal manual categorization required.
 
----
+______________________________________________________________________
 
 ### Phase 5: Ecosystem (v1.1.x+)
 
 #### 5.1 Institution Registry
+
 - [ ] Public GitHub repo of institution profiles
 - [ ] Version control for parser changes
 - [ ] Community contributions
 - [ ] Automated testing against sample data
 
 #### 5.2 Plugin System (WASM)
+
 For edge cases that need custom logic:
+
 ```rust
 #[wasm_bindgen]
 pub trait ImportPlugin {
@@ -1637,15 +1675,17 @@ pub trait ImportPlugin {
 ```
 
 #### 5.3 Sync Daemon
+
 - [ ] Background sync from APIs
 - [ ] Push notifications for new transactions
 - [ ] Anomaly detection (unusual amounts, new merchants)
 
----
+______________________________________________________________________
 
 ## Data Model
 
 ### ImportConfig (per account)
+
 ```rust
 pub struct ImportConfig {
     pub account: Account,
@@ -1657,6 +1697,7 @@ pub struct ImportConfig {
 ```
 
 ### SourceConfig
+
 ```rust
 pub enum SourceConfig {
     Csv {
@@ -1676,6 +1717,7 @@ pub enum SourceConfig {
 ```
 
 ### ValidationConfig
+
 ```rust
 pub struct ValidationConfig {
     pub require_balance_match: bool,
@@ -1685,11 +1727,12 @@ pub struct ValidationConfig {
 }
 ```
 
----
+______________________________________________________________________
 
 ## User Experience
 
 ### Initial Setup
+
 ```bash
 $ rledger import add-account
 ? Select your bank: Chase
@@ -1706,6 +1749,7 @@ $ rledger import add-account
 ```
 
 ### Regular Sync
+
 ```bash
 $ rledger import sync
 Syncing Assets:Chase:Checking...
@@ -1723,6 +1767,7 @@ Review required for 1 account. Run `rledger import review` to resolve.
 ```
 
 ### Review Queue
+
 ```bash
 $ rledger import review
 Assets:Amex:Platinum has 1 issue:
@@ -1743,7 +1788,7 @@ Recent unmatched from API:
   → Balance now matches ✓
 ```
 
----
+______________________________________________________________________
 
 ## Security Considerations
 
@@ -1752,7 +1797,7 @@ Recent unmatched from API:
 - **PDF parsing**: Sandboxed, no code execution
 - **WASM plugins**: Sandboxed, no filesystem access
 
----
+______________________________________________________________________
 
 ## Success Metrics
 
@@ -1760,49 +1805,56 @@ Recent unmatched from API:
 |--------|--------|
 | Balance match rate | >99% after reconciliation |
 | Auto-categorization accuracy | >90% for known merchants |
-| Manual intervention rate | <5% of transactions |
-| Time to import (1000 txns) | <5 seconds |
+| Manual intervention rate | \<5% of transactions |
+| Time to import (1000 txns) | \<5 seconds |
 | Supported institutions | Top 50 US banks at launch |
 
----
+______________________________________________________________________
 
 ## Open Questions
 
 ### Extraction
+
 1. ~~**LLM for PDF parsing**: Local (slow) vs cloud (privacy concerns)?~~ → User configurable
-2. **Local LLM options**: Which local models work well? (llama.cpp, Ollama, etc.)
-3. **Ensemble weighting**: How to weight different OCR engines? Learn from corrections?
+1. **Local LLM options**: Which local models work well? (llama.cpp, Ollama, etc.)
+1. **Ensemble weighting**: How to weight different OCR engines? Learn from corrections?
 
 ### APIs & Pricing
+
 4. **Plaid pricing**: $0.30/connection/month - include or require user's own key?
-5. **SimpleFIN**: $15/year - recommend as default? Or make optional?
+1. **SimpleFIN**: $15/year - recommend as default? Or make optional?
 
 ### Data Management
+
 6. **Historical import**: Bulk import years of data vs incremental only?
-7. **Multi-currency**: How to handle FX transactions from travel cards?
-8. **Storage limits**: Archive compression? Remote backup options?
+1. **Multi-currency**: How to handle FX transactions from travel cards?
+1. **Storage limits**: Archive compression? Remote backup options?
 
 ### Transparency Log
+
 9. **Log format**: Custom binary vs SQLite vs JSON lines?
-10. **Merkle tree library**: Build vs use existing (e.g., `merkle-tree-rs`)?
-11. **Public attestation**: Partner with Sigstore? Or self-hosted Rekor?
+1. **Merkle tree library**: Build vs use existing (e.g., `merkle-tree-rs`)?
+1. **Public attestation**: Partner with Sigstore? Or self-hosted Rekor?
 
 ### User Experience
-12. **Offline-first**: How to handle API-only institutions without internet?
-13. **Conflict resolution**: When sources disagree, what's the UX?
-14. **Mobile**: How to handle statement import from phone photos?
 
----
+12. **Offline-first**: How to handle API-only institutions without internet?
+01. **Conflict resolution**: When sources disagree, what's the UX?
+01. **Mobile**: How to handle statement import from phone photos?
+
+______________________________________________________________________
 
 ## References
 
 ### Data Matching & Reconciliation
+
 - [Splink Documentation](https://moj-analytical-services.github.io/splink/)
 - [Plaid Transaction Reconciliation](https://plaid.com/blog/finding-the-right-fit-how-plaid-reconciles-pending-and-posted-transactions/)
 - [Great Expectations](https://greatexpectations.io/)
 - [Fellegi-Sunter Model (1969)](https://www.tandfonline.com/doi/abs/10.1080/01621459.1969.10501049)
 
 ### Document Extraction
+
 - [Reducto Hybrid Architecture](https://reducto.ai/)
 - [LayoutLM Paper](https://arxiv.org/abs/1912.13318)
 - [DocTR](https://github.com/mindee/doctr)
@@ -1813,21 +1865,25 @@ Recent unmatched from API:
 - [SCORE-Bench](https://unstructured.io/blog/introducing-score-bench-an-open-benchmark-for-document-parsing)
 
 ### Bank Data
+
 - [SimpleFIN Protocol](https://www.simplefin.org/protocol.html)
 - [Teller API](https://teller.io/)
 - [hledger CSV import](https://hledger.org/import-csv.html)
 
 ### Beancount Import Ecosystem
+
 - [beangulp](https://github.com/beancount/beangulp) - Official Beancount v3 importer framework with `identify()`, `account()`, `extract()` interface
 - [smart_importer](https://github.com/beancount/smart_importer) - ML-augmented importers using scikit-learn SVM for account prediction
 - [beancount_reds_importers](https://github.com/redstreet/beancount_reds_importers) - Community importers framework
 
 ### Transparency & Integrity
+
 - [Sigstore Rekor](https://docs.sigstore.dev/logging/overview/)
 - [Merkle Trees Explained](https://en.wikipedia.org/wiki/Merkle_tree)
 - [Content-Addressable Storage](https://en.wikipedia.org/wiki/Content-addressable_storage)
 
 ### Append-Only Database Patterns
+
 - [Git Object Database](https://git-scm.com/book/en/v2/Git-Internals-Git-Objects) - The canonical content-addressed storage design
 - [Git Database Internals (GitHub Blog)](https://github.blog/open-source/git/gits-database-internals-i-packed-object-store/) - Pack files and compression
 - [Certificate Transparency RFC 6962](https://www.rfc-editor.org/rfc/rfc6962.html) - Append-only Merkle tree logs
@@ -1842,6 +1898,7 @@ Recent unmatched from API:
 - [ipfs-sqlite-block-store](https://github.com/Actyx/ipfs-sqlite-block-store) - IPFS blocks in SQLite (Rust)
 
 ### Rust Crates for OCR/Extraction
+
 - [ort](https://github.com/pykeio/ort) - ONNX Runtime bindings for Rust
 - [tesseract-rs](https://github.com/cafercangundogdu/tesseract-rs) - Tesseract with bundled compilation
 - [leptess](https://github.com/houqp/leptess) - Tesseract/Leptonica bindings
@@ -1852,10 +1909,12 @@ Recent unmatched from API:
 - [pdf](https://github.com/nicoulaj/pdf) - PDF parsing
 
 ### Python Libraries (for reference/interop)
+
 - [pdfplumber](https://github.com/jsvine/pdfplumber) - PDF→image conversion (proven for statement extraction)
 - [Ollama](https://ollama.ai/) - Local LLM inference server
 - [qwen3-vl](https://ollama.com/library/qwen3-vl) - Vision model with high accuracy for documents
 
 ### Local Vision Models (via Ollama)
+
 - `qwen3-vl:8b` - Best accuracy, ~150s/page on RTX 3090
 - `minicpm-v` - Fast mode, ~20-30s/page, lower accuracy

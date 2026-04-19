@@ -232,9 +232,11 @@ mod tests {
 
         let output = process_directives(input);
 
-        assert!(output
-            .errors
-            .iter()
-            .any(|e| e.message.contains("Large transaction")));
+        assert!(
+            output
+                .errors
+                .iter()
+                .any(|e| e.message.contains("Large transaction"))
+        );
     }
 }

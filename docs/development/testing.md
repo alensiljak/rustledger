@@ -141,6 +141,7 @@ mod tests {
 ```
 
 **Run:**
+
 ```bash
 cargo test -p rustledger-core inventory
 ```
@@ -150,6 +151,7 @@ cargo test -p rustledger-core inventory
 Located in `crates/*/tests/`. Test crate-level functionality with realistic inputs.
 
 **Key integration tests:**
+
 - `parser_integration_test.rs` - Parser with snapshot testing (insta)
 - `bql_integration_test.rs` - BQL query execution
 - `validation_integration_test.rs` - Full validation pipeline
@@ -157,6 +159,7 @@ Located in `crates/*/tests/`. Test crate-level functionality with realistic inpu
 - `native_plugins_test.rs` - Plugin registration and execution
 
 **Run:**
+
 ```bash
 cargo test -p rustledger-parser --test parser_integration_test
 cargo test -p rustledger-query --test bql_integration_test
@@ -167,11 +170,13 @@ cargo test -p rustledger-query --test bql_integration_test
 Use random inputs to verify invariants hold across many cases.
 
 Located in:
+
 - `crates/rustledger-core/tests/property_tests.rs`
 - `crates/rustledger-core/tests/tla_proptest.rs`
 - `crates/rustledger-validate/tests/tla_proptest.rs`
 
 **Example:**
+
 ```rust
 proptest! {
     #[test]
@@ -191,6 +196,7 @@ proptest! {
 ```
 
 **Run:**
+
 ```bash
 cargo test -p rustledger-core proptest
 cargo test -p rustledger-validate proptest
@@ -211,6 +217,7 @@ Formal specifications in `spec/tla/` verify critical algorithms:
 | `ValidationCorrect.tla` | Validation rules |
 
 **Run locally (requires Java):**
+
 ```bash
 # In nix develop
 java -jar ~/tla2tools.jar -config spec/tla/Conservation.cfg spec/tla/Conservation.tla
@@ -219,6 +226,7 @@ java -jar ~/tla2tools.jar -config spec/tla/Conservation.cfg spec/tla/Conservatio
 **CI:** Runs on changes to `spec/tla/`, `inventory.rs`, or booking code.
 
 **Proptest integration:** TLA+ invariants are also verified via proptest:
+
 ```bash
 cargo test -p rustledger-core tla_proptest
 ```
@@ -228,11 +236,13 @@ cargo test -p rustledger-core tla_proptest
 Compare rustledger against Python beancount to ensure identical behavior.
 
 **Curated files (93 files):** Committed to `tests/compatibility/files/`
+
 ```bash
 ./scripts/compat-test.sh tests/compatibility/files
 ```
 
 **Full suite (~800 files):** Downloaded on demand
+
 ```bash
 # Inside nix develop
 ./scripts/fetch-compat-test-files.sh
@@ -240,6 +250,7 @@ Compare rustledger against Python beancount to ensure identical behavior.
 ```
 
 **BQL compatibility:**
+
 ```bash
 ./scripts/compat-bql-test.sh
 ```
@@ -261,12 +272,14 @@ Compare rustledger against Python beancount to ensure identical behavior.
 ### Crate Fixtures (`crates/*/tests/fixtures/`)
 
 Per-crate test data:
+
 - `rustledger-loader/tests/fixtures/` - Include paths, cycles, errors
 - `rustledger/tests/fixtures/` - CLI integration test files
 
 ### Compatibility Fixtures (`tests/compatibility/files/`)
 
 Organized by category:
+
 - `parser/` - Parser edge cases (~25 files)
 - `validation/` - Validation scenarios (~20 files)
 - `plugins/` - Plugin configurations (~5 files)
@@ -330,20 +343,21 @@ proptest! {
 ### Fixture File
 
 1. Determine the appropriate location:
+
    - Parser/syntax: `tests/fixtures/`
    - Compatibility: `tests/compatibility/files/<category>/`
    - Crate-specific: `crates/<crate>/tests/fixtures/`
 
-2. Create a minimal `.beancount` file that reproduces the case
+1. Create a minimal `.beancount` file that reproduces the case
 
-3. Update `tests/compatibility/sources.toml` if adding compatibility files
+1. Update `tests/compatibility/sources.toml` if adding compatibility files
 
 ### TLA+ Specification
 
 1. Create `spec/tla/MySpec.tla` with the specification
-2. Create `spec/tla/MySpec.cfg` with model configuration
-3. Add model check step to `.github/workflows/tla.yml`
-4. Optionally add proptest integration in `tla_proptest.rs`
+1. Create `spec/tla/MySpec.cfg` with model configuration
+1. Add model check step to `.github/workflows/tla.yml`
+1. Optionally add proptest integration in `tla_proptest.rs`
 
 ## Snapshot Testing
 
@@ -358,6 +372,7 @@ fn test_parse_transaction() {
 ```
 
 **Update snapshots:**
+
 ```bash
 cargo insta review
 ```

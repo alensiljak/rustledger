@@ -234,7 +234,7 @@ fn compute_open_directive_edit(
 
 /// Find the earliest date in the document.
 fn find_earliest_date(parse_result: &ParseResult) -> Option<String> {
-    let mut earliest: Option<chrono::NaiveDate> = None;
+    let mut earliest: Option<rustledger_core::NaiveDate> = None;
 
     for spanned in &parse_result.directives {
         let date = match &spanned.value {
@@ -257,7 +257,7 @@ fn find_earliest_date(parse_result: &ParseResult) -> Option<String> {
         }
     }
 
-    earliest.map(|d| d.format("%Y-%m-%d").to_string())
+    earliest.map(|d| d.to_string())
 }
 
 /// Find the position to insert new open directives.

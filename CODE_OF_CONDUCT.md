@@ -7,12 +7,14 @@ Be helpful. Be respectful. Focus on the code.
 ## The Longer Version
 
 **Do:**
+
 - Give constructive feedback on technical merit
 - Assume good faith
 - Help newcomers learn
 - Admit when you're wrong
 
 **Don't:**
+
 - Attack people (attack ideas instead)
 - Derail discussions with off-topic drama
 - Be a jerk

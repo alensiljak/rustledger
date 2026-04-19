@@ -52,15 +52,15 @@
 
 <!-- Link to related issues: Fixes #123, Closes #456 -->
 
----
+______________________________________________________________________
 
 ### For Reviewers
 
 **Review checklist** (see [CONTRIBUTING.md](../CONTRIBUTING.md#what-reviewers-check)):
 
 1. Correctness - Does the code do what it claims?
-2. Tests - Are there sufficient tests?
-3. Beancount compatibility - Does it match Python beancount?
-4. Performance - Any obvious issues?
-5. Security - Any vulnerabilities?
-6. Documentation - Are public APIs documented?
+1. Tests - Are there sufficient tests?
+1. Beancount compatibility - Does it match Python beancount?
+1. Performance - Any obvious issues?
+1. Security - Any vulnerabilities?
+1. Documentation - Are public APIs documented?

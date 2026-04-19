@@ -131,10 +131,10 @@ license = "various"
 description = "Files collected from various community repositories"
 file_count = 64
 repositories = [
-    { name = "beancount-example", url = "https://github.com/wileykestner/beancount-example", license = "MIT" },
-    { name = "fava-investor", url = "https://github.com/redstreet/fava_investor", license = "GPL-3.0" },
-    { name = "fava-dashboards", url = "https://github.com/andreasgerstmayr/fava-dashboards", license = "MIT" },
-    { name = "tariochbctools", url = "https://github.com/tarioch/beancern", license = "MIT" },
+  { name = "beancount-example", url = "https://github.com/wileykestner/beancount-example", license = "MIT" },
+  { name = "fava-investor", url = "https://github.com/redstreet/fava_investor", license = "GPL-3.0" },
+  { name = "fava-dashboards", url = "https://github.com/andreasgerstmayr/fava-dashboards", license = "MIT" },
+  { name = "tariochbctools", url = "https://github.com/tarioch/beancern", license = "MIT" },
 ]
 
 # =============================================================================
@@ -155,9 +155,9 @@ Selection criteria:
 """
 
 categories = [
-    { name = "parser", description = "Parser edge cases and syntax variations", count = 30 },
-    { name = "validation", description = "Validation scenarios (balancing, accounts)", count = 25 },
-    { name = "plugins", description = "Plugin usage and configuration", count = 15 },
-    { name = "real-world", description = "Real-world ledger examples", count = 20 },
-    { name = "edge-cases", description = "Known compatibility edge cases", count = 10 },
+  { name = "parser", description = "Parser edge cases and syntax variations", count = 30 },
+  { name = "validation", description = "Validation scenarios (balancing, accounts)", count = 25 },
+  { name = "plugins", description = "Plugin usage and configuration", count = 15 },
+  { name = "real-world", description = "Real-world ledger examples", count = 20 },
+  { name = "edge-cases", description = "Known compatibility edge cases", count = 10 },
 ]

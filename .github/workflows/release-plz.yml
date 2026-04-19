@@ -11,7 +11,6 @@
 # 3. Tag triggers release-build.yml and release-publish.yml
 #
 name: Release-plz
-
 on:
   push:
     branches:
@@ -28,14 +27,11 @@ on:
         required: false
         default: false
         type: boolean
-
 permissions:
   contents: write
   pull-requests: write
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   release-plz:
     name: Release-plz
@@ -55,18 +51,15 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-
       - name: Checkout repository
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       # Debug: Run cargo-semver-checks directly to diagnose issues
       - name: Debug - Run cargo-semver-checks directly
         if: inputs.debug_semver == true
@@ -84,7 +77,6 @@ jobs:
             --manifest-path crates/rustledger-parser/Cargo.toml \
             --verbose \
             2>&1 || echo "Exit code: $?"
-
       # Use app token to create PR so it triggers CI workflows automatically
       # (GITHUB_TOKEN can't trigger other workflows)
       - name: Run release-plz
@@ -95,7 +87,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
           RUST_LOG: ${{ inputs.debug_semver == true && 'release_plz_core::semver_check=debug,release_plz_core=info' || '' }}
-
       # Clean up old release-plz branches (from closed/superseded PRs)
       - name: Cleanup old release-plz branches
         if: steps.release-plz.outputs.pr != ''
@@ -122,7 +113,6 @@ jobs:
                   git push origin --delete "$branch" || echo "Failed to delete $branch (may already be deleted)"
                 fi
               done
-
       # Enable auto-merge for release PRs (will merge when checks pass and approved)
       - name: Enable auto-merge for release PR
         if: steps.release-plz.outputs.pr != ''
@@ -137,7 +127,6 @@ jobs:
           else
             echo "Could not extract PR number from output"
           fi
-
       # Sync all package versions to the release PR branch (not main!)
       # This ensures the version sync is included when the PR merges
       - name: Sync package versions (npm, rpm)
@@ -245,7 +234,6 @@ jobs:
 
             echo "Package versions synced to PR branch (signed via GitHub API)"
           fi
-
   # Create release when PR is merged
   release:
     name: Release
@@ -266,18 +254,15 @@ jobs:
         with:
           app-id: ${{ secrets.BOT_APP_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
-
       - name: Checkout repository
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
         with:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       # Check if the release tag already exists (from a previous partial run)
       # If it does, skip release-plz since the tag will have already triggered release-build.yml
       - name: Check if release tag exists
@@ -300,7 +285,6 @@ jobs:
             echo "Tag v$VERSION does not exist - proceeding with release"
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
-
       # Use GitHub App token (not GITHUB_TOKEN) so tag creation triggers release-build.yml
       # GITHUB_TOKEN events don't trigger other workflows (GitHub security feature)
       - name: Run release-plz release

@@ -1,7 +1,6 @@
----
-title: Error Codes Reference
-description: Validation errors and how to fix them
----
+______________________________________________________________________
+
+## title: Error Codes Reference description: Validation errors and how to fix them
 
 # Error Codes Reference
 
@@ -38,6 +37,7 @@ Format: `file:line: error[code]: message`
 **Cause**: Transaction uses an account without an `open` directive.
 
 **Example**:
+
 ```beancount
 ; No 'open' for Expenses:Food
 2024-01-15 * "Coffee"
@@ -46,6 +46,7 @@ Format: `file:line: error[code]: message`
 ```
 
 **Fix**: Add an open directive:
+
 ```beancount
 2020-01-01 open Expenses:Food
 2020-01-01 open Assets:Cash  USD
@@ -64,6 +65,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Transaction on an account after its `close` date.
 
 **Example**:
+
 ```beancount
 2024-01-01 close Assets:OldBank
 
@@ -84,6 +86,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Account name doesn't match required format.
 
 **Example**:
+
 ```beancount
 2024-01-15 * "Coffee"
   expenses:food   5.00 USD    ; Lowercase not allowed
@@ -98,15 +101,17 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Account balance doesn't match assertion.
 
 **Example**:
+
 ```beancount
 2024-01-15 balance Assets:Checking  1000.00 USD
 ; But actual balance is 950.00 USD
 ```
 
 **Fix**:
+
 1. Check for missing transactions
-2. Verify the expected amount
-3. Use `rledger doctor context` to see surrounding transactions
+1. Verify the expected amount
+1. Use `rledger doctor context` to see surrounding transactions
 
 ### E2002: Balance Exceeds Tolerance
 
@@ -133,6 +138,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Postings don't sum to zero.
 
 **Example**:
+
 ```beancount
 2024-01-15 * "Coffee"
   Expenses:Food    5.00 USD
@@ -140,6 +146,7 @@ Or use `rledger doctor missing-open` to generate them.
 ```
 
 **Fix**: Ensure postings sum to zero:
+
 ```beancount
 2024-01-15 * "Coffee"
   Expenses:Food    5.00 USD
@@ -171,6 +178,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Can't find a lot to reduce when selling/removing inventory.
 
 **Example**:
+
 ```beancount
 2024-01-15 * "Sell AAPL"
   Assets:Brokerage  -10 AAPL {150.00 USD}  ; No lot at this cost
@@ -209,6 +217,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Using a currency without a `commodity` directive (when strict mode enabled).
 
 **Fix**: Declare the currency:
+
 ```beancount
 2020-01-01 commodity USD
 ```
@@ -218,6 +227,7 @@ Or use `rledger doctor missing-open` to generate them.
 **Cause**: Posting uses currency not allowed for account.
 
 **Example**:
+
 ```beancount
 2020-01-01 open Assets:Bank  USD  ; Only USD allowed
 

@@ -5,10 +5,10 @@
 //!
 //! Reference: spec/tla/*.tla
 
-use chrono::NaiveDate;
 use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, BookingError, BookingMethod, Cost, CostSpec, Inventory, Position};
 
 // ============================================================================
@@ -17,7 +17,8 @@ use rustledger_core::{Amount, BookingError, BookingMethod, Cost, CostSpec, Inven
 
 fn date_strategy() -> impl Strategy<Value = NaiveDate> {
     (2020i32..2025, 1u32..13, 1u32..29).prop_map(|(y, m, d)| {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap_or(NaiveDate::from_ymd_opt(y, m, 1).unwrap())
+        rustledger_core::naive_date(y, m, d)
+            .unwrap_or(rustledger_core::naive_date(y, m, 1).unwrap())
     })
 }
 
@@ -219,7 +220,7 @@ proptest! {
         cost2 in 150i64..250,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         inv.add(Position::with_cost(
             Amount::new(dec!(10), "AAPL"),
@@ -266,7 +267,7 @@ proptest! {
     ) {
         let mut from_account = Inventory::new();
         let to_account = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Add to source account
         from_account.add(Position::with_cost(
@@ -322,7 +323,7 @@ proptest! {
         cost in 100i64..200,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Add two lots with the same currency at different costs.
         inv.add(Position::with_cost(
@@ -355,7 +356,7 @@ proptest! {
         cost in 100i64..200,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let cost_dec = Decimal::from(cost);
 
         // Add exactly one lot
@@ -401,7 +402,7 @@ proptest! {
         reduce in 1i64..10,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         inv.add(Position::with_cost(
             Amount::new(Decimal::from(units), "AAPL"),
@@ -430,7 +431,7 @@ proptest! {
         reduce_units in 1i64..30,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let total_added = Decimal::from(add_units);
 
         inv.add(Position::with_cost(
@@ -479,7 +480,7 @@ proptest! {
         cost2 in 200i64..300,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Add two lots with different costs
         inv.add(Position::with_cost(
@@ -517,7 +518,7 @@ proptest! {
         reduce in 5i64..15,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let total_added = Decimal::from(units);
         let reduce_amount = Decimal::from(reduce);
 
@@ -564,7 +565,7 @@ proptest! {
         reduce_goog in 1i64..10,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Add AAPL
         inv.add(Position::with_cost(
@@ -629,7 +630,7 @@ proptest! {
         units_goog in 10i64..50,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         inv.add(Position::with_cost(
             Amount::new(Decimal::from(units_aapl), "AAPL"),
@@ -674,7 +675,7 @@ proptest! {
         reduce_aapl in 1i64..10,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         inv.add(Position::with_cost(
             Amount::new(Decimal::from(units_aapl), "AAPL"),
@@ -714,7 +715,7 @@ proptest! {
         add2 in 10i64..50,
     ) {
         let mut inv = Inventory::new();
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         // Add to AAPL twice
         inv.add(Position::with_cost(

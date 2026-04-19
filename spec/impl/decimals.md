@@ -45,6 +45,7 @@ digit       = "0" | "1" | ... | "9"
 ```
 
 Examples:
+
 ```
 100           → Decimal(100, scale=0)
 100.00        → Decimal(10000, scale=2)
@@ -216,8 +217,8 @@ Round half to nearest even (reduces cumulative bias):
 ### When Rounding Occurs
 
 1. **Division** - Internal divisions rounded to 12 decimal places
-2. **Display** - Numbers formatted to original scale
-3. **Never for storage** - Full precision preserved in memory
+1. **Display** - Numbers formatted to original scale
+1. **Never for storage** - Full precision preserved in memory
 
 ## Edge Cases
 

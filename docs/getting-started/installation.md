@@ -1,7 +1,6 @@
----
-title: Installation
-description: Install rustledger on macOS, Linux, or Windows
----
+______________________________________________________________________
+
+## title: Installation description: Install rustledger on macOS, Linux, or Windows
 
 # Installation
 

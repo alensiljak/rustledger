@@ -1,7 +1,6 @@
----
-title: Guides
-description: Tutorials and how-to guides
----
+______________________________________________________________________
+
+## title: Guides description: Tutorials and how-to guides
 
 # Guides
 

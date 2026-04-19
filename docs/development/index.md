@@ -1,7 +1,6 @@
----
-title: Development
-description: Contributing to rustledger
----
+______________________________________________________________________
+
+## title: Development description: Contributing to rustledger
 
 # Development
 
@@ -10,9 +9,9 @@ Guides for contributing to rustledger development.
 ## Getting Started
 
 1. Clone the repository
-2. Install Rust toolchain
-3. Run `cargo build --all-features`
-4. Run `cargo test --all-features`
+1. Install Rust toolchain
+1. Run `cargo build --all-features`
+1. Run `cargo test --all-features`
 
 See [CONTRIBUTING.md](https://github.com/rustledger/rustledger/blob/main/CONTRIBUTING.md) for detailed setup.
 

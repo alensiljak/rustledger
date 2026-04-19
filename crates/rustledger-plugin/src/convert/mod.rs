@@ -148,7 +148,9 @@ pub fn directives_to_wrappers(directives: &[Directive]) -> Vec<DirectiveWrapper>
 
 /// Convert a serializable wrapper back to a directive.
 pub fn wrapper_to_directive(wrapper: &DirectiveWrapper) -> Result<Directive, ConversionError> {
-    let date = NaiveDate::parse_from_str(&wrapper.date, "%Y-%m-%d")
+    let date = wrapper
+        .date
+        .parse::<NaiveDate>()
         .map_err(|_| ConversionError::InvalidDate(wrapper.date.clone()))?;
 
     match &wrapper.data {
@@ -191,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_transaction() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let txn = Transaction {
             date,
             flag: '*',
@@ -245,7 +247,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_balance() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let balance = Balance {
             date,
             account: "Assets:Checking".into(),
@@ -270,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_open() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
         let open = Open {
             date,
             account: "Assets:Checking".into(),
@@ -295,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_price() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 15).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
         let price = Price {
             date,
             currency: "AAPL".into(),
@@ -318,7 +320,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_all_directive_types() {
-        let date = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
 
         let directives = vec![
             Directive::Open(Open {

@@ -9,29 +9,24 @@
 # 6. Regression detection (newly failing files)
 #
 name: Compatibility
-
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    - cron: '0 3 * * *'  # Nightly at 3 AM UTC (for historical tracking)
+    - cron: '0 3 * * *' # Nightly at 3 AM UTC (for historical tracking)
   workflow_dispatch:
-
 # Prevent concurrent runs from racing on the compatibility branch
 concurrency:
   group: compatibility-${{ github.event.pull_request.number || 'nightly' }}
   cancel-in-progress: true
-
 permissions:
   contents: write
   pull-requests: write
-
 env:
   CARGO_TERM_COLOR: always
   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
 jobs:
   compatibility-test:
     name: Run compatibility tests
@@ -39,21 +34,17 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       # Note: rust-cache intentionally omitted to avoid LGPL-3.0 license check failure.
       # The dependency-review workflow runs from the base branch, so adding LGPL-3.0 to
       # allow-licenses in this PR won't take effect until merged. Nightly builds don't
       # benefit much from caching anyway since they run infrequently.
-
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: |
           pip install beancount beanquery matplotlib pyyaml
@@ -64,7 +55,6 @@ jobs:
           # Install reds-plugins from GitHub to get unreleased plugins like box_accrual
           pip install git+https://github.com/redstreet/beancount_reds_plugins || true
           pip install git+https://github.com/Evernight/beancount-lazy-plugins || true
-
       # Cache downloaded test files to avoid re-cloning repos every run
       - name: Cache compatibility test files
         id: cache-compat-files
@@ -75,18 +65,15 @@ jobs:
           key: compat-files-v3-${{ hashFiles('scripts/fetch-compat-test-files.sh') }}
           restore-keys: |
             compat-files-v3-
-
       - name: Fetch compatibility test files
         if: steps.cache-compat-files.outputs.cache-hit != 'true'
         run: |
           echo "Downloading compatibility test files..."
           ./scripts/fetch-compat-test-files.sh
           echo "Downloaded $(find tests/compatibility/files -name '*.beancount' | wc -l) test files"
-
       - name: Build rustledger
         run: |
           cargo build --release -p rustledger --no-default-features
-
       - name: Generate synthetic test files
         run: |
           echo "Generating synthetic test files..."
@@ -111,7 +98,6 @@ jobs:
             done
             echo "Generated $(find tests/compatibility/synthetic/bean-example -name '*.beancount' 2>/dev/null | wc -l) bean-example files"
           fi
-
       - name: Verify tool installations
         run: |
           echo "=== Installed versions ==="
@@ -119,13 +105,11 @@ jobs:
           bean-query --version
           ./target/release/rledger check --version
           ./target/release/rledger query --version
-
       - name: Fetch previous results for regression detection
         run: |
           mkdir -p .github/badges
           curl -sSf https://raw.githubusercontent.com/${{ github.repository }}/compatibility/.github/badges/compat-check-results.jsonl \
             -o .github/badges/previous-check-results.jsonl 2>/dev/null || echo "" > .github/badges/previous-check-results.jsonl
-
       - name: Run comprehensive compatibility test
         id: compat_test
         run: |
@@ -593,7 +577,6 @@ jobs:
                   for r in regressions:
                       f.write(r + "\n")
           EOF
-
       - name: Run BQL compatibility test
         id: bql_compat
         run: |
@@ -770,7 +753,6 @@ jobs:
               for r in results:
                   f.write(json.dumps(r) + "\n")
           EOF
-
       - name: Generate YAML summary
         run: |
           cat > compat-results.yaml << EOF
@@ -814,12 +796,10 @@ jobs:
 
           echo "=== YAML Summary ==="
           cat compat-results.yaml
-
       - name: Fetch existing history from compatibility branch
         run: |
           curl -sSf https://raw.githubusercontent.com/${{ github.repository }}/compatibility/.github/badges/compat-history.json \
             -o .github/badges/compat-history.json 2>/dev/null || echo "[]" > .github/badges/compat-history.json
-
       - name: Update results and generate charts
         run: |
           python3 << 'EOF'
@@ -1033,7 +1013,6 @@ jobs:
           FULL_PCT: ${{ steps.compat_test.outputs.full_pct }}
           BQL_PCT: ${{ steps.bql_compat.outputs.bql_pct }}
           REGRESSION_COUNT: ${{ steps.compat_test.outputs.regression_count }}
-
       - name: Update summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
@@ -1080,7 +1059,6 @@ jobs:
 
           *Real-world: Downloaded from 10+ beancount repositories. Synthetic: Generated edge cases and proptest fixtures.*
           EOF
-
       - name: Post PR comment (release PRs only)
         if: github.event_name == 'pull_request'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -1155,7 +1133,6 @@ jobs:
                 body: body
               });
             }
-
       - name: Commit results to compatibility branch
         if: github.event_name != 'pull_request'
         run: |

@@ -1,7 +1,6 @@
----
-title: rledger price
-description: Fetch commodity prices
----
+______________________________________________________________________
+
+## title: rledger price description: Fetch commodity prices
 
 # rledger price
 
@@ -108,6 +107,7 @@ rledger price AAPL --source-cmd "my-price-fetcher"
 ```
 
 The command receives the ticker as the first argument, plus `--currency <CURRENCY>` and (when provided) `--date <YYYY-MM-DD>` flags. It should output in one of:
+
 - Simple format: `150.00 USD`
 - Beancount format: `2024-01-15 price AAPL 150.00 USD`
 - JSON format: `{"price": "150.00", "currency": "USD"}`

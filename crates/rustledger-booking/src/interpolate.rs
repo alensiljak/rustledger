@@ -496,7 +496,7 @@ mod tests {
     use rustledger_core::{NaiveDate, Posting};
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        rustledger_core::naive_date(year, month, day).unwrap()
     }
 
     /// Helper to get the complete amount from a posting.

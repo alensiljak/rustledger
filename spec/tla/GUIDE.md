@@ -7,9 +7,9 @@ This guide explains how to read rustledger's TLA+ specifications and how they re
 TLA+ (Temporal Logic of Actions) is a formal specification language for describing and verifying concurrent and distributed systems. We use it to:
 
 1. **Formally specify** the expected behavior of critical algorithms
-2. **Model check** against all possible inputs within bounds
-3. **Verify invariants** hold in all reachable states
-4. **Generate counterexamples** when properties are violated
+1. **Model check** against all possible inputs within bounds
+1. **Verify invariants** hold in all reachable states
+1. **Generate counterexamples** when properties are violated
 
 ## File Structure
 
@@ -140,22 +140,27 @@ fn reduce_fifo(&mut self, units: &Amount, spec: &CostSpec) -> Result<BookingResu
 ## Key Invariants
 
 ### NonNegativeUnits
+
 ```tla
 NonNegativeUnits == method # "NONE" => TotalUnits >= 0
 ```
+
 **Meaning**: For all booking methods except NONE, total units must never go negative.
 
 **Rust test**: `tla_non_negative_units_after_fifo()`
 
 ### ValidLots
+
 ```tla
 ValidLots == \A l \in lots : l.units > 0
 ```
+
 **Meaning**: Every lot in the inventory must have positive units (no empty lots).
 
 **Rust test**: `tla_valid_lots_after_partial_reduction()`
 
 ### FIFOProperty
+
 ```tla
 FIFOProperty ==
     \A i \in 1..Len(history) :
@@ -163,15 +168,18 @@ FIFOProperty ==
             \A other \in history[i].matching_lots :
                 history[i].from_lot.date <= other.date
 ```
+
 **Meaning**: FIFO always selects the oldest lot among all matches.
 
 **Rust test**: `tla_fifo_property_selects_oldest()`
 
 ### HIFOProperty
+
 ```tla
 HIFOProperty ==
     \A other \in matches : selected.cost_per_unit >= other.cost_per_unit
 ```
+
 **Meaning**: HIFO always selects the highest-cost lot (tax optimization).
 
 **Rust test**: `tla_hifo_property_selects_highest_cost()`
@@ -179,6 +187,7 @@ HIFOProperty ==
 ## Running TLA+ Model Checker
 
 ### Using Just
+
 ```bash
 just tla-all        # Run all specs
 just tla-booking    # Run BookingMethods.tla
@@ -186,6 +195,7 @@ just tla-inventory  # Run Inventory.tla
 ```
 
 ### Using TLC Directly
+
 ```bash
 java -jar tools/tla2tools.jar \
     -config spec/tla/BookingMethods.cfg \
@@ -194,6 +204,7 @@ java -jar tools/tla2tools.jar \
 ```
 
 ### Understanding Output
+
 ```
 TLC2 Version 2.18
 Running breadth-first search...
@@ -207,6 +218,7 @@ Model checking completed. No error has been found.
 ```
 
 **Error example**:
+
 ```
 Error: Invariant FIFOProperty is violated.
 The behavior up to this point is:
@@ -294,9 +306,11 @@ INVARIANTS
 ## Rust Test Correspondence
 
 Each TLA+ invariant should have a corresponding Rust test in:
+
 - `crates/rustledger-core/tests/tla_invariants_test.rs`
 
 The tests use the naming convention:
+
 - `tla_<invariant_name>_<scenario>()`
 - `tla_trace_<trace_description>()`
 - `prop_tla_<property_name>()` for property-based tests
@@ -306,10 +320,10 @@ The tests use the naming convention:
 When modifying booking algorithms:
 
 1. **Update TLA+ spec first** - Define the expected behavior formally
-2. **Run model checker** - Verify the spec is consistent
-3. **Implement in Rust** - Match the TLA+ specification
-4. **Add TLA+ tests** - Create tests that validate TLA+ invariants
-5. **Update this guide** - Document any new mappings
+1. **Run model checker** - Verify the spec is consistent
+1. **Implement in Rust** - Match the TLA+ specification
+1. **Add TLA+ tests** - Create tests that validate TLA+ invariants
+1. **Update this guide** - Document any new mappings
 
 ## Resources
 

@@ -129,7 +129,7 @@ pub(super) fn data_to_cost(data: &CostData) -> Result<CostSpec, ConversionError>
     let date = data
         .date
         .as_ref()
-        .map(|s| NaiveDate::parse_from_str(s, "%Y-%m-%d"))
+        .map(|s| s.parse::<NaiveDate>())
         .transpose()
         .map_err(|_| ConversionError::InvalidDate(data.date.clone().unwrap_or_default()))?;
 
@@ -194,7 +194,7 @@ pub(super) fn data_to_meta_value(data: &MetaValueData) -> MetaValue {
             }
         }
         MetaValueData::Date(s) => {
-            if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+            if let Ok(d) = s.parse::<NaiveDate>() {
                 MetaValue::Date(d)
             } else {
                 MetaValue::String(s.clone())

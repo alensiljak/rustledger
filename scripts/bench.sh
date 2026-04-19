@@ -23,7 +23,7 @@ cargo build --release -p rustledger --no-default-features --quiet
 
 # Generate test data
 echo "Generating test ledgers..."
-python3 << EOF
+python3 <<EOF
 import random
 from datetime import date, timedelta
 
@@ -91,30 +91,30 @@ echo "=== Validation Benchmark (parse + check) ==="
 echo "rustledger & beancount use .beancount format; ledger & hledger use .ledger format"
 echo ""
 hyperfine \
-    --warmup 3 \
-    --runs 10 \
-    --export-json "$TMPDIR/validation.json" \
-    --command-name 'rustledger' "./target/release/rledger check $TMPDIR/benchmark.beancount" \
-    --command-name 'beancount' "bean-check $TMPDIR/benchmark.beancount" \
-    --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger accounts" \
-    --command-name 'hledger' "hledger check -f $TMPDIR/benchmark.ledger"
+  --warmup 3 \
+  --runs 10 \
+  --export-json "$TMPDIR/validation.json" \
+  --command-name 'rustledger' "./target/release/rledger check $TMPDIR/benchmark.beancount" \
+  --command-name 'beancount' "bean-check $TMPDIR/benchmark.beancount" \
+  --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger accounts" \
+  --command-name 'hledger' "hledger check -f $TMPDIR/benchmark.ledger"
 
 echo ""
 echo "=== Balance Report Benchmark (parse + compute) ==="
 echo "All tools computing account balances on equivalent data"
 echo ""
 hyperfine \
-    --warmup 3 \
-    --runs 10 \
-    --export-json "$TMPDIR/balance.json" \
-    --command-name 'rustledger' "./target/release/rledger report $TMPDIR/benchmark.beancount balances > /dev/null" \
-    --command-name 'beancount' "bean-query -q $TMPDIR/benchmark.beancount BALANCES > /dev/null" \
-    --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger balance > /dev/null" \
-    --command-name 'hledger' "hledger -f $TMPDIR/benchmark.ledger balance > /dev/null"
+  --warmup 3 \
+  --runs 10 \
+  --export-json "$TMPDIR/balance.json" \
+  --command-name 'rustledger' "./target/release/rledger report $TMPDIR/benchmark.beancount balances > /dev/null" \
+  --command-name 'beancount' "bean-query -q $TMPDIR/benchmark.beancount BALANCES > /dev/null" \
+  --command-name 'ledger' "ledger -f $TMPDIR/benchmark.ledger balance > /dev/null" \
+  --command-name 'hledger' "hledger -f $TMPDIR/benchmark.ledger balance > /dev/null"
 
 echo ""
 echo "=== Summary ==="
-python3 << EOF
+python3 <<EOF
 import json
 
 with open("$TMPDIR/validation.json") as f:

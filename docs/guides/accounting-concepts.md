@@ -1,7 +1,6 @@
----
-title: Accounting Concepts
-description: Introduction to double-entry bookkeeping
----
+______________________________________________________________________
+
+## title: Accounting Concepts description: Introduction to double-entry bookkeeping
 
 # Accounting Concepts
 
@@ -12,6 +11,7 @@ A practical introduction to double-entry bookkeeping for plain-text accounting.
 Double-entry bookkeeping is a system where every transaction affects at least two accounts. Money never appears or disappears - it always moves from one place to another.
 
 When you buy coffee:
+
 - Your cash **decreases** (Assets go down)
 - Your expenses **increase** (Expenses go up)
 
@@ -64,6 +64,7 @@ Liabilities:Loans:Auto    ; Car loan
 ### Equity
 
 Adjustments to your net worth, typically for:
+
 - Opening balances when starting to track
 - Rounding differences
 - Retained earnings
@@ -126,8 +127,9 @@ This is why every transaction must sum to zero.
 This confuses many beginners. Here's the logic:
 
 When you earn money, two things happen:
+
 1. Your bank account (Asset) **increases**: `+$1000`
-2. Something must **decrease** to balance: `-$1000`
+1. Something must **decrease** to balance: `-$1000`
 
 That "something" is Income. Income being negative means "money flowed in."
 
@@ -214,6 +216,7 @@ Net Worth = -(Income + Expenses + Equity)
 ```
 
 Query your net worth:
+
 ```sql
 SELECT sum(cost(position))
 WHERE account ~ "Assets" OR account ~ "Liabilities"
@@ -230,6 +233,7 @@ Profit = Income + Expenses
 Remember: Income is negative, so if you earned more than you spent, the sum is negative (profit). If you spent more, it's positive (loss).
 
 Query this year's profit:
+
 ```sql
 SELECT sum(cost(position))
 WHERE (account ~ "Income" OR account ~ "Expenses")
@@ -241,6 +245,7 @@ WHERE (account ~ "Income" OR account ~ "Expenses")
 ### Balance Sheet
 
 Shows your financial position at a point in time:
+
 - **Assets**: What you own
 - **Liabilities**: What you owe
 - **Net Worth**: The difference
@@ -252,6 +257,7 @@ rledger report balsheet ledger.beancount
 ### Income Statement
 
 Shows financial activity over a period:
+
 - **Income**: Money earned
 - **Expenses**: Money spent
 - **Net Income**: The difference
@@ -287,6 +293,7 @@ Expenses
 ```
 
 Benefits:
+
 - Query at any level: `account ~ "Expenses:Food"` matches all food expenses
 - Reports can roll up to parent categories
 - Keeps related transactions together
@@ -296,6 +303,7 @@ Benefits:
 ### 1. Start Simple
 
 Begin with just a few accounts:
+
 ```beancount
 2024-01-01 open Assets:Bank:Checking
 2024-01-01 open Expenses:Everything

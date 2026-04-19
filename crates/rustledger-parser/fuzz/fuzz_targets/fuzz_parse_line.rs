@@ -356,7 +356,8 @@ impl FuzzInput {
                         // Last posting auto-balanced
                         s.push_str(&format!("\n  {}", acc));
                     } else {
-                        let amt = (self.amount_integer.abs() as i64 / (num as i64)) % MAX_AMOUNT_CENTS;
+                        let amt =
+                            (self.amount_integer.abs() as i64 / (num as i64)) % MAX_AMOUNT_CENTS;
                         s.push_str(&format!("\n  {}  {}.00 {}", acc, amt, currency));
                     }
                 }

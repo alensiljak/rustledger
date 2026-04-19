@@ -77,21 +77,24 @@ See [impl/architecture.md](impl/architecture.md) for detailed diagrams.
 ## Implementation Priority
 
 ### Phase 1: Core (MVP)
+
 1. **Parser** - Parse full syntax to AST (`core/syntax.md`, `core/grammar.peg`, `impl/error-recovery.md`)
-2. **Loader** - Handle includes, collect options (`core/options.md`, `core/ordering.md`)
-3. **Core Types** - Amount, Position, Inventory (`core/inventory.md`, `impl/decimals.md`)
-4. **Interpolation** - Fill missing posting amounts (`core/algorithms.md`)
-5. **Booking** - Lot matching algorithms (`core/inventory.md`, `tla/`)
-6. **Validation** - Balance assertions, account lifecycle (`core/validation.md`)
+1. **Loader** - Handle includes, collect options (`core/options.md`, `core/ordering.md`)
+1. **Core Types** - Amount, Position, Inventory (`core/inventory.md`, `impl/decimals.md`)
+1. **Interpolation** - Fill missing posting amounts (`core/algorithms.md`)
+1. **Booking** - Lot matching algorithms (`core/inventory.md`, `tla/`)
+1. **Validation** - Balance assertions, account lifecycle (`core/validation.md`)
 
 ### Phase 2: Tooling
+
 7. **bean-check** - Validate ledger files
-8. **BQL Engine** - Query language (`core/bql.md`)
-9. **bean-query** - Interactive query REPL
+1. **BQL Engine** - Query language (`core/bql.md`)
+1. **bean-query** - Interactive query REPL
 
 ### Phase 3: Extensibility
+
 10. **WASM Plugins** - Plugin runtime (`core/wasm-plugins.md`)
-11. **Built-in Plugins** - implicit_prices, etc.
+01. **Built-in Plugins** - implicit_prices, etc.
 
 ## Key Metrics
 
@@ -130,6 +133,7 @@ See [project/ci.md](project/ci.md) for CI/CD pipeline.
 ## Sources
 
 These specs are derived from:
+
 - [Official Beancount Documentation](https://beancount.github.io/docs/)
 - [Beancount Source Code](https://github.com/beancount/beancount)
 - [beancount-parser-lima](https://github.com/tesujimath/beancount-parser-lima)

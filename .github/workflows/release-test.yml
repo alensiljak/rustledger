@@ -1,5 +1,4 @@
 name: Release Channel Testing
-
 on:
   # Run after Release Publish completes (ensures packages are actually published)
   workflow_run:
@@ -11,11 +10,9 @@ on:
         description: 'Version to test (e.g., 0.8.9)'
         required: true
         type: string
-
 permissions:
   contents: read
   packages: read
-
 env:
   TEST_BEANCOUNT: |
     option "operating_currency" "USD"
@@ -28,15 +25,13 @@ env:
     2024-01-15 * "Groceries"
       Expenses:Food  50 USD
       Assets:Bank
-
 jobs:
   # Extract version and validate before running tests
   prepare:
     runs-on: ubuntu-latest
     # Only run if triggered manually OR if the publish workflow succeeded
     if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -87,7 +82,6 @@ jobs:
           VERSION="${VERSION#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Testing version: $VERSION"
-
   test-cargo:
     name: Test Cargo (crates.io)
     needs: prepare
@@ -110,10 +104,8 @@ jobs:
           done
           echo "Timeout waiting for crates.io"
           exit 1
-
       - name: Install rustledger
         run: cargo install rustledger
-
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -122,19 +114,15 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-
       - name: Test rledger query
         run: |
           OUTPUT=$(rledger query /tmp/test.beancount "SELECT account, sum(position)")
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "Assets:Bank"
-
   # Note: This tests that rustledger can be installed via Homebrew, but does NOT
   # validate that the just-released version is available. Homebrew-core updates
   # require a PR to be submitted and merged, which happens asynchronously after
@@ -149,13 +137,10 @@ jobs:
     steps:
       - name: Update Homebrew
         run: brew update
-
       - name: Untap custom tap (use homebrew-core)
         run: brew untap rustledger/rustledger 2>/dev/null || true
-
       - name: Install rustledger from homebrew-core
         run: brew install rustledger
-
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -166,16 +151,12 @@ jobs:
           else
             echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-
       - name: Test bean-check compatibility
         run: bean-check /tmp/test.beancount
-
   test-homebrew-macos:
     name: Test Homebrew (macOS)
     needs: prepare
@@ -185,13 +166,10 @@ jobs:
     steps:
       - name: Update Homebrew
         run: brew update
-
       - name: Untap custom tap (use homebrew-core)
         run: brew untap rustledger/rustledger 2>/dev/null || true
-
       - name: Install rustledger from homebrew-core
         run: brew install rustledger
-
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -202,16 +180,12 @@ jobs:
           else
             echo "ℹ Homebrew has an older version (expected - homebrew-core PR may still be pending)"
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-
       - name: Test bean-check compatibility
         run: bean-check /tmp/test.beancount
-
   test-scoop:
     name: Test Scoop (Windows)
     needs: prepare
@@ -226,13 +200,11 @@ jobs:
           irm get.scoop.sh | iex
           # Ensure scoop is in PATH for subsequent steps
           "$env:USERPROFILE\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Add rustledger bucket and install
         shell: pwsh
         run: |
           scoop bucket add rustledger https://github.com/rustledger/scoop-rustledger
           scoop install rustledger
-
       - name: Check installed version
         shell: pwsh
         run: |
@@ -247,18 +219,15 @@ jobs:
             Write-Error "Version mismatch! Scoop bucket needs to be updated."
             exit 1
           }
-
       - name: Create test file
         shell: pwsh
         run: |
           @"
           ${{ env.TEST_BEANCOUNT }}
           "@ | Out-File -FilePath test.beancount -Encoding utf8
-
       - name: Test rledger check
         shell: pwsh
         run: rledger check test.beancount
-
   test-aur:
     name: Test AUR (Arch Linux)
     needs: prepare
@@ -271,12 +240,10 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git sudo curl
-
       - name: Create build user
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-
       - name: Install yay
         run: |
           su - builder -c '
@@ -285,7 +252,6 @@ jobs:
             cd /tmp/yay-bin
             makepkg -si --noconfirm
           '
-
       - name: Wait for AUR update
         run: |
           echo "Checking for rustledger-bin $VERSION on AUR..."
@@ -300,11 +266,9 @@ jobs:
             sleep 30
           done
           echo "Warning: AUR may not be updated, proceeding anyway..."
-
       - name: Install rustledger-bin
         run: |
           su - builder -c 'yay -S --noconfirm rustledger-bin'
-
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -312,13 +276,10 @@ jobs:
           if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (AUR may not be updated yet)"
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger
         run: rledger check /tmp/test.beancount
-
   test-npm:
     name: Test npm (@rustledger/wasm)
     needs: prepare
@@ -342,10 +303,8 @@ jobs:
           done
           echo "Timeout waiting for npm"
           exit 1
-
       - name: Install @rustledger/wasm
         run: npm install @rustledger/wasm
-
       - name: Test import
         run: |
           node -e "
@@ -353,7 +312,6 @@ jobs:
             console.log('WASM module loaded successfully');
             console.log('Exports:', Object.keys(wasm));
           "
-
   test-npm-mcp:
     name: Test npm (@rustledger/mcp-server)
     needs: prepare
@@ -377,10 +335,8 @@ jobs:
           done
           echo "Timeout waiting for npm"
           exit 1
-
       - name: Install @rustledger/mcp-server
         run: npm install @rustledger/mcp-server
-
       - name: Test MCP server package
         run: |
           # Verify the package has a valid entry point
@@ -392,7 +348,6 @@ jobs:
             ls -la node_modules/@rustledger/mcp-server/
             exit 1
           fi
-
   test-docker:
     name: Test Docker (ghcr.io)
     needs: prepare
@@ -414,7 +369,6 @@ jobs:
           done
           echo "Timeout waiting for Docker image"
           exit 1
-
       - name: Verify version
         run: |
           INSTALLED=$(docker run --rm "ghcr.io/rustledger/rustledger:$VERSION" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -423,15 +377,12 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: |
           docker run --rm -v /tmp/test.beancount:/data/test.beancount:ro \
             "ghcr.io/rustledger/rustledger:$VERSION" check /data/test.beancount
-
   test-nix:
     name: Test Nix
     needs: prepare
@@ -443,7 +394,6 @@ jobs:
         uses: cachix/install-nix-action@616559265b40713947b9c190a8ff4b507b5df49b # v31.10.4
         with:
           nix_path: nixpkgs=channel:nixos-unstable
-
       - name: Test nix run
         run: |
           # Run rledger from the flake and capture output
@@ -455,14 +405,11 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: |
           nix run github:rustledger/rustledger/v${VERSION} -- check /tmp/test.beancount
-
   test-copr:
     name: Test COPR (Fedora)
     needs: prepare
@@ -475,7 +422,6 @@ jobs:
         run: |
           dnf install -y dnf-plugins-core
           dnf copr enable -y robcohen/rustledger
-
       - name: Wait for COPR build
         run: |
           echo "Checking for rustledger $VERSION in COPR..."
@@ -491,10 +437,8 @@ jobs:
             sleep 30
           done
           echo "Warning: COPR may not be updated yet, proceeding anyway..."
-
       - name: Install rustledger
         run: dnf install -y rustledger
-
       - name: Check installed version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -502,13 +446,10 @@ jobs:
           if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (COPR build may still be pending)"
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-
   test-cargo-binstall:
     name: Test cargo-binstall
     needs: prepare
@@ -520,10 +461,8 @@ jobs:
         uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - name: Install cargo-binstall
         run: curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
-
       - name: Wait for binstall availability
         run: |
           echo "Waiting for rustledger $VERSION binaries..."
@@ -537,11 +476,9 @@ jobs:
             sleep 20
           done
           echo "Proceeding with install attempt..."
-
       - name: Install via cargo-binstall
         run: |
           cargo binstall rustledger@$VERSION --no-confirm
-
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -550,13 +487,10 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-
   test-github-release:
     name: Test GitHub Release (${{ matrix.target }})
     needs: prepare
@@ -570,7 +504,7 @@ jobs:
           - target: x86_64-unknown-linux-musl
             can_run: true
           - target: aarch64-unknown-linux-gnu
-            can_run: false  # Can't run on x86_64 runner without QEMU
+            can_run: false # Can't run on x86_64 runner without QEMU
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
     steps:
@@ -583,7 +517,6 @@ jobs:
           echo "Downloading $URL"
           curl -fsSL -o "$ARCHIVE" "$URL"
           curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
-
       - name: Verify checksum
         env:
           TARGET: ${{ matrix.target }}
@@ -591,7 +524,6 @@ jobs:
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           echo "Verifying checksum..."
           sha256sum -c "${ARCHIVE}.sha256"
-
       - name: Extract archive
         env:
           TARGET: ${{ matrix.target }}
@@ -599,7 +531,6 @@ jobs:
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           tar -xzf "$ARCHIVE"
           ls -la rledger*
-
       - name: Verify version
         if: matrix.can_run
         run: |
@@ -609,22 +540,18 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         if: matrix.can_run
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         if: matrix.can_run
         run: ./rledger check /tmp/test.beancount
-
       - name: Test rledger query
         if: matrix.can_run
         run: |
           OUTPUT=$(./rledger query /tmp/test.beancount "SELECT account, sum(position)")
           echo "$OUTPUT"
           echo "$OUTPUT" | grep -q "Assets:Bank"
-
   test-github-release-macos:
     name: Test GitHub Release (macOS ${{ matrix.arch }})
     needs: prepare
@@ -651,7 +578,6 @@ jobs:
           echo "Downloading $URL"
           curl -fsSL -o "$ARCHIVE" "$URL"
           curl -fsSL -o "${ARCHIVE}.sha256" "${URL}.sha256"
-
       - name: Verify checksum
         env:
           TARGET: ${{ matrix.target }}
@@ -659,7 +585,6 @@ jobs:
           ARCHIVE="rustledger-v${VERSION}-${TARGET}.tar.gz"
           echo "Verifying checksum..."
           shasum -a 256 -c "${ARCHIVE}.sha256"
-
       - name: Extract and verify version
         env:
           TARGET: ${{ matrix.target }}
@@ -672,13 +597,10 @@ jobs:
             echo "Version mismatch!"
             exit 1
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger check
         run: ./rledger check /tmp/test.beancount
-
   test-github-release-windows:
     name: Test GitHub Release (Windows)
     needs: prepare
@@ -695,7 +617,6 @@ jobs:
           Write-Host "Downloading $URL"
           Invoke-WebRequest -Uri $URL -OutFile $ARCHIVE
           Invoke-WebRequest -Uri "${URL}.sha256" -OutFile "${ARCHIVE}.sha256"
-
       - name: Verify checksum
         shell: pwsh
         run: |
@@ -709,7 +630,6 @@ jobs:
             Write-Error "Checksum mismatch!"
             exit 1
           }
-
       - name: Extract and verify version
         shell: pwsh
         run: |
@@ -727,23 +647,20 @@ jobs:
             Write-Error "Version mismatch!"
             exit 1
           }
-
       - name: Create test file
         shell: pwsh
         run: |
           @"
           ${{ env.TEST_BEANCOUNT }}
           "@ | Out-File -FilePath test.beancount -Encoding utf8
-
       - name: Test rledger check
         shell: pwsh
         run: .\rledger.exe check test.beancount
-
   test-aur-source:
     name: Test AUR (rustledger from source)
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 45  # Rust compilation can take 15-30 minutes
+    timeout-minutes: 45 # Rust compilation can take 15-30 minutes
     container: archlinux:latest
     env:
       VERSION: ${{ needs.prepare.outputs.version }}
@@ -752,12 +669,10 @@ jobs:
         run: |
           pacman -Syu --noconfirm
           pacman -S --noconfirm base-devel git sudo curl
-
       - name: Create build user
         run: |
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
-
       - name: Install yay
         run: |
           su - builder -c '
@@ -766,7 +681,6 @@ jobs:
             cd /tmp/yay-bin
             makepkg -si --noconfirm
           '
-
       - name: Wait for AUR update
         run: |
           echo "Checking for rustledger $VERSION on AUR..."
@@ -781,11 +695,9 @@ jobs:
             sleep 30
           done
           echo "Warning: AUR may not be updated, proceeding anyway..."
-
       - name: Install rustledger (from source)
         run: |
           su - builder -c 'yay -S --noconfirm rustledger'
-
       - name: Verify version
         run: |
           INSTALLED=$(rledger --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?' | head -1)
@@ -793,13 +705,10 @@ jobs:
           if [ "$INSTALLED" != "$VERSION" ]; then
             echo "Warning: Version mismatch (AUR may not be updated yet)"
           fi
-
       - name: Create test file
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
-
       - name: Test rledger
         run: rledger check /tmp/test.beancount
-
   summary:
     name: Test Summary
     needs:
@@ -870,7 +779,6 @@ jobs:
           echo "| GitHub Release (Linux) | $(status "${{ needs.test-github-release.result }}") |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release (macOS) | $(status "${{ needs.test-github-release-macos.result }}") |" >> $GITHUB_STEP_SUMMARY
           echo "| GitHub Release (Windows) | $(status "${{ needs.test-github-release-windows.result }}") |" >> $GITHUB_STEP_SUMMARY
-
       - name: Check for failures
         if: contains(needs.*.result, 'failure')
         run: |

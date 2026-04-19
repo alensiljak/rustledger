@@ -9,19 +9,15 @@
 # - Manual dispatch
 #
 name: AUR
-
 on:
   pull_request:
     branches:
       - main
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   # Quick check to determine if we should run the full test
   should-run:
@@ -32,7 +28,6 @@ jobs:
     steps:
       - name: Checkout for path filtering
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Check for packaging changes
         id: changes
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
@@ -42,7 +37,6 @@ jobs:
               - 'packaging/arch/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
-
       - name: Decide whether to run
         id: decide
         env:
@@ -72,7 +66,6 @@ jobs:
 
           echo "No AUR-relevant changes - skipping test"
           echo "run=false" >> $GITHUB_OUTPUT
-
   test-pkgbuild:
     name: Test PKGBUILD
     runs-on: ubuntu-latest
@@ -83,10 +76,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Set up sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-
       - name: Cache sccache for Arch container
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
@@ -94,7 +85,6 @@ jobs:
           key: aur-sccache-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             aur-sccache-
-
       - name: Cache cargo registry
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
@@ -102,10 +92,8 @@ jobs:
           key: aur-cargo-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             aur-cargo-
-
       - name: Set up Docker
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
-
       # For release PRs, we need to create a test tarball since the version
       # won't be published to GitHub yet
       - name: Get version from Cargo.toml
@@ -114,7 +102,6 @@ jobs:
           VERSION=$(grep -A5 '^\[workspace\.package\]' Cargo.toml | grep '^version' | head -1 | sed 's/version = "\(.*\)"/\1/')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
-
       # Create a tarball of the current source for testing
       # This simulates what GitHub would provide for the release
       - name: Create test tarball
@@ -140,7 +127,6 @@ jobs:
 
           echo "=== Modified PKGBUILD ==="
           cat /tmp/pkgbuild-test/PKGBUILD
-
       - name: Prepare sccache for container
         run: |
           # Create cache directories
@@ -149,7 +135,6 @@ jobs:
           # Copy sccache binary (installed by sccache-action) and ensure executable
           cp "$(which sccache)" /tmp/sccache-bin
           chmod +x /tmp/sccache-bin
-
       - name: Test PKGBUILD in Arch container
         run: |
           docker run --rm \
@@ -219,7 +204,6 @@ jobs:
               echo ""
               echo "=== PKGBUILD test passed ==="
             '
-
       - name: Summary
         if: always()
         run: |

@@ -1,7 +1,6 @@
----
-title: Migrating from Ledger-CLI
-description: Switch from ledger-cli to rustledger
----
+______________________________________________________________________
+
+## title: Migrating from Ledger-CLI description: Switch from ledger-cli to rustledger
 
 # Migrating from Ledger-CLI
 
@@ -96,19 +95,21 @@ done > accounts.beancount
 For each transaction:
 
 1. Add quotes around payee: `"Payee Name"`
-2. Add flag if missing: `*` for cleared
-3. Ensure amounts balance explicitly (no auto-balance)
-4. Change `$5.00` to `5.00 USD`
+1. Add flag if missing: `*` for cleared
+1. Ensure amounts balance explicitly (no auto-balance)
+1. Change `$5.00` to `5.00 USD`
 
 #### Convert Balance Assertions
 
 Ledger:
+
 ```ledger
 2024-01-31 Balance
     Assets:Checking  = $1234.56
 ```
 
 Beancount:
+
 ```beancount
 2024-01-31 balance Assets:Checking  1234.56 USD
 ```
@@ -144,9 +145,9 @@ echo "Exported to $OUTPUT - manual conversion needed"
 After automated conversion, manually:
 
 1. Add quotes around payees
-2. Fix commodity positions (`$5.00` → `5.00 USD`)
-3. Add explicit balancing amounts
-4. Review balance assertions
+1. Fix commodity positions (`$5.00` → `5.00 USD`)
+1. Add explicit balancing amounts
+1. Review balance assertions
 
 ### 5. Validate
 

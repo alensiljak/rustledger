@@ -6,14 +6,14 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use chrono::NaiveDate;
 use rust_decimal_macros::dec;
+use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Balance, Directive, Open, Posting, Transaction};
 use rustledger_validate::validate;
 
 #[allow(clippy::missing_const_for_fn)]
 fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-    NaiveDate::from_ymd_opt(year, month, day).unwrap()
+    rustledger_core::naive_date(year, month, day).unwrap()
 }
 
 /// Generate a valid ledger with account opens, transactions, and balance assertions.

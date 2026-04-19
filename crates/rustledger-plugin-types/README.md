@@ -137,9 +137,11 @@ let warning = PluginError::warning("Duplicate entry")
 ## Memory Management
 
 Plugins must export:
+
 - `alloc(size: u32) -> *mut u8` - **Required**. The host calls this to allocate memory for input data.
 
 Plugins may optionally export:
+
 - `dealloc(ptr: *mut u8, size: u32)` - Optional. For freeing memory within the plugin.
 
 ## License

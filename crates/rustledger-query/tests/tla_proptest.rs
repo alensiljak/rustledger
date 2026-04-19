@@ -21,7 +21,8 @@ use rustledger_query::{Executor, parse, price::PriceDatabase};
 
 fn date_strategy() -> impl Strategy<Value = NaiveDate> {
     (2020i32..2025, 1u32..13, 1u32..29).prop_map(|(y, m, d)| {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap_or(NaiveDate::from_ymd_opt(y, m, 1).unwrap())
+        rustledger_core::naive_date(y, m, d)
+            .unwrap_or(rustledger_core::naive_date(y, m, 1).unwrap())
     })
 }
 

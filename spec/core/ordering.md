@@ -180,8 +180,9 @@ include "2024-02.beancount"
 ### Same-Second Transactions
 
 There's no sub-day ordering. Transactions on the same date are ordered by:
+
 1. Type priority (transactions are all priority 4)
-2. File line number
+1. File line number
 
 ```beancount
 ; Line 10

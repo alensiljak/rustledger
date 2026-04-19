@@ -6,7 +6,6 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use chrono::NaiveDate;
 use rust_decimal_macros::dec;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
 use rustledger_query::{Executor, parse as parse_query};
@@ -27,7 +26,7 @@ fn generate_directives(num_transactions: usize) -> Vec<Directive> {
         let payee = payees[i % payees.len()];
         let amount = dec!(10.00) + rust_decimal::Decimal::from(i as i32 % 100);
 
-        let date = NaiveDate::from_ymd_opt(year, month, day).unwrap();
+        let date = rustledger_core::naive_date(year, month, day).unwrap();
 
         let txn = Transaction::new(date, format!("Transaction {i}"))
             .with_flag('*')

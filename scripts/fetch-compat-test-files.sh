@@ -19,40 +19,40 @@ mkdir -p "$TMPDIR"
 mkdir -p "$DEST"
 
 cleanup() {
-    rm -rf "$TMPDIR"
+  rm -rf "$TMPDIR"
 }
 trap cleanup EXIT
 
 # Helper function to fetch and extract beancount files
 fetch_repo() {
-    local name="$1"
-    local repo="$2"  # GitHub repo in "owner/repo" format
-    local branch="${3:-}"
-    local subdir="$DEST/$name"
+  local name="$1"
+  local repo="$2" # GitHub repo in "owner/repo" format
+  local branch="${3:-}"
+  local subdir="$DEST/$name"
 
-    mkdir -p "$subdir"
-    echo "Fetching $name..."
+  mkdir -p "$subdir"
+  echo "Fetching $name..."
 
-    local clone_args=(-- --depth=1)
-    if [ -n "$branch" ]; then
-        clone_args+=(--branch="$branch")
-    fi
+  local clone_args=(-- --depth=1)
+  if [ -n "$branch" ]; then
+    clone_args+=(--branch="$branch")
+  fi
 
-    gh repo clone "$repo" "$TMPDIR/$name" "${clone_args[@]}" 2>/dev/null || {
-        echo "  Warning: Failed to clone $name"
-        return 0
-    }
+  gh repo clone "$repo" "$TMPDIR/$name" "${clone_args[@]}" 2>/dev/null || {
+    echo "  Warning: Failed to clone $name"
+    return 0
+  }
 
-    # Find and copy all .beancount files, preserving some path info in filename
-    find "$TMPDIR/$name" -name "*.beancount" -type f | while read -r f; do
-        # Create a unique filename based on relative path
-        relpath="${f#$TMPDIR/$name/}"
-        safename=$(echo "$relpath" | tr '/' '_')
-        cp "$f" "$subdir/$safename" 2>/dev/null || true
-    done
+  # Find and copy all .beancount files, preserving some path info in filename
+  find "$TMPDIR/$name" -name "*.beancount" -type f | while read -r f; do
+    # Create a unique filename based on relative path
+    relpath="${f#$TMPDIR/$name/}"
+    safename=$(echo "$relpath" | tr '/' '_')
+    cp "$f" "$subdir/$safename" 2>/dev/null || true
+  done
 
-    count=$(find "$subdir" -name "*.beancount" | wc -l | tr -d ' ')
-    echo "  Found $count files"
+  count=$(find "$subdir" -name "*.beancount" | wc -l | tr -d ' ')
+  echo "  Found $count files"
 }
 
 # 1. beancount v2 - most comprehensive test data
@@ -272,25 +272,25 @@ echo "=== Fixing short plugin names ==="
 
 # Fix beancount_reds_plugins capital_gains_classifier short names
 find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "gain_loss"' {} \; 2>/dev/null | while read -r file; do
-    sed -i 's/plugin "gain_loss"/plugin "beancount_reds_plugins.capital_gains_classifier.gain_loss"/' "$file"
-    echo "  Fixed: $(basename "$file")"
+  sed -i 's/plugin "gain_loss"/plugin "beancount_reds_plugins.capital_gains_classifier.gain_loss"/' "$file"
+  echo "  Fixed: $(basename "$file")"
 done
 
 find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "long_short"' {} \; 2>/dev/null | while read -r file; do
-    sed -i 's/plugin "long_short"/plugin "beancount_reds_plugins.capital_gains_classifier.long_short"/' "$file"
-    echo "  Fixed: $(basename "$file")"
+  sed -i 's/plugin "long_short"/plugin "beancount_reds_plugins.capital_gains_classifier.long_short"/' "$file"
+  echo "  Fixed: $(basename "$file")"
 done
 
 # Fix beanahead rx_txn_plugin short name
 find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugin "rx_txn_plugin"' {} \; 2>/dev/null | while read -r file; do
-    sed -i 's/plugin "rx_txn_plugin"/plugin "beanahead.plugins.rx_txn_plugin"/' "$file"
-    echo "  Fixed: $(basename "$file")"
+  sed -i 's/plugin "rx_txn_plugin"/plugin "beanahead.plugins.rx_txn_plugin"/' "$file"
+  echo "  Fixed: $(basename "$file")"
 done
 
 # Fix plugins.redstreet.zerosum path to beancount_reds_plugins.zerosum
 find "$DEST" -name "*.beancount" -type f -exec grep -l 'plugins.redstreet.zerosum' {} \; 2>/dev/null | while read -r file; do
-    sed -i 's/plugins\.redstreet\.zerosum/beancount_reds_plugins.zerosum/' "$file"
-    echo "  Fixed: $(basename "$file")"
+  sed -i 's/plugins\.redstreet\.zerosum/beancount_reds_plugins.zerosum/' "$file"
+  echo "  Fixed: $(basename "$file")"
 done
 
 # === Deduplication ===
@@ -304,14 +304,14 @@ duplicates_removed=0
 
 # Process all .beancount files
 while IFS= read -r -d '' file; do
-    hash=$(sha256sum "$file" | cut -d' ' -f1)
-    if [[ -n "${seen_hashes[$hash]:-}" ]]; then
-        # Duplicate found - remove it
-        rm "$file"
-        duplicates_removed=$((duplicates_removed + 1))
-    else
-        seen_hashes[$hash]="$file"
-    fi
+  hash=$(sha256sum "$file" | cut -d' ' -f1)
+  if [[ -n ${seen_hashes[$hash]:-} ]]; then
+    # Duplicate found - remove it
+    rm "$file"
+    duplicates_removed=$((duplicates_removed + 1))
+  else
+    seen_hashes[$hash]="$file"
+  fi
 done < <(find "$DEST" -name "*.beancount" -type f -print0 | sort -z)
 
 echo "  Removed $duplicates_removed duplicate files"
@@ -323,19 +323,19 @@ echo ""
 
 total=0
 for dir in "$DEST"/*/; do
-    if [ -d "$dir" ]; then
-        count=$(find "$dir" -name "*.beancount" | wc -l | tr -d ' ')
-        dirname=$(basename "$dir")
-        printf "  %-25s %4d files\n" "$dirname:" "$count"
-        total=$((total + count))
-    fi
+  if [ -d "$dir" ]; then
+    count=$(find "$dir" -name "*.beancount" | wc -l | tr -d ' ')
+    dirname=$(basename "$dir")
+    printf "  %-25s %4d files\n" "$dirname:" "$count"
+    total=$((total + count))
+  fi
 done
 
 # Also count top-level files
 top_count=$(find "$DEST" -maxdepth 1 -name "*.beancount" | wc -l | tr -d ' ')
 if [ "$top_count" -gt 0 ]; then
-    printf "  %-25s %4d files\n" "(top-level):" "$top_count"
-    total=$((total + top_count))
+  printf "  %-25s %4d files\n" "(top-level):" "$top_count"
+  total=$((total + top_count))
 fi
 
 echo ""

@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use rustledger_core::NaiveDate;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
@@ -125,7 +124,7 @@ pub(super) fn cmd_generate_synthetic<W: Write>(
                 .wrapping_add(1);
 
             let year = 2020 + (rng_state % 5) as i32;
-            let start_date = NaiveDate::from_ymd_opt(year, 1, 1).unwrap();
+            let start_date = rustledger_core::naive_date(year, 1, 1).unwrap();
 
             let filename = format!("synthetic_{:04}.beancount", i + 1);
             let filepath = output.join(&filename);
@@ -155,7 +154,7 @@ pub(super) fn cmd_generate_synthetic<W: Write>(
                 let amount = 10 + (rng_state % 990);
                 let amount_str = format!("{}.{:02}", amount / 100, amount % 100);
 
-                let txn_date = NaiveDate::from_ymd_opt(year, month, day).unwrap_or(start_date);
+                let txn_date = rustledger_core::naive_date(year, month, day).unwrap_or(start_date);
 
                 match j % 3 {
                     0 => {

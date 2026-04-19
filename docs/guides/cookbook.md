@@ -1,7 +1,6 @@
----
-title: Cookbook
-description: Practical examples for common financial scenarios
----
+______________________________________________________________________
+
+## title: Cookbook description: Practical examples for common financial scenarios
 
 # Cookbook
 
@@ -385,6 +384,7 @@ Track pending reimbursement:
 ```
 
 Query vacation expenses:
+
 ```sql
 SELECT sum(cost(position))
 WHERE "vacation" IN tags AND account ~ "Expenses"
@@ -407,6 +407,7 @@ WHERE "vacation" IN tags AND account ~ "Expenses"
 ```
 
 Query all trip expenses:
+
 ```sql
 SELECT * WHERE "trip-paris-2024" IN links
 ```

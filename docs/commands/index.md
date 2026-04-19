@@ -1,7 +1,6 @@
----
-title: Commands Reference
-description: Complete CLI reference for rustledger
----
+______________________________________________________________________
+
+## title: Commands Reference description: Complete CLI reference for rustledger
 
 # Commands Reference
 
@@ -52,7 +51,7 @@ rledger check -P personal
 | 1 | Error (validation errors, file not found, etc.) |
 | 2 | Invalid usage (bad arguments) |
 
-## Bean-* Aliases
+## Bean-\* Aliases
 
 For compatibility with Python beancount, rustledger provides aliased commands:
 

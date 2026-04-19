@@ -5,9 +5,9 @@ This document specifies how the parser recovers from errors and how source locat
 ## Error Recovery Philosophy
 
 1. **Parse as much as possible** - Don't stop at first error
-2. **Produce useful AST** - Partial results are valuable
-3. **Accurate locations** - Errors point to exact source positions
-4. **Cascading prevention** - Avoid spurious errors from earlier failures
+1. **Produce useful AST** - Partial results are valuable
+1. **Accurate locations** - Errors point to exact source positions
+1. **Cascading prevention** - Avoid spurious errors from earlier failures
 
 ## Source Locations
 
@@ -238,9 +238,9 @@ fn parse_postings(&mut self) -> Vec<Spanned<Posting>> {
 #### Quality Criteria
 
 1. **Specific** - "Expected ')' to close '(' at line 42" not "Syntax error"
-2. **Actionable** - Suggest fixes when possible
-3. **Located** - Point to exact character
-4. **Contextual** - Show surrounding code
+1. **Actionable** - Suggest fixes when possible
+1. **Located** - Point to exact character
+1. **Contextual** - Show surrounding code
 
 #### Error Structure
 
@@ -318,11 +318,12 @@ fn render_error(error: &ParseError, source: &str, file: &str) {
 ### Problem
 
 Directives are transformed through multiple phases:
+
 1. Parse → AST with spans
-2. Include expansion → Multiple files merged
-3. Interpolation → New amounts added
-4. Pad expansion → Synthetic transactions
-5. Plugin processing → Arbitrary transformations
+1. Include expansion → Multiple files merged
+1. Interpolation → New amounts added
+1. Pad expansion → Synthetic transactions
+1. Plugin processing → Arbitrary transformations
 
 Errors in later phases must point to original source.
 

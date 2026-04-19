@@ -5,7 +5,6 @@
 use super::{PriceSource, user_agent};
 use crate::cmd::price::{PriceRequest, PriceResponse};
 use anyhow::{Context, Result};
-use chrono::Utc;
 use rust_decimal::Decimal;
 use std::env;
 use std::str::FromStr;
@@ -118,7 +117,7 @@ impl AlphaVantageSource {
         let price = Decimal::from_str(price_str)
             .with_context(|| format!("Failed to parse price: {price_str}"))?;
 
-        let date = Utc::now().date_naive();
+        let date = jiff::Zoned::now().date();
 
         Ok(PriceResponse {
             price,
@@ -153,7 +152,7 @@ impl AlphaVantageSource {
         let price = Decimal::from_str(price_str)
             .with_context(|| format!("Failed to parse rate: {price_str}"))?;
 
-        let date = Utc::now().date_naive();
+        let date = jiff::Zoned::now().date();
 
         Ok(PriceResponse {
             price,
@@ -188,7 +187,7 @@ impl AlphaVantageSource {
         let price = Decimal::from_str(price_str)
             .with_context(|| format!("Failed to parse price: {price_str}"))?;
 
-        let date = Utc::now().date_naive();
+        let date = jiff::Zoned::now().date();
 
         Ok(PriceResponse {
             price,

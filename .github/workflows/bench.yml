@@ -9,7 +9,7 @@
 name: Benchmarks
 on:
   schedule:
-    - cron: '0 2 * * *'  # Nightly at 2 AM UTC
+    - cron: '0 2 * * *' # Nightly at 2 AM UTC
   release:
     types: [published]
   workflow_dispatch:
@@ -22,18 +22,14 @@ on:
         options:
           - 'false'
           - 'true'
-
 # Prevent concurrent benchmark runs from racing on the benchmarks branch
 concurrency:
   group: benchmarks
   cancel-in-progress: false
-
 permissions:
   contents: write
-
 env:
   CARGO_TERM_COLOR: always
-
 jobs:
   benchmark-comparison:
     name: Run benchmarks
@@ -41,26 +37,21 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           cache-on-failure: true
           prefix-key: bench
-
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
-
       - name: Set up Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '22'
-
       - name: Install dependencies
         run: |
           # Python beancount + beanquery (for BQL)
@@ -83,7 +74,6 @@ jobs:
           HYPERFINE_VERSION=$(curl -s https://api.github.com/repos/sharkdp/hyperfine/releases/latest | jq -r '.tag_name')
           curl -sL "https://github.com/sharkdp/hyperfine/releases/download/${HYPERFINE_VERSION}/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz -C /tmp
           sudo mv "/tmp/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu/hyperfine" /usr/local/bin/
-
       - name: Build ledger from source
         run: |
           # Get latest release tag from GitHub API
@@ -96,7 +86,6 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_DOCS=OFF -DBUILD_WEB_DOCS=OFF
           cmake --build build --parallel $(nproc)
           sudo cp build/ledger /usr/local/bin/
-
       - name: Verify tool installations
         run: |
           echo "=== Installed versions ==="
@@ -105,11 +94,9 @@ jobs:
           hyperfine --version
           bean-check --version
           bean-query --version
-
       - name: Build rustledger
         run: |
           cargo build --release -p rustledger --no-default-features
-
       - name: Generate test ledgers
         run: |
           python3 << 'EOF'
@@ -169,7 +156,6 @@ jobs:
 
           print("Generated benchmark.beancount and benchmark.ledger (10K transactions each)")
           EOF
-
       - name: Run validation benchmarks
         id: bench_validation
         run: |
@@ -208,7 +194,6 @@ jobs:
           print(f"ledger:     {times.get('ledger')}ms")
           print(f"hledger:    {times.get('hledger')}ms")
           EOF
-
       - name: Run balance benchmarks
         id: bench_balance
         run: |
@@ -247,7 +232,6 @@ jobs:
           print(f"ledger:     {times.get('ledger')}ms")
           print(f"hledger:    {times.get('hledger')}ms")
           EOF
-
       - name: Run memory profiling
         id: bench_memory
         run: |
@@ -277,7 +261,6 @@ jobs:
           measure_memory "beancount" "bean-check benchmark.beancount"
           measure_memory "ledger" "ledger -f benchmark.ledger accounts"
           measure_memory "hledger" "hledger check -f benchmark.ledger"
-
       - name: Fetch existing data and spec templates from benchmarks branch
         run: |
           mkdir -p .github/badges
@@ -288,7 +271,6 @@ jobs:
           # Fetch spec templates
           curl -sSf "$BASE_URL/validation-spec.json" -o .github/badges/validation-spec.json
           curl -sSf "$BASE_URL/balance-chart.vega.json" -o .github/badges/balance-spec.json
-
       - name: Update results using spec templates
         run: |
           python3 << 'EOF'
@@ -393,7 +375,6 @@ jobs:
           print(f"  hledger:    {hledger_bal}ms")
           print(f"  beancount:  {beancount_bal}ms")
           EOF
-
         env:
           RUSTLEDGER_VAL_MS: ${{ steps.bench_validation.outputs.rustledger_val_ms }}
           BEANCOUNT_VAL_MS: ${{ steps.bench_validation.outputs.beancount_val_ms }}
@@ -403,14 +384,12 @@ jobs:
           BEANCOUNT_BAL_MS: ${{ steps.bench_balance.outputs.beancount_bal_ms }}
           LEDGER_BAL_MS: ${{ steps.bench_balance.outputs.ledger_bal_ms }}
           HLEDGER_BAL_MS: ${{ steps.bench_balance.outputs.hledger_bal_ms }}
-
       - name: Render Vega charts to SVG
         run: |
           cd .github/badges
           vg2svg validation-chart.vega.json validation-chart.svg
           vg2svg balance-chart.vega.json balance-chart.svg
           echo "Rendered Vega specs to SVG"
-
       - name: Check for performance regression
         id: regression
         run: |
@@ -484,7 +463,6 @@ jobs:
         env:
           RUSTLEDGER_VAL_MS: ${{ steps.bench_validation.outputs.rustledger_val_ms }}
           RUSTLEDGER_BAL_MS: ${{ steps.bench_balance.outputs.rustledger_bal_ms }}
-
       - name: Update summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
@@ -521,7 +499,6 @@ jobs:
           ---
           **Regression Check:** ${{ steps.regression.outputs.has_regression == 'true' && 'Regression detected' || 'No regression' }}
           EOF
-
       - name: Commit results to benchmarks branch
         run: |
           git config user.name "github-actions[bot]"
@@ -551,7 +528,6 @@ jobs:
           git add .github/badges/
           git diff --staged --quiet || git commit -m "chore: update benchmark results"
           git push origin benchmarks
-
   # Scaling benchmark - test performance across different input sizes
   # Only runs when manually triggered with scaling=true
   scaling-benchmark:
@@ -565,21 +541,17 @@ jobs:
         size: [1000, 5000, 10000, 50000]
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # stable
         with:
           toolchain: stable
-
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
         with:
           cache-on-failure: true
           prefix-key: bench-scaling
-
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
         with:
           python-version: '3.11'
-
       - name: Install dependencies
         run: |
           pip install beancount beanquery
@@ -592,10 +564,8 @@ jobs:
           HYPERFINE_VERSION=$(curl -s https://api.github.com/repos/sharkdp/hyperfine/releases/latest | jq -r '.tag_name')
           curl -sL "https://github.com/sharkdp/hyperfine/releases/download/${HYPERFINE_VERSION}/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz -C /tmp
           sudo mv "/tmp/hyperfine-${HYPERFINE_VERSION}-x86_64-unknown-linux-gnu/hyperfine" /usr/local/bin/
-
       - name: Build rustledger
         run: cargo build --release -p rustledger --no-default-features
-
       - name: Generate test ledger (${{ matrix.size }} transactions)
         run: |
           python3 << EOF
@@ -639,7 +609,6 @@ jobs:
 
           print(f"Generated {SIZE} transactions")
           EOF
-
       - name: Run scaling benchmark
         run: |
           echo "=== Scaling Benchmark: ${{ matrix.size }} transactions ==="
@@ -650,7 +619,6 @@ jobs:
             --command-name 'rustledger' './target/release/rledger check benchmark.beancount' \
             --command-name 'beancount' 'bean-check benchmark.beancount' \
             --command-name 'hledger' 'hledger check -f benchmark.ledger'
-
       - name: Report results
         run: |
           python3 << 'EOF'
@@ -670,7 +638,6 @@ jobs:
               max_ms = r['max'] * 1000
               print(f"| {name} | {mean_ms:.1f} | {min_ms:.1f} | {max_ms:.1f} |")
           EOF
-
       - name: Update summary
         run: |
           python3 << 'EOF'
@@ -694,7 +661,6 @@ jobs:
           with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as f:
               f.write(summary)
           EOF
-
       - name: Upload results artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:

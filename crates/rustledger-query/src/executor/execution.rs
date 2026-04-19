@@ -1223,7 +1223,7 @@ impl Executor<'_> {
                         if func.args.len() == 1 {
                             let arg = self.evaluate_literal_expr(&func.args[0])?;
                             if let Value::String(s) = arg
-                                && let Ok(date) = NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+                                && let Ok(date) = s.parse::<NaiveDate>()
                             {
                                 return Ok(Value::Date(date));
                             }
@@ -1235,7 +1235,7 @@ impl Executor<'_> {
                             match (year, month, day) {
                                 (Value::Integer(y), Value::Integer(m), Value::Integer(d)) => {
                                     if let Some(date) =
-                                        NaiveDate::from_ymd_opt(y as i32, m as u32, d as u32)
+                                        rustledger_core::naive_date(y as i32, m as u32, d as u32)
                                     {
                                         Ok(Value::Date(date))
                                     } else {

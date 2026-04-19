@@ -15,7 +15,7 @@
 //! - [`Price`] - Record a price for a commodity
 //! - [`Custom`] - Custom directive type
 
-use chrono::NaiveDate;
+use crate::NaiveDate;
 use rust_decimal::Decimal;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
@@ -1279,7 +1279,7 @@ mod tests {
     use rust_decimal_macros::dec;
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        crate::naive_date(year, month, day).unwrap()
     }
 
     #[test]

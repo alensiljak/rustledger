@@ -124,11 +124,7 @@ fn detect_duplicates(input: PluginInput) -> PluginOutput {
                         amount: units.number.clone(),
                         currency: units.currency.clone(),
                     };
-                    transactions.push((
-                        wrapper.date.clone(),
-                        fingerprint,
-                        txn.narration.clone(),
-                    ));
+                    transactions.push((wrapper.date.clone(), fingerprint, txn.narration.clone()));
                 }
             }
         }

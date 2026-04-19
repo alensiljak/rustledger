@@ -1,5 +1,4 @@
 name: TLA+ Model Checking
-
 on:
   push:
     branches: [main]
@@ -12,45 +11,36 @@ on:
       - 'spec/tla/**'
       - 'crates/rustledger-core/src/inventory.rs'
       - 'crates/rustledger-booking/src/**'
-
 permissions:
   contents: read
-
 env:
   TLA_VERSION: "1.8.0"
-
 jobs:
   model-check:
     name: TLA+ Model Checking
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Set up Java
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
         with:
           distribution: 'temurin'
           java-version: '17'
-
       - name: Cache TLA+ Tools
         id: cache-tla
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
         with:
           path: ~/tla2tools.jar
           key: tla-tools-${{ env.TLA_VERSION }}
-
       - name: Download TLA+ Tools
         if: steps.cache-tla.outputs.cache-hit != 'true'
         run: |
           wget -q https://github.com/tlaplus/tlaplus/releases/download/v${{ env.TLA_VERSION }}/tla2tools.jar \
             -O ~/tla2tools.jar
-
       - name: Verify TLA+ Tools
         run: java -jar ~/tla2tools.jar -help | head -5
-
       - name: Model Check Conservation.tla
         run: |
           echo "::group::Checking Conservation.tla"
@@ -61,7 +51,6 @@ jobs:
             -deadlock \
             spec/tla/Conservation.tla
           echo "::endgroup::"
-
       - name: Model Check DoubleEntry.tla
         run: |
           echo "::group::Checking DoubleEntry.tla"
@@ -72,7 +61,6 @@ jobs:
             -deadlock \
             spec/tla/DoubleEntry.tla
           echo "::endgroup::"
-
       - name: Model Check AccountStateMachine.tla
         run: |
           echo "::group::Checking AccountStateMachine.tla"
@@ -83,7 +71,6 @@ jobs:
             -deadlock \
             spec/tla/AccountStateMachine.tla
           echo "::endgroup::"
-
       - name: Model Check Interpolation.tla
         run: |
           echo "::group::Checking Interpolation.tla"
@@ -94,7 +81,6 @@ jobs:
             -deadlock \
             spec/tla/Interpolation.tla
           echo "::endgroup::"
-
       - name: Model Check FIFOCorrect.tla
         run: |
           echo "::group::Checking FIFOCorrect.tla"
@@ -105,7 +91,6 @@ jobs:
             -deadlock \
             spec/tla/FIFOCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check LIFOCorrect.tla
         run: |
           echo "::group::Checking LIFOCorrect.tla"
@@ -116,7 +101,6 @@ jobs:
             -deadlock \
             spec/tla/LIFOCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check HIFOCorrect.tla
         run: |
           echo "::group::Checking HIFOCorrect.tla"
@@ -127,7 +111,6 @@ jobs:
             -deadlock \
             spec/tla/HIFOCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check MultiCurrency.tla
         run: |
           echo "::group::Checking MultiCurrency.tla"
@@ -138,7 +121,6 @@ jobs:
             -deadlock \
             spec/tla/MultiCurrency.tla
           echo "::endgroup::"
-
       - name: Model Check PriceDB.tla
         run: |
           echo "::group::Checking PriceDB.tla"
@@ -149,7 +131,6 @@ jobs:
             -deadlock \
             spec/tla/PriceDB.tla
           echo "::endgroup::"
-
       - name: Model Check STRICTCorrect.tla
         run: |
           echo "::group::Checking STRICTCorrect.tla"
@@ -160,7 +141,6 @@ jobs:
             -deadlock \
             spec/tla/STRICTCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check AVERAGECorrect.tla
         run: |
           echo "::group::Checking AVERAGECorrect.tla"
@@ -171,7 +151,6 @@ jobs:
             -deadlock \
             spec/tla/AVERAGECorrect.tla
           echo "::endgroup::"
-
       - name: Model Check NONECorrect.tla
         run: |
           echo "::group::Checking NONECorrect.tla"
@@ -182,7 +161,6 @@ jobs:
             -deadlock \
             spec/tla/NONECorrect.tla
           echo "::endgroup::"
-
       - name: Model Check ValidationCorrect.tla
         run: |
           echo "::group::Checking ValidationCorrect.tla"
@@ -193,7 +171,6 @@ jobs:
             -deadlock \
             spec/tla/ValidationCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check PluginCorrect.tla
         run: |
           echo "::group::Checking PluginCorrect.tla"
@@ -204,7 +181,6 @@ jobs:
             -deadlock \
             spec/tla/PluginCorrect.tla
           echo "::endgroup::"
-
       - name: Model Check ConcurrentAccess.tla
         run: |
           echo "::group::Checking ConcurrentAccess.tla"
@@ -215,7 +191,6 @@ jobs:
             -deadlock \
             spec/tla/ConcurrentAccess.tla
           echo "::endgroup::"
-
       - name: Model Check QueryExecution.tla
         run: |
           echo "::group::Checking QueryExecution.tla"
@@ -226,7 +201,6 @@ jobs:
             -deadlock \
             spec/tla/QueryExecution.tla
           echo "::endgroup::"
-
       # On failure, try to generate Rust tests from counterexample traces
       - name: Generate Rust tests from traces
         if: failure()
@@ -254,7 +228,6 @@ jobs:
             echo "No trace files found"
           fi
           echo "::endgroup::"
-
       - name: Upload counterexample traces
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -264,7 +237,6 @@ jobs:
             *.trace
             generated_test_*.rs
           if-no-files-found: ignore
-
       - name: Summary
         if: always()
         run: |

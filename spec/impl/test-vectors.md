@@ -11,6 +11,7 @@ This document catalogs all known test sources from the Python Beancount implemen
 These are the most comprehensive parser test fixtures, extracted from the Python beancount test suite.
 
 #### Arithmetic Tests (10 files)
+
 ```
 Arithmetic.NumberExprAdd.beancount
 Arithmetic.NumberExprDifferentPlaces.beancount
@@ -25,12 +26,14 @@ Arithmetic.NumberExprSubtract.beancount
 ```
 
 #### Balance Tests (2 files)
+
 ```
 Balance.TotalCost.beancount
 Balance.TotalPrice.beancount
 ```
 
 #### Comment Tests (5 files)
+
 ```
 Comment.CommentAfterPostings.beancount
 Comment.CommentAfterTransaction.beancount
@@ -40,18 +43,21 @@ Comment.CommentBetweenPostings.beancount
 ```
 
 #### Currency Tests (2 files)
+
 ```
 Currencies.DifferentCostAndPriceCurrency.beancount
 Currencies.ParseCurrencies.beancount
 ```
 
 #### Deprecated Options (2 files)
+
 ```
 DeprecatedOptions.DeprecatedOption.beancount
 DeprecatedOptions.DeprecatedPlugin.beancount
 ```
 
 #### Display Context Options (4 files)
+
 ```
 DisplayContextOptions.RenderCommasError.beancount
 DisplayContextOptions.RenderCommasNo.beancount
@@ -60,6 +66,7 @@ DisplayContextOptions.RenderCommasYes2.beancount
 ```
 
 #### Document Tests (3 files)
+
 ```
 Document.DocumentLinks.beancount
 Document.DocumentNoTagsLinks.beancount
@@ -67,12 +74,14 @@ Document.DocumentTags.beancount
 ```
 
 #### Expression Tests (2 files)
+
 ```
 Expressions.ExplicitPrecision.beancount
 Expressions.ExplicitPrecision2.beancount
 ```
 
 #### Incomplete Inputs Tests (26 files)
+
 ```
 IncompleteInputs.CostAverage.beancount
 IncompleteInputs.CostAverageMissingBasis.beancount
@@ -103,6 +112,7 @@ IncompleteInputs.UnitsMissingWithPrice.beancount
 ```
 
 #### Lexer and Parser Error Tests (35 files)
+
 ```
 LexerAndParserErrors.GrammarExceptionsAmount.beancount
 LexerAndParserErrors.GrammarExceptionsBalance.beancount
@@ -141,6 +151,7 @@ LexerAndParserErrors.ParsingErrorAtRoot.beancount
 ```
 
 #### Metadata Tests (11 files)
+
 ```
 MetaData.MetadataDataTypes.beancount
 MetaData.MetadataEmpty.beancount
@@ -156,6 +167,7 @@ MetaData.MetadataTransactionRepeated2.beancount
 ```
 
 #### Miscellaneous Tests (5 files)
+
 ```
 Misc.CommentInPostings.beancount
 Misc.CommentInPostingsInvalid.beancount
@@ -165,11 +177,13 @@ MiscOptions.PluginProcessingModeRaw.beancount
 ```
 
 #### Multiline Tests (1 file)
+
 ```
 MultipleLines.MultilineNarration.beancount
 ```
 
 #### Parse Lots Tests (18 files)
+
 ```
 ParseLots.CostAmount.beancount
 ParseLots.CostBothCosts.beancount
@@ -192,6 +206,7 @@ ParseLots.CostWithSlashes.beancount
 ```
 
 #### Parser Complete Tests (13 files)
+
 ```
 Parser.BasicTesting.beancount
 ParserComplete.Comment.beancount
@@ -209,6 +224,7 @@ ParserComplete.TransactionSinglePostingAtZero.beancount
 ```
 
 #### Parser Entry Types (20 files)
+
 ```
 ParserEntryTypes.Balance.beancount
 ParserEntryTypes.BalanceWithCost.beancount
@@ -233,6 +249,7 @@ ParserEntryTypes.TransactionWithTxnKeyword.beancount
 ```
 
 #### Parser Include Tests (5 files)
+
 ```
 ParserInclude.IncludeAbsolute.beancount
 ParserInclude.IncludeCycle.beancount
@@ -242,6 +259,7 @@ ParserInclude.IncludeRelativeFromString.beancount
 ```
 
 #### Parser Links/Options/Plugin Tests (13 files)
+
 ```
 ParserLinks.ParseLinks.beancount
 ParserOptions.InvalidAccountNames.beancount
@@ -257,6 +275,7 @@ ParserPlugin.PluginWithConfig.beancount
 ```
 
 #### Push/Pop Meta and Tag Tests (8 files)
+
 ```
 PushPopMeta.PushmetaForgotten.beancount
 PushPopMeta.PushmetaInvalidPop.beancount
@@ -269,6 +288,7 @@ PushPopTag.TagLeftUnclosed.beancount
 ```
 
 #### Syntax Error Tests (4 files)
+
 ```
 SyntaxErrors.ErrorInPosting.beancount
 SyntaxErrors.ErrorInTransactionLine.beancount
@@ -277,6 +297,7 @@ SyntaxErrors.SingleErrorTokenAtTopLevel.beancount
 ```
 
 #### Totals and Signs Tests (12 files)
+
 ```
 TotalsAndSigns.CostNegative.beancount
 TotalsAndSigns.PriceNegative.beancount
@@ -293,6 +314,7 @@ TotalsAndSigns.ZeroCost.beancount
 ```
 
 #### Transaction Tests (18 files)
+
 ```
 Transactions.BlankLineNotAllowed.beancount
 Transactions.BlankLineWithSpacesNotAllowed.beancount
@@ -315,6 +337,7 @@ Transactions.ZeroUnits.beancount
 ```
 
 #### Whitespace Tests (2 files)
+
 ```
 Whitespace.IndentError0.beancount
 Whitespace.IndentError1.beancount
@@ -338,6 +361,7 @@ Whitespace.IndentError1.beancount
 ### 3. Booking Test Cases (from booking_full_test.py)
 
 #### STRICT Booking Tests
+
 ```
 test_augment__from_empty__no_cost__pos
 test_augment__from_empty__no_cost__neg
@@ -360,6 +384,7 @@ test_ambiguous__STRICT__mixed
 ```
 
 #### FIFO Booking Tests
+
 ```
 test_ambiguous__FIFO__no_match_against_any_lots
 test_ambiguous__FIFO__test_match_against_partial_first_lot
@@ -372,6 +397,7 @@ test_ambiguous__FIFO__test_matching_more_than_is_available
 ```
 
 #### LIFO Booking Tests
+
 ```
 test_ambiguous__LIFO__no_match_against_any_lots
 test_ambiguous__LIFO__test_match_against_partial_first_lot
@@ -384,6 +410,7 @@ test_ambiguous__LIFO__test_matching_more_than_is_available
 ```
 
 #### NONE Booking Tests
+
 ```
 test_reduce__ambiguous__none
 test_reduce__ambiguous__none__from_mixed
@@ -448,6 +475,7 @@ for i, match in enumerate(matches):
 ## Test Categories Checklist
 
 ### Parser Tests
+
 - [ ] All 12 directive types parse correctly
 - [ ] Comments (line, inline, org-mode)
 - [ ] Strings (simple, multiline, unicode, escapes)
@@ -464,6 +492,7 @@ for i, match in enumerate(matches):
 - [ ] Push/pop tag and meta
 
 ### Error Recovery Tests
+
 - [ ] Lexer errors
 - [ ] Grammar errors
 - [ ] Recovery continues after error
@@ -471,6 +500,7 @@ for i, match in enumerate(matches):
 - [ ] Error locations are accurate
 
 ### Booking Tests
+
 - [ ] STRICT: exact match required
 - [ ] STRICT: ambiguous match rejected
 - [ ] STRICT: total match accepted
@@ -484,6 +514,7 @@ for i, match in enumerate(matches):
 - [ ] AVERAGE: weighted average recalculation (if implementing)
 
 ### Validation Tests
+
 - [ ] Account not opened
 - [ ] Account already closed
 - [ ] Balance assertion failed
@@ -492,6 +523,7 @@ for i, match in enumerate(matches):
 - [ ] Duplicate metadata key
 
 ### Integration Tests
+
 - [ ] example.beancount loads without errors
 - [ ] Output matches Python beancount
 

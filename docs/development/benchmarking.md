@@ -68,18 +68,21 @@ nix develop .#bench
 Located in `crates/*/benches/`. Each crate has focused benchmarks:
 
 #### rustledger-core (`inventory_bench.rs`)
+
 - `inventory_add` - Adding positions to inventory
 - `inventory_merge` - Merging two inventories
 - `reduce_fifo/lifo/strict` - Cost basis reduction methods
 - `inventory_units/book_value/at_cost` - Query operations
 
 #### rustledger-parser (`parser_bench.rs`)
+
 - `parse_small/medium/large` - Parsing different file sizes
 - `parse_scaling` - Scaling behavior (10→1000 transactions)
 - `tokenize_*` - Lexer-only performance
 - `tokenize_vs_parse` - Lexer vs full parser comparison
 
 #### rustledger-query (`query_bench.rs`)
+
 - `query_simple_select` - Basic SELECT queries
 - `query_where` - WHERE clause with regex
 - `query_group_by` - Aggregation queries
@@ -87,11 +90,13 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 - `query_scaling` - Query scaling (100→5000 directives)
 
 #### rustledger-validate (`validate_bench.rs`)
+
 - `validate_valid` - Valid ledgers without errors
 - `validate_with_errors` - Ledgers with validation errors
 - `validate_balance_assertions` - Balance assertion checking
 
 #### rustledger (`pipeline_bench.rs`)
+
 - `pipeline_parse` - Parse-only baseline
 - `pipeline_parse_validate` - Parse + validate
 - `pipeline_full` - Full pipeline including interpolation
@@ -102,15 +107,18 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 **Workflow:** `.github/workflows/bench.yml`
 
 **Triggers:**
+
 - Nightly at 2 AM UTC
 - On release publication
 - Manual via `workflow_dispatch`
 
 **What it measures:**
+
 1. **Validation benchmark** - Parse + check a ledger
-2. **Balance benchmark** - Parse + compute balances
+1. **Balance benchmark** - Parse + compute balances
 
 **Tools compared:**
+
 - rustledger (Rust)
 - beancount (Python)
 - ledger (C++)
@@ -119,11 +127,13 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 **Test data:** 10,000 synthetic transactions generated deterministically (seed=42)
 
 **Results location:**
+
 - Branch: `benchmarks`
 - History: `.github/badges/validation-history.json`, `.github/badges/balance-history.json`
 - Charts: `.github/badges/*.svg`
 
 **Commands used:**
+
 - Validation: `rledger check` (rustledger), `bean-check` (beancount), `ledger accounts` (ledger), `hledger check` (hledger)
 - Balance: `rledger report balances` (rustledger), `bean-query BALANCES` (beancount), `ledger balance` (ledger), `hledger balance` (hledger)
 
@@ -132,25 +142,30 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 **Workflow:** `.github/workflows/bench-pr.yml`
 
 **Triggers:**
+
 - Pull requests to `main` that modify:
   - `crates/**/*.rs`
   - `Cargo.toml`
   - `Cargo.lock`
 
 **What it measures:**
+
 - Quick validation benchmark (1K transactions for speed)
 - Memory usage (Peak RSS)
 - Comparison against baseline from main branch
 
 **Tools compared:**
+
 - rustledger vs beancount only (ledger/hledger omitted for speed)
 
 **Output:**
+
 - Posts/updates a PR comment with results
 - Shows speedup factor and memory comparison
 - Indicates change vs main branch baseline (with emoji: 🚀 faster, ✅ stable, ⚠️ slower)
 
 **Also runs:**
+
 - Criterion benchmarks for `rustledger-core` and `rustledger-parser`
 
 ### 4. Scaling Benchmarks
@@ -160,18 +175,22 @@ Located in `crates/*/benches/`. Each crate has focused benchmarks:
 **Trigger:** Manual via `workflow_dispatch` with `scaling: true`
 
 **What it measures:**
+
 - Performance across multiple input sizes: 1K, 5K, 10K, 50K transactions
 - Helps identify algorithmic complexity issues (O(n) vs O(n²))
 
 **Tools compared:**
+
 - rustledger, beancount, hledger (ledger omitted for build time)
 
 **Output:**
+
 - Separate job per size (matrix strategy)
 - Results uploaded as artifacts
 - Summary table in workflow run
 
 **When to use:**
+
 - Before merging significant algorithmic changes
 - Investigating performance scaling behavior
 - Comparing against hledger's similar scaling benchmarks
@@ -183,11 +202,13 @@ The CI comparison benchmark includes memory profiling using `/usr/bin/time -v`:
 **Metric:** Peak RSS (Resident Set Size) in MB
 
 **Method:**
+
 - Runs each tool 3 times
 - Takes median of "Maximum resident set size" values
 - Reports in workflow summary
 
 **Interpreting results:**
+
 - Lower is better
 - rustledger typically uses significantly less memory than Python beancount
 - Memory usage scales with ledger size
@@ -204,11 +225,13 @@ nix develop .#bench
 ```
 
 The script:
+
 1. Generates test ledgers (`.beancount` and `.ledger` formats)
-2. Runs hyperfine with 10 iterations, 3 warmups
-3. Outputs JSON and formatted summary
+1. Runs hyperfine with 10 iterations, 3 warmups
+1. Outputs JSON and formatted summary
 
 **Additional scripts:**
+
 - `scripts/bench-compare.py` - Compare benchmark results and detect regressions
 - `scripts/generate-bench-charts.py` - Generate Vega chart specs from history
 
@@ -264,9 +287,9 @@ fn bench_operation_scaling(c: &mut Criterion) {
 ### Criterion Benchmark
 
 1. Add to the appropriate `benches/*.rs` file
-2. Use `BenchmarkGroup` for related benchmarks
-3. Include throughput metrics where applicable
-4. Test multiple input sizes
+1. Use `BenchmarkGroup` for related benchmarks
+1. Include throughput metrics where applicable
+1. Test multiple input sizes
 
 ```rust
 fn bench_my_feature(c: &mut Criterion) {
@@ -312,12 +335,14 @@ my_benchmark/1000       time:   [1.2345 ms 1.2456 ms 1.2567 ms]
 ### CI Benchmark Results
 
 View the benchmark charts on the `benchmarks` branch:
+
 - `validation-chart.svg` - Validation performance comparison
 - `balance-chart.svg` - Balance computation comparison
 - `validation-chart.vega.json` - Vega spec (editable)
 - `balance-chart.vega.json` - Vega spec (editable)
 
 **Local chart generation:**
+
 ```bash
 # Generate Vega specs from history
 ./scripts/generate-bench-charts.py
@@ -338,24 +363,30 @@ The CI benchmark workflow includes automatic regression detection:
 - **Scope:** Only rustledger is checked (comparison tools vary independently)
 
 To investigate a regression:
+
 1. Check the benchmark history charts
-2. Run local Criterion benchmarks to isolate the component
-3. Use `cargo flamegraph` for profiling (requires nightly shell)
+1. Run local Criterion benchmarks to isolate the component
+1. Use `cargo flamegraph` for profiling (requires nightly shell)
 
 ## Nix Development Shells
 
 ### Default Shell (`nix develop`)
+
 Standard development with Rust toolchain and pre-commit hooks.
 
 ### Benchmark Shell (`nix develop .#bench`)
+
 Includes:
+
 - All comparison tools (beancount, ledger, hledger)
 - hyperfine for timing
 - Python with matplotlib for charts
 - Build dependencies for ledger
 
 ### Nightly Shell (`nix develop .#nightly`)
+
 For fuzzing and nightly-only features:
+
 - cargo-fuzz
 - Nightly Rust toolchain
 
@@ -364,6 +395,7 @@ For fuzzing and nightly-only features:
 ### Criterion results vary too much
 
 Ensure a stable environment:
+
 ```bash
 # Disable CPU frequency scaling (Linux)
 sudo cpupower frequency-set -g performance
@@ -375,6 +407,7 @@ sudo cpupower frequency-set -g performance
 ### CI benchmark shows regression but local doesn't
 
 CI runners have different characteristics than local machines:
+
 - Shared resources may cause variance
 - Check if other tools also show variance
 - Look at the trend over multiple days, not single runs
@@ -382,6 +415,7 @@ CI runners have different characteristics than local machines:
 ### Missing comparison tools in bench shell
 
 The benchmark shell auto-downloads tools on first use:
+
 ```bash
 # Force re-download
 rm -rf .bench-tools

@@ -4,7 +4,6 @@
 # Optimization: Skips expensive builds on non-code PRs (docs, CI config, etc.)
 # Always runs full build on: release PRs, pushes to main, merge queue
 name: CI
-
 on:
   push:
     branches: [main]
@@ -13,16 +12,13 @@ on:
   merge_group:
     branches: [main]
   workflow_dispatch:
-
 permissions:
   contents: read
-
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -Dwarnings
   SCCACHE_GHA_ENABLED: true
   RUSTC_WRAPPER: sccache
-
 jobs:
   # Detect if code files changed (skip builds on docs-only PRs)
   changes:
@@ -33,7 +29,6 @@ jobs:
       should_build: ${{ steps.decide.outputs.should_build }}
     steps:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
-
       - name: Check for code changes
         id: filter
         uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
@@ -46,7 +41,6 @@ jobs:
               - 'rust-toolchain.toml'
               - 'tests/**'
               - 'spec/**'
-
       - name: Decide if build needed
         id: decide
         env:
@@ -76,7 +70,6 @@ jobs:
             echo "No code changes - skipping build"
             echo "should_build=false" >> $GITHUB_OUTPUT
           fi
-
   # Fast format check (only on code changes)
   fmt:
     name: Format
@@ -90,7 +83,6 @@ jobs:
           toolchain: stable
           components: rustfmt
       - run: cargo fmt --all -- --check
-
   # Fast invariant check: verify that crates declaring
   # `#![forbid(unsafe_code)]` contain no `unsafe` blocks/items. Runs in
   # milliseconds via grep, so it fails loudly and early on AI-generated
@@ -111,7 +103,6 @@ jobs:
       - uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98 # v6
       - name: Verify forbid-unsafe-code invariant
         run: ./scripts/check-unsafe-invariant.sh
-
   # Main CI matrix - check, clippy, test, doc (only on code changes)
   ci:
     name: ${{ matrix.name }}
@@ -160,7 +151,6 @@ jobs:
         run: ${{ matrix.cmd }}
         env:
           RUSTDOCFLAGS: ${{ matrix.env == 'RUSTDOCFLAGS=-Dwarnings' && '-Dwarnings' || '' }}
-
   # Doctests (nextest doesn't support them, only on code changes)
   doctest:
     name: Doctests
@@ -178,7 +168,6 @@ jobs:
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2
       - name: Run doctests
         run: cargo test --doc --all-features
-
   # Regression tests - user-reported issues (only on code changes)
   regressions:
     name: Regression Tests
@@ -206,7 +195,6 @@ jobs:
             issue=$(basename "$f" .beancount | sed 's/issue-//')
             echo "- [#$issue](https://github.com/rustledger/rustledger/issues/$issue)" >> $GITHUB_STEP_SUMMARY
           done
-
   # Gate job - all core checks must pass (or be skipped on non-code PRs)
   build:
     name: build

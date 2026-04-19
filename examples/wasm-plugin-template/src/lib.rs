@@ -39,9 +39,8 @@ pub extern "C" fn alloc(size: u32) -> *mut u8 {
 #[no_mangle]
 pub extern "C" fn process(input_ptr: u32, input_len: u32) -> u64 {
     // Read input from WASM memory
-    let input_bytes = unsafe {
-        std::slice::from_raw_parts(input_ptr as *const u8, input_len as usize)
-    };
+    let input_bytes =
+        unsafe { std::slice::from_raw_parts(input_ptr as *const u8, input_len as usize) };
 
     // Deserialize input
     let input: PluginInput = match rmp_serde::from_slice(input_bytes) {

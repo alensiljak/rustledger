@@ -18,9 +18,9 @@
 //! }"
 //! ```
 
-use chrono::{Datelike, NaiveDate};
 use regex::Regex;
 use rust_decimal::Decimal;
+use rustledger_core::NaiveDate;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::LazyLock;
@@ -147,7 +147,7 @@ fn process_long_short(input: PluginInput) -> PluginOutput {
             }
 
             // Calculate short vs long gains
-            let entry_date = if let Ok(d) = NaiveDate::parse_from_str(&directive.date, "%Y-%m-%d") {
+            let entry_date = if let Ok(d) = directive.date.parse::<NaiveDate>() {
                 d
             } else {
                 new_directives.push(directive);
@@ -162,10 +162,7 @@ fn process_long_short(input: PluginInput) -> PluginOutput {
                     (&posting.cost, &posting.units, &posting.price)
                 {
                     // Get cost date
-                    let cost_date = cost
-                        .date
-                        .as_ref()
-                        .and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok());
+                    let cost_date = cost.date.as_ref().and_then(|d| d.parse::<NaiveDate>().ok());
 
                     if let Some(cost_date) = cost_date {
                         // Calculate gain
@@ -185,7 +182,8 @@ fn process_long_short(input: PluginInput) -> PluginOutput {
                         let gain = (cost_number - price_number) * units_number.abs();
 
                         // Check if long-term (> 1 year)
-                        let years_held = entry_date.years_since(cost_date).unwrap_or(0);
+                        let days_held = entry_date.since(cost_date).map_or(0, |s| s.get_days());
+                        let years_held = (days_held / 365) as u32;
                         let is_long_term = years_held > 1
                             || (years_held == 1
                                 && (entry_date.month() > cost_date.month()

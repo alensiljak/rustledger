@@ -179,6 +179,7 @@ See: [ADR-0003: Parser Design](adr/0003-parser-design.md)
 ### 2. Crate Separation
 
 Each crate has a single responsibility and can be used independently:
+
 - Want just parsing? Use `rustledger-parser`
 - Want validation? Use `rustledger-validate` (depends on parser)
 - Want queries? Use `rustledger-query`
@@ -194,6 +195,7 @@ See: [ADR-0002: Error Handling](adr/0002-error-handling.md)
 ### 4. Python Plugin Sandbox
 
 Python plugins run in a WebAssembly sandbox (CPython compiled to WASI). This provides:
+
 - Security: Plugins can't access filesystem or network
 - Portability: No system Python needed
 - Compatibility: Runs existing Python plugins
@@ -213,6 +215,7 @@ Parsed ledgers are cached to disk in a binary format. Subsequent runs skip parsi
 | Lot matching | O(m) | m = lots in inventory |
 
 Memory usage is proportional to ledger size, typically 3-5x smaller than Python beancount due to:
+
 - No Python object overhead
 - Efficient string interning
 - SmallVec for small collections

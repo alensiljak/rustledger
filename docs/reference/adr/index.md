@@ -1,7 +1,6 @@
----
-title: Architecture Decision Records
-description: Key design decisions and rationale
----
+______________________________________________________________________
+
+## title: Architecture Decision Records description: Key design decisions and rationale
 
 # Architecture Decision Records
 

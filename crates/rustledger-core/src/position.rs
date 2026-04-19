@@ -22,7 +22,6 @@ use crate::{Amount, Cost, CostSpec};
 /// ```
 /// use rustledger_core::{Amount, Cost, Position};
 /// use rust_decimal_macros::dec;
-/// use chrono::NaiveDate;
 ///
 /// // Simple position (no cost)
 /// let cash = Position::simple(Amount::new(dec!(1000.00), "USD"));
@@ -30,7 +29,7 @@ use crate::{Amount, Cost, CostSpec};
 ///
 /// // Position with cost (lot)
 /// let cost = Cost::new(dec!(150.00), "USD")
-///     .with_date(NaiveDate::from_ymd_opt(2024, 1, 15).unwrap());
+///     .with_date(rustledger_core::naive_date(2024, 1, 15).unwrap());
 /// let stock = Position::with_cost(
 ///     Amount::new(dec!(10), "AAPL"),
 ///     cost
@@ -184,11 +183,11 @@ impl fmt::Display for Position {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::NaiveDate;
+    use crate::NaiveDate;
     use rust_decimal_macros::dec;
 
     fn date(year: i32, month: u32, day: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(year, month, day).unwrap()
+        crate::naive_date(year, month, day).unwrap()
     }
 
     #[test]
