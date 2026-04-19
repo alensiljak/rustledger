@@ -22,7 +22,7 @@
 #
 # SECRETS REQUIRED
 # ----------------
-# - BOT_APP_ID / BOT_PRIVATE_KEY: GitHub App for cross-repo dispatches (Scoop, website)
+# - BOT_CLIENT_ID / BOT_PRIVATE_KEY: GitHub App for cross-repo dispatches (Scoop, website)
 # - HOMEBREW_GITHUB_API_TOKEN: PAT with public_repo scope for homebrew-core PRs
 # - COPR_LOGIN / COPR_TOKEN: COPR build trigger
 # - AUR_SSH_PRIVATE_KEY: SSH key for pushing to AUR (aur.archlinux.org)
@@ -166,7 +166,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: rustledger.github.io
@@ -296,7 +296,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: scoop-rustledger
@@ -344,7 +344,7 @@ jobs:
         id: app-token
         uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
         with:
-          app-id: ${{ secrets.BOT_APP_ID }}
+          client-id: ${{ secrets.BOT_CLIENT_ID }}
           private-key: ${{ secrets.BOT_PRIVATE_KEY }}
           owner: rustledger
           repositories: rustfava
