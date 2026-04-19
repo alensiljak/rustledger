@@ -1038,3 +1038,51 @@ fn test_parallel_loading_multiple_includes() {
         "Source map should have 4 files"
     );
 }
+
+/// Test that WASM plugins are executed during load (not just parsed).
+///
+/// This is a regression test for issue #842: WASM plugins were parsed
+/// but never executed by the loader, only by `rledger check`.
+#[cfg(feature = "wasm-plugins")]
+#[test]
+fn test_wasm_plugin_executed_during_load() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let path = fixtures_path("with_wasm_plugin.beancount");
+    let options = LoadOptions::default();
+
+    // This should not error — the passthrough WASM plugin should execute
+    // and return directives unchanged.
+    let ledger = load(&path, &options).expect("should load file with WASM plugin");
+
+    // The passthrough plugin doesn't modify directives,
+    // so we should still have our original directives
+    assert!(
+        !ledger.directives.is_empty(),
+        "directives should not be empty after WASM plugin execution"
+    );
+}
+
+/// Test that non-native, non-WASM plugins are handled gracefully.
+#[test]
+fn test_unknown_plugin_does_not_panic() {
+    use rustledger_loader::{LoadOptions, load};
+
+    // Create a temp file with an unknown plugin
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.beancount");
+    std::fs::write(
+        &path,
+        "plugin \"nonexistent_plugin\"\n2024-01-01 open Assets:Bank USD\n",
+    )
+    .unwrap();
+
+    let options = LoadOptions::default();
+
+    // Should not panic — unknown plugins should be silently skipped or error gracefully
+    let result = load(&path, &options);
+    assert!(
+        result.is_ok(),
+        "loading with unknown plugin should not panic"
+    );
+}

@@ -463,6 +463,40 @@ pub fn run_plugins(
                 }
 
                 wrappers = output.directives;
+            } else {
+                // Not a native plugin — try WASM if the feature is enabled
+                #[cfg(feature = "wasm-plugins")]
+                {
+                    let is_wasm = std::path::Path::new(raw_name)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("wasm"));
+                    if is_wasm {
+                        let wasm_path = if std::path::Path::new(raw_name).is_absolute() {
+                            std::path::PathBuf::from(raw_name)
+                        } else {
+                            base_dir.join(raw_name)
+                        };
+
+                        match run_wasm_plugin(&wasm_path, &wrappers, &plugin_options, plugin_config)
+                        {
+                            Ok((output_directives, plugin_errors)) => {
+                                for err in plugin_errors {
+                                    errors.push(err);
+                                }
+                                wrappers = output_directives;
+                            }
+                            Err(e) => {
+                                errors.push(
+                                    LedgerError::error(
+                                        "PLUGIN",
+                                        format!("WASM plugin {} failed: {e}", wasm_path.display()),
+                                    )
+                                    .with_phase("plugin"),
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -586,4 +620,50 @@ pub fn load(path: &Path, options: &LoadOptions) -> Result<Ledger, ProcessError> 
 /// Use this when you need the original parse output.
 pub fn load_raw(path: &Path) -> Result<LoadResult, LoadError> {
     crate::Loader::new().load(path)
+}
+
+/// Run a WASM plugin and return its output directives and errors.
+#[cfg(feature = "wasm-plugins")]
+fn run_wasm_plugin(
+    wasm_path: &std::path::Path,
+    directives: &[rustledger_plugin_types::DirectiveWrapper],
+    options: &rustledger_plugin::PluginOptions,
+    config: &Option<String>,
+) -> Result<
+    (
+        Vec<rustledger_plugin_types::DirectiveWrapper>,
+        Vec<LedgerError>,
+    ),
+    String,
+> {
+    use rustledger_plugin::{PluginInput, PluginManager};
+
+    let mut mgr = PluginManager::new();
+    mgr.load(wasm_path)
+        .map_err(|e| format!("failed to load: {e}"))?;
+
+    let input = PluginInput {
+        directives: directives.to_vec(),
+        options: options.clone(),
+        config: config.clone(),
+    };
+
+    let output = mgr
+        .execute(0, &input)
+        .map_err(|e| format!("execution failed: {e}"))?;
+
+    let mut errors = Vec::new();
+    for err in output.errors {
+        let ledger_err = match err.severity {
+            rustledger_plugin::PluginErrorSeverity::Error => {
+                LedgerError::error("PLUGIN", err.message).with_phase("plugin")
+            }
+            rustledger_plugin::PluginErrorSeverity::Warning => {
+                LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
+            }
+        };
+        errors.push(ledger_err);
+    }
+
+    Ok((output.directives, errors))
 }
