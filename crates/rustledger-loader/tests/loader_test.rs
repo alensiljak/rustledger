@@ -919,10 +919,7 @@ fn test_unknown_plugin_skipped_gracefully() {
 
     // Should report the plugin as not found (not silently skip)
     assert!(
-        ledger
-            .errors
-            .iter()
-            .any(|e| e.phase == Some("plugin".to_string())),
+        ledger.errors.iter().any(|e| e.phase == "plugin"),
         "expected a plugin error for unknown plugin, got: {:?}",
         ledger.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );

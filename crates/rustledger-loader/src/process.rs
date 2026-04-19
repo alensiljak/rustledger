@@ -796,7 +796,9 @@ fn run_python_plugin(
 
     // Try file-based execution first, then module-based
     let is_file = resolved_path.exists()
-        || module_name.ends_with(".py")
+        || std::path::Path::new(module_name)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("py"))
         || module_name.contains(std::path::MAIN_SEPARATOR);
 
     let output = if is_file {
