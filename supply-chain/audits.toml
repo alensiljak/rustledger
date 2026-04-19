@@ -15,265 +15,289 @@ notes = "Updated from 0.103.10 per RUSTSEC-2026-0098"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-03-28"
 end = "2027-03-10"
 
 [[trusted.anstream]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-03-16"
 end = "2027-03-24"
 
 [[trusted.anstyle]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2022-05-18"
 end = "2027-03-24"
 
 [[trusted.anstyle-parse]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-03-08"
 end = "2027-03-24"
 
 [[trusted.anstyle-query]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-04-13"
 end = "2027-03-24"
 
 [[trusted.anstyle-wincon]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-03-08"
 end = "2027-03-24"
 
 [[trusted.anyhow]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-10-05"
 end = "2027-03-10"
 
 [[trusted.async-trait]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-07-23"
 end = "2027-03-10"
 
 [[trusted.bstr]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-04-02"
 end = "2027-03-10"
 
 [[trusted.cap-fs-ext]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-12-11"
 end = "2027-03-10"
 
 [[trusted.cap-net-ext]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2023-04-07"
 end = "2027-03-10"
 
 [[trusted.cap-primitives]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-08-07"
 end = "2027-03-10"
 
 [[trusted.cap-rand]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-09-24"
 end = "2027-03-10"
 
 [[trusted.cap-std]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-06-25"
 end = "2027-03-10"
 
 [[trusted.cap-time-ext]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-09-21"
 end = "2027-03-10"
 
 [[trusted.cc]]
 criteria = "safe-to-deploy"
-user-id = 55123             # rust-lang-owner
+user-id = 55123 # rust-lang-owner
 start = "2022-10-29"
 end = "2027-03-10"
 
 [[trusted.clap_builder]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-03-28"
 end = "2027-03-24"
 
 [[trusted.clap_complete]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2021-12-31"
 end = "2027-03-24"
 
 [[trusted.clap_lex]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2022-04-15"
 end = "2027-03-24"
 
 [[trusted.colorchoice]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-04-13"
 end = "2027-03-10"
 
 [[trusted.csv]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-04-05"
 end = "2027-03-10"
 
 [[trusted.csv-core]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-06-26"
 end = "2027-03-10"
 
 [[trusted.fd-lock]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2022-01-21"
 end = "2027-03-10"
 
 [[trusted.find-msvc-tools]]
 criteria = "safe-to-deploy"
-user-id = 539               # Josh Stone (cuviper)
+user-id = 539 # Josh Stone (cuviper)
 start = "2025-08-29"
 end = "2027-03-10"
 
 [[trusted.fs-set-times]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-09-15"
 end = "2027-03-10"
 
 [[trusted.futures]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.futures-channel]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.futures-core]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.futures-io]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.futures-sink]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.futures-task]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2019-07-29"
 end = "2027-03-10"
 
 [[trusted.futures-util]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2020-10-05"
 end = "2027-03-10"
 
 [[trusted.id-arena]]
 criteria = "safe-to-deploy"
-user-id = 696               # Nick Fitzgerald (fitzgen)
+user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2026-01-14"
 end = "2027-03-10"
 
 [[trusted.io-extras]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-11-09"
 end = "2027-03-10"
 
 [[trusted.io-lifetimes]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-06-12"
 end = "2027-03-10"
 
 [[trusted.is_terminal_polyfill]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2024-05-02"
 end = "2027-03-24"
 
 [[trusted.itoa]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-05-02"
 end = "2027-03-10"
 
+[[trusted.jiff]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-02-17"
+end = "2027-04-19"
+
+[[trusted.jiff-static]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2025-03-06"
+end = "2027-04-19"
+
+[[trusted.jiff-tzdb]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-07-09"
+end = "2027-04-19"
+
+[[trusted.jiff-tzdb-platform]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-07-09"
+end = "2027-04-19"
+
 [[trusted.libc]]
 criteria = "safe-to-deploy"
-user-id = 55123             # rust-lang-owner
+user-id = 55123 # rust-lang-owner
 start = "2024-08-15"
 end = "2027-03-10"
 
 [[trusted.libm]]
 criteria = "safe-to-deploy"
-user-id = 55123             # rust-lang-owner
+user-id = 55123 # rust-lang-owner
 start = "2024-10-26"
 end = "2027-03-10"
 
 [[trusted.linux-raw-sys]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-06-12"
 end = "2027-03-10"
 
 [[trusted.memchr]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-07-07"
 end = "2027-03-10"
 
 [[trusted.num-bigint]]
 criteria = "safe-to-deploy"
-user-id = 539               # Josh Stone (cuviper)
+user-id = 539 # Josh Stone (cuviper)
 start = "2019-09-04"
 end = "2027-03-10"
 
 [[trusted.once_cell_polyfill]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2025-05-22"
 end = "2027-03-24"
 
 [[trusted.pin-project-lite]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2019-10-22"
 end = "2027-03-10"
 
@@ -283,267 +307,279 @@ trusted-publisher = "github:taiki-e/pin-project-lite"
 start = "2026-02-27"
 end = "2027-03-10"
 
+[[trusted.portable-atomic]]
+criteria = "safe-to-deploy"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2022-02-24"
+end = "2027-04-19"
+
+[[trusted.portable-atomic-util]]
+criteria = "safe-to-deploy"
+user-id = 33035 # Taiki Endo (taiki-e)
+start = "2023-01-15"
+end = "2027-04-19"
+
 [[trusted.prettyplease]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2022-01-04"
 end = "2027-03-10"
 
 [[trusted.proc-macro2]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-23"
 end = "2027-03-10"
 
 [[trusted.quote]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-09"
 end = "2027-03-10"
 
 [[trusted.regex]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-02-27"
 end = "2027-03-10"
 
 [[trusted.regex-automata]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-02-25"
 end = "2027-03-10"
 
 [[trusted.regex-syntax]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-03-30"
 end = "2027-03-10"
 
 [[trusted.rustc-demangle]]
 criteria = "safe-to-deploy"
-user-id = 55123             # rust-lang-owner
+user-id = 55123 # rust-lang-owner
 start = "2023-03-23"
 end = "2027-03-10"
 
 [[trusted.rustix]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
 end = "2027-03-10"
 
 [[trusted.ryu]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-05-02"
 end = "2027-03-10"
 
 [[trusted.semver]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2021-05-25"
 end = "2027-03-10"
 
 [[trusted.serde_json]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-02-28"
 end = "2027-03-10"
 
 [[trusted.serde_repr]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-26"
 end = "2027-03-10"
 
 [[trusted.serde_spanned]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-01-20"
 end = "2027-03-10"
 
 [[trusted.serde_yaml]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-05-02"
 end = "2027-03-10"
 
 [[trusted.slab]]
 criteria = "safe-to-deploy"
-user-id = 6741              # Alice Ryhl (Darksonn)
+user-id = 6741 # Alice Ryhl (Darksonn)
 start = "2021-10-13"
 end = "2027-03-10"
 
 [[trusted.socket2]]
 criteria = "safe-to-deploy"
-user-id = 6025              # Thomas de Zeeuw (Thomasdezeeuw)
+user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)
 start = "2020-09-09"
 end = "2027-03-10"
 
 [[trusted.syn]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-03-01"
 end = "2027-03-10"
 
 [[trusted.system-interface]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2020-10-27"
 end = "2027-03-10"
 
 [[trusted.target-lexicon]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2019-03-06"
 end = "2027-03-10"
 
 [[trusted.termcolor]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-06-04"
 end = "2027-03-10"
 
 [[trusted.thiserror]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-10-09"
 end = "2027-03-10"
 
 [[trusted.thiserror-impl]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-10-09"
 end = "2027-03-10"
 
 [[trusted.tokio-macros]]
 criteria = "safe-to-deploy"
-user-id = 6741              # Alice Ryhl (Darksonn)
+user-id = 6741 # Alice Ryhl (Darksonn)
 start = "2020-10-26"
 end = "2027-03-10"
 
 [[trusted.tokio-macros]]
 criteria = "safe-to-deploy"
-user-id = 33035             # Taiki Endo (taiki-e)
+user-id = 33035 # Taiki Endo (taiki-e)
 start = "2022-11-29"
 end = "2027-03-10"
 
 [[trusted.toml]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2022-12-14"
 end = "2027-03-10"
 
 [[trusted.toml_datetime]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2022-10-21"
 end = "2027-03-10"
 
 [[trusted.toml_edit]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2021-09-13"
 end = "2027-03-10"
 
 [[trusted.toml_parser]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2025-07-08"
 end = "2027-03-10"
 
 [[trusted.toml_write]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2025-04-25"
 end = "2027-03-10"
 
 [[trusted.toml_writer]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2025-07-08"
 end = "2027-03-24"
 
 [[trusted.unicode-ident]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2021-10-02"
 end = "2027-03-10"
 
 [[trusted.unsafe-libyaml]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2022-07-03"
 end = "2027-03-10"
 
 [[trusted.walkdir]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-06-09"
 end = "2027-03-10"
 
 [[trusted.winapi-util]]
 criteria = "safe-to-deploy"
-user-id = 189               # Andrew Gallant (BurntSushi)
+user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2020-01-11"
 end = "2027-03-10"
 
 [[trusted.windows-core]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2021-11-15"
 end = "2027-03-10"
 
 [[trusted.windows-interface]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2022-02-18"
 end = "2027-03-10"
 
 [[trusted.windows-result]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2024-02-02"
 end = "2027-03-10"
 
 [[trusted.windows-strings]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2024-02-02"
 end = "2027-03-10"
 
 [[trusted.windows-targets]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2022-09-09"
 end = "2027-03-10"
 
 [[trusted.windows_aarch64_gnullvm]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2022-09-01"
 end = "2027-03-10"
 
 [[trusted.windows_i686_gnullvm]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2024-04-02"
 end = "2027-03-10"
 
 [[trusted.windows_x86_64_gnullvm]]
 criteria = "safe-to-deploy"
-user-id = 64539             # Kenny Kerr (kennykerr)
+user-id = 64539 # Kenny Kerr (kennykerr)
 start = "2022-09-01"
 end = "2027-03-10"
 
 [[trusted.winnow]]
 criteria = "safe-to-deploy"
-user-id = 6743              # Ed Page (epage)
+user-id = 6743 # Ed Page (epage)
 start = "2023-02-22"
 end = "2027-03-24"
 
 [[trusted.winx]]
 criteria = "safe-to-deploy"
-user-id = 6825              # Dan Gohman (sunfishcode)
+user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2019-08-20"
 end = "2027-03-10"
 
@@ -555,6 +591,6 @@ end = "2027-03-10"
 
 [[trusted.zmij]]
 criteria = "safe-to-deploy"
-user-id = 3618              # David Tolnay (dtolnay)
+user-id = 3618 # David Tolnay (dtolnay)
 start = "2025-12-18"
 end = "2027-03-10"
