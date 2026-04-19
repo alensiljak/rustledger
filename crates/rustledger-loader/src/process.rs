@@ -549,11 +549,12 @@ pub fn run_plugins(
                             .with_phase("plugin"),
                         );
                     }
-                } else if ext == "py"
+                } else if *force_python
+                    || ext == "py"
                     || raw_name.contains(std::path::MAIN_SEPARATOR)
                     || raw_name.contains('.')
                 {
-                    // Python module or file-based plugin
+                    // Python module or file-based plugin (or force_python via "python:" prefix)
                     #[cfg(feature = "python-plugins")]
                     {
                         let resolved = match resolve_path(raw_name) {

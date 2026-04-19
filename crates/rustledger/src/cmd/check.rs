@@ -611,7 +611,7 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             error_count += 1;
         }
     }
-    let warning_count = ledger
+    let mut warning_count = ledger
         .errors
         .iter()
         .filter(|e| matches!(e.severity, rustledger_loader::ErrorSeverity::Warning))
@@ -636,38 +636,85 @@ pub fn run(args: &Args) -> Result<ExitCode> {
             config: None,
         };
 
-        // Run WASM plugins from CLI --plugin flag
-        if !args.plugins.is_empty() {
-            let mut wasm_mgr = PluginManager::new();
-            for plugin_path in &args.plugins {
-                if let Err(e) = wasm_mgr.load(plugin_path) {
-                    if !args.quiet {
-                        writeln!(
-                            stdout,
-                            "error: failed to load WASM plugin {}: {e}",
-                            plugin_path.display()
-                        )?;
+        let mut wasm_mgr = PluginManager::new();
+        for plugin_path in &args.plugins {
+            if let Err(e) = wasm_mgr.load(plugin_path) {
+                let msg = format!("failed to load WASM plugin {}: {e}", plugin_path.display());
+                if json_mode {
+                    diagnostics.push(JsonDiagnostic {
+                        file: main_file_str.clone(),
+                        line: 1,
+                        column: 1,
+                        end_line: 1,
+                        end_column: 1,
+                        severity: "error".to_string(),
+                        phase: "plugin".to_string(),
+                        code: "PLUGIN".to_string(),
+                        message: msg,
+                        hint: None,
+                        context: None,
+                    });
+                } else if !args.quiet {
+                    writeln!(stdout, "error: {msg}")?;
+                }
+                error_count += 1;
+            }
+        }
+        if !wasm_mgr.is_empty() {
+            match wasm_mgr.execute_all(current_input) {
+                Ok(output) => {
+                    for err in &output.errors {
+                        let sev = match err.severity {
+                            rustledger_plugin::PluginErrorSeverity::Error => "error",
+                            rustledger_plugin::PluginErrorSeverity::Warning => "warning",
+                        };
+                        if json_mode {
+                            diagnostics.push(JsonDiagnostic {
+                                file: main_file_str.clone(),
+                                line: 1,
+                                column: 1,
+                                end_line: 1,
+                                end_column: 1,
+                                severity: sev.to_string(),
+                                phase: "plugin".to_string(),
+                                code: "PLUGIN".to_string(),
+                                message: err.message.clone(),
+                                hint: None,
+                                context: None,
+                            });
+                        } else if !args.quiet {
+                            writeln!(stdout, "{sev}: {}", err.message)?;
+                        }
+                        match err.severity {
+                            rustledger_plugin::PluginErrorSeverity::Error => {
+                                error_count += 1;
+                            }
+                            rustledger_plugin::PluginErrorSeverity::Warning => {
+                                warning_count += 1;
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    let msg = format!("WASM plugin execution failed: {e}");
+                    if json_mode {
+                        diagnostics.push(JsonDiagnostic {
+                            file: main_file_str,
+                            line: 1,
+                            column: 1,
+                            end_line: 1,
+                            end_column: 1,
+                            severity: "error".to_string(),
+                            phase: "plugin".to_string(),
+                            code: "PLUGIN".to_string(),
+                            message: msg,
+                            hint: None,
+                            context: None,
+                        });
+                    } else if !args.quiet {
+                        writeln!(stdout, "error: {msg}")?;
                     }
                     error_count += 1;
-                }
-            }
-            if !wasm_mgr.is_empty() {
-                match wasm_mgr.execute_all(current_input) {
-                    Ok(output) => {
-                        for err in &output.errors {
-                            if !args.quiet {
-                                writeln!(stdout, "{:?}: {}", err.severity, err.message)?;
-                            }
-                            error_count += 1;
-                        }
-                        // current_input.directives = output.directives;
-                    }
-                    Err(e) => {
-                        if !args.quiet {
-                            writeln!(stdout, "error: WASM plugin execution failed: {e}")?;
-                        }
-                        error_count += 1;
-                    }
                 }
             }
         }
