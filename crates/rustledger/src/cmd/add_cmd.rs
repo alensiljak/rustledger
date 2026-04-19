@@ -198,7 +198,7 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
     }
 
     if trimmed == "yesterday" {
-        return today.pred_opt().context("Cannot compute yesterday's date");
+        return today.yesterday().ok().context("Cannot compute yesterday's date");
     }
 
     // Relative days: +N or -N
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn test_parse_date_yesterday() {
-        let yesterday = jiff::Zoned::now().date().pred_opt().unwrap();
+        let yesterday = jiff::Zoned::now().date().yesterday().ok().unwrap();
         assert_eq!(parse_date("yesterday").unwrap(), yesterday);
         assert_eq!(parse_date("YESTERDAY").unwrap(), yesterday);
     }
@@ -796,8 +796,8 @@ mod tests {
     #[test]
     fn test_parse_date_relative() {
         let today = jiff::Zoned::now().date();
-        let tomorrow = today.succ_opt().unwrap();
-        let yesterday = today.pred_opt().unwrap();
+        let tomorrow = today.tomorrow().ok().unwrap();
+        let yesterday = today.yesterday().ok().unwrap();
 
         assert_eq!(parse_date("+1").unwrap(), tomorrow);
         assert_eq!(parse_date("-1").unwrap(), yesterday);

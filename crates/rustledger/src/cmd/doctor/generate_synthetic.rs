@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use rustledger_core::NaiveDate;
 use std::fs;
 use std::io::Write;
 use std::path::PathBuf;
