@@ -481,17 +481,14 @@ pub fn run_plugins(
                     };
 
                     // Path security: prevent plugins from outside the ledger directory
-                    if options.path_security {
-                        if let (Ok(canon_base), Ok(canon_plugin)) =
+                    if options.path_security
+                        && let (Ok(canon_base), Ok(canon_plugin)) =
                             (base_dir.canonicalize(), resolved.canonicalize())
-                        {
-                            if !canon_plugin.starts_with(&canon_base) {
-                                return Err(format!(
-                                    "plugin path '{}' is outside the ledger directory",
-                                    name
-                                ));
-                            }
-                        }
+                        && !canon_plugin.starts_with(&canon_base)
+                    {
+                        return Err(format!(
+                            "plugin path '{name}' is outside the ledger directory"
+                        ));
                     }
 
                     Ok(resolved)
