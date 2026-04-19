@@ -205,20 +205,16 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
         errors.push(LedgerError::error("LOAD", load_err.to_string()).with_phase("parse"));
     }
 
-    // 1. Sort by date, type priority, then augmentations before reductions.
-    // Within the same date, transactions that add lots (augmentations) are
-    // processed before those that remove lots (reductions). This ensures
-    // lots exist when they're matched, regardless of file ordering.
-    directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
-            .then_with(|| {
-                a.value
-                    .has_cost_reduction()
-                    .cmp(&b.value.has_cost_reduction())
-            })
+    // 1. Sort by date, type priority, then cost-basis reductions last.
+    // Transactions without cost reductions (no negative-units + cost-spec
+    // postings) process before those that reduce lots, ensuring lots exist
+    // when matched regardless of file ordering.
+    directives.sort_by_cached_key(|d| {
+        (
+            d.value.date(),
+            d.value.priority(),
+            d.value.has_cost_reduction(),
+        )
     });
 
     // 2. Booking/interpolation

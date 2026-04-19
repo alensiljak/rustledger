@@ -226,11 +226,12 @@ fn calculate_balance_at_date(
 ) -> HashMap<String, Decimal> {
     // Clone and sort directives by date (required for correct booking)
     let mut directives: Vec<Spanned<Directive>> = directives_in.to_vec();
-    directives.sort_by(|a, b| {
-        a.value
-            .date()
-            .cmp(&b.value.date())
-            .then_with(|| a.value.priority().cmp(&b.value.priority()))
+    directives.sort_by_cached_key(|d| {
+        (
+            d.value.date(),
+            d.value.priority(),
+            d.value.has_cost_reduction(),
+        )
     });
 
     // Run booking/interpolation to fill in missing amounts

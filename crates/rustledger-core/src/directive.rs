@@ -454,25 +454,17 @@ impl Directive {
     }
 }
 
-/// Sort directives by date, then by type priority, then augmentations before reductions.
+/// Sort directives by date, then type priority, then cost-basis reductions last.
 ///
 /// This is a stable sort that preserves file order for directives
 /// with the same date, type, and reduction status.
 ///
-/// Within the same date, transactions that only augment inventory
-/// (buy lots) are processed before transactions that reduce it
-/// (sell lots). This ensures lots exist when they're matched,
-/// regardless of the file ordering.
+/// Within the same date, transactions without cost-basis reductions
+/// (no negative-units + cost-spec postings) are processed before
+/// those that do reduce cost-basis lots. This ensures lots exist
+/// when they're matched, regardless of file ordering.
 pub fn sort_directives(directives: &mut [Directive]) {
-    directives.sort_by(|a, b| {
-        // Primary: date ascending
-        a.date()
-            .cmp(&b.date())
-            // Secondary: type priority
-            .then_with(|| a.priority().cmp(&b.priority()))
-            // Tertiary: augmentations before reductions
-            .then_with(|| a.has_cost_reduction().cmp(&b.has_cost_reduction()))
-    });
+    directives.sort_by_cached_key(|d| (d.date(), d.priority(), d.has_cost_reduction()));
 }
 
 /// A transaction directive.
