@@ -472,20 +472,42 @@ pub fn run_plugins(
                     .unwrap_or("")
                     .to_lowercase();
 
-                let resolve_path = |name: &str| -> std::path::PathBuf {
+                let resolve_path = |name: &str| -> Result<std::path::PathBuf, String> {
                     let p = std::path::Path::new(name);
-                    if p.is_absolute() {
+                    let resolved = if p.is_absolute() {
                         p.to_path_buf()
                     } else {
                         base_dir.join(name)
+                    };
+
+                    // Path security: prevent plugins from outside the ledger directory
+                    if options.path_security {
+                        if let (Ok(canon_base), Ok(canon_plugin)) =
+                            (base_dir.canonicalize(), resolved.canonicalize())
+                        {
+                            if !canon_plugin.starts_with(&canon_base) {
+                                return Err(format!(
+                                    "plugin path '{}' is outside the ledger directory",
+                                    name
+                                ));
+                            }
+                        }
                     }
+
+                    Ok(resolved)
                 };
 
                 if ext == "wasm" {
                     // WASM plugin
                     #[cfg(feature = "wasm-plugins")]
                     {
-                        let wasm_path = resolve_path(raw_name);
+                        let wasm_path = match resolve_path(raw_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                errors.push(LedgerError::error("PLUGIN", e).with_phase("plugin"));
+                                continue;
+                            }
+                        };
                         match run_wasm_plugin(&wasm_path, &wrappers, &plugin_options, plugin_config)
                         {
                             Ok((output_directives, plugin_errors)) => {
@@ -525,7 +547,13 @@ pub fn run_plugins(
                     // Python module or file-based plugin
                     #[cfg(feature = "python-plugins")]
                     {
-                        let resolved = resolve_path(raw_name);
+                        let resolved = match resolve_path(raw_name) {
+                            Ok(p) => p,
+                            Err(e) => {
+                                errors.push(LedgerError::error("PLUGIN", e).with_phase("plugin"));
+                                continue;
+                            }
+                        };
                         match run_python_plugin(
                             raw_name,
                             &resolved,
@@ -713,7 +741,8 @@ fn run_wasm_plugin(
     use rustledger_plugin::{PluginInput, PluginManager};
 
     let mut mgr = PluginManager::new();
-    mgr.load(wasm_path)
+    let plugin_idx = mgr
+        .load(wasm_path)
         .map_err(|e| format!("failed to load: {e}"))?;
 
     let input = PluginInput {
@@ -723,7 +752,7 @@ fn run_wasm_plugin(
     };
 
     let output = mgr
-        .execute(0, &input)
+        .execute(plugin_idx, &input)
         .map_err(|e| format!("execution failed: {e}"))?;
 
     let mut errors = Vec::new();

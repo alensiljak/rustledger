@@ -910,17 +910,21 @@ fn test_unknown_plugin_skipped_gracefully() {
     let ledger =
         load(&path, &LoadOptions::default()).expect("should load file with unknown plugin");
 
-    // The unknown plugin "some.unknown.plugin.module" should NOT crash
-    // the pipeline — it should be silently skipped (only native plugins
-    // are executed). Verify the ledger loaded successfully.
-    //
-    // Note: the current run_plugins() implementation silently skips
-    // non-native plugins. If/when Python plugin support is added to the
-    // loader pipeline, this test should be updated to check for an error
-    // like E8001 (plugin not found).
+    // Unknown plugins should NOT crash the pipeline — they report an error
+    // but loading continues with the remaining directives.
     assert!(
         !ledger.directives.is_empty(),
         "Ledger should still have directives even with unknown plugin"
+    );
+
+    // Should report the plugin as not found (not silently skip)
+    assert!(
+        ledger
+            .errors
+            .iter()
+            .any(|e| e.phase == Some("plugin".to_string())),
+        "expected a plugin error for unknown plugin, got: {:?}",
+        ledger.errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
 
@@ -1051,15 +1055,35 @@ fn test_wasm_plugin_executed_during_load() {
     let path = fixtures_path("with_wasm_plugin.beancount");
     let options = LoadOptions::default();
 
-    // This should not error — the passthrough WASM plugin should execute
-    // and return directives unchanged.
     let ledger = load(&path, &options).expect("should load file with WASM plugin");
 
-    // The passthrough plugin doesn't modify directives,
-    // so we should still have our original directives
+    // Verify no WASM-related errors — if the plugin was silently skipped
+    // (the original bug), there would be no errors, but if it was attempted
+    // and failed, there would be WASM errors.
+    let wasm_errors: Vec<_> = ledger
+        .errors
+        .iter()
+        .filter(|e| e.message.contains("WASM") || e.message.contains("wasm"))
+        .collect();
+    assert!(
+        wasm_errors.is_empty(),
+        "WASM plugin should execute without errors, got: {wasm_errors:?}"
+    );
+
+    // The plugin was found and processed (not reported as "not found")
+    let not_found_errors: Vec<_> = ledger
+        .errors
+        .iter()
+        .filter(|e| e.message.contains("not found") || e.message.contains("Not found"))
+        .collect();
+    assert!(
+        not_found_errors.is_empty(),
+        "WASM plugin should be found, got: {not_found_errors:?}"
+    );
+
     assert!(
         !ledger.directives.is_empty(),
-        "directives should not be empty after WASM plugin execution"
+        "directives should survive WASM plugin execution"
     );
 }
 
