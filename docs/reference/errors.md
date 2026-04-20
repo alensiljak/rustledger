@@ -198,12 +198,6 @@ Or use `rledger doctor missing-open` to generate them.
 
 **Fix**: Specify the exact lot using cost basis `{cost}` or date `{date}`.
 
-### E4004: Negative Inventory
-
-**Cause**: Reduction would create negative inventory.
-
-**Fix**: Check that you have sufficient holdings before selling.
-
 ### E4005: Negative Cost
 
 **Cause**: A cost specification resolves to a negative amount.
@@ -236,20 +230,6 @@ Or use `rledger doctor missing-open` to generate them.
 ```
 
 **Fix**: Use allowed currency or update account declaration.
-
-## Metadata Errors (E6xxx)
-
-### E6001: Duplicate Metadata Key
-
-**Cause**: Same metadata key used twice on one directive.
-
-**Fix**: Remove the duplicate key.
-
-### E6002: Invalid Metadata Value
-
-**Cause**: Metadata value has wrong type.
-
-**Fix**: Use correct value type (string, number, date, etc.).
 
 ## Option Errors (E7xxx)
 
