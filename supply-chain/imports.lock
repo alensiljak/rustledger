@@ -120,6 +120,13 @@ user-id = 6825
 user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
+[[publisher.clap]]
+version = "4.6.1"
+when = "2026-04-15"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
 [[publisher.clap_builder]]
 version = "4.6.0"
 when = "2026-03-12"
@@ -130,6 +137,13 @@ user-name = "Ed Page"
 [[publisher.clap_complete]]
 version = "4.6.2"
 when = "2026-04-13"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.clap_derive]]
+version = "4.6.1"
+when = "2026-04-15"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -156,68 +170,68 @@ user-login = "jrmuizel"
 user-name = "Jeff Muizelaar"
 
 [[publisher.cranelift-assembler-x64]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-assembler-x64-meta]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-bforest]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-bitset]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-codegen]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-codegen-meta]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-codegen-shared]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-control]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-entity]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-frontend]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-isle]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-native]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.cranelift-srcgen]]
-version = "0.130.1"
-when = "2026-04-09"
+version = "0.131.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.csv]]
@@ -407,6 +421,20 @@ user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
 
+[[publisher.object]]
+version = "0.37.3"
+when = "2025-08-13"
+user-id = 4415
+user-login = "philipc"
+user-name = "Philip Craig"
+
+[[publisher.object]]
+version = "0.39.0"
+when = "2026-03-29"
+user-id = 4415
+user-login = "philipc"
+user-name = "Philip Craig"
+
 [[publisher.once_cell_polyfill]]
 version = "1.70.2"
 when = "2025-10-21"
@@ -441,13 +469,13 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.pulley-interpreter]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.pulley-macros]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.quote]]
@@ -456,6 +484,13 @@ when = "2026-03-03"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
+
+[[publisher.rayon]]
+version = "1.12.0"
+when = "2026-04-14"
+user-id = 539
+user-login = "cuviper"
+user-name = "Josh Stone"
 
 [[publisher.regalloc2]]
 version = "0.15.0"
@@ -554,13 +589,6 @@ user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
-[[publisher.serde_yaml]]
-version = "0.9.34+deprecated"
-when = "2024-03-25"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.slab]]
 version = "0.4.12"
 when = "2026-01-31"
@@ -623,6 +651,13 @@ when = "2026-01-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
+
+[[publisher.tokio]]
+version = "1.52.1"
+when = "2026-04-16"
+user-id = 1249
+user-login = "hawkw"
+user-name = "Eliza Weisman"
 
 [[publisher.tokio-macros]]
 version = "2.7.0"
@@ -708,13 +743,6 @@ user-id = 1139
 user-login = "Manishearth"
 user-name = "Manish Goregaokar"
 
-[[publisher.unsafe-libyaml]]
-version = "0.2.11"
-when = "2024-03-17"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.utf8_iter]]
 version = "1.0.4"
 when = "2023-12-01"
@@ -744,18 +772,13 @@ user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
 [[publisher.wasm-compose]]
-version = "0.245.1"
-when = "2026-02-12"
+version = "0.246.2"
+when = "2026-04-03"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wasm-encoder]]
 version = "0.244.0"
 when = "2026-01-06"
-trusted-publisher = "github:bytecodealliance/wasm-tools"
-
-[[publisher.wasm-encoder]]
-version = "0.245.1"
-when = "2026-02-12"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wasm-encoder]]
@@ -775,98 +798,93 @@ when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wasmparser]]
-version = "0.245.1"
-when = "2026-02-12"
-trusted-publisher = "github:bytecodealliance/wasm-tools"
-
-[[publisher.wasmparser]]
 version = "0.246.2"
 when = "2026-04-03"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wasmprinter]]
-version = "0.245.1"
-when = "2026-02-12"
+version = "0.246.2"
+when = "2026-04-03"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wasmtime]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-environ]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-cache]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-component-macro]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-component-util]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-core]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-cranelift]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-fiber]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-jit-debug]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-jit-icache-coherence]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-unwinder]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-versioned-export-macros]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-winch]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-internal-wit-bindgen]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-wasi]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wasmtime-wasi-io]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wast]]
@@ -880,18 +898,18 @@ when = "2026-04-03"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wiggle]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wiggle-generate]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.wiggle-macro]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.winapi-util]]
@@ -902,8 +920,8 @@ user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.winch-codegen]]
-version = "43.0.1"
-when = "2026-04-09"
+version = "44.0.0"
+when = "2026-04-20"
 trusted-publisher = "github:bytecodealliance/wasmtime"
 
 [[publisher.windows-core]]
@@ -1014,8 +1032,8 @@ when = "2026-01-06"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.wit-parser]]
-version = "0.245.1"
-when = "2026-02-12"
+version = "0.246.2"
+when = "2026-04-03"
 trusted-publisher = "github:bytecodealliance/wasm-tools"
 
 [[publisher.zmij]]
@@ -1498,15 +1516,6 @@ criteria = "safe-to-deploy"
 version = "0.5.2"
 notes = "This is a more compact implementation of std's Cow. It uses lots of unsafe, but appears sound in my audit."
 
-[[audits.bytecode-alliance.audits.bitmaps]]
-who = "Nick Fitzgerald <fitzgen@gmail.com>"
-criteria = "safe-to-deploy"
-version = "2.1.0"
-notes = """
-No ambient I/O. Minimal unsafe, purely related to simd ISA extensions and
-obviously correct with only local reasoning.
-"""
-
 [[audits.bytecode-alliance.audits.block-buffer]]
 who = "Benjamin Bouvier <public@benj.me>"
 criteria = "safe-to-deploy"
@@ -1840,11 +1849,6 @@ who = "Andrew Brown <andrew.brown@intel.com>"
 criteria = "safe-to-deploy"
 version = "0.2.19"
 notes = "As advertised: a numeric library. The only `unsafe` is from some float-to-int conversions, which seems expected."
-
-[[audits.bytecode-alliance.audits.object]]
-who = "Nick Fitzgerald <fitzgen@gmail.com>"
-criteria = "safe-to-deploy"
-delta = "0.37.3 -> 0.38.1"
 
 [[audits.bytecode-alliance.audits.percent-encoding]]
 who = "Alex Crichton <alex@alexcrichton.com>"
@@ -2936,40 +2940,6 @@ who = "J.C. Jones <jc@divviup.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.3 -> 0.9.5"
 
-[[audits.isrg.audits.rayon]]
-who = "Brandon Pitman <bran@bran.land>"
-criteria = "safe-to-deploy"
-delta = "1.6.1 -> 1.7.0"
-
-[[audits.isrg.audits.rayon]]
-who = "David Cook <dcook@divviup.org>"
-criteria = "safe-to-deploy"
-delta = "1.7.0 -> 1.8.0"
-
-[[audits.isrg.audits.rayon]]
-who = "Ameer Ghani <inahga@divviup.org>"
-criteria = "safe-to-deploy"
-delta = "1.8.0 -> 1.8.1"
-
-[[audits.isrg.audits.rayon]]
-who = "Brandon Pitman <bran@bran.land>"
-criteria = "safe-to-deploy"
-delta = "1.8.1 -> 1.9.0"
-
-[[audits.isrg.audits.rayon]]
-who = "Brandon Pitman <bran@bran.land>"
-criteria = "safe-to-deploy"
-delta = "1.9.0 -> 1.10.0"
-
-[[audits.isrg.audits.rayon]]
-who = "David Cook <dcook@divviup.org>"
-criteria = "safe-to-deploy"
-delta = "1.10.0 -> 1.11.0"
-notes = """
-I compared src/slice/sort.rs against the file library/core/src/slice/sort.rs
-from the standard library, as of commit e501add.
-"""
-
 [[audits.isrg.audits.rayon-core]]
 who = "Ameer Ghani <inahga@divviup.org>"
 criteria = "safe-to-deploy"
@@ -3619,19 +3589,6 @@ notes = """
 A tiny bit of unsafe code to implement functionality that isn't in stable rust
 yet, but it's all valid. Otherwise it's a pretty simple crate.
 """
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.rayon]]
-who = "Josh Stone <jistone@redhat.com>"
-criteria = "safe-to-deploy"
-version = "1.5.3"
-notes = "All code written or reviewed by Josh Stone or Niko Matsakis."
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.rayon]]
-who = "Mike Hommey <mh+mozilla@glandium.org>"
-criteria = "safe-to-deploy"
-delta = "1.5.3 -> 1.6.1"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.rustc_version]]
