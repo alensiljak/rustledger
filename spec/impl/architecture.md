@@ -57,7 +57,8 @@ rustledger/
 │   ├── rustledger-ffi-wasi/     # FFI via WASI JSON-RPC
 │   └── rustledger/              # CLI tools (rledger, bean-* commands)
 ├── packages/
-│   └── vscode/                  # VS Code extension (LSP client)
+│   ├── vscode/                  # VS Code extension (LSP client)
+│   └── mcp-server/              # MCP server (Model Context Protocol)
 ├── Cargo.toml                   # Workspace definition
 └── spec/                        # Specifications (this folder)
 ```

@@ -46,10 +46,11 @@ This document describes rustledger's crate structure and data flow.
     ┌─────────────────┐   ┌───────────────────┐   ┌───────────────────┐
     │ rustledger-wasm │   │rustledger-ffi-wasi│   │rustledger-importer│
     │ (JS/TS bindings)│   │ (JSON-RPC/WASI)   │   │    (CSV/OFX)      │
-    └────────┬────────┘   └────────┬──────────┘   └───────────────────┘
-              │                     │
-              └─────────┬──────────┘
-                        └──────────► rustledger-core, parser, loader, query
+    └────────┬────────┘   └────────┬──────────┘   └────────┬──────────┘
+              │                     │                       │
+              │                     └──► core, booking, validate, plugin, query
+              └────────────────────────► core, parser, booking, validate, loader, query
+                                                            └──► core only
 ```
 
 ## Crate Descriptions
@@ -112,11 +113,14 @@ Input File
     │
     ▼
 ┌─────────────────────────────────────┐
-│ 3. SORT + BOOK (rustledger-booking) │
-│    - Sort by date/type/cost-reduce  │
-│    - Interpolate missing amounts    │
-│    - Match lots (FIFO/LIFO/etc)     │
-│    - Compute cost basis             │
+│ 3. SORT (rustledger-loader) +       │
+│    BOOK (rustledger-booking)        │
+│    - Loader sorts by                │
+│      date/type/cost-reduce          │
+│    - Booking interpolates amounts   │
+│    - Booking matches lots           │
+│      (FIFO/LIFO/etc)                │
+│    - Booking computes cost basis    │
 └─────────────────────────────────────┘
     │
     ▼
@@ -198,7 +202,7 @@ See: [ADR-0002: Error Handling](adr/0002-error-handling.md)
 
 ### 4. Plugin System
 
-Plugins are executed by `run_plugins()` in `rustledger-loader`, the single source of truth for all file-declared plugin execution. Three plugin backends:
+Plugins are executed by `run_plugins()` in `rustledger-loader`, the single source of truth for all file-declared plugin execution (native, WASM, and Python). The CLI additionally supports `--plugin` flags for CLI-specified WASM plugins that run as post-processing. Three plugin backends:
 
 - **Native plugins** (30+): Rust implementations, zero serialization overhead
 - **WASM plugins**: Any language compiled to WASM, sandboxed via wasmtime
