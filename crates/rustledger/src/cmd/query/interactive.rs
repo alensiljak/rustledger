@@ -90,7 +90,9 @@ pub(super) fn run_interactive(
 
                 // Handle dot-commands
                 if let Some(cmd) = line.strip_prefix('.') {
-                    handle_dot_command(cmd, &mut settings, directives);
+                    if handle_dot_command(cmd, &mut settings, directives) {
+                        break;
+                    }
                     continue;
                 }
 
@@ -104,10 +106,9 @@ pub(super) fn run_interactive(
                         "warning: commands without \".\" prefix are deprecated. use \".{lower}\" instead"
                     );
 
-                    if lower == "exit" || lower == "quit" {
+                    if handle_dot_command(&lower, &mut settings, directives) {
                         break;
                     }
-                    handle_dot_command(&lower, &mut settings, directives);
                     continue;
                 }
 
@@ -152,14 +153,15 @@ pub(super) fn run_interactive(
     Ok(())
 }
 
-fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Directive]) {
+/// Returns `true` if the REPL should exit.
+fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Directive]) -> bool {
     let parts: Vec<&str> = cmd.split_whitespace().collect();
     let command = parts.first().map(|s| s.to_lowercase()).unwrap_or_default();
     let args: Vec<&str> = parts.into_iter().skip(1).collect();
 
     match command.as_str() {
         "exit" | "quit" => {
-            std::process::exit(0);
+            return true;
         }
         "help" => {
             println!("Shell utility commands (prefix with .):");
@@ -373,7 +375,7 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
                                         output_path.display(),
                                         e
                                     );
-                                    return;
+                                    return false;
                                 }
                             }
                         } else {
@@ -433,4 +435,5 @@ fn handle_dot_command(cmd: &str, settings: &mut ShellSettings, directives: &[Dir
             eprintln!("error: unknown command \".{command}\"");
         }
     }
+    false
 }
