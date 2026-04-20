@@ -73,6 +73,7 @@ toml = "1.0"
 # CLI
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
+clap_complete_nushell = "4"
 rustyline = { version = "18", features = ["derive"] }
 dirs = "6"
 edit = "0.1"
