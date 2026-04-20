@@ -156,15 +156,7 @@ criteria = "safe-to-deploy"
 version = "1.0.0-alpha.8"
 criteria = "safe-to-deploy"
 
-[[exemptions.clap]]
-version = "4.6.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.clap_complete_nushell]]
-version = "4.6.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.clap_derive]]
 version = "4.6.0"
 criteria = "safe-to-deploy"
 
@@ -368,10 +360,6 @@ criteria = "safe-to-deploy"
 version = "0.1.65"
 criteria = "safe-to-deploy"
 
-[[exemptions.im-rc]]
-version = "15.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.indexmap]]
 version = "2.13.0"
 criteria = "safe-to-deploy"
@@ -508,10 +496,6 @@ criteria = "safe-to-deploy"
 version = "0.31.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.object]]
-version = "0.37.3"
-criteria = "safe-to-deploy"
-
 [[exemptions.ofxy]]
 version = "0.2.0"
 criteria = "safe-to-deploy"
@@ -622,10 +606,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rancor]]
 version = "0.1.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.rand_xoshiro]]
-version = "0.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.redox_syscall]]
@@ -752,10 +732,6 @@ criteria = "safe-to-deploy"
 version = "1.0.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.sized-chunks]]
-version = "0.6.5"
-criteria = "safe-to-deploy"
-
 [[exemptions.stable_deref_trait]]
 version = "1.2.1"
 criteria = "safe-to-deploy"
@@ -798,10 +774,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tinyvec]]
 version = "1.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.tokio]]
-version = "1.51.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.tokio-stream]]

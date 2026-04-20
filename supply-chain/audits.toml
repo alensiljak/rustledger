@@ -109,6 +109,12 @@ user-id = 55123 # rust-lang-owner
 start = "2022-10-29"
 end = "2027-03-10"
 
+[[trusted.clap]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2027-04-20"
+
 [[trusted.clap_builder]]
 criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
@@ -120,6 +126,12 @@ criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
 start = "2021-12-31"
 end = "2027-03-24"
+
+[[trusted.clap_derive]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2027-04-20"
 
 [[trusted.clap_lex]]
 criteria = "safe-to-deploy"
@@ -289,6 +301,12 @@ user-id = 539 # Josh Stone (cuviper)
 start = "2019-09-04"
 end = "2027-03-10"
 
+[[trusted.object]]
+criteria = "safe-to-deploy"
+user-id = 4415 # Philip Craig (philipc)
+start = "2019-04-26"
+end = "2027-04-20"
+
 [[trusted.once_cell_polyfill]]
 criteria = "safe-to-deploy"
 user-id = 6743 # Ed Page (epage)
@@ -336,6 +354,12 @@ criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-04-09"
 end = "2027-03-10"
+
+[[trusted.rayon]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-06-13"
+end = "2027-04-20"
 
 [[trusted.regex]]
 criteria = "safe-to-deploy"
@@ -450,6 +474,18 @@ criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-10-09"
 end = "2027-03-10"
+
+[[trusted.tokio]]
+criteria = "safe-to-deploy"
+user-id = 1249 # Eliza Weisman (hawkw)
+start = "2020-04-04"
+end = "2027-04-20"
+
+[[trusted.tokio]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2020-12-25"
+end = "2027-04-20"
 
 [[trusted.tokio-macros]]
 criteria = "safe-to-deploy"
