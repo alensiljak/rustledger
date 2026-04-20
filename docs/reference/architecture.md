@@ -43,12 +43,13 @@ This document describes rustledger's crate structure and data flow.
                                   └─────────────────┘
 
 
-    ┌─────────────────┐           ┌───────────────────┐
-    │ rustledger-wasm │           │rustledger-importer│
-    │ (JS/TS bindings)│           │      (CSV)        │
-    └────────┬────────┘           └───────────────────┘
-              │
-              └─────────────────► rustledger-core, parser, query
+    ┌─────────────────┐   ┌───────────────────┐   ┌───────────────────┐
+    │ rustledger-wasm │   │rustledger-ffi-wasi│   │rustledger-importer│
+    │ (JS/TS bindings)│   │ (JSON-RPC/WASI)   │   │    (CSV/OFX)      │
+    └────────┬────────┘   └────────┬──────────┘   └───────────────────┘
+              │                     │
+              └─────────┬──────────┘
+                        └──────────► rustledger-core, parser, loader, query
 ```
 
 ## Crate Descriptions
@@ -73,7 +74,8 @@ This document describes rustledger's crate structure and data flow.
 | Crate | Purpose | Key Types |
 |-------|---------|-----------|
 | `rustledger-query` | BQL query engine | `Query`, `Executor`, `Table`, `Row` |
-| `rustledger-plugin` | Native + Python plugins | `NativePlugin`, `PluginRegistry` |
+| `rustledger-plugin` | Native + WASM + Python plugins | `NativePlugin`, `NativePluginRegistry`, `PluginManager` |
+| `rustledger-plugin-types` | WASM plugin interface types | `PluginInput`, `PluginOutput`, `DirectiveWrapper` |
 | `rustledger-lsp` | Language Server Protocol | LSP handlers for all standard features |
 | `rustledger-importer` | Bank statement import | `CsvImporter`, `OfxImporter` |
 
@@ -83,7 +85,7 @@ This document describes rustledger's crate structure and data flow.
 |-------|---------|
 | `rustledger` | CLI binary (`rledger`, `bean-*` commands) |
 | `rustledger-wasm` | WebAssembly bindings for JS/TS |
-| `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
+| `rustledger-ffi-wasi` | FFI via WASI JSON-RPC for embedding |
 
 ## Data Flow
 
@@ -110,18 +112,20 @@ Input File
     │
     ▼
 ┌─────────────────────────────────────┐
-│ 3. PLUGINS (rustledger-plugin)      │
-│    - Run native plugins             │
-│    - Run Python plugins (WASI)      │
-│    - Transform directives           │
+│ 3. SORT + BOOK (rustledger-booking) │
+│    - Sort by date/type/cost-reduce  │
+│    - Interpolate missing amounts    │
+│    - Match lots (FIFO/LIFO/etc)     │
+│    - Compute cost basis             │
 └─────────────────────────────────────┘
     │
     ▼
 ┌─────────────────────────────────────┐
-│ 4. BOOKING (rustledger-booking)     │
-│    - Interpolate missing amounts    │
-│    - Match lots (FIFO/LIFO/etc)     │
-│    - Compute cost basis             │
+│ 4. PLUGINS (rustledger-plugin)      │
+│    - Run native plugins (30+)       │
+│    - Run WASM plugins (sandboxed)   │
+│    - Run Python plugins (via WASI)  │
+│    - Transform directives           │
 └─────────────────────────────────────┘
     │
     ▼
@@ -192,13 +196,15 @@ Each crate defines its own error type. The CLI crate uses `anyhow` to unify them
 
 See: [ADR-0002: Error Handling](adr/0002-error-handling.md)
 
-### 4. Python Plugin Sandbox
+### 4. Plugin System
 
-Python plugins run in a WebAssembly sandbox (CPython compiled to WASI). This provides:
+Plugins are executed by `run_plugins()` in `rustledger-loader`, the single source of truth for all file-declared plugin execution. Three plugin backends:
 
-- Security: Plugins can't access filesystem or network
-- Portability: No system Python needed
-- Compatibility: Runs existing Python plugins
+- **Native plugins** (30+): Rust implementations, zero serialization overhead
+- **WASM plugins**: Any language compiled to WASM, sandboxed via wasmtime
+- **Python plugins**: CPython compiled to WASI, runs existing beancount plugins
+
+Plugin execution order within the pipeline: after booking, before validation. This ensures plugins see fully-interpolated directives and validation checks plugin output.
 
 ### 5. Binary Cache
 
