@@ -354,24 +354,29 @@ pub fn run_plugins(
     };
 
     // Collect raw plugin names first (we'll resolve them with the registry later)
-    let mut raw_plugins: Vec<(String, Option<String>)> = Vec::new();
+    // Tuple: (name, config, force_python)
+    let mut raw_plugins: Vec<(String, Option<String>, bool)> = Vec::new();
 
     // Add auto_accounts first if requested
     if options.auto_accounts {
-        raw_plugins.push(("auto_accounts".to_string(), None));
+        raw_plugins.push(("auto_accounts".to_string(), None, false));
     }
 
     // Add plugins from the file
     if options.run_plugins {
         for plugin in file_plugins {
-            raw_plugins.push((plugin.name.clone(), plugin.config.clone()));
+            raw_plugins.push((
+                plugin.name.clone(),
+                plugin.config.clone(),
+                plugin.force_python,
+            ));
         }
     }
 
     // Add extra plugins from options
     for (i, plugin_name) in options.extra_plugins.iter().enumerate() {
         let config = options.extra_plugin_configs.get(i).cloned().flatten();
-        raw_plugins.push((plugin_name.clone(), config));
+        raw_plugins.push((plugin_name.clone(), config, false));
     }
 
     // Check if we have any work to do - early return before creating registry
@@ -428,9 +433,12 @@ pub fn run_plugins(
     if !raw_plugins.is_empty() {
         let registry = NativePluginRegistry::new();
 
-        for (raw_name, plugin_config) in &raw_plugins {
-            // Resolve the plugin name - try direct match first, then prefixed variants
-            let resolved_name = if registry.find(raw_name).is_some() {
+        for (raw_name, plugin_config, force_python) in &raw_plugins {
+            // Resolve the plugin name - try direct match first, then prefixed variants.
+            // Skip native resolution when force_python is set (plugin "python:..." prefix).
+            let resolved_name = if *force_python {
+                None
+            } else if registry.find(raw_name).is_some() {
                 Some(raw_name.as_str())
             } else if let Some(short_name) = raw_name.strip_prefix("beancount.plugins.") {
                 registry.find(short_name).is_some().then_some(short_name)
@@ -541,11 +549,12 @@ pub fn run_plugins(
                             .with_phase("plugin"),
                         );
                     }
-                } else if ext == "py"
+                } else if *force_python
+                    || ext == "py"
                     || raw_name.contains(std::path::MAIN_SEPARATOR)
                     || raw_name.contains('.')
                 {
-                    // Python module or file-based plugin
+                    // Python module or file-based plugin (or force_python via "python:" prefix)
                     #[cfg(feature = "python-plugins")]
                     {
                         let resolved = match resolve_path(raw_name) {
@@ -570,13 +579,7 @@ pub fn run_plugins(
                                 wrappers = output_directives;
                             }
                             Err(e) => {
-                                errors.push(
-                                    LedgerError::error(
-                                        "PLUGIN",
-                                        format!("Plugin '{raw_name}' failed: {e}"),
-                                    )
-                                    .with_phase("plugin"),
-                                );
+                                errors.push(LedgerError::error("E8002", e).with_phase("plugin"));
                             }
                         }
                     }
@@ -584,9 +587,9 @@ pub fn run_plugins(
                     {
                         errors.push(
                             LedgerError::error(
-                                "PLUGIN",
+                                "E8005",
                                 format!(
-                                    "Plugin '{}' not found. Python plugins require the python-plugins feature.",
+                                    "Python plugin \"{}\" requires python-plugin-wasm feature",
                                     raw_name
                                 ),
                             )
@@ -594,11 +597,45 @@ pub fn run_plugins(
                         );
                     }
                 } else {
-                    // Completely unknown plugin name
-                    errors.push(
-                        LedgerError::error("PLUGIN", format!("Plugin not found: '{raw_name}'"))
+                    // Completely unknown plugin name — try to suggest a module path
+                    #[cfg(feature = "python-plugins")]
+                    {
+                        use rustledger_plugin::python::{is_python_available, suggest_module_path};
+                        let suggestion = if is_python_available() {
+                            suggest_module_path(raw_name)
+                        } else {
+                            None
+                        };
+                        if let Some(module_path) = suggestion {
+                            errors.push(
+                                LedgerError::error(
+                                    "E8004",
+                                    format!(
+                                        "Cannot resolve Python module '{raw_name}'. Replace with: plugin \"{module_path}\""
+                                    ),
+                                )
+                                .with_phase("plugin"),
+                            );
+                        } else {
+                            errors.push(
+                                LedgerError::error(
+                                    "E8001",
+                                    format!("Plugin not found: \"{raw_name}\""),
+                                )
+                                .with_phase("plugin"),
+                            );
+                        }
+                    }
+                    #[cfg(not(feature = "python-plugins"))]
+                    {
+                        errors.push(
+                            LedgerError::error(
+                                "E8001",
+                                format!("Plugin not found: \"{raw_name}\""),
+                            )
                             .with_phase("plugin"),
-                    );
+                        );
+                    }
                 }
             }
         }
