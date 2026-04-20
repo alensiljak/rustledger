@@ -754,3 +754,140 @@ proptest! {
         );
     }
 }
+
+// ============================================================================
+// STRICT_WITH_SIZE Property Tests
+// ============================================================================
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(50))]
+
+    /// StrictWithSize exact-size property:
+    /// When a reduction amount exactly matches one lot's size,
+    /// STRICT_WITH_SIZE should succeed (not raise AmbiguousMatch).
+    #[test]
+    fn prop_strict_with_size_exact_match_succeeds(
+        lot1_size in 1i64..50,
+        lot2_size in 1i64..50,
+        cost1 in 50i64..200,
+        cost2 in 50i64..200,
+    ) {
+        // Only test when lot sizes differ (so we have a unique exact match)
+        prop_assume!(lot1_size != lot2_size);
+
+        let mut inv = Inventory::new();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
+
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(lot1_size), "AAPL"),
+            Cost::new(Decimal::from(cost1), "USD").with_date(date),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(lot2_size), "AAPL"),
+            Cost::new(Decimal::from(cost2), "USD").with_date(date),
+        ));
+
+        // Reduce exactly lot1_size — should match lot1 exactly
+        let result = inv.reduce(
+            &Amount::new(Decimal::from(-lot1_size), "AAPL"),
+            None,
+            BookingMethod::StrictWithSize,
+        );
+
+        // Should always succeed because exact-size match is unambiguous
+        prop_assert!(
+            result.is_ok(),
+            "StrictWithSize exact match for {} should succeed, got {:?}",
+            lot1_size, result
+        );
+
+        if let Ok(r) = result {
+            let cost_basis = r.cost_basis.unwrap().number;
+            let expected = Decimal::from(lot1_size) * Decimal::from(cost1);
+            prop_assert_eq!(
+                cost_basis, expected,
+                "Cost basis should be {} * {} = {}, got {}",
+                lot1_size, cost1, expected, cost_basis
+            );
+        }
+    }
+
+    /// StrictWithSize conservation:
+    /// After a successful reduction, total inventory units must decrease
+    /// by exactly the reduction amount.
+    #[test]
+    fn prop_strict_with_size_conserves_units(
+        lot_size in 1i64..50,
+        cost in 50i64..200,
+    ) {
+        let mut inv = Inventory::new();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
+
+        // Single lot — always unambiguous for STRICT_WITH_SIZE
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(lot_size), "AAPL"),
+            Cost::new(Decimal::from(cost), "USD").with_date(date),
+        ));
+
+        let reduce_amount = lot_size / 2 + 1; // Always > 0, always <= lot_size
+        let reduce_amount = reduce_amount.min(lot_size);
+        let before = inv.units("AAPL");
+
+        let result = inv.reduce(
+            &Amount::new(Decimal::from(-reduce_amount), "AAPL"),
+            None,
+            BookingMethod::StrictWithSize,
+        );
+
+        if let Ok(_) = result {
+            let after = inv.units("AAPL");
+            prop_assert_eq!(
+                before - after,
+                Decimal::from(reduce_amount),
+                "Units should decrease by exactly {}, went from {} to {}",
+                reduce_amount, before, after
+            );
+        }
+    }
+
+    /// StrictWithSize ambiguity:
+    /// When no lot exactly matches the reduction size AND the total doesn't
+    /// match, STRICT_WITH_SIZE should raise AmbiguousMatch for 2+ lots
+    /// with different costs.
+    #[test]
+    fn prop_strict_with_size_ambiguous_when_no_exact_match(
+        lot_size in 5i64..50,
+        cost1 in 50i64..150,
+        cost2 in 150i64..250,
+    ) {
+        let mut inv = Inventory::new();
+        let date = rustledger_core::naive_date(2024, 1, 1).unwrap();
+
+        // Two lots of same size but different costs
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(lot_size), "AAPL"),
+            Cost::new(Decimal::from(cost1), "USD").with_date(date),
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(Decimal::from(lot_size), "AAPL"),
+            Cost::new(Decimal::from(cost2), "USD").with_date(date),
+        ));
+
+        // Reduce less than lot_size (no exact match, not total)
+        let reduce = lot_size - 1;
+        if reduce > 0 {
+            let result = inv.reduce(
+                &Amount::new(Decimal::from(-reduce), "AAPL"),
+                None,
+                BookingMethod::StrictWithSize,
+            );
+
+            // Should be ambiguous: same size lots, different costs, no exact match
+            prop_assert!(
+                matches!(result, Err(BookingError::AmbiguousMatch { .. })),
+                "Expected AmbiguousMatch for reduce {} from two {}-unit lots, got {:?}",
+                reduce, lot_size, result
+            );
+        }
+    }
+}
