@@ -407,7 +407,7 @@ pub fn run_plugins(
     if has_document_dirs {
         let doc_plugin = DocumentDiscoveryPlugin::new(resolved_documents, base_dir.to_path_buf());
         let input = PluginInput {
-            directives: wrappers.clone(),
+            directives: std::mem::take(&mut wrappers),
             options: plugin_options.clone(),
             config: None,
         };
@@ -453,8 +453,11 @@ pub fn run_plugins(
             if let Some(name) = resolved_name
                 && let Some(plugin) = registry.find(name)
             {
+                // Move wrappers into the plugin input instead of cloning.
+                // The plugin returns modified directives in its output,
+                // which we reassign to `wrappers` below.
                 let input = PluginInput {
-                    directives: wrappers.clone(),
+                    directives: std::mem::take(&mut wrappers),
                     options: plugin_options.clone(),
                     config: plugin_config.clone(),
                 };
