@@ -418,7 +418,11 @@ pub fn update_inventories(
             .map(|a| a.booking)
             .unwrap_or_default();
 
-        let is_reduction = units.number.is_sign_negative() && posting.cost.is_some();
+        // Use the same reduction detection as the booking engine: a posting
+        // reduces inventory when the inventory has positions with the opposite
+        // sign for the same currency. This correctly handles sell-to-open
+        // (selling into empty inventory) as an augmentation, not a reduction.
+        let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units);
 
         if is_reduction {
             process_inventory_reduction(inv, posting, units, booking_method, txn, errors);
