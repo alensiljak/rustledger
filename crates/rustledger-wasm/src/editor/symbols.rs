@@ -27,6 +27,7 @@ pub fn get_document_symbols_cached(
 }
 
 /// Get all document symbols (for outline view, non-cached, used by tests).
+#[cfg(test)]
 pub fn get_document_symbols(source: &str, parse_result: &ParseResult) -> Vec<EditorDocumentSymbol> {
     let line_index = LineIndex::new(source);
     parse_result
