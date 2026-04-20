@@ -1178,9 +1178,11 @@ plugin \"some.unknown.python.module\"
     assert!(
         diagnostics.iter().any(|d| {
             let code = d["code"].as_str().unwrap_or("");
-            code == "E8001" || code == "E8004" || code == "E8005"
+            // E8001: plugin not found, E8002: Python execution/runtime failed,
+            // E8004: cannot resolve module (with suggestion), E8005: feature disabled
+            code == "E8001" || code == "E8002" || code == "E8004" || code == "E8005"
         }),
-        "unknown Python module should produce E8001/E8004/E8005: {json}"
+        "unknown Python module should produce E8001/E8002/E8004/E8005: {json}"
     );
 }
 
