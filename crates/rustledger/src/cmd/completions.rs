@@ -19,6 +19,8 @@ pub enum ShellType {
     Powershell,
     /// Elvish shell completions
     Elvish,
+    /// Nushell completions
+    Nushell,
 }
 
 impl Generator for ShellType {
@@ -29,6 +31,7 @@ impl Generator for ShellType {
             Self::Fish => Shell::Fish.file_name(name),
             Self::Powershell => Shell::PowerShell.file_name(name),
             Self::Elvish => Shell::Elvish.file_name(name),
+            Self::Nushell => clap_complete_nushell::Nushell.file_name(name),
         }
     }
 
@@ -39,6 +42,7 @@ impl Generator for ShellType {
             Self::Fish => Shell::Fish.generate(cmd, buf),
             Self::Powershell => Shell::PowerShell.generate(cmd, buf),
             Self::Elvish => Shell::Elvish.generate(cmd, buf),
+            Self::Nushell => clap_complete_nushell::Nushell.generate(cmd, buf),
         }
     }
 }
