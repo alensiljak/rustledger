@@ -1761,6 +1761,367 @@ mod tests {
     // these tests, forcing the author to consciously re-check pta-standards
     // conformance assertions and downstream user tooling.
 
+    // =========================================================================
+    // Booking method coverage tests
+    //
+    // These tests cover gaps identified during the spring 2026 audit:
+    // - STRICT_WITH_SIZE: cost spec + exact-size, multiple exact-size matches
+    // - HIFO: multi-lot ordering, partial reduction, cost spec filtering
+    // - AVERAGE: weighted average with different costs, partial reduction preserves cost
+    // - NONE: with cost positions, short position reduction
+    // =========================================================================
+
+    // --- STRICT_WITH_SIZE ---
+
+    #[test]
+    fn test_strict_with_size_different_costs_exact_match() {
+        // When lots have different costs but one matches the reduction size exactly,
+        // STRICT_WITH_SIZE should pick that lot instead of raising AmbiguousMatch
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(7), "AAPL"), cost2));
+
+        // Reduce exactly 7 - should match the 7-share lot at cost 200
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-7), "AAPL"),
+                None,
+                BookingMethod::StrictWithSize,
+            )
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(10));
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1400.00)); // 7 * 200
+    }
+
+    #[test]
+    fn test_strict_with_size_multiple_exact_matches_picks_oldest() {
+        // When multiple lots have the exact same size, STRICT_WITH_SIZE should
+        // pick the oldest one (first in index order)
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 6, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost2));
+
+        // Both lots are size 5 — should pick the first (oldest) one
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-5), "AAPL"),
+                None,
+                BookingMethod::StrictWithSize,
+            )
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(5));
+        // Should use cost from the oldest lot (100)
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00));
+    }
+
+    #[test]
+    fn test_strict_with_size_with_cost_spec() {
+        // Cost spec should filter lots before exact-size matching
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // With cost spec filtering to the 200 USD lot, should find unique match
+        let spec = CostSpec::empty().with_number_per(dec!(200.00));
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-5), "AAPL"),
+                Some(&spec),
+                BookingMethod::StrictWithSize,
+            )
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(15));
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00)); // 5 * 200
+    }
+
+    // --- HIFO ---
+
+    #[test]
+    fn test_hifo_reduces_highest_cost_first() {
+        // HIFO should reduce the highest-cost lot first, regardless of date
+        let mut inv = Inventory::new();
+
+        let cost_low = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_mid = Cost::new(dec!(150.00), "USD").with_date(date(2024, 2, 1));
+        let cost_high = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_low));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost_mid));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(10), "AAPL"),
+            cost_high,
+        ));
+
+        // Reduce 5 — should come from highest cost lot (200)
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Hifo)
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00)); // 5 * 200
+        assert_eq!(inv.units("AAPL"), dec!(25));
+    }
+
+    #[test]
+    fn test_hifo_spans_multiple_lots() {
+        // When reducing more than the highest-cost lot holds, HIFO should
+        // continue to the next highest
+        let mut inv = Inventory::new();
+
+        let cost_low = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_high = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost_low));
+        inv.add(Position::with_cost(Amount::new(dec!(5), "AAPL"), cost_high));
+
+        // Reduce 8: 5 from high (200) + 3 from low (100)
+        let result = inv
+            .reduce(&Amount::new(dec!(-8), "AAPL"), None, BookingMethod::Hifo)
+            .unwrap();
+
+        // Cost basis: 5*200 + 3*100 = 1300
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1300.00));
+        assert_eq!(inv.units("AAPL"), dec!(2));
+    }
+
+    #[test]
+    fn test_hifo_with_cost_spec_filter() {
+        // Cost spec should filter lots before HIFO ordering
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "EUR").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // Filter to USD lots only
+        let spec = CostSpec::empty().with_currency("USD");
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-5), "AAPL"),
+                Some(&spec),
+                BookingMethod::Hifo,
+            )
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00)); // 5 * 100 USD
+    }
+
+    #[test]
+    fn test_hifo_short_position() {
+        // HIFO with short positions: covering shorts should work correctly
+        let mut inv = Inventory::new();
+
+        let cost_low = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_high = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        // Short positions (negative units)
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_low,
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_high,
+        ));
+
+        // Cover 5 shares (positive = reduce short position)
+        // HIFO should pick the highest-cost short lot (200)
+        let result = inv
+            .reduce(&Amount::new(dec!(5), "AAPL"), None, BookingMethod::Hifo)
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00)); // 5 * 200
+        assert_eq!(inv.units("AAPL"), dec!(-15));
+    }
+
+    // --- AVERAGE ---
+
+    #[test]
+    fn test_average_weighted_cost() {
+        // AVERAGE should compute weighted average across lots with different costs
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // Average cost = (10*100 + 10*200) / 20 = 150
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Average)
+            .unwrap();
+
+        // Cost basis: 5 * 150 = 750
+        assert_eq!(result.cost_basis.unwrap().number, dec!(750.00));
+        assert_eq!(inv.units("AAPL"), dec!(15));
+    }
+
+    #[test]
+    fn test_average_merges_into_single_position() {
+        // After AVERAGE reduction, inventory should have a single simple position
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        inv.reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::Average)
+            .unwrap();
+
+        // Should have exactly one AAPL position remaining
+        let aapl_positions: Vec<_> = inv
+            .positions
+            .iter()
+            .filter(|p| p.units.currency.as_ref() == "AAPL")
+            .collect();
+        assert_eq!(aapl_positions.len(), 1);
+        assert_eq!(aapl_positions[0].units.number, dec!(15));
+    }
+
+    #[test]
+    fn test_average_uneven_lots() {
+        // Weighted average with unequal lot sizes
+        let mut inv = Inventory::new();
+
+        let cost1 = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost2 = Cost::new(dec!(200.00), "USD").with_date(date(2024, 2, 1));
+
+        inv.add(Position::with_cost(Amount::new(dec!(30), "AAPL"), cost1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost2));
+
+        // Average cost = (30*100 + 10*200) / 40 = 5000/40 = 125
+        let result = inv
+            .reduce(
+                &Amount::new(dec!(-10), "AAPL"),
+                None,
+                BookingMethod::Average,
+            )
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1250.00)); // 10 * 125
+    }
+
+    // --- NONE ---
+
+    #[test]
+    fn test_none_booking_with_cost_positions() {
+        // NONE booking should work even when positions have costs
+        let mut inv = Inventory::new();
+
+        let cost = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        inv.add(Position::with_cost(Amount::new(dec!(10), "AAPL"), cost));
+
+        let result = inv
+            .reduce(&Amount::new(dec!(-5), "AAPL"), None, BookingMethod::None)
+            .unwrap();
+
+        assert_eq!(inv.units("AAPL"), dec!(5));
+        // NONE delegates to reduce_ordered (FIFO) internally, so cost basis is computed
+        assert!(result.cost_basis.is_some());
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00));
+    }
+
+    #[test]
+    fn test_none_booking_short_cover() {
+        // Covering a short position with NONE booking
+        let mut inv = Inventory::new();
+        inv.add(Position::simple(Amount::new(dec!(-100), "USD")));
+
+        // Positive amount should reduce the negative position
+        let result = inv
+            .reduce(&Amount::new(dec!(30), "USD"), None, BookingMethod::None)
+            .unwrap();
+
+        assert_eq!(inv.units("USD"), dec!(-70));
+        assert!(!result.matched.is_empty());
+    }
+
+    #[test]
+    fn test_none_booking_empty_inventory_augments() {
+        // NONE booking on empty inventory should augment
+        let mut inv = Inventory::new();
+
+        let result = inv
+            .reduce(&Amount::new(dec!(50), "USD"), None, BookingMethod::None)
+            .unwrap();
+
+        assert_eq!(inv.units("USD"), dec!(50));
+        assert!(result.matched.is_empty()); // Augmentation, not reduction
+    }
+
+    // --- Cross-method: short positions ---
+
+    #[test]
+    fn test_fifo_short_position_cover() {
+        // FIFO: cover short positions (oldest short first)
+        let mut inv = Inventory::new();
+
+        let cost_old = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_new = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_old,
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_new,
+        ));
+
+        // Cover 5 shares — FIFO should pick oldest short (cost 100)
+        let result = inv
+            .reduce(&Amount::new(dec!(5), "AAPL"), None, BookingMethod::Fifo)
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(500.00)); // 5 * 100
+        assert_eq!(inv.units("AAPL"), dec!(-15));
+    }
+
+    #[test]
+    fn test_lifo_short_position_cover() {
+        // LIFO: cover short positions (newest short first)
+        let mut inv = Inventory::new();
+
+        let cost_old = Cost::new(dec!(100.00), "USD").with_date(date(2024, 1, 1));
+        let cost_new = Cost::new(dec!(200.00), "USD").with_date(date(2024, 3, 1));
+
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_old,
+        ));
+        inv.add(Position::with_cost(
+            Amount::new(dec!(-10), "AAPL"),
+            cost_new,
+        ));
+
+        // Cover 5 shares — LIFO should pick newest short (cost 200)
+        let result = inv
+            .reduce(&Amount::new(dec!(5), "AAPL"), None, BookingMethod::Lifo)
+            .unwrap();
+
+        assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00)); // 5 * 200
+        assert_eq!(inv.units("AAPL"), dec!(-15));
+    }
+
     #[test]
     fn test_accounted_error_display_insufficient_units() {
         let err = BookingError::InsufficientUnits {
