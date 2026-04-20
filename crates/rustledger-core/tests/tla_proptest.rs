@@ -839,7 +839,7 @@ proptest! {
             BookingMethod::StrictWithSize,
         );
 
-        if let Ok(_) = result {
+        if result.is_ok() {
             let after = inv.units("AAPL");
             prop_assert_eq!(
                 before - after,
