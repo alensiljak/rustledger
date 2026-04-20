@@ -473,24 +473,6 @@ pub struct Ledger {
     editor_cache: editor::EditorCache,
 }
 
-#[cfg(test)]
-impl Ledger {
-    /// Test-only constructor from pre-processed parts.
-    pub(crate) fn new_from_parts(
-        directives: Vec<Directive>,
-        options: LedgerOptions,
-        errors: Vec<Error>,
-        editor_cache: editor::EditorCache,
-    ) -> Self {
-        Self {
-            directives,
-            options,
-            errors,
-            editor_cache,
-        }
-    }
-}
-
 #[wasm_bindgen]
 impl Ledger {
     /// Create a `Ledger` from multiple files with include resolution.
