@@ -47,7 +47,7 @@ pub(super) fn is_duplicate(new_txn: &Transaction, existing: &[Transaction]) -> b
 }
 
 /// Get the amount from the first posting of a transaction (for comparison).
-fn first_posting_amount(txn: &Transaction) -> Option<Decimal> {
+pub(super) fn first_posting_amount(txn: &Transaction) -> Option<Decimal> {
     txn.postings.first().and_then(|p| {
         p.units
             .as_ref()
@@ -56,7 +56,7 @@ fn first_posting_amount(txn: &Transaction) -> Option<Decimal> {
 }
 
 /// Build a lowercase string combining payee and narration for fuzzy matching.
-fn txn_match_text(txn: &Transaction) -> String {
+pub(super) fn txn_match_text(txn: &Transaction) -> String {
     let mut text = String::new();
     if let Some(ref payee) = txn.payee {
         text.push_str(payee.as_str());

@@ -418,8 +418,12 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::config::{ImporterEntry, parse_column_value};
+    use super::duplicate::{first_posting_amount, fuzzy_text_match, txn_match_text};
     use super::*;
+    use rustledger_core::Transaction;
     use rustledger_importer::config::ImporterType;
+    use std::collections::HashMap;
 
     fn write_temp_config(content: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();

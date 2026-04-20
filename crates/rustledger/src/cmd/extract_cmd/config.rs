@@ -22,38 +22,38 @@ pub(super) struct ImporterEntry {
     /// Target account for imported transactions.
     pub(super) account: Option<String>,
     /// Currency (default: USD).
-    currency: Option<String>,
+    pub(super) currency: Option<String>,
     /// Date column name or 0-based index.
-    date_column: Option<toml::Value>,
+    pub(super) date_column: Option<toml::Value>,
     /// Date format (strftime-style).
-    date_format: Option<String>,
+    pub(super) date_format: Option<String>,
     /// Narration/description column name or index.
-    narration_column: Option<toml::Value>,
+    pub(super) narration_column: Option<toml::Value>,
     /// Payee column name or index.
-    payee_column: Option<toml::Value>,
+    pub(super) payee_column: Option<toml::Value>,
     /// Amount column name or index.
-    amount_column: Option<toml::Value>,
+    pub(super) amount_column: Option<toml::Value>,
     /// Debit column name or index.
-    debit_column: Option<toml::Value>,
+    pub(super) debit_column: Option<toml::Value>,
     /// Credit column name or index.
-    credit_column: Option<toml::Value>,
+    pub(super) credit_column: Option<toml::Value>,
     /// CSV delimiter character.
-    delimiter: Option<String>,
+    pub(super) delimiter: Option<String>,
     /// Number of rows to skip.
-    skip_rows: Option<usize>,
+    pub(super) skip_rows: Option<usize>,
     /// Whether the CSV has a header row.
     #[serde(default)]
-    skip_header: Option<bool>,
+    pub(super) skip_header: Option<bool>,
     /// Whether to invert amount signs.
     #[serde(default)]
-    invert_amounts: Option<bool>,
+    pub(super) invert_amounts: Option<bool>,
     /// Default expense account for unmatched negative-amount (money out) transactions.
-    default_expense: Option<String>,
+    pub(super) default_expense: Option<String>,
     /// Default income account for unmatched positive-amount (money in) transactions.
-    default_income: Option<String>,
+    pub(super) default_income: Option<String>,
     /// Account mappings: pattern → account.
     #[serde(default)]
-    mappings: HashMap<String, String>,
+    pub(super) mappings: HashMap<String, String>,
 }
 
 /// Parse a TOML value as a column spec string (either a string name or integer index).
