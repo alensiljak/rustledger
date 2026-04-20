@@ -163,9 +163,12 @@ fn test_check_invalid_account_root_is_parse_phase() {
 }
 
 /// Regression for issue #737: a wildcard reduction `-5 AAPL {}` against an
-/// inventory holding lots at different costs must produce exactly one E4003
-/// "Ambiguous lot match" diagnostic — not zero (the original silent-accept
-/// bug) and not two (the validator/booking double-report).
+/// inventory holding lots at different costs must produce exactly one
+/// "Ambiguous" diagnostic from the booking engine — not zero (the original
+/// silent-accept bug) and not two (the old validator/booking double-report).
+///
+/// Since #859, the validator no longer re-runs lot matching on pre-booked
+/// directives, so the sole reporter is the booking engine (code "BOOK").
 #[test]
 fn test_check_ambiguous_lot_match_reports_once() {
     let rledger = require_rledger!();
@@ -214,21 +217,29 @@ fn test_check_ambiguous_lot_match_reports_once() {
     let diagnostics = json["diagnostics"]
         .as_array()
         .expect("diagnostics array missing");
-    let e4003: Vec<_> = diagnostics
+    // The booking engine reports this as a "BOOK" error. The validator no longer
+    // re-reports it (see #859), so we look for any diagnostic mentioning "ambiguous".
+    let ambiguous: Vec<_> = diagnostics
         .iter()
-        .filter(|d| d["code"] == "E4003")
+        .filter(|d| {
+            d["message"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase()
+                .contains("ambiguous")
+        })
         .collect();
 
     assert_eq!(
-        e4003.len(),
+        ambiguous.len(),
         1,
-        "expected exactly one E4003 diagnostic, got {}: {json}",
-        e4003.len()
+        "expected exactly one ambiguous-lot diagnostic, got {}: {json}",
+        ambiguous.len()
     );
-    let msg = e4003[0]["message"].as_str().unwrap_or("");
-    assert!(
-        msg.to_lowercase().contains("ambiguous"),
-        "E4003 message should mention 'ambiguous', got: {msg}"
+    assert_eq!(
+        ambiguous[0]["code"].as_str().unwrap_or(""),
+        "BOOK",
+        "ambiguous lot error should come from the booking engine, not the validator"
     );
 }
 

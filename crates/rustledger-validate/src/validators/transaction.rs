@@ -429,6 +429,14 @@ pub fn update_inventories(
 }
 
 /// Process an inventory reduction (selling/removing units).
+///
+/// On pre-booked directives (the normal pipeline), every reduction posting has
+/// a fully-resolved cost spec, so `inv.reduce()` is a trivial exact match.
+///
+/// If the cost spec is empty (booking failed or wasn't run), we skip inventory
+/// processing entirely — booking already reported the error, and re-running
+/// lot matching here would either double-report or diverge from the booking
+/// engine's decisions.
 pub fn process_inventory_reduction(
     inv: &mut Inventory,
     posting: &Posting,
@@ -437,102 +445,46 @@ pub fn process_inventory_reduction(
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
 ) {
+    // Skip reductions with empty cost specs — these are unbooked transactions
+    // where the booking engine already failed and reported an error. Re-running
+    // lot matching here would double-report errors or (worse) make different
+    // decisions than the booking engine. This mirrors validate_transaction_balance
+    // which also skips transactions with empty cost specs (line 216-224).
+    if let Some(cost) = &posting.cost
+        && cost.number_per.is_none()
+        && cost.number_total.is_none()
+    {
+        return;
+    }
+
     match inv.reduce(units, posting.cost.as_ref(), booking_method) {
         Ok(_) => {}
-        Err(err @ rustledger_core::BookingError::InsufficientUnits { .. }) => {
-            errors.push(
-                ValidationError::new(
+        Err(err) => {
+            // On pre-booked directives, reduce() with a fully-specified cost
+            // should not fail. If it does, report the error — this catches
+            // bugs in the booking engine or standalone validation without booking.
+            let (code, context) = match &err {
+                rustledger_core::BookingError::InsufficientUnits { .. } => (
                     ErrorCode::InsufficientUnits,
-                    format!("{}", err.with_account(posting.account.clone())),
-                    txn.date,
-                )
-                .with_context(format!("currency: {}", units.currency)),
-            );
-        }
-        Err(err @ rustledger_core::BookingError::NoMatchingLot { .. }) => {
-            // In STRICT mode, when no lot matches AND the inventory has no POSITIVE
-            // positions for this commodity, Python beancount allows "sell to open"
-            // by creating a new lot with negative units. This is common in options trading.
-            // However, if there ARE positive lots that just don't match the cost spec,
-            // that's an error (you're trying to sell from a lot that doesn't exist).
-            // We only check for positive lots because negative lots are short positions
-            // from previous sell-to-open operations.
-            let has_positive_lots = inv
-                .positions()
-                .iter()
-                .any(|p| p.units.currency == units.currency && p.units.number > Decimal::ZERO);
-
-            if booking_method == BookingMethod::Strict
-                && !has_positive_lots
-                && let Some(cost_spec) = &posting.cost
-            {
-                // Need cost per unit (or total) and currency to create a new lot
-                let cost_number = cost_spec
-                    .number_per
-                    .or_else(|| cost_spec.number_total.map(|t| t / units.number.abs()));
-
-                // Infer currency from cost spec, price annotation, or fall back
-                let cost_currency = cost_spec.currency.clone().or_else(|| {
-                    // Try to get currency from price annotation
-                    posting.price.as_ref().and_then(|p| match p {
-                        rustledger_core::PriceAnnotation::Unit(a)
-                        | rustledger_core::PriceAnnotation::Total(a) => Some(a.currency.clone()),
-                        rustledger_core::PriceAnnotation::UnitIncomplete(inc)
-                        | rustledger_core::PriceAnnotation::TotalIncomplete(inc) => {
-                            inc.as_amount().map(|a| a.currency.clone())
-                        }
-                        _ => None,
-                    })
-                });
-
-                if let (Some(number), Some(curr)) = (cost_number, cost_currency) {
-                    // Create a new position with negative units (sell to open)
-                    let cost = rustledger_core::Cost::new(number, curr)
-                        .with_date(cost_spec.date.unwrap_or(txn.date));
-                    let cost = if let Some(label) = &cost_spec.label {
-                        cost.with_label(label.clone())
-                    } else {
-                        cost
-                    };
-                    let position = rustledger_core::Position::with_cost(units.clone(), cost);
-                    inv.add(position);
-                    return; // Successfully created sell-to-open position
-                }
-            }
-            // Couldn't create sell-to-open (or has existing lots that don't match), report error
-            errors.push(
-                ValidationError::new(
-                    ErrorCode::NoMatchingLot,
-                    format!("{}", err.with_account(posting.account.clone())),
-                    txn.date,
-                )
-                .with_context(format!("cost spec: {:?}", posting.cost)),
-            );
-        }
-        Err(err @ rustledger_core::BookingError::AmbiguousMatch { .. }) => {
-            errors.push(
-                ValidationError::new(
+                    format!("currency: {}", units.currency),
+                ),
+                rustledger_core::BookingError::AmbiguousMatch { .. } => (
                     ErrorCode::AmbiguousLotMatch,
-                    format!("{}", err.with_account(posting.account.clone())),
-                    txn.date,
-                )
-                .with_context("Specify cost, date, or label to disambiguate".to_string()),
-            );
-        }
-        Err(err @ rustledger_core::BookingError::CurrencyMismatch { .. }) => {
-            // Defensive: no `Inventory::reduce` path in `rustledger-core`
-            // currently emits this variant, but if a future one does we
-            // surface it consistently with the booking engine's path in
-            // `cmd/check.rs`. CurrencyMismatch is rendered and classified as
-            // a specialization of NoMatchingLot — see the canonical
-            // `AccountedBookingError::Display` impl in `rustledger-core`.
+                    "Specify cost, date, or label to disambiguate".to_string(),
+                ),
+                rustledger_core::BookingError::NoMatchingLot { .. }
+                | rustledger_core::BookingError::CurrencyMismatch { .. } => (
+                    ErrorCode::NoMatchingLot,
+                    format!("cost spec: {:?}", posting.cost),
+                ),
+            };
             errors.push(
                 ValidationError::new(
-                    ErrorCode::NoMatchingLot,
+                    code,
                     format!("{}", err.with_account(posting.account.clone())),
                     txn.date,
                 )
-                .with_context(format!("currency: {}", units.currency)),
+                .with_context(context),
             );
         }
     }
