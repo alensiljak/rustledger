@@ -549,7 +549,12 @@ impl Ledger {
             Ok(ledger) => {
                 let directives: Vec<Directive> =
                     ledger.directives.into_iter().map(|s| s.value).collect();
-                let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+                let mut errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
+                // Include option warnings (E7001–E7006) so WASM consumers
+                // see the same diagnostics as `rledger check` and the LSP.
+                for w in &ledger.options.warnings {
+                    errors.push(Error::new(format!("[{}] {}", w.code, w.message)));
+                }
                 let editor_cache = editor::EditorCache::from_directives(&directives);
 
                 Ok(Self {

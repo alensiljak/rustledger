@@ -628,6 +628,33 @@ pub fn all_diagnostics(
         }
     }
 
+    // Emit option warnings (E7001–E7006) from the loaded ledger.
+    // These are only shown in the main file (file_id 0) to avoid duplication
+    // across open documents in multi-file mode.
+    let show_option_warnings = current_file_id.is_none() || current_file_id == Some(0);
+    if show_option_warnings {
+        if let Some(ls) = ledger_state
+            && let Some(ledger) = ls.ledger()
+        {
+            for warning in &ledger.options.warnings {
+                diagnostics.push(Diagnostic {
+                    range: Range {
+                        start: Position::new(0, 0),
+                        end: Position::new(0, 0),
+                    },
+                    severity: Some(DiagnosticSeverity::ERROR),
+                    code: Some(lsp_types::NumberOrString::String(warning.code.to_string())),
+                    source: Some("rustledger".to_string()),
+                    message: warning.message.clone(),
+                    related_information: None,
+                    tags: None,
+                    code_description: None,
+                    data: None,
+                });
+            }
+        }
+    }
+
     diagnostics
 }
 
