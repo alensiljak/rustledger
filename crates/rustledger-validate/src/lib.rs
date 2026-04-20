@@ -1364,4 +1364,186 @@ mod tests {
             );
         }
     }
+
+    // =========================================================================
+    // Error code coverage tests (spring 2026 audit)
+    // =========================================================================
+
+    #[test]
+    fn test_e2002_balance_exceeds_explicit_tolerance() {
+        // E2002: When a balance directive specifies an explicit tolerance and the
+        // actual balance exceeds it, we should get BalanceToleranceExceeded.
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Income:Salary")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Deposit")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(1000.00), "USD"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Income:Salary",
+                        Amount::new(dec!(-1000.00), "USD"),
+                    )),
+            ),
+            // Balance assertion with explicit tolerance of 0.01,
+            // but actual is 1000.00 vs expected 999.00 (difference = 1.00)
+            Directive::Balance(
+                Balance::new(
+                    date(2024, 1, 16),
+                    "Assets:Bank",
+                    Amount::new(dec!(999.00), "USD"),
+                )
+                .with_tolerance(dec!(0.01)),
+            ),
+        ];
+
+        let errors = validate(&directives);
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::BalanceToleranceExceeded),
+            "Expected E2002 BalanceToleranceExceeded, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e2002_balance_within_explicit_tolerance_passes() {
+        // When within explicit tolerance, no error should be raised
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Income:Salary")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Deposit")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(1000.00), "USD"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Income:Salary",
+                        Amount::new(dec!(-1000.00), "USD"),
+                    )),
+            ),
+            // Balance assertion with tolerance of 5.00, difference is only 1.00
+            Directive::Balance(
+                Balance::new(
+                    date(2024, 1, 16),
+                    "Assets:Bank",
+                    Amount::new(dec!(999.00), "USD"),
+                )
+                .with_tolerance(dec!(5.00)),
+            ),
+        ];
+
+        let errors = validate(&directives);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ErrorCode::BalanceToleranceExceeded
+                    || e.code == ErrorCode::BalanceAssertionFailed),
+            "Expected no balance errors, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e5001_undeclared_currency() {
+        // E5001: When require_commodities=true, using a currency without a
+        // commodity directive should raise UndeclaredCurrency.
+        use rustledger_core::Commodity;
+
+        let directives = vec![
+            Directive::Commodity(Commodity::new(date(2024, 1, 1), "USD")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Lunch")
+                    .with_posting(Posting::new(
+                        "Expenses:Food",
+                        Amount::new(dec!(20.00), "EUR"), // EUR not declared
+                    ))
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(-20.00), "EUR"),
+                    )),
+            ),
+        ];
+
+        let mut options = ValidationOptions::default();
+        options.require_commodities = true;
+        let errors = validate_with_options(&directives, options);
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::UndeclaredCurrency),
+            "Expected E5001 UndeclaredCurrency for EUR, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e5001_declared_currency_passes() {
+        // When the currency is declared, no E5001 error
+        use rustledger_core::Commodity;
+
+        let directives = vec![
+            Directive::Commodity(Commodity::new(date(2024, 1, 1), "USD")),
+            Directive::Commodity(Commodity::new(date(2024, 1, 1), "EUR")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Lunch")
+                    .with_posting(Posting::new(
+                        "Expenses:Food",
+                        Amount::new(dec!(20.00), "EUR"),
+                    ))
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(-20.00), "EUR"),
+                    )),
+            ),
+        ];
+
+        let mut options = ValidationOptions::default();
+        options.require_commodities = true;
+        let errors = validate_with_options(&directives, options);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ErrorCode::UndeclaredCurrency),
+            "Expected no E5001 errors, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e5001_not_raised_without_require_commodities() {
+        // Without require_commodities=true, undeclared currencies are fine
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Lunch")
+                    .with_posting(Posting::new(
+                        "Expenses:Food",
+                        Amount::new(dec!(20.00), "XYZ"), // Totally made up
+                    ))
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(-20.00), "XYZ"),
+                    )),
+            ),
+        ];
+
+        let errors = validate(&directives);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ErrorCode::UndeclaredCurrency),
+            "Should not raise E5001 without require_commodities, got: {errors:?}"
+        );
+    }
 }
