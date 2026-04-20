@@ -1750,17 +1750,6 @@ mod tests {
         assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00));
     }
 
-    // === AccountedBookingError Display tests ===
-    //
-    // These tests pin the canonical user-facing wording for every variant
-    // of `AccountedBookingError`. The whole point of unifying booking-error
-    // Display into `rustledger-core` (#750) is that there's a single source
-    // of truth — and a single source of truth with no tests is one refactor
-    // away from drifting again, which is exactly the failure mode that
-    // produced #748. Any change to the Display strings below will break
-    // these tests, forcing the author to consciously re-check pta-standards
-    // conformance assertions and downstream user tooling.
-
     // =========================================================================
     // Booking method coverage tests
     //
@@ -2121,6 +2110,17 @@ mod tests {
         assert_eq!(result.cost_basis.unwrap().number, dec!(1000.00)); // 5 * 200
         assert_eq!(inv.units("AAPL"), dec!(-15));
     }
+
+    // === AccountedBookingError Display tests ===
+    //
+    // These tests pin the canonical user-facing wording for every variant
+    // of `AccountedBookingError`. The whole point of unifying booking-error
+    // Display into `rustledger-core` (#750) is that there's a single source
+    // of truth — and a single source of truth with no tests is one refactor
+    // away from drifting again, which is exactly the failure mode that
+    // produced #748. Any change to the Display strings below will break
+    // these tests, forcing the author to consciously re-check pta-standards
+    // conformance assertions and downstream user tooling.
 
     #[test]
     fn test_accounted_error_display_insufficient_units() {
