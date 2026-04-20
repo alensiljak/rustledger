@@ -43,16 +43,24 @@ This document describes the high-level architecture of rustledger.
 ```
 rustledger/
 ├── crates/
-│   ├── rustledger-core/       # Core types and traits
-│   ├── rustledger-parser/     # Lexer and parser
-│   ├── rustledger-loader/     # File loading and includes
-│   ├── rustledger-booking/    # Interpolation and booking engine
-│   ├── rustledger-validate/   # Validation rules
-│   ├── rustledger-query/      # BQL query engine
-│   ├── rustledger-plugin/     # WASM plugin runtime
-│   └── rustledger/            # CLI tools
-├── Cargo.toml                # Workspace definition
-└── spec/                     # Specifications (this folder)
+│   ├── rustledger-core/         # Core types (Amount, Directive, Inventory)
+│   ├── rustledger-parser/       # Logos lexer + Winnow parser
+│   ├── rustledger-loader/       # File loading, includes, processing pipeline
+│   ├── rustledger-booking/      # Interpolation and booking engine (7 methods)
+│   ├── rustledger-validate/     # Validation rules (28 error codes)
+│   ├── rustledger-query/        # BQL query engine
+│   ├── rustledger-plugin/       # Native + WASM + Python plugin system
+│   ├── rustledger-plugin-types/ # WASM plugin interface types
+│   ├── rustledger-importer/     # CSV/OFX bank statement import
+│   ├── rustledger-lsp/          # Language Server Protocol
+│   ├── rustledger-wasm/         # WebAssembly bindings for JS/TS
+│   ├── rustledger-ffi-wasi/     # FFI via WASI JSON-RPC
+│   └── rustledger/              # CLI tools (rledger, bean-* commands)
+├── packages/
+│   ├── vscode/                  # VS Code extension (LSP client)
+│   └── mcp-server/              # MCP server (Model Context Protocol)
+├── Cargo.toml                   # Workspace definition
+└── spec/                        # Specifications (this folder)
 ```
 
 ## Crate Dependencies
@@ -94,7 +102,7 @@ rustledger/
                ▼
     ┌─────────────────────┐
     │    rust_decimal     │
-    │    chrono           │
+    │    jiff             │
     └─────────────────────┘
 ```
 
@@ -115,20 +123,20 @@ rustledger/
 │                                                          │              │
 │                                                          ▼              │
 │  ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐   ┌────────┐        │
-│  │ Apply  │◀──│ Plugin │◀──│Validate│◀──│  Book  │◀──│Interpolate     │
-│  │ Plugins│   │  Host  │   │  Accts │   │  Lots  │   │ Amounts│        │
-│  └───┬────┘   └────────┘   └────────┘   └────────┘   └────────┘        │
-│      │                                                                  │
-│  Phase 2: BOOKING & VALIDATION                                          │
+│  │  Sort  │──▶│Interpol│──▶│  Book  │──▶│ Plugins│──▶│Validate│        │
+│  │by date │   │amounts │   │  Lots  │   │(native,│   │accounts│        │
+│  └────────┘   └────────┘   └────────┘   │WASM,Py)│   │balance │        │
+│                                          └────────┘   └───┬────┘        │
+│  Phase 2: SORT → BOOK → PLUGINS → VALIDATE                │              │
 │  ─────────────────────────────────────────────────────────              │
-│      │                                                                  │
-│      ▼                                                                  │
-│  ┌────────┐   ┌────────┐   ┌────────┐                                  │
-│  │Validate│──▶│ Collect│──▶│ Ledger │                                  │
-│  │Balance │   │ Errors │   │(final) │                                  │
-│  └────────┘   └────────┘   └────────┘                                  │
+│                                                          │              │
+│                                                          ▼              │
+│                                          ┌────────┐   ┌────────┐        │
+│                                          │ Collect│──▶│ Ledger │        │
+│                                          │ Errors │   │(final) │        │
+│                                          └────────┘   └────────┘        │
 │                                                                          │
-│  Phase 3: FINAL VALIDATION                                              │
+│  Phase 3: OUTPUT                                                         │
 │  ─────────────────────────────────────────────────────────              │
 │                                                                          │
 └──────────────────────────────────────────────────────────────────────────┘

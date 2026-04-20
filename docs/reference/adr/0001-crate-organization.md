@@ -19,18 +19,19 @@ Key considerations:
 
 Organize the codebase as a workspace with multiple focused crates:
 
-- **rustledger-core**: Core types (Directive, Transaction, Amount, etc.) with no dependencies beyond std
+- **rustledger-core**: Core types (Directive, Transaction, Amount, etc.) with no internal dependencies
 - **rustledger-parser**: Beancount file parser, depends only on core
-- **rustledger-loader**: File loading with include resolution, depends on parser
-- **rustledger-validate**: Validation rules, depends on core
+- **rustledger-loader**: File loading, includes, caching, and processing pipeline (sort → book → plugins → validate)
+- **rustledger-validate**: Validation rules, depends on core, parser, booking
 - **rustledger-booking**: Balance booking algorithms, depends on core
-- **rustledger-query**: BQL query language, depends on core
-- **rustledger-plugin**: Plugin infrastructure, depends on core
+- **rustledger-query**: BQL query language, depends on core, parser, loader
+- **rustledger-plugin**: Native + WASM + Python plugin system (30+ plugins), depends on core
+- **rustledger-plugin-types**: Shared WASM plugin interface types (minimal, no internal deps)
 - **rustledger-importer**: Bank statement import framework (CSV, OFX)
 - **rustledger**: CLI binary (`rledger`, `bean-*` commands)
 - **rustledger-wasm**: WebAssembly bindings for JS/TS
 - **rustledger-lsp**: Language Server Protocol for editor integration
-- **rustledger-ffi-wasi**: FFI via WASI for embedding in any language
+- **rustledger-ffi-wasi**: FFI via WASI JSON-RPC for embedding in any language
 
 ## Consequences
 
