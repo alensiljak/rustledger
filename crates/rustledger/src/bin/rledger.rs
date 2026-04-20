@@ -125,11 +125,33 @@ enum Commands {
         args: rustledger::cmd::add_cmd::Args,
     },
 
+    /// Install or uninstall bean-* compatibility wrapper scripts
+    Compat {
+        #[command(subcommand)]
+        action: CompatAction,
+    },
+
     /// Generate shell completions
     Completions {
         /// Shell to generate completions for
         #[arg(value_enum)]
         shell: Shell,
+    },
+}
+
+#[derive(Subcommand)]
+enum CompatAction {
+    /// Install bean-* wrapper scripts (bean-check, bean-query, etc.)
+    Install {
+        /// Directory to install wrappers into (default: same as rledger binary)
+        #[arg(long)]
+        prefix: Option<PathBuf>,
+    },
+    /// Remove bean-* wrapper scripts
+    Uninstall {
+        /// Directory to remove wrappers from (default: same as rledger binary)
+        #[arg(long)]
+        prefix: Option<PathBuf>,
     },
 }
 
@@ -399,6 +421,26 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Commands::Compat { action } => match action {
+            CompatAction::Install { prefix } => {
+                match rustledger::cmd::compat::install(prefix.as_deref()) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("error: {e:#}");
+                        ExitCode::from(1)
+                    }
+                }
+            }
+            CompatAction::Uninstall { prefix } => {
+                match rustledger::cmd::compat::uninstall(prefix.as_deref()) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("error: {e:#}");
+                        ExitCode::from(1)
+                    }
+                }
+            }
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "rledger", &mut io::stdout());
             ExitCode::SUCCESS

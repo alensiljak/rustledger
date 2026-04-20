@@ -17,9 +17,10 @@ default-run = "rledger"
 bench = false
 
 [features]
-default = ["bean-compat", "python-plugin-wasm"]
+default = ["python-plugin-wasm"]
 # Include bean-* binaries for backwards compatibility with Python beancount.
-# Disable with: cargo install rustledger --no-default-features
+# Enable with: cargo install rustledger --features bean-compat
+# Or use wrapper scripts instead: rledger compat install
 bean-compat = []
 # Enable Python plugin support via WASM sandbox (adds ~30s to build time)
 # This allows running existing Python beancount plugins

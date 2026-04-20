@@ -5,6 +5,7 @@
 
 pub mod add_cmd;
 pub mod check;
+pub mod compat;
 pub mod completions;
 pub mod config_cmd;
 pub mod doctor;
