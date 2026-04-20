@@ -445,11 +445,14 @@ pub fn process_inventory_reduction(
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
 ) {
-    // Skip reductions with empty cost specs — these are unbooked transactions
-    // where the booking engine already failed and reported an error. Re-running
-    // lot matching here would double-report errors or (worse) make different
-    // decisions than the booking engine. This mirrors validate_transaction_balance
-    // which also skips transactions with empty cost specs (line 216-224).
+    // Skip reductions with no numeric cost (e.g., `{}`, `{2024-01-15}`, `{"lot1"}`).
+    // These are unbooked postings where either:
+    //   - Booking wasn't run (standalone validation), or
+    //   - Booking failed and already reported the error (normal pipeline).
+    // If booking succeeded, it would have filled in number_per from the matched
+    // lot. Re-running lot matching here would double-report or diverge from the
+    // booking engine's decisions. This mirrors validate_transaction_balance which
+    // also skips transactions with empty cost specs.
     if let Some(cost) = &posting.cost
         && cost.number_per.is_none()
         && cost.number_total.is_none()

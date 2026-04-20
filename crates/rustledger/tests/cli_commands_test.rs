@@ -217,29 +217,31 @@ fn test_check_ambiguous_lot_match_reports_once() {
     let diagnostics = json["diagnostics"]
         .as_array()
         .expect("diagnostics array missing");
-    // The booking engine reports this as a "BOOK" error. The validator no longer
-    // re-reports it (see #859), so we look for any diagnostic mentioning "ambiguous".
-    let ambiguous: Vec<_> = diagnostics
-        .iter()
-        .filter(|d| {
-            d["message"]
-                .as_str()
-                .unwrap_or("")
-                .to_lowercase()
-                .contains("ambiguous")
-        })
-        .collect();
+    // The booking engine is the sole reporter of lot-matching errors (#859).
+    // The validator no longer re-runs lot matching on unbooked postings.
+    let book_errors: Vec<_> = diagnostics.iter().filter(|d| d["code"] == "BOOK").collect();
 
     assert_eq!(
-        ambiguous.len(),
+        book_errors.len(),
         1,
-        "expected exactly one ambiguous-lot diagnostic, got {}: {json}",
-        ambiguous.len()
+        "expected exactly one BOOK diagnostic, got {}: {json}",
+        book_errors.len()
     );
-    assert_eq!(
-        ambiguous[0]["code"].as_str().unwrap_or(""),
-        "BOOK",
-        "ambiguous lot error should come from the booking engine, not the validator"
+    let msg = book_errors[0]["message"].as_str().unwrap_or("");
+    assert!(
+        msg.to_lowercase().contains("ambiguous"),
+        "BOOK diagnostic should mention 'ambiguous', got: {msg}"
+    );
+
+    // Confirm the validator does NOT double-report as E4003.
+    let e4003: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d["code"] == "E4003")
+        .collect();
+    assert!(
+        e4003.is_empty(),
+        "validator should not re-report booking errors, but found {} E4003 diagnostics",
+        e4003.len()
     );
 }
 
