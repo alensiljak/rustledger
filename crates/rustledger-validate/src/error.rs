@@ -48,8 +48,6 @@ pub enum ErrorCode {
     InsufficientUnits,
     /// E4003: Ambiguous lot match in STRICT mode.
     AmbiguousLotMatch,
-    /// E4004: Reduction would create negative inventory.
-    NegativeInventory,
     /// E4005: Cost amount is negative (cost must be non-negative).
     NegativeCost,
 
@@ -58,12 +56,6 @@ pub enum ErrorCode {
     UndeclaredCurrency,
     /// E5002: Currency not allowed in account.
     CurrencyNotAllowed,
-
-    // === Metadata Errors (E6xxx) ===
-    /// E6001: Duplicate metadata key.
-    DuplicateMetadataKey,
-    /// E6002: Invalid metadata value type.
-    InvalidMetadataValue,
 
     // === Option Errors (E7xxx) ===
     /// E7001: Unknown option name.
@@ -109,14 +101,10 @@ impl ErrorCode {
             Self::NoMatchingLot => "E4001",
             Self::InsufficientUnits => "E4002",
             Self::AmbiguousLotMatch => "E4003",
-            Self::NegativeInventory => "E4004",
             Self::NegativeCost => "E4005",
             // Currency errors
             Self::UndeclaredCurrency => "E5001",
             Self::CurrencyNotAllowed => "E5002",
-            // Metadata errors
-            Self::DuplicateMetadataKey => "E6001",
-            Self::InvalidMetadataValue => "E6002",
             // Option errors
             Self::UnknownOption => "E7001",
             Self::InvalidOptionValue => "E7002",

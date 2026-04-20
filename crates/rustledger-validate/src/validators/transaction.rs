@@ -1,6 +1,7 @@
 //! Transaction validation.
 
 use rust_decimal::Decimal;
+use rustc_hash::FxHashMap;
 use rustledger_core::{Amount, BookingMethod, InternedStr, Inventory, Posting, Transaction};
 use std::collections::HashMap;
 
@@ -69,6 +70,36 @@ pub fn validate_transaction_structure(
             "Transaction has only one posting".to_string(),
             txn.date,
         ));
+    }
+
+    // Check for multiple missing amounts per currency (E3002).
+    // If >1 posting is missing an amount for the same currency, interpolation
+    // is ambiguous. We detect this by looking at postings where `amount()` is
+    // None AND the posting has no units at all (fully elided amount).
+    {
+        let mut missing_count: FxHashMap<Option<&InternedStr>, u32> = FxHashMap::default();
+        for posting in &txn.postings {
+            if posting.amount().is_none() {
+                // Group by the currency hint from partial units, or None for fully elided
+                let currency = posting
+                    .units
+                    .as_ref()
+                    .and_then(|u| u.as_amount())
+                    .map(|a| &a.currency);
+                *missing_count.entry(currency).or_default() += 1;
+            }
+        }
+        // If any group has >1 missing, or there are multiple groups of missing amounts
+        let total_missing: u32 = missing_count.values().sum();
+        if total_missing > 1 {
+            errors.push(ValidationError::new(
+                ErrorCode::MultipleInterpolation,
+                format!(
+                    "Transaction has {total_missing} postings with missing amounts; at most one is allowed"
+                ),
+                txn.date,
+            ));
+        }
     }
 
     // Check for negative cost amounts

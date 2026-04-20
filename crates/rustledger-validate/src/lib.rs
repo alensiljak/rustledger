@@ -30,11 +30,9 @@
 //! | E4001 | No matching lot for reduction |
 //! | E4002 | Insufficient units in lot |
 //! | E4003 | Ambiguous lot match |
-//! | E4004 | Reduction would create negative inventory |
+//! | E4005 | Negative cost amount |
 //! | E5001 | Currency not declared |
 //! | E5002 | Currency not allowed in account |
-//! | E6001 | Duplicate metadata key |
-//! | E6002 | Invalid metadata value |
 //! | E7001 | Unknown option |
 //! | E7002 | Invalid option value |
 //! | E7003 | Duplicate option |
@@ -203,6 +201,34 @@ impl LedgerState {
     /// Get all account names.
     pub fn accounts(&self) -> impl Iterator<Item = &str> {
         self.accounts.keys().map(InternedStr::as_str)
+    }
+
+    /// Import option warnings from the loader and convert them to validation errors.
+    ///
+    /// The loader collects option warnings (E7001 unknown option, E7002 invalid value,
+    /// E7003 duplicate option) during option processing. Call this method to include
+    /// those warnings as validation errors.
+    ///
+    /// Each tuple is `(code, message)` where code is "E7001", "E7002", or "E7003".
+    pub fn import_option_warnings(
+        &self,
+        warnings: &[(&str, &str)],
+        errors: &mut Vec<ValidationError>,
+    ) {
+        for &(code, message) in warnings {
+            let error_code = match code {
+                "E7001" => ErrorCode::UnknownOption,
+                "E7002" => ErrorCode::InvalidOptionValue,
+                "E7003" => ErrorCode::DuplicateOption,
+                _ => continue,
+            };
+            errors.push(ValidationError::new(
+                error_code,
+                message.to_string(),
+                // Options don't have dates — use epoch as sentinel
+                NaiveDate::default(),
+            ));
+        }
     }
 }
 
@@ -1545,5 +1571,128 @@ mod tests {
                 .any(|e| e.code == ErrorCode::UndeclaredCurrency),
             "Should not raise E5001 without require_commodities, got: {errors:?}"
         );
+    }
+
+    #[test]
+    fn test_e3002_multiple_missing_amounts() {
+        // E3002: Multiple postings with missing amounts is ambiguous
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Drinks")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Lunch")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(-50.00), "USD"),
+                    ))
+                    // Two postings with no amount — ambiguous interpolation
+                    .with_posting(Posting {
+                        account: "Expenses:Food".into(),
+                        units: None,
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                        comments: vec![],
+                        trailing_comments: vec![],
+                    })
+                    .with_posting(Posting {
+                        account: "Expenses:Drinks".into(),
+                        units: None,
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                        comments: vec![],
+                        trailing_comments: vec![],
+                    }),
+            ),
+        ];
+
+        let errors = validate(&directives);
+
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.code == ErrorCode::MultipleInterpolation),
+            "Expected E3002 MultipleInterpolation, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e3002_single_missing_amount_ok() {
+        // A single missing amount is fine (can be interpolated)
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+            Directive::Transaction(
+                Transaction::new(date(2024, 1, 15), "Lunch")
+                    .with_posting(Posting::new(
+                        "Assets:Bank",
+                        Amount::new(dec!(-50.00), "USD"),
+                    ))
+                    .with_posting(Posting {
+                        account: "Expenses:Food".into(),
+                        units: None,
+                        cost: None,
+                        price: None,
+                        flag: None,
+                        meta: Default::default(),
+                        comments: vec![],
+                        trailing_comments: vec![],
+                    }),
+            ),
+        ];
+
+        let errors = validate(&directives);
+
+        assert!(
+            !errors
+                .iter()
+                .any(|e| e.code == ErrorCode::MultipleInterpolation),
+            "Should not raise E3002 with single missing amount, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_e7001_unknown_option() {
+        // E7001: import_option_warnings converts loader warnings to validation errors
+        let state = LedgerState::new();
+        let mut errors = Vec::new();
+
+        state.import_option_warnings(&[("E7001", "Invalid option \"bogus_option\"")], &mut errors);
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, ErrorCode::UnknownOption);
+        assert!(errors[0].message.contains("bogus_option"));
+    }
+
+    #[test]
+    fn test_e7002_invalid_option_value() {
+        let state = LedgerState::new();
+        let mut errors = Vec::new();
+
+        state.import_option_warnings(
+            &[("E7002", "Invalid leaf account name: 'not-valid'")],
+            &mut errors,
+        );
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, ErrorCode::InvalidOptionValue);
+    }
+
+    #[test]
+    fn test_e7003_duplicate_option() {
+        let state = LedgerState::new();
+        let mut errors = Vec::new();
+
+        state.import_option_warnings(
+            &[("E7003", "Option \"title\" can only be specified once")],
+            &mut errors,
+        );
+
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].code, ErrorCode::DuplicateOption);
     }
 }
