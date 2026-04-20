@@ -433,10 +433,10 @@ pub fn update_inventories(
 /// On pre-booked directives (the normal pipeline), every reduction posting has
 /// a fully-resolved cost spec, so `inv.reduce()` is a trivial exact match.
 ///
-/// If the cost spec is empty (booking failed or wasn't run), we skip inventory
-/// processing entirely — booking already reported the error, and re-running
-/// lot matching here would either double-report or diverge from the booking
-/// engine's decisions.
+/// If the cost spec has no cost amount (booking failed or wasn't run), we skip
+/// inventory processing entirely — booking already reported the error, and
+/// re-running lot matching here would either double-report or diverge from the
+/// booking engine's decisions.
 pub fn process_inventory_reduction(
     inv: &mut Inventory,
     posting: &Posting,
@@ -445,14 +445,14 @@ pub fn process_inventory_reduction(
     txn: &Transaction,
     errors: &mut Vec<ValidationError>,
 ) {
-    // Skip reductions with no numeric cost (e.g., `{}`, `{2024-01-15}`, `{"lot1"}`).
-    // These are unbooked postings where either:
+    // Skip reductions whose cost spec has no cost amount (e.g., `{}`, `{2024-01-15}`,
+    // `{"lot1"}`). These are unbooked postings where either:
     //   - Booking wasn't run (standalone validation), or
     //   - Booking failed and already reported the error (normal pipeline).
     // If booking succeeded, it would have filled in number_per from the matched
     // lot. Re-running lot matching here would double-report or diverge from the
-    // booking engine's decisions. This mirrors validate_transaction_balance which
-    // also skips transactions with empty cost specs.
+    // booking engine's decisions. This mirrors `validate_transaction_balance`,
+    // which also skips balance checking when a posting has an unresolved cost.
     if let Some(cost) = &posting.cost
         && cost.number_per.is_none()
         && cost.number_total.is_none()
