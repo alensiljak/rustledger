@@ -1497,8 +1497,10 @@ mod tests {
             ),
         ];
 
-        let mut options = ValidationOptions::default();
-        options.require_commodities = true;
+        let options = ValidationOptions {
+            require_commodities: true,
+            ..Default::default()
+        };
         let errors = validate_with_options(&directives, options);
 
         assert!(
@@ -1532,8 +1534,10 @@ mod tests {
             ),
         ];
 
-        let mut options = ValidationOptions::default();
-        options.require_commodities = true;
+        let options = ValidationOptions {
+            require_commodities: true,
+            ..Default::default()
+        };
         let errors = validate_with_options(&directives, options);
 
         assert!(
