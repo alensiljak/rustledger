@@ -29,9 +29,11 @@
 //! - `-q, --quick <ARGS>`: Quick mode with inline arguments
 //! - `--no-completion`: Disable account tab completion in interactive mode
 
+pub(crate) mod parsing;
+
 use anyhow::{Context, Result, bail};
 use clap::Parser;
-use rust_decimal::Decimal;
+use parsing::{calculate_balance, parse_amount, parse_date};
 use rustledger_core::NaiveDate;
 use rustledger_core::format::{FormatConfig, format_directive};
 use rustledger_core::{Amount, Directive, Posting, Transaction};
@@ -47,7 +49,8 @@ use std::borrow::Cow;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read as IoRead, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::str::FromStr;
+#[cfg(test)]
+use {rust_decimal::Decimal, std::str::FromStr};
 
 /// Add transactions to beancount files.
 #[derive(Parser, Debug)]
@@ -181,140 +184,6 @@ impl Highlighter for AddHelper {
 }
 
 impl Validator for AddHelper {}
-
-/// Parse a flexible date string.
-///
-/// Supports:
-/// - "today" or empty → current date
-/// - "yesterday" → previous day
-/// - "+N" / "-N" → relative days from today
-/// - "YYYY-MM-DD" → explicit date
-pub fn parse_date(input: &str) -> Result<NaiveDate> {
-    let trimmed = input.trim().to_lowercase();
-    let today = jiff::Zoned::now().date();
-
-    if trimmed.is_empty() || trimmed == "today" {
-        return Ok(today);
-    }
-
-    if trimmed == "yesterday" {
-        return today
-            .yesterday()
-            .ok()
-            .context("Cannot compute yesterday's date");
-    }
-
-    // Relative days: +N or -N
-    if let Some(stripped) = trimmed.strip_prefix('+') {
-        let days: i64 = stripped
-            .parse()
-            .with_context(|| format!("Invalid relative date: {input}"))?;
-        return today
-            .checked_add(jiff::ToSpan::days(days))
-            .ok()
-            .context("Date out of range");
-    }
-
-    if let Some(stripped) = trimmed.strip_prefix('-') {
-        let days: i64 = stripped
-            .parse()
-            .with_context(|| format!("Invalid relative date: {input}"))?;
-        return today
-            .checked_add(jiff::ToSpan::days(-(days)))
-            .ok()
-            .context("Date out of range");
-    }
-
-    // Explicit date: YYYY-MM-DD
-    trimmed
-        .parse::<NaiveDate>()
-        .with_context(|| format!("Invalid date format: {input}. Use YYYY-MM-DD."))
-}
-
-/// Check if a character is valid in a beancount currency.
-///
-/// Currency can contain: uppercase letters, digits, apostrophes, dots, underscores, hyphens.
-const fn is_currency_char(c: char) -> bool {
-    c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '\'' | '.' | '_' | '-')
-}
-
-/// Parse an amount string like "123.45 USD" or "123.45USD" or "10 BRK.B".
-///
-/// Supports beancount currency format:
-/// - Starts with uppercase letter or `/`
-/// - Can contain: uppercase letters, digits, apostrophes, dots, underscores, hyphens
-pub fn parse_amount(input: &str) -> Result<Amount> {
-    let trimmed = input.trim();
-
-    // First try splitting by whitespace (most common case)
-    let parts: Vec<&str> = trimmed.split_whitespace().collect();
-    if parts.len() == 2 {
-        let number = Decimal::from_str(parts[0])
-            .with_context(|| format!("Invalid number in amount: {}", parts[0]))?;
-        return Ok(Amount::new(number, parts[1]));
-    }
-
-    // Handle no-space format like "123.45USD" or "10BRK.B"
-    // Find where the number ends and currency begins by scanning backwards
-    // Currency must start with uppercase letter (or `/`)
-    let mut split_pos = trimmed.len();
-    let chars: Vec<char> = trimmed.chars().collect();
-
-    for i in (0..chars.len()).rev() {
-        let c = chars[i];
-        if is_currency_char(c) || c == '/' {
-            // Check if this could be the start of a currency (uppercase letter or `/`)
-            if c.is_ascii_uppercase() || c == '/' {
-                split_pos = chars[..i].iter().collect::<String>().len();
-            }
-        } else {
-            // Not a currency character, stop scanning
-            break;
-        }
-    }
-
-    if split_pos == 0 || split_pos == trimmed.len() {
-        bail!("Invalid amount format: {input}. Expected '123.45 USD' or '123.45USD'.");
-    }
-
-    let number_part = trimmed[..split_pos].trim();
-    let currency_part = trimmed[split_pos..].trim();
-
-    let number = Decimal::from_str(number_part)
-        .with_context(|| format!("Invalid number in amount: {number_part}"))?;
-
-    if currency_part.is_empty() {
-        bail!("Missing currency in amount: {input}");
-    }
-
-    Ok(Amount::new(number, currency_part))
-}
-
-/// Calculate the balancing amount for a transaction.
-///
-/// Returns the negative sum of all provided amounts.
-/// Only works when all amounts have the same currency.
-pub fn calculate_balance(amounts: &[Amount]) -> Result<Amount> {
-    if amounts.is_empty() {
-        bail!("Cannot calculate balance with no amounts");
-    }
-
-    let currency = &amounts[0].currency;
-
-    // Verify all amounts have the same currency
-    for amt in amounts.iter().skip(1) {
-        if amt.currency != *currency {
-            bail!(
-                "Cannot auto-balance: mixed currencies ({} and {})",
-                currency,
-                amt.currency
-            );
-        }
-    }
-
-    let sum: Decimal = amounts.iter().map(|a| a.number).sum();
-    Ok(Amount::new(-sum, currency.as_str()))
-}
 
 /// Run the add command in quick mode.
 fn run_quick_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {

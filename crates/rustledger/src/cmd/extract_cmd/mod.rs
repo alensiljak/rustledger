@@ -33,15 +33,19 @@
 //! 2. `importers.toml` in the current directory
 //! 3. `~/.config/rledger/importers.toml`
 
+mod config;
+mod duplicate;
+
 use crate::cmd::completions::ShellType;
 use anyhow::{Context, Result, anyhow};
 use clap::Parser;
+use config::{
+    build_config_from_entry, find_importers_config, find_matching_importers, load_importers_config,
+};
+use duplicate::{is_duplicate, is_ofx_file, load_existing_transactions};
 use format_num_pattern::Locale;
-use rust_decimal::Decimal;
-use rustledger_core::{Directive, FormatConfig, Transaction, format_directive};
+use rustledger_core::{Directive, FormatConfig, format_directive};
 use rustledger_importer::{Importer, ImporterConfig, OfxImporter};
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -142,201 +146,6 @@ pub struct Args {
     existing: Option<PathBuf>,
 }
 
-// --- Importers TOML configuration ---
-
-/// Top-level importers configuration file.
-#[derive(Debug, Deserialize)]
-struct ImportersFile {
-    importers: Vec<ImporterEntry>,
-}
-
-/// A single importer entry in importers.toml.
-#[derive(Debug, Deserialize)]
-struct ImporterEntry {
-    /// Name used to select this importer via --importer flag.
-    name: String,
-    /// Optional glob pattern to auto-identify this importer by filename.
-    filename_pattern: Option<String>,
-    /// Target account for imported transactions.
-    account: Option<String>,
-    /// Currency (default: USD).
-    currency: Option<String>,
-    /// Date column name or 0-based index.
-    date_column: Option<toml::Value>,
-    /// Date format (strftime-style).
-    date_format: Option<String>,
-    /// Narration/description column name or index.
-    narration_column: Option<toml::Value>,
-    /// Payee column name or index.
-    payee_column: Option<toml::Value>,
-    /// Amount column name or index.
-    amount_column: Option<toml::Value>,
-    /// Debit column name or index.
-    debit_column: Option<toml::Value>,
-    /// Credit column name or index.
-    credit_column: Option<toml::Value>,
-    /// CSV delimiter character.
-    delimiter: Option<String>,
-    /// Number of rows to skip.
-    skip_rows: Option<usize>,
-    /// Whether the CSV has a header row.
-    #[serde(default)]
-    skip_header: Option<bool>,
-    /// Whether to invert amount signs.
-    #[serde(default)]
-    invert_amounts: Option<bool>,
-    /// Default expense account for unmatched negative-amount (money out) transactions.
-    default_expense: Option<String>,
-    /// Default income account for unmatched positive-amount (money in) transactions.
-    default_income: Option<String>,
-    /// Account mappings: pattern → account.
-    #[serde(default)]
-    mappings: HashMap<String, String>,
-}
-
-/// Parse a TOML value as a column spec string (either a string name or integer index).
-fn parse_column_value(value: &toml::Value) -> Option<String> {
-    match value {
-        toml::Value::String(s) => Some(s.clone()),
-        toml::Value::Integer(i) => Some(i.to_string()),
-        _ => None,
-    }
-}
-
-/// Find the importers.toml file, searching in standard locations.
-///
-/// If an explicit path is provided via `--importers-config`, it must exist
-/// or an error is returned. Otherwise, searches the current directory and
-/// then `~/.config/rledger/`.
-fn find_importers_config(explicit_path: Option<&Path>) -> Result<Option<PathBuf>> {
-    // 1. Explicit path from --importers-config — must exist
-    if let Some(path) = explicit_path {
-        if path.exists() {
-            return Ok(Some(path.to_path_buf()));
-        }
-        return Err(anyhow!("Importers config not found: {}", path.display()));
-    }
-
-    // 2. Current directory
-    if let Ok(cwd) = std::env::current_dir() {
-        let local = cwd.join("importers.toml");
-        if local.exists() {
-            return Ok(Some(local));
-        }
-    }
-
-    // 3. User config directory
-    if let Some(config_dir) = dirs::config_dir() {
-        let user_path = config_dir.join("rledger").join("importers.toml");
-        if user_path.exists() {
-            return Ok(Some(user_path));
-        }
-    }
-
-    Ok(None)
-}
-
-/// Load and parse an importers.toml file.
-fn load_importers_config(path: &Path) -> Result<ImportersFile> {
-    let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read importers config: {}", path.display()))?;
-    let config: ImportersFile = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse importers config: {}", path.display()))?;
-    Ok(config)
-}
-
-/// Build an `ImporterConfig` from a named importer entry.
-fn build_config_from_entry(entry: &ImporterEntry) -> Result<ImporterConfig> {
-    let mut builder = ImporterConfig::csv();
-
-    if let Some(ref account) = entry.account {
-        builder = builder.account(account);
-    }
-
-    if let Some(ref currency) = entry.currency {
-        builder = builder.currency(currency);
-    }
-
-    if let Some(ref val) = entry.date_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.date_column(&col);
-    }
-
-    if let Some(ref fmt) = entry.date_format {
-        builder = builder.date_format(fmt);
-    }
-
-    if let Some(ref val) = entry.narration_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.narration_column(&col);
-    }
-
-    if let Some(ref val) = entry.payee_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.payee_column(&col);
-    }
-
-    if let Some(ref val) = entry.amount_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.amount_column(&col);
-    }
-
-    if let Some(ref val) = entry.debit_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.debit_column(&col);
-    }
-
-    if let Some(ref val) = entry.credit_column
-        && let Some(col) = parse_column_value(val)
-    {
-        builder = builder.credit_column(&col);
-    }
-
-    if let Some(ref delim) = entry.delimiter
-        && let Some(c) = delim.chars().next()
-    {
-        builder = builder.delimiter(c);
-    }
-
-    if let Some(skip) = entry.skip_rows {
-        builder = builder.skip_rows(skip);
-    }
-
-    if let Some(skip_header) = entry.skip_header {
-        builder = builder.has_header(!skip_header);
-    }
-
-    if let Some(invert) = entry.invert_amounts {
-        builder = builder.invert_sign(invert);
-    }
-
-    if let Some(ref account) = entry.default_expense {
-        builder = builder.default_expense(account);
-    }
-
-    if let Some(ref account) = entry.default_income {
-        builder = builder.default_income(account);
-    }
-
-    if !entry.mappings.is_empty() {
-        // Sort by pattern length descending so more specific patterns match first
-        let mut mappings: Vec<(String, String)> = entry
-            .mappings
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
-        mappings.sort_by_key(|a| std::cmp::Reverse(a.0.len()));
-        builder = builder.mappings(mappings);
-    }
-
-    builder.build()
-}
-
 /// Main entry point with custom binary name (for bean-extract compatibility).
 pub fn main_with_name(bin_name: &str) -> ExitCode {
     let args = Args::parse();
@@ -404,114 +213,6 @@ fn list_importers(args: &Args) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Check if an importer matches the given filename using its glob pattern.
-fn importer_matches_filename(entry: &ImporterEntry, filename: &str) -> bool {
-    if let Some(pattern) = &entry.filename_pattern {
-        glob::Pattern::new(pattern).is_ok_and(|p| p.matches(filename))
-    } else {
-        false
-    }
-}
-
-/// Find importers that match the given filename.
-fn find_matching_importers<'a>(
-    config: &'a ImportersFile,
-    filename: &str,
-) -> Vec<&'a ImporterEntry> {
-    config
-        .importers
-        .iter()
-        .filter(|imp| importer_matches_filename(imp, filename))
-        .collect()
-}
-
-/// Check if a file is an OFX/QFX file based on extension.
-fn is_ofx_file(path: &Path) -> bool {
-    path.extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx"))
-}
-
-/// Load existing transactions from a beancount file for duplicate detection.
-fn load_existing_transactions(path: &Path) -> Result<Vec<Transaction>> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read existing ledger: {}", path.display()))?;
-    let parse_result = rustledger_parser::parse(&content);
-    let mut transactions = Vec::new();
-    for directive in parse_result.directives {
-        if let Directive::Transaction(txn) = directive.value {
-            transactions.push(txn);
-        }
-    }
-    Ok(transactions)
-}
-
-/// Check if a new transaction is a duplicate of an existing one.
-///
-/// Matches on: same date, same first-posting amount, and fuzzy payee/narration match.
-fn is_duplicate(new_txn: &Transaction, existing: &[Transaction]) -> bool {
-    let new_amount = first_posting_amount(new_txn);
-    let new_text = txn_match_text(new_txn);
-
-    existing.iter().any(|existing_txn| {
-        // Date must match exactly
-        if new_txn.date != existing_txn.date {
-            return false;
-        }
-        // Amount must match (first posting)
-        let existing_amount = first_posting_amount(existing_txn);
-        if new_amount != existing_amount {
-            return false;
-        }
-        // Fuzzy text match: check if payee or narration overlap
-        let existing_text = txn_match_text(existing_txn);
-        fuzzy_text_match(&new_text, &existing_text)
-    })
-}
-
-/// Get the amount from the first posting of a transaction (for comparison).
-fn first_posting_amount(txn: &Transaction) -> Option<Decimal> {
-    txn.postings.first().and_then(|p| {
-        p.units
-            .as_ref()
-            .and_then(rustledger_core::IncompleteAmount::number)
-    })
-}
-
-/// Build a lowercase string combining payee and narration for fuzzy matching.
-fn txn_match_text(txn: &Transaction) -> String {
-    let mut text = String::new();
-    if let Some(ref payee) = txn.payee {
-        text.push_str(payee.as_str());
-        text.push(' ');
-    }
-    text.push_str(txn.narration.as_str());
-    text.to_lowercase()
-}
-
-/// Fuzzy text match: returns true if either string contains the other,
-/// or if they share significant word overlap.
-fn fuzzy_text_match(a: &str, b: &str) -> bool {
-    if a.is_empty() || b.is_empty() {
-        return false;
-    }
-    if a == b {
-        return true;
-    }
-    if a.contains(b) || b.contains(a) {
-        return true;
-    }
-    // Word overlap: if >50% of words in the shorter text appear in the longer
-    let a_words: Vec<&str> = a.split_whitespace().collect();
-    let b_words: Vec<&str> = b.split_whitespace().collect();
-    let (shorter, longer) = if a_words.len() <= b_words.len() {
-        (&a_words, &b_words)
-    } else {
-        (&b_words, &a_words)
-    };
-    let matches = shorter.iter().filter(|w| longer.contains(w)).count();
-    matches * 2 > shorter.len()
 }
 
 /// Run the extract command with the given arguments.
@@ -717,8 +418,12 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::config::{ImporterEntry, parse_column_value};
+    use super::duplicate::{first_posting_amount, fuzzy_text_match, txn_match_text};
     use super::*;
+    use rustledger_core::Transaction;
     use rustledger_importer::config::ImporterType;
+    use std::collections::HashMap;
 
     fn write_temp_config(content: &str) -> (tempfile::TempDir, PathBuf) {
         let dir = tempfile::tempdir().unwrap();

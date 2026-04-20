@@ -1,0 +1,230 @@
+//! rledger query - Query beancount files with BQL.
+//!
+//! This is the primary rustledger command for querying ledgers.
+//! For backwards compatibility with Python beancount, `bean-query` is also available.
+//!
+//! # Usage
+//!
+//! ```bash
+//! rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
+//! rledger query ledger.beancount -F query.bql
+//! rledger query ledger.beancount  # Interactive mode
+//! ```
+
+mod interactive;
+mod output;
+
+use crate::cmd::completions::ShellType;
+use anyhow::{Context, Result};
+use clap::Parser;
+use rustledger_booking::expand_pads;
+use rustledger_core::DisplayContext;
+use rustledger_loader::{LoadOptions, load};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+/// System tables available in BQL queries (prefixed with #).
+const SYSTEM_TABLES: &[&str] = &[
+    "#accounts",
+    "#balances",
+    "#commodities",
+    "#documents",
+    "#entries",
+    "#events",
+    "#notes",
+    "#postings",
+    "#prices",
+    "#transactions",
+];
+
+/// Query beancount files with BQL.
+#[derive(Parser, Debug)]
+#[command(name = "query")]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    /// The beancount file to query (uses config default if not specified)
+    #[arg(value_name = "FILE")]
+    pub file: Option<PathBuf>,
+
+    /// Generate shell completions and exit
+    #[arg(long, value_name = "SHELL", hide = true)]
+    pub generate_completions: Option<ShellType>,
+
+    /// BQL query to execute (if not provided, enters interactive mode)
+    #[arg(value_name = "QUERY", trailing_var_arg = true, num_args = 0..)]
+    query: Vec<String>,
+
+    /// Read query from file
+    #[arg(short = 'F', long = "query-file", value_name = "QUERY_FILE")]
+    query_file: Option<PathBuf>,
+
+    /// Output file (default: stdout)
+    #[arg(short = 'o', long, value_name = "OUTPUT_FILE")]
+    output: Option<PathBuf>,
+
+    /// Output format (text, csv, json, beancount)
+    #[arg(short = 'f', long)]
+    pub format: Option<OutputFormat>,
+
+    /// Numberify output (remove currencies, output raw numbers)
+    #[arg(short = 'm', long)]
+    numberify: bool,
+
+    /// Do not report ledger validation errors on load
+    #[arg(short = 'q', long = "no-errors")]
+    no_errors: bool,
+
+    /// Show verbose output
+    #[arg(short, long)]
+    verbose: bool,
+}
+
+/// Output format for query results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    /// Plain text output (default).
+    Text,
+    /// CSV output.
+    Csv,
+    /// JSON output.
+    Json,
+    /// Beancount directive output.
+    Beancount,
+}
+
+impl std::fmt::Display for OutputFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text => write!(f, "text"),
+            Self::Csv => write!(f, "csv"),
+            Self::Json => write!(f, "json"),
+            Self::Beancount => write!(f, "beancount"),
+        }
+    }
+}
+
+/// Main entry point with custom binary name (for bean-query compatibility).
+pub fn main_with_name(bin_name: &str) -> ExitCode {
+    let mut args = Args::parse();
+
+    // Handle shell completion generation
+    if let Some(shell) = args.generate_completions {
+        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
+        return ExitCode::SUCCESS;
+    }
+
+    // If no file specified, try to get from config (same as rledger)
+    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
+    if args.file.is_none()
+        && let Ok(loaded) = crate::config::Config::load()
+    {
+        let profile = std::env::var("RLEDGER_PROFILE").ok();
+        args.file = loaded.config.effective_file_path(profile.as_deref());
+    }
+
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {e:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+/// Run the query command with the given arguments.
+pub fn run(args: &Args) -> Result<()> {
+    // File is required (the --generate-completions flag is only for standalone bean-query)
+    let Some(file) = args.file.as_ref() else {
+        anyhow::bail!("FILE is required");
+    };
+
+    // Check if file exists
+    if !file.exists() {
+        anyhow::bail!("file not found: {}", file.display());
+    }
+
+    // Load and fully process the file (parse → book → plugins)
+    // This uses the new loader API which matches Python's loader.load_file()
+    let options = LoadOptions {
+        validate: false, // Query doesn't need validation
+        ..Default::default()
+    };
+
+    let ledger =
+        load(file, &options).with_context(|| format!("failed to load {}", file.display()))?;
+
+    // Report errors to stderr (matching bean-query behavior)
+    // Continue with successfully parsed directives rather than bailing
+    if !ledger.errors.is_empty() && !args.no_errors {
+        for err in &ledger.errors {
+            eprintln!("{}: {}", err.code, err.message);
+        }
+        eprintln!();
+    }
+
+    // Get directives (already booked and plugins applied)
+    let booked_directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
+
+    // Expand pad directives into synthetic transactions
+    let directives = expand_pads(&booked_directives);
+
+    // Use display context from the loaded ledger
+    let display_context = ledger.display_context;
+
+    if args.verbose {
+        eprintln!("Loaded {} directives", directives.len());
+    }
+
+    // Determine query source
+    let query_str = if !args.query.is_empty() {
+        args.query.join(" ")
+    } else if let Some(ref query_file) = args.query_file {
+        fs::read_to_string(query_file)
+            .with_context(|| format!("failed to read query file {}", query_file.display()))?
+    } else {
+        // Interactive mode
+        return interactive::run_interactive(file, &directives, &display_context, args);
+    };
+
+    // Batch query: no pager (matching Python bean-query behavior).
+    // Pager is only used in interactive REPL mode.
+    let settings = ShellSettings::from_args(args, display_context);
+    output::execute_query(&query_str, &directives, &settings, &mut io::stdout())
+}
+
+/// Shell settings for query output and interactive mode.
+struct ShellSettings {
+    format: OutputFormat,
+    numberify: bool,
+    pager: bool,
+    output_file: Option<PathBuf>,
+    display_context: DisplayContext,
+}
+
+impl ShellSettings {
+    fn from_args(args: &Args, display_context: DisplayContext) -> Self {
+        Self {
+            format: args.format.unwrap_or(OutputFormat::Text),
+            numberify: args.numberify,
+            pager: true,
+            output_file: args.output.clone(),
+            display_context,
+        }
+    }
+}
+
+impl OutputFormat {
+    /// Parse from a string (for config file values).
+    #[must_use]
+    pub fn from_str_config(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "text" => Some(Self::Text),
+            "csv" => Some(Self::Csv),
+            "json" => Some(Self::Json),
+            "beancount" => Some(Self::Beancount),
+            _ => None,
+        }
+    }
+}
