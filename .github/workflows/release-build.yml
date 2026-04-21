@@ -198,7 +198,7 @@ jobs:
           fi
 
           # Step 1: Build instrumented binary
-          cargo pgo build -- --no-default-features --features bean-compat
+          cargo pgo build -- --no-default-features
 
           # Step 2: Run workload to collect profile data
           for i in {1..10}; do
@@ -206,9 +206,9 @@ jobs:
           done
 
           # Step 3: Build optimized binary using profile data
-          cargo pgo optimize build -- --no-default-features --features bean-compat
+          cargo pgo optimize build -- --no-default-features
 
-          # Build LSP separately (no PGO, no bean-compat)
+          # Build LSP separately (no PGO needed)
           cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
       - name: Build with PGO (Windows)
         if: matrix.pgo && runner.os == 'Windows'
@@ -217,7 +217,7 @@ jobs:
           $benchmarkPath = Join-Path $env:RUNNER_TEMP "benchmark.beancount"
 
           # Step 1: Build instrumented binary
-          cargo pgo build -- --no-default-features --features bean-compat
+          cargo pgo build -- --no-default-features
 
           # Step 2: Run workload to collect profile data
           for ($i = 0; $i -lt 10; $i++) {
@@ -225,9 +225,9 @@ jobs:
           }
 
           # Step 3: Build optimized binary using profile data
-          cargo pgo optimize build -- --no-default-features --features bean-compat
+          cargo pgo optimize build -- --no-default-features
 
-          # Build LSP separately (no PGO, no bean-compat)
+          # Build LSP separately (no PGO needed)
           cargo build --release --target ${{ matrix.target }} -p rustledger-lsp
       - name: Build without PGO (cross-compiled targets)
         if: ${{ !matrix.pgo }}
@@ -245,12 +245,12 @@ jobs:
           fi
 
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --profile $PROFILE --target ${{ matrix.target }} --no-default-features --features bean-compat
-            # Build LSP separately (no bean-compat feature needed)
+            cross build --profile $PROFILE --target ${{ matrix.target }} --no-default-features
+            # Build LSP separately
             cross build --profile $PROFILE --target ${{ matrix.target }} -p rustledger-lsp
           else
-            cargo build --profile $PROFILE --target ${{ matrix.target }} --no-default-features --features bean-compat
-            # Build LSP separately (no bean-compat feature needed)
+            cargo build --profile $PROFILE --target ${{ matrix.target }} --no-default-features
+            # Build LSP separately
             cargo build --profile $PROFILE --target ${{ matrix.target }} -p rustledger-lsp
           fi
       - name: Package (Unix)

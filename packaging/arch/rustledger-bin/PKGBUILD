@@ -1,6 +1,6 @@
 # Maintainer: Rob Cohen <rob@robcohen.dev>
 pkgbase=rustledger-bin
-pkgname=(rustledger-bin rustledger-bin-bean-compat)
+pkgname=(rustledger-bin)
 pkgver=0.8.6
 pkgrel=1
 pkgdesc="Fast, pure Rust implementation of Beancount double-entry accounting (pre-built binary)"
@@ -33,19 +33,5 @@ package_rustledger-bin() {
     install -Dm644 "LICENSE-${pkgver}" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }
 
-package_rustledger-bin-bean-compat() {
-    pkgdesc="Beancount-compatible bean-* commands for rustledger (drop-in replacement, pre-built binary)"
-    depends=('rustledger-bin')
-    conflicts=('beancount' 'rustledger-bean-compat')
-    provides=('beancount' 'rustledger-bean-compat')
-
-    # Install beancount compatibility binaries
-    for bin in bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price; do
-        if [[ -f "$bin" ]]; then
-            install -Dm755 "$bin" "$pkgdir/usr/bin/$bin"
-        fi
-    done
-
-    # Install license
-    install -Dm644 "LICENSE-${pkgver}" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
-}
+# bean-* compatibility wrappers can be installed post-install via:
+#   rledger compat install --prefix /usr/bin

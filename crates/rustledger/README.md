@@ -16,16 +16,16 @@ Drop-in replacement for Beancount CLI tools. Pure Rust, 10-30x faster.
 
 ## Compatibility
 
-With default features, also installs `bean-*` commands for Python beancount compatibility:
+For Python beancount compatibility (`bean-check`, `bean-query`, etc.), install wrapper scripts:
 
-- `bean-check`, `bean-query`, `bean-format`, `bean-report`, `bean-doctor`, `bean-extract`, `bean-price`
+```bash
+rledger compat install
+```
 
 ## Install
 
 ```bash
 cargo install rustledger
-# or without bean-* compatibility aliases:
-cargo install rustledger --no-default-features
 ```
 
 ## Example
@@ -38,8 +38,7 @@ rledger format --in-place ledger.beancount
 
 ## Cargo Features
 
-- `bean-compat` (default) - Include `bean-*` binaries
-- `python-plugin-wasm` (default) - Enable Python plugin support
+- `python-plugin-wasm` (default) - Enable Python plugin support via WASM sandbox
 
 ## License
 
