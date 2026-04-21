@@ -156,7 +156,12 @@ jobs:
       - name: Publish to npm (trusted publishing)
         run: |
           cd crates/rustledger-wasm/pkg
-          npm publish --access public --provenance
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "@rustledger/wasm@${VERSION}" version >/dev/null 2>&1; then
+            echo "@rustledger/wasm@${VERSION} already published, skipping."
+          else
+            npm publish --access public --provenance
+          fi
   # Trigger website rebuild to use new WASM package
   trigger-website:
     name: Trigger website rebuild
@@ -219,7 +224,13 @@ jobs:
       - name: Publish to npm (trusted publishing)
         run: |
           cd packages/mcp-server
-          npm publish --access public --provenance
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "${PACKAGE_NAME}@${PACKAGE_VERSION} already published, skipping."
+          else
+            npm publish --access public --provenance
+          fi
   # Build and push Docker images
   publish-docker:
     name: Build Docker images
