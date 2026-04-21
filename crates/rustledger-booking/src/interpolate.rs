@@ -447,44 +447,16 @@ pub fn interpolate(transaction: &Transaction) -> Result<InterpolationResult, Int
         }
     }
 
-    // Remove postings that were filled with zero amounts.
-    // Python beancount removes postings that interpolate to exactly zero,
-    // as they don't contribute to the transaction balance.
-    // We must iterate in reverse to maintain correct indices during removal.
-    let mut indices_to_remove: Vec<usize> = filled_indices
-        .iter()
-        .filter(|&&idx| {
-            result.postings.get(idx).is_some_and(|p| {
-                p.units
-                    .as_ref()
-                    .and_then(|u| u.as_amount())
-                    .is_some_and(|a| a.number.is_zero())
-            })
-        })
-        .copied()
-        .collect();
-    indices_to_remove.sort_unstable_by(|a, b| b.cmp(a)); // Sort descending
-
-    for idx in &indices_to_remove {
-        result.postings.remove(*idx);
-    }
-
-    // Update filled_indices to remove the zero-amount indices and adjust remaining indices
-    let final_filled_indices: Vec<usize> = filled_indices
-        .into_iter()
-        .filter(|idx| !indices_to_remove.contains(idx))
-        .map(|idx| {
-            // Adjust index for removed postings before it
-            let adjustment = indices_to_remove.iter().filter(|&&r| r < idx).count();
-            idx - adjustment
-        })
-        .collect();
+    // Note: We intentionally do NOT prune postings that interpolate to zero.
+    // Although Python beancount removes such postings, pruning them before
+    // validation hides errors (e.g., E1001 for unopened accounts).
+    // See issue #877 / beancount/beancount#962.
 
     // Return the residuals we've been tracking incrementally
     // (no need to recalculate - we've updated residuals as we filled amounts)
     Ok(InterpolationResult {
         transaction: result,
-        filled_indices: final_filled_indices,
+        filled_indices,
         residuals,
     })
 }
@@ -1145,19 +1117,20 @@ mod tests {
     // =========================================================================
 
     /// Test that zero-amount postings are removed when transaction balances perfectly.
+    /// Test that zero-amount postings from balanced cost basis are preserved.
     ///
     /// When a transaction with cost basis balances to zero (e.g., cost equals cash),
-    /// the empty posting that would be 0 USD is removed entirely.
-    /// This matches Python beancount's behavior.
+    /// the empty posting is filled with 0 USD and preserved. Previously these were
+    /// pruned, but that hid validation errors (see issue #877).
     ///
     /// Example:
     /// ```beancount
     /// Assets:Crypto    100 USDC {1.0 USD, 2022-04-16}
     /// Assets:Cash     -100 USD
-    /// Income:Trading   ; <- would be 0 USD, so removed
+    /// Income:Trading   ; <- filled with 0 USD, preserved
     /// ```
     #[test]
-    fn test_interpolate_balanced_cost_removes_zero_posting() {
+    fn test_interpolate_balanced_cost_preserves_zero_posting() {
         let txn = Transaction::new(date(2022, 4, 16), "Trade")
             .with_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "USDC")).with_cost(
@@ -1171,32 +1144,40 @@ mod tests {
 
         let result = interpolate(&txn).expect("interpolation should succeed");
 
-        // The zero-amount posting should be removed, not filled
-        assert!(
-            result.filled_indices.is_empty(),
-            "zero-amount posting should be removed"
+        // The zero-amount posting should be filled and preserved
+        assert_eq!(
+            result.filled_indices,
+            vec![2],
+            "zero-amount posting should be in filled_indices"
         );
 
-        // Transaction should only have 2 postings (Income:Trading removed)
+        // Transaction should have all 3 postings
         assert_eq!(
             result.transaction.postings.len(),
-            2,
-            "zero-amount posting should be removed from transaction"
+            3,
+            "zero-amount posting should be preserved in transaction"
         );
+
+        // The filled posting should have 0 USD
+        let filled = &result.transaction.postings[2];
+        let amount = filled.units.as_ref().unwrap().as_amount().unwrap();
+        assert!(amount.number.is_zero());
+        assert_eq!(amount.currency, "USD");
     }
 
-    /// Test that zero-amount postings from zero-cost basis are removed.
+    /// Test that zero-amount postings from zero-cost basis are preserved.
     ///
     /// When a posting has a zero cost like `{0 USD}`, the empty posting
-    /// would be 0 USD and is removed. This matches Python beancount behavior.
+    /// is filled with 0 USD and preserved for validation.
+    /// See issue #877.
     ///
     /// Example:
     /// ```beancount
     /// Assets:Crypto    100 TOKEN {0 USD}
-    /// Income:Bonus     ; <- would be 0 USD, so removed
+    /// Income:Bonus     ; <- filled with 0 USD, preserved
     /// ```
     #[test]
-    fn test_interpolate_zero_cost_removes_zero_posting() {
+    fn test_interpolate_zero_cost_preserves_zero_posting() {
         let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
             .with_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
@@ -1209,29 +1190,30 @@ mod tests {
 
         let result = interpolate(&txn).expect("interpolation should succeed");
 
-        // The zero-amount posting should be removed
-        assert!(
-            result.filled_indices.is_empty(),
-            "zero-amount posting should be removed"
+        // The zero-amount posting should be preserved
+        assert_eq!(
+            result.filled_indices,
+            vec![1],
+            "zero-amount posting should be in filled_indices"
         );
 
-        // Transaction should only have 1 posting
+        // Transaction should have both postings
         assert_eq!(
             result.transaction.postings.len(),
-            1,
-            "zero-amount posting should be removed from transaction"
+            2,
+            "zero-amount posting should be preserved in transaction"
         );
     }
 
-    /// Test that zero-amount postings from zero total cost are removed.
+    /// Test that zero-amount postings from zero total cost are preserved.
     ///
     /// Example:
     /// ```beancount
     /// Assets:Crypto    100 TOKEN {{0 USD}}
-    /// Income:Bonus     ; <- would be 0 USD, so removed
+    /// Income:Bonus     ; <- filled with 0 USD, preserved
     /// ```
     #[test]
-    fn test_interpolate_zero_total_cost_removes_zero_posting() {
+    fn test_interpolate_zero_total_cost_preserves_zero_posting() {
         let txn = Transaction::new(date(2022, 4, 16), "Free tokens")
             .with_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
@@ -1244,17 +1226,50 @@ mod tests {
 
         let result = interpolate(&txn).expect("interpolation should succeed");
 
-        // The zero-amount posting should be removed
-        assert!(
-            result.filled_indices.is_empty(),
-            "zero-amount posting should be removed"
+        // The zero-amount posting should be preserved
+        assert_eq!(
+            result.filled_indices,
+            vec![1],
+            "zero-amount posting should be in filled_indices"
         );
 
-        // Transaction should only have 1 posting
+        // Transaction should have both postings
         assert_eq!(
             result.transaction.postings.len(),
-            1,
-            "zero-amount posting should be removed from transaction"
+            2,
+            "zero-amount posting should be preserved in transaction"
         );
+    }
+
+    /// Regression test for issue #877 (beancount/beancount#962).
+    /// Zero-value interpolated postings must NOT be pruned, because pruning
+    /// can hide validation errors (e.g., E1001 for unopened accounts).
+    #[test]
+    fn test_zero_value_posting_preserved_for_validation() {
+        // An elided posting on an account that would interpolate to zero.
+        // Even though the amount is zero, the posting must survive interpolation
+        // so that downstream validation can detect the unopened account.
+        let txn = Transaction::new(date(2022, 1, 1), "Test")
+            .with_posting(Posting::new("Assets:Cash", Amount::new(dec!(100), "USD")))
+            .with_posting(Posting::new(
+                "Expenses:Food",
+                Amount::new(dec!(-100), "USD"),
+            ))
+            .with_posting(Posting::auto("Income:Unopened"));
+
+        let result = interpolate(&txn).expect("interpolation should succeed");
+
+        // The Income:Unopened posting must still be present
+        assert_eq!(
+            result.transaction.postings.len(),
+            3,
+            "zero-value elided posting must be preserved so validation can check the account"
+        );
+
+        // Verify the preserved posting is the one we expect
+        let preserved = &result.transaction.postings[2];
+        assert_eq!(preserved.account, "Income:Unopened");
+        let amount = preserved.units.as_ref().unwrap().as_amount().unwrap();
+        assert!(amount.number.is_zero());
     }
 }
