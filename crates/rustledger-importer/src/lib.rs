@@ -32,6 +32,7 @@
 
 pub mod config;
 pub mod csv_importer;
+pub mod csv_inference;
 pub mod ofx_importer;
 pub mod registry;
 
@@ -160,6 +161,48 @@ pub fn extract_from_file(path: &Path, config: &ImporterConfig) -> Result<ImportR
 /// Extract transactions from file contents (useful for testing).
 pub fn extract_from_string(content: &str, config: &ImporterConfig) -> Result<ImportResult> {
     config.extract_from_string(content)
+}
+
+/// Auto-extract transactions from a file by inferring its format.
+///
+/// If the file is OFX/QFX, uses the OFX importer directly. Otherwise,
+/// attempts to infer the CSV format from the file content. Returns the
+/// enriched result with fingerprints and confidence scores.
+///
+/// # Errors
+///
+/// Returns an error if the file can't be read, the format can't be inferred,
+/// or extraction fails.
+pub fn auto_extract(
+    path: &std::path::Path,
+    account: &str,
+    currency: &str,
+) -> Result<EnrichedImportResult> {
+    // Check for OFX first
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx"))
+    {
+        let ofx = ofx_importer::OfxImporter::new(account, currency);
+        return ofx.extract_from_string_enriched(&std::fs::read_to_string(path)?);
+    }
+
+    // Try CSV auto-inference
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read file {}: {e}", path.display()))?;
+
+    let inferred = csv_inference::infer_csv_config(&content)
+        .ok_or_else(|| anyhow::anyhow!("Could not infer CSV format from {}", path.display()))?;
+
+    let csv_config = inferred.to_csv_config();
+    let importer_config = config::ImporterConfig {
+        account: account.to_string(),
+        currency: Some(currency.to_string()),
+        amount_format: config::AmountFormat::default(),
+        importer_type: config::ImporterType::Csv(csv_config.clone()),
+    };
+    let importer = csv_importer::CsvImporter::new(importer_config);
+    importer.extract_string_enriched(&content, &csv_config)
 }
 
 #[cfg(test)]

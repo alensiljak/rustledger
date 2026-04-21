@@ -132,6 +132,10 @@ pub struct Args {
     #[arg(long)]
     invert_sign: bool,
 
+    /// Auto-detect CSV format (delimiter, columns, date format)
+    #[arg(long)]
+    auto: bool,
+
     /// CSV has no header row
     #[arg(long)]
     no_header: bool,
@@ -278,6 +282,32 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
                 config_path.display()
             );
             build_config_from_entry(entry)?
+        } else if args.auto {
+            // Auto-detect CSV format
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("Failed to read file: {}", file.display()))?;
+
+            let inferred = rustledger_importer::csv_inference::infer_csv_config(&content)
+                .ok_or_else(|| anyhow!(
+                    "Could not auto-detect CSV format for {}. Try specifying columns explicitly.",
+                    file.display()
+                ))?;
+
+            eprintln!(
+                "Auto-detected format (confidence: {:.0}%):",
+                inferred.confidence * 100.0
+            );
+            eprintln!("  delimiter: {:?}", inferred.delimiter);
+            eprintln!("  date_format: {}", inferred.date_format);
+            eprintln!("  has_header: {}", inferred.has_header);
+
+            let csv_config = inferred.to_csv_config();
+            ImporterConfig {
+                account: args.account.clone(),
+                currency: Some(args.currency.clone()),
+                amount_format: rustledger_importer::config::AmountFormat::default(),
+                importer_type: rustledger_importer::config::ImporterType::Csv(csv_config),
+            }
         } else {
             // No config file: build from CLI arguments
             let mut builder = ImporterConfig::csv()
