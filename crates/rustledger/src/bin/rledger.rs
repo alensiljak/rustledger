@@ -380,6 +380,16 @@ fn main() -> ExitCode {
             }
         }
         Commands::Extract { args } => {
+            // --list-importers doesn't require a file
+            if args.list_importers {
+                match rustledger::cmd::extract_cmd::list_importers(&args) {
+                    Ok(()) => return ExitCode::SUCCESS,
+                    Err(e) => {
+                        eprintln!("error: {e:#}");
+                        return ExitCode::from(1);
+                    }
+                }
+            }
             let file = match require_file(args.file.as_ref(), &config, profile_ref) {
                 Ok(f) => f,
                 Err(code) => return code,

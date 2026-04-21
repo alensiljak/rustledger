@@ -49,7 +49,6 @@ use rustledger_importer::{Importer, ImporterConfig, OfxImporter};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 use std::str::FromStr;
 
 /// Extract transactions from bank files.
@@ -75,7 +74,7 @@ pub struct Args {
 
     /// List available importers from config file and exit
     #[arg(long = "list-importers")]
-    list_importers: bool,
+    pub list_importers: bool,
 
     /// Target account for imported transactions
     #[arg(short, long, default_value = "Assets:Bank:Checking")]
@@ -146,45 +145,8 @@ pub struct Args {
     existing: Option<PathBuf>,
 }
 
-/// Main entry point with custom binary name (for bean-extract compatibility).
-pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
-
-    // Handle shell completion generation
-    if let Some(shell) = args.generate_completions {
-        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
-        return ExitCode::SUCCESS;
-    }
-
-    // Handle --list-importers
-    if args.list_importers {
-        return match list_importers(&args) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(e) => {
-                eprintln!("error: {e:#}");
-                ExitCode::from(1)
-            }
-        };
-    }
-
-    // File is required when not generating completions or listing importers
-    let Some(ref file) = args.file else {
-        eprintln!("error: FILE is required");
-        eprintln!("For more information, try '--help'");
-        return ExitCode::from(2);
-    };
-
-    match run(&args, file) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::from(1)
-        }
-    }
-}
-
 /// List available importers from a config file.
-fn list_importers(args: &Args) -> Result<()> {
+pub fn list_importers(args: &Args) -> Result<()> {
     let config_path = find_importers_config(args.config.as_deref())?
         .context("--list-importers requires --config or an importers.toml in the current directory or ~/.config/rledger/")?;
 

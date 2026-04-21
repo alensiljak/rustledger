@@ -271,8 +271,7 @@ jobs:
           # Create archive with all binaries
           ARCHIVE="rustledger-${VERSION}-${{ matrix.target }}.tar.gz"
           tar -czvf "../../../${ARCHIVE}" \
-            rledger rledger-lsp \
-            bean-check bean-format bean-query bean-report bean-doctor bean-extract bean-price
+            rledger rledger-lsp
 
           # Create checksum
           cd ../../..
@@ -289,8 +288,7 @@ jobs:
           # Create archive with all binaries
           $ARCHIVE = "rustledger-${VERSION}-${{ matrix.target }}.zip"
           $binaries = @(
-            "rledger.exe", "rledger-lsp.exe",
-            "bean-check.exe", "bean-format.exe", "bean-query.exe", "bean-report.exe", "bean-doctor.exe", "bean-extract.exe", "bean-price.exe"
+            "rledger.exe", "rledger-lsp.exe"
           )
           Compress-Archive -Path $binaries -DestinationPath "../../../${ARCHIVE}"
 

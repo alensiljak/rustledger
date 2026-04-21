@@ -17,7 +17,6 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::io;
 use std::path::PathBuf;
-use std::process::ExitCode;
 
 mod context;
 mod directories;
@@ -171,32 +170,6 @@ pub enum Conversion {
     Value,
     /// Convert to cost basis
     Cost,
-}
-
-/// Main entry point with custom binary name (for bean-doctor compatibility).
-pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let args = Args::parse();
-
-    // Handle shell completion generation
-    if let Some(shell) = args.generate_completions {
-        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
-        return ExitCode::SUCCESS;
-    }
-
-    // Command is required when not generating completions
-    let Some(command) = args.command else {
-        eprintln!("error: a subcommand is required");
-        eprintln!("For more information, try '--help'");
-        return ExitCode::from(2);
-    };
-
-    match run(command) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::from(1)
-        }
-    }
 }
 
 /// Run the doctor command with the given subcommand.

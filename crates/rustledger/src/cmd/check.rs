@@ -17,8 +17,6 @@ use serde::Serialize;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
-use tracing::Level;
-use tracing_subscriber::fmt::format::FmtSpan;
 
 /// Output format for diagnostics.
 #[derive(Debug, Clone, Copy, Default, ValueEnum)]
@@ -749,41 +747,6 @@ pub fn run(args: &Args) -> Result<ExitCode> {
         Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)
-    }
-}
-
-/// Main entry point with custom binary name (for bean-check compatibility).
-pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let mut args = Args::parse();
-
-    // Handle shell completion generation
-    if let Some(shell) = args.generate_completions {
-        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
-        return ExitCode::SUCCESS;
-    }
-
-    // If no file specified, try to get from config (same as rledger)
-    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
-    if args.file.is_none()
-        && let Ok(loaded) = crate::config::Config::load()
-    {
-        let profile = std::env::var("RLEDGER_PROFILE").ok();
-        args.file = loaded.config.effective_file_path(profile.as_deref());
-    }
-
-    if args.verbose {
-        tracing_subscriber::fmt()
-            .with_max_level(Level::DEBUG)
-            .with_span_events(FmtSpan::CLOSE)
-            .init();
-    }
-
-    match run(&args) {
-        Ok(exit_code) => exit_code,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::from(2)
-        }
     }
 }
 

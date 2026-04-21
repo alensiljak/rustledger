@@ -23,8 +23,6 @@ use rustledger_loader::{LoadOptions, load};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::process::ExitCode;
-
 /// System tables available in BQL queries (prefixed with #).
 const SYSTEM_TABLES: &[&str] = &[
     "#accounts",
@@ -101,34 +99,6 @@ impl std::fmt::Display for OutputFormat {
             Self::Csv => write!(f, "csv"),
             Self::Json => write!(f, "json"),
             Self::Beancount => write!(f, "beancount"),
-        }
-    }
-}
-
-/// Main entry point with custom binary name (for bean-query compatibility).
-pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let mut args = Args::parse();
-
-    // Handle shell completion generation
-    if let Some(shell) = args.generate_completions {
-        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
-        return ExitCode::SUCCESS;
-    }
-
-    // If no file specified, try to get from config (same as rledger)
-    // Honor RLEDGER_PROFILE env var to match rledger behavior with profiles
-    if args.file.is_none()
-        && let Ok(loaded) = crate::config::Config::load()
-    {
-        let profile = std::env::var("RLEDGER_PROFILE").ok();
-        args.file = loaded.config.effective_file_path(profile.as_deref());
-    }
-
-    match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::from(1)
         }
     }
 }
