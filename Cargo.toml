@@ -10,6 +10,7 @@ members = [
   "crates/rustledger-plugin",
   "crates/rustledger-plugin-types",
   "crates/rustledger-importer",
+  "crates/rustledger-ops",
   "crates/rustledger",
   "crates/rustledger-wasm",
   "crates/rustledger-ffi-wasi",
@@ -26,6 +27,7 @@ default-members = [
   "crates/rustledger-plugin",
   "crates/rustledger-plugin-types",
   "crates/rustledger-importer",
+  "crates/rustledger-ops",
   "crates/rustledger",
   "crates/rustledger-lsp",
 ]
@@ -93,6 +95,7 @@ rayon = "1.12"
 
 # Fast hashing
 rustc-hash = "2"
+blake3 = "1"
 
 # Testing
 proptest = "1"
@@ -136,6 +139,7 @@ rustledger-query = { version = "0.13.0", path = "crates/rustledger-query" }
 rustledger-plugin = { version = "0.13.0", path = "crates/rustledger-plugin", default-features = false }
 rustledger-plugin-types = { version = "0.13.0", path = "crates/rustledger-plugin-types" }
 rustledger-importer = { version = "0.13.0", path = "crates/rustledger-importer" }
+rustledger-ops = { version = "0.13.0", path = "crates/rustledger-ops" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"

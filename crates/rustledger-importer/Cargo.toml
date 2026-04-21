@@ -17,6 +17,7 @@ bench = false
 
 [dependencies]
 rustledger-core.workspace = true
+rustledger-ops.workspace = true
 jiff.workspace = true
 rust_decimal.workspace = true
 anyhow.workspace = true

@@ -165,6 +165,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
 
 [[package]]
+name = "arrayref"
+version = "0.3.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a2e8124351fda1ef8aaaa3bbd7ebbcb486bbcd4225aca0aa0d84bb2db8fecb"
+
+[[package]]
 name = "arrayvec"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -279,6 +285,20 @@ dependencies = [
  "radium",
  "tap",
  "wyz",
+]
+
+[[package]]
+name = "blake3"
+version = "1.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d2d5991425dfd0785aed03aedcf0b321d61975c9b5b3689c774a2610ae0b51e"
+dependencies = [
+ "arrayref",
+ "arrayvec",
+ "cc",
+ "cfg-if",
+ "constant_time_eq",
+ "cpufeatures 0.3.0",
 ]
 
 [[package]]
@@ -3245,6 +3265,7 @@ dependencies = [
  "ofxy",
  "rust_decimal",
  "rustledger-core",
+ "rustledger-ops",
  "serde",
  "serde_json",
  "tempfile",
@@ -3299,6 +3320,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rustledger-ops"
+version = "0.13.0"
+dependencies = [
+ "blake3",
+ "proptest",
+ "rust_decimal",
+ "rustledger-plugin-types",
+]
+
+[[package]]
 name = "rustledger-parser"
 version = "0.13.0"
 dependencies = [
@@ -3329,6 +3360,7 @@ dependencies = [
  "rust_decimal",
  "rust_decimal_macros",
  "rustledger-core",
+ "rustledger-ops",
  "rustledger-plugin-types",
  "serde",
  "serde_json",

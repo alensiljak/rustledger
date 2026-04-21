@@ -1,10 +1,12 @@
 //! CSV file importer.
 
-use crate::ImportResult;
 use crate::config::{ColumnSpec, CsvConfig, ImporterConfig};
+use crate::{EnrichedImportResult, ImportResult};
 use anyhow::{Context, Result};
 use rust_decimal::Decimal;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
+use rustledger_ops::enrichment::{CategorizationMethod, Enrichment};
+use rustledger_ops::fingerprint::Fingerprint;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -78,6 +80,97 @@ impl CsvImporter {
             result = result.with_warning(warning);
         }
         Ok(result)
+    }
+
+    /// Extract transactions from a file with enrichment metadata.
+    ///
+    /// Each transaction is paired with an [`Enrichment`] that includes a
+    /// stable fingerprint and categorization confidence.
+    pub fn extract_file_enriched(
+        &self,
+        path: &Path,
+        csv_config: &CsvConfig,
+    ) -> Result<EnrichedImportResult> {
+        let file =
+            File::open(path).with_context(|| format!("Failed to open file: {}", path.display()))?;
+        let mut reader = BufReader::new(file);
+        let mut content = String::new();
+        reader.read_to_string(&mut content)?;
+        self.extract_string_enriched(&content, csv_config)
+    }
+
+    /// Extract transactions from string content with enrichment metadata.
+    pub fn extract_string_enriched(
+        &self,
+        content: &str,
+        csv_config: &CsvConfig,
+    ) -> Result<EnrichedImportResult> {
+        let result = self.extract_string(content, csv_config)?;
+        let entries = result
+            .directives
+            .into_iter()
+            .enumerate()
+            .map(|(i, directive)| {
+                let enrichment = self.enrich_directive(&directive, csv_config, i);
+                (directive, enrichment)
+            })
+            .collect();
+
+        let mut enriched = EnrichedImportResult::new(entries);
+        for warning in result.warnings {
+            enriched = enriched.with_warning(warning);
+        }
+        Ok(enriched)
+    }
+
+    /// Build enrichment metadata for a single imported directive.
+    fn enrich_directive(
+        &self,
+        directive: &Directive,
+        csv_config: &CsvConfig,
+        index: usize,
+    ) -> Enrichment {
+        let (confidence, method) = if let Directive::Transaction(txn) = directive {
+            // Determine if we matched a mapping rule or used the default
+            let payee = txn.payee.as_ref().map(rustledger_core::InternedStr::as_str);
+            let matched = self.match_mapping(csv_config, payee, txn.narration.as_str());
+            if matched.is_some() {
+                (1.0, CategorizationMethod::Rule)
+            } else {
+                (0.0, CategorizationMethod::Default)
+            }
+        } else {
+            (1.0, CategorizationMethod::Manual)
+        };
+
+        let fingerprint = if let Directive::Transaction(txn) = directive {
+            let amount_str = txn.postings.first().and_then(|p| {
+                p.units
+                    .as_ref()
+                    .and_then(|u| u.number().map(|n| n.to_string()))
+            });
+            let mut text = String::new();
+            if let Some(ref payee) = txn.payee {
+                text.push_str(payee.as_str());
+                text.push(' ');
+            }
+            text.push_str(txn.narration.as_str());
+            Some(Fingerprint::compute(
+                &txn.date.to_string(),
+                amount_str.as_deref(),
+                &text,
+            ))
+        } else {
+            None
+        };
+
+        Enrichment {
+            directive_index: index,
+            confidence,
+            method,
+            alternatives: vec![],
+            fingerprint,
+        }
     }
 
     fn parse_row(

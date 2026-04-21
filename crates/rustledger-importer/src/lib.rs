@@ -37,6 +37,7 @@ pub mod registry;
 
 use anyhow::Result;
 use rustledger_core::Directive;
+use rustledger_ops::enrichment::Enrichment;
 use std::path::Path;
 
 pub use config::ImporterConfig;
@@ -73,6 +74,58 @@ impl ImportResult {
     pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
         self.warnings.push(warning.into());
         self
+    }
+}
+
+/// Result of an enriched import operation.
+///
+/// Each directive is paired with an [`Enrichment`] that carries metadata about
+/// how it was categorized, its confidence score, and a stable fingerprint for
+/// deduplication.
+#[derive(Debug, Clone)]
+pub struct EnrichedImportResult {
+    /// Directive–enrichment pairs.
+    pub entries: Vec<(Directive, Enrichment)>,
+    /// Warnings encountered during import.
+    pub warnings: Vec<String>,
+}
+
+impl EnrichedImportResult {
+    /// Create a new enriched import result.
+    pub const fn new(entries: Vec<(Directive, Enrichment)>) -> Self {
+        Self {
+            entries,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Create an empty enriched import result.
+    pub const fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Add a warning.
+    pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
+        self.warnings.push(warning.into());
+        self
+    }
+
+    /// Convert to a plain [`ImportResult`], discarding enrichment metadata.
+    #[must_use]
+    pub fn into_import_result(self) -> ImportResult {
+        ImportResult {
+            directives: self.entries.into_iter().map(|(d, _)| d).collect(),
+            warnings: self.warnings,
+        }
+    }
+}
+
+impl From<EnrichedImportResult> for ImportResult {
+    fn from(enriched: EnrichedImportResult) -> Self {
+        enriched.into_import_result()
     }
 }
 
