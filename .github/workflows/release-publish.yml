@@ -150,8 +150,9 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - name: Update npm for OIDC support
-        run: npm install -g npm@latest
+      # Node 22 ships with npm 10.9+ which supports OIDC natively.
+      # Do NOT run `npm install -g npm@latest` — it corrupts the npm
+      # installation on Node 22 (MODULE_NOT_FOUND: promise-retry).
       - name: Publish to npm (trusted publishing)
         run: |
           cd crates/rustledger-wasm/pkg
@@ -190,8 +191,9 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - name: Update npm for OIDC support
-        run: npm install -g npm@latest
+      # Node 22 ships with npm 10.9+ which supports OIDC natively.
+      # Do NOT run `npm install -g npm@latest` — it corrupts the npm
+      # installation on Node 22 (MODULE_NOT_FOUND: promise-retry).
       - name: Wait for npm registry propagation
         run: |
           VERSION=${RELEASE_TAG#v}
