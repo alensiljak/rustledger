@@ -59,6 +59,14 @@ fn wrapper_filename(name: &str) -> String {
     format!("{name}.cmd")
 }
 
+/// Check if an existing file is an rledger-generated wrapper.
+///
+/// Returns `true` if the file can be read as UTF-8 and contains "rledger".
+/// Returns `false` if the file doesn't exist, can't be read, or isn't a wrapper.
+fn is_rledger_wrapper(path: &Path) -> bool {
+    fs::read_to_string(path).is_ok_and(|contents| contents.contains("rledger"))
+}
+
 /// Install bean-* compatibility wrapper scripts.
 pub fn install(prefix: Option<&Path>) -> Result<()> {
     let dir = resolve_target_dir(prefix)?;
@@ -75,10 +83,7 @@ pub fn install(prefix: Option<&Path>) -> Result<()> {
         let filename = wrapper_filename(name);
         let path = dir.join(&filename);
 
-        if path.exists()
-            && let Ok(contents) = fs::read_to_string(&path)
-            && !contents.contains("rledger")
-        {
+        if path.exists() && !is_rledger_wrapper(&path) {
             eprintln!(
                 "  skip: {} (exists and is not an rledger wrapper)",
                 path.display()
@@ -105,11 +110,10 @@ pub fn install(prefix: Option<&Path>) -> Result<()> {
     if installed > 0 {
         println!("\n{installed} wrapper(s) installed to {}", dir.display());
         // Check if the directory is on PATH
-        if let Ok(path_var) = std::env::var("PATH") {
-            let dir_str = dir.to_string_lossy();
-            if !path_var.split(':').any(|p| p == dir_str.as_ref()) {
-                println!("  note: {} may not be on your PATH", dir.display());
-            }
+        if let Ok(path_var) = std::env::var("PATH")
+            && !std::env::split_paths(&path_var).any(|p| p == dir)
+        {
+            println!("  note: {} may not be on your PATH", dir.display());
         }
     } else {
         println!("nothing to install (all wrappers already exist)");
@@ -132,9 +136,7 @@ pub fn uninstall(prefix: Option<&Path>) -> Result<()> {
         }
 
         // Only remove if it's one of our wrappers
-        if let Ok(contents) = fs::read_to_string(&path)
-            && !contents.contains("rledger")
-        {
+        if !is_rledger_wrapper(&path) {
             eprintln!("  skip: {} (not an rledger wrapper)", path.display());
             continue;
         }
@@ -167,6 +169,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_wrapper_content_unix() {
         let content = wrapper_content("check");
@@ -213,7 +216,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         // Write a non-rledger bean-check
-        let path = dir.path().join("bean-check");
+        let path = dir.path().join(wrapper_filename("bean-check"));
         fs::write(
             &path,
             "#!/bin/sh\npython3 -m beancount.scripts.check \"$@\"\n",
@@ -231,11 +234,29 @@ mod tests {
     }
 
     #[test]
+    fn test_install_skips_non_utf8_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write a binary file that can't be read as UTF-8
+        let path = dir.path().join(wrapper_filename("bean-check"));
+        fs::write(&path, b"\x80\x81\x82\xff").unwrap();
+
+        install(Some(dir.path())).unwrap();
+
+        // Should NOT have been overwritten
+        let contents = fs::read(&path).unwrap();
+        assert_eq!(
+            contents, b"\x80\x81\x82\xff",
+            "should not overwrite non-UTF-8 file"
+        );
+    }
+
+    #[test]
     fn test_install_overwrites_existing_rledger_wrappers() {
         let dir = tempfile::tempdir().unwrap();
 
         // Write an old rledger wrapper
-        let path = dir.path().join("bean-check");
+        let path = dir.path().join(wrapper_filename("bean-check"));
         fs::write(&path, "#!/bin/sh\nrledger check-old \"$@\"\n").unwrap();
 
         install(Some(dir.path())).unwrap();
@@ -246,5 +267,19 @@ mod tests {
             contents.contains("rledger check"),
             "should overwrite old rledger wrapper"
         );
+    }
+
+    #[test]
+    fn test_uninstall_skips_non_rledger_files() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // Write a non-rledger bean-check
+        let path = dir.path().join(wrapper_filename("bean-check"));
+        fs::write(&path, "#!/bin/sh\npython3 bean-check \"$@\"\n").unwrap();
+
+        uninstall(Some(dir.path())).unwrap();
+
+        // Should NOT have been removed
+        assert!(path.exists(), "should not remove non-rledger file");
     }
 }
