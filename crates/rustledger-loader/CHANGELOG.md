@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.12.1) - 2026-04-21
+
+### Bug Fixes
+
+- eliminate duplication, fix file reading and encrypted file handling
+- preserve include order and surface I/O errors in parallel path
+- use FileSystem trait for parallel reads instead of raw std::fs
+- read only 1024 bytes for .asc encryption detection
+- address Copilot review — tighten validator, fix Options, update docs
+- execute WASM plugins during file loading
+- handle Python and unknown plugins in loader, add tests
+- inline format variables for clippy
+- address review comments on plugin execution
+- clippy (collapsible if, inline format, case-insensitive ext)
+- case-insensitive .py extension, fix phase type in test
+- make WASM test resilient to coverage instrumentation
+- order augmentations before reductions on same date
+- address review comments on sort ordering
+- address review comments on plugin consolidation
+- restore specific error codes and suggest_module_path in run_plugins()
+
+### Performance
+
+- parallel file loading for multi-file ledgers
+- avoid cloning directive list for native plugin execution
+
+### Refactoring
+
+- consolidate plugin execution into run_plugins()
+
+### Testing
+
+- add regression test for parallel multi-file loading
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

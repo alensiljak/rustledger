@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.12.1) - 2026-04-21
+
+### Bug Fixes
+
+- resolve Rust 1.95 clippy lints in rustledger-plugin
+- address review comments on chrono-to-jiff migration
+- clippy, formatting, and cast precedence issues
+- resolve remaining clippy warnings
+
+### Refactoring
+
+- remove more dead code found in second pass
+- third pass — remove unused error variant, constant, and field
+- *(core)* replace chrono with jiff in rustledger-core
+- migrate remaining crates from chrono to jiff
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

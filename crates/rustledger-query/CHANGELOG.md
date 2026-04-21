@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.12.1) - 2026-04-21
+
+### Bug Fixes
+
+- support WHERE clause in BALANCES queries
+- address review comments on BALANCES WHERE
+- add missing postings table columns for beancount compatibility
+- weight for @@ total price, describe id type, evaluate_column parity
+- align description format and add id to evaluate_column
+- add visible meta column to postings table
+- lowercase type column values for beancount compatibility
+- collapse nested if in weight evaluation (clippy)
+- clippy, formatting, and cast precedence issues
+- double-mangled paths and clippy cast warnings
+- pred_opt/succ_opt and unused imports in CLI/bench
+
+### Refactoring
+
+- *(core)* replace chrono with jiff in rustledger-core
+- migrate remaining crates from chrono to jiff
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

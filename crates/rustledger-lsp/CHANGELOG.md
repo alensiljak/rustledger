@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.12.1) - 2026-04-21
+
+### Bug Fixes
+
+- handle deserialization failures in async dispatch
+- update LSP test for Unicode account support
+- resolve all Rust 1.95 clippy lints across workspace
+- address review comments on sort ordering
+- also emit option warnings in single-file mode
+
+### Features
+
+- implement background request dispatch for expensive LSP operations
+- expose option warnings (E7001–E7006) in LSP and WASM
+
+### Refactoring
+
+- remove duplicated code and dead code across codebase
+- third pass — remove unused error variant, constant, and field
+- improve LSP background dispatch architecture
+- *(core)* replace chrono with jiff in rustledger-core
+- migrate remaining crates from chrono to jiff
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes
