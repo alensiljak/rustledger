@@ -212,8 +212,9 @@ impl BookingEngine {
                 // - Selling long positions (negative units, positive inventory)
                 // - Closing short positions (positive units, negative inventory)
                 if let Some(inv) = working_inventories.get_mut(&posting.account) {
-                    // Check if inventory is_reduced_by these units
-                    // (signs differ for the same currency)
+                    // Check if these units reduce existing cost-bearing inventory lots.
+                    // Only positions with a cost basis are considered; simple (no-cost)
+                    // positions are ignored to avoid misclassifying augmentations.
                     let is_reduction = inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 
                     if is_reduction {
@@ -439,8 +440,10 @@ impl BookingEngine {
                 let method = self.method_for(&posting.account);
                 let inv = self.inventories.entry(posting.account.clone()).or_default();
 
-                // Determine if this is a reduction using is_reduced_by logic:
-                // Units reduce inventory when signs differ for the same currency
+                // Determine if this is a reduction: units reduce inventory when
+                // signs differ for the same currency. Only cost-bearing positions
+                // are considered, so simple (no-cost) positions don't trigger
+                // false reduction detection.
                 let is_reduction = posting.cost.is_some()
                     && inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 

@@ -452,9 +452,10 @@ pub fn update_inventories(
             .unwrap_or_default();
 
         // Use the same reduction detection as the booking engine: a posting
-        // reduces inventory when the inventory has positions with the opposite
-        // sign for the same currency. This correctly handles sell-to-open
-        // (selling into empty inventory) as an augmentation, not a reduction.
+        // reduces inventory when the inventory has cost-bearing positions with
+        // the opposite sign for the same currency. Simple (no-cost) positions
+        // are ignored. This correctly handles sell-to-open (selling into empty
+        // inventory) as an augmentation, not a reduction.
         let is_reduction =
             posting.cost.is_some() && inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 
