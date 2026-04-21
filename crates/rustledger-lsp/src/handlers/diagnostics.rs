@@ -628,6 +628,46 @@ pub fn all_diagnostics(
         }
     }
 
+    // Emit option warnings (E7001–E7006).
+    // In multi-file mode, use warnings from the loaded ledger (shown only in
+    // the main file to avoid duplication). In single-file mode (no ledger),
+    // validate options from the parse result so diagnostics still appear
+    // before the workspace ledger has loaded.
+    let show_option_warnings = current_file_id.is_none() || current_file_id == Some(0);
+    if show_option_warnings {
+        let single_file_options;
+        let option_warnings = if let Some(ls) = ledger_state
+            && let Some(ledger) = ls.ledger()
+        {
+            ledger.options.warnings.as_slice()
+        } else {
+            // Single-file fallback: validate parsed options to generate warnings.
+            let mut opts = LoaderOptions::default();
+            for (key, value, _span) in &result.options {
+                opts.set(key, value);
+            }
+            single_file_options = opts;
+            single_file_options.warnings.as_slice()
+        };
+
+        for warning in option_warnings {
+            diagnostics.push(Diagnostic {
+                range: Range {
+                    start: Position::new(0, 0),
+                    end: Position::new(0, 0),
+                },
+                severity: Some(DiagnosticSeverity::ERROR),
+                code: Some(lsp_types::NumberOrString::String(warning.code.to_string())),
+                source: Some("rustledger".to_string()),
+                message: warning.message.clone(),
+                related_information: None,
+                tags: None,
+                code_description: None,
+                data: None,
+            });
+        }
+    }
+
     diagnostics
 }
 

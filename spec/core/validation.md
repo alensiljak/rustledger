@@ -256,16 +256,6 @@ This document catalogs all validation errors and warnings with their trigger con
   Assets:Cash
 ```
 
-### BOOKING_NEGATIVE_UNITS
-
-**Code:** `E4004`
-
-**Condition:** Reduction would create negative position (except with NONE booking).
-
-**Message:** `Reduction would result in negative inventory for {currency}`
-
-**Severity:** Error
-
 ## Currency Errors
 
 ### CURRENCY_NOT_DECLARED
@@ -295,28 +285,6 @@ This document catalogs all validation errors and warnings with their trigger con
   Assets:USDOnly   100 EUR  ; ERROR: Only USD allowed
   Income:Salary
 ```
-
-## Metadata Errors
-
-### DUPLICATE_METADATA_KEY
-
-**Code:** `E6001`
-
-**Condition:** Same metadata key specified multiple times on one directive.
-
-**Message:** `Duplicate metadata key "{key}"`
-
-**Severity:** Warning
-
-### INVALID_METADATA_VALUE
-
-**Code:** `E6002`
-
-**Condition:** Metadata value doesn't match expected type.
-
-**Message:** `Invalid value for metadata key "{key}": expected {type}`
-
-**Severity:** Warning
 
 ## Option Errors
 
