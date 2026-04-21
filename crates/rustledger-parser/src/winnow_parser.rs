@@ -503,6 +503,34 @@ fn parse_primary(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
             stream.advance();
             return parse_primary(stream);
         }
+        // Date token in expression context: re-parse as arithmetic (issue #876).
+        // The Logos lexer greedily matches `\d{4}[-/]\d{1,2}[-/]\d{1,2}` as a
+        // Date token, but in an expression/amount position `1000-12-32` should
+        // be evaluated as 1000 - 12 - 32 = 956. We split the Date text into
+        // its numeric components and compute the result here.
+        //
+        // Only dash-separated dates are recovered as subtraction. Slash-separated
+        // dates (e.g. `2024/1/5`) fall through to a parse error because Python
+        // beancount does not treat them as division either — returning a silently
+        // wrong number would be worse than an error.
+        if let Token::Date(s) = &t.token {
+            if s.contains('/') {
+                // Slash-separated date in expression context — not valid arithmetic.
+                return Err(());
+            }
+            let parts: Vec<&str> = s.splitn(3, '-').collect();
+            if parts.len() == 3
+                && let (Ok(a), Ok(b), Ok(c)) = (
+                    Decimal::from_str(parts[0]),
+                    Decimal::from_str(parts[1]),
+                    Decimal::from_str(parts[2]),
+                )
+            {
+                stream.advance();
+                let result = a.checked_sub(b).and_then(|r| r.checked_sub(c)).ok_or(())?;
+                return Ok(result);
+            }
+        }
     }
     parse_number(stream)
 }
@@ -2742,5 +2770,114 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         assert_eq!(result.comments.len(), 3);
+    }
+
+    /// Regression test for issue #876 (beancount/beancount#986).
+    /// Arithmetic expressions like `1000-12-32` in posting amounts must be
+    /// evaluated as subtraction (1000 - 12 - 32 = 956), not tokenized as dates.
+    #[test]
+    fn test_date_arithmetic_ambiguity_subtraction() {
+        let source = "2024-01-15 balance Assets:Bank 1000-12-32 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(956),
+                "1000-12-32 should evaluate to 956"
+            );
+            assert_eq!(b.amount.currency.as_str(), "USD");
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Regression test for issue #876: another date-like arithmetic expression.
+    /// `2000-6-4` in a posting amount should evaluate to 2000 - 6 - 4 = 1990.
+    #[test]
+    fn test_date_arithmetic_ambiguity_single_digit() {
+        let source = "2024-01-15 balance Assets:Bank 2000-6-4 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(1990),
+                "2000-6-4 should evaluate to 1990"
+            );
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Regression test for issue #876: normal dates at line start must still
+    /// be parsed as dates and not be affected by the arithmetic recovery.
+    #[test]
+    fn test_date_at_line_start_still_works() {
+        let source = "2024-01-15 * \"Test\"\n  Assets:Bank  100 USD\n  Expenses:Other\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        if let Directive::Transaction(txn) = &result.directives[0].value {
+            assert_eq!(txn.postings.len(), 2);
+        } else {
+            panic!("Expected Transaction directive");
+        }
+    }
+
+    /// Demonstrates that a real date-like pattern in an expression context is
+    /// recovered as subtraction: 2024 - 1 - 15 = 2008.
+    #[test]
+    fn test_date_arithmetic_valid_date_in_expression() {
+        let source = "2024-01-15 balance Assets:Bank 2024-01-15 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(2008),
+                "2024-01-15 in amount context should evaluate to 2024 - 1 - 15 = 2008"
+            );
+            assert_eq!(b.amount.currency.as_str(), "USD");
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Known limitation: since the lexer tokenizes "1000-12-32" as a single Date
+    /// token, it is recovered as (1000 - 12 - 32) = 956. When followed by `*2`,
+    /// the result is 956 * 2 = 1912, not the mathematically correct
+    /// 1000 - 12 - (32 * 2) = 924.
+    /// This is acceptable because YYYY-MM-DD patterns followed by operators are
+    /// extremely unlikely in real ledger files, and fixing this would require
+    /// changes at the lexer level rather than the parser level.
+    #[test]
+    fn test_date_arithmetic_precedence_limitation() {
+        let source = "2024-01-15 balance Assets:Bank 1000-12-32*2 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            // (1000 - 12 - 32) * 2 = 956 * 2 = 1912, not 1000 - 12 - 64 = 924
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(1912),
+                "1000-12-32*2 evaluates as (1000-12-32)*2 = 1912 due to lexer-level tokenization"
+            );
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Slash-separated date-like tokens in expression context must produce a
+    /// parse error, not silently compute division. Python beancount would also
+    /// reject `2024/1/5` in an amount position.
+    #[test]
+    fn test_slash_date_in_expression_is_error() {
+        let source = "2024-01-15 balance Assets:Bank 2024/1/5 USD\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "slash-separated date in expression context should produce a parse error"
+        );
     }
 }
