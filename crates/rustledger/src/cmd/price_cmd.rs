@@ -5,7 +5,7 @@
 use crate::cmd::completions::ShellType;
 use crate::cmd::price::sources::PriceSource;
 use crate::cmd::price::{PriceRequest, PriceSourceRegistry};
-use crate::config::{CommodityMapping, Config, PriceConfig};
+use crate::config::{CommodityMapping, PriceConfig};
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustledger_core::NaiveDate;
@@ -13,7 +13,6 @@ use rustledger_loader::Loader;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::process::ExitCode;
 use std::time::Duration;
 
 /// Fetch current prices for commodities.
@@ -81,34 +80,6 @@ pub struct PriceArgs {
     /// Clear the price cache before fetching.
     #[arg(long)]
     clear_cache: bool,
-}
-
-/// Main entry point with custom binary name (for bean-price compatibility).
-pub fn main_with_name(bin_name: &str) -> ExitCode {
-    let mut args = Args::parse();
-
-    // Handle shell completion generation
-    if let Some(shell) = args.generate_completions {
-        crate::cmd::completions::generate_completions::<Args>(shell, bin_name);
-        return ExitCode::SUCCESS;
-    }
-
-    // Load configuration
-    let config = Config::load().map(|l| l.config).unwrap_or_default();
-
-    // If no file or symbols specified, try to get file from config
-    if args.price_args.file.is_none() && args.price_args.symbols.is_empty() {
-        let profile = std::env::var("RLEDGER_PROFILE").ok();
-        args.price_args.file = config.effective_file_path(profile.as_deref());
-    }
-
-    match run(&args.price_args, &config.price) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(e) => {
-            eprintln!("error: {e:#}");
-            ExitCode::from(1)
-        }
-    }
 }
 
 /// Run the price command.

@@ -109,7 +109,7 @@ rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
 | `rledger price` | Fetch commodity prices from online sources |
 | `rledger-lsp` | Language Server Protocol for editor integration |
 
-Python beancount users can also use `bean-check`, `bean-query`, etc.
+Python beancount users can install `bean-check`, `bean-query`, etc. wrapper scripts via `rledger compat install`.
 
 <details>
 <summary><strong>Report subcommands</strong></summary>

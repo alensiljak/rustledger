@@ -104,6 +104,12 @@ Replace beancount commands:
 | `bean-price` | `rledger price` |
 | `bean-extract` | `rledger extract` |
 
+Or install wrapper scripts so existing scripts work without changes:
+
+```bash
+rledger compat install
+```
+
 ### 6. Update Editor
 
 If using VS Code or other editors with Python beancount LSP, switch to rustledger LSP for better performance.

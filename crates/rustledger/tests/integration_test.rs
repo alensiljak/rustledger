@@ -10,20 +10,20 @@ use std::process::Command;
 
 use common::{project_root, test_fixtures_dir};
 
-fn rust_bean_check_binary() -> Option<PathBuf> {
-    // Use CARGO_BIN_EXE_bean-check if available (set by cargo test)
-    if let Ok(path) = std::env::var("CARGO_BIN_EXE_bean-check") {
+fn rledger_binary() -> Option<PathBuf> {
+    // Use CARGO_BIN_EXE_rledger if available (set by cargo test)
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_rledger") {
         return Some(PathBuf::from(path));
     }
 
     // Check target/release first (for --release and nix builds)
-    let release = project_root().join("target/release/bean-check");
+    let release = project_root().join("target/release/rledger");
     if release.exists() {
         return Some(release);
     }
 
     // Fall back to target/debug
-    let debug = project_root().join("target/debug/bean-check");
+    let debug = project_root().join("target/debug/rledger");
     if debug.exists() {
         return Some(debug);
     }
@@ -52,13 +52,13 @@ fn python_bean_check(path: &Path) -> (bool, String) {
     (success, stderr)
 }
 
-/// Run Rust bean-check on a file.
+/// Run rledger check on a file.
 fn rust_bean_check(path: &Path) -> Option<(bool, String)> {
-    let binary = rust_bean_check_binary()?;
+    let binary = rledger_binary()?;
     let output = Command::new(binary)
-        .arg(path)
+        .args(["check", path.to_str().unwrap()])
         .output()
-        .expect("Failed to run rust bean-check");
+        .expect("Failed to run rledger check");
 
     let success = output.status.success();
     let combined = format!(

@@ -53,15 +53,19 @@ rledger check -P personal
 
 ## Bean-\* Aliases
 
-For compatibility with Python beancount, rustledger provides aliased commands:
+For compatibility with Python beancount, rustledger can install wrapper scripts:
 
-| Alias | Equivalent |
-|-------|------------|
+```bash
+rledger compat install          # installs to same directory as rledger
+rledger compat install --prefix ~/bin  # or a custom directory
+rledger compat uninstall        # removes them
+```
+
+| Wrapper | Equivalent |
+|---------|------------|
 | `bean-check` | `rledger check` |
 | `bean-query` | `rledger query` |
 | `bean-format` | `rledger format` |
 | `bean-doctor` | `rledger doctor` |
 | `bean-extract` | `rledger extract` |
 | `bean-price` | `rledger price` |
-
-These aliases are included in the standard installation.

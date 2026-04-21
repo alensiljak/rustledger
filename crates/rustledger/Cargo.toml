@@ -17,10 +17,7 @@ default-run = "rledger"
 bench = false
 
 [features]
-default = ["bean-compat", "python-plugin-wasm"]
-# Include bean-* binaries for backwards compatibility with Python beancount.
-# Disable with: cargo install rustledger --no-default-features
-bean-compat = []
+default = ["python-plugin-wasm"]
 # Enable Python plugin support via WASM sandbox (adds ~30s to build time)
 # This allows running existing Python beancount plugins
 python-plugin-wasm = ["rustledger-plugin/python-plugins", "rustledger-loader/wasm-plugins", "rustledger-loader/python-plugins"]
@@ -29,42 +26,6 @@ python-plugin-wasm = ["rustledger-plugin/python-plugins", "rustledger-loader/was
 [[bin]]
 name = "rledger"
 path = "src/bin/rledger.rs"
-
-# Compatibility binaries (installed by default, opt-out with --no-default-features)
-[[bin]]
-name = "bean-check"
-path = "src/bin/bean_check.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-format"
-path = "src/bin/bean_format.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-query"
-path = "src/bin/bean_query.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-report"
-path = "src/bin/bean_report.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-doctor"
-path = "src/bin/bean_doctor.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-extract"
-path = "src/bin/bean_extract.rs"
-required-features = ["bean-compat"]
-
-[[bin]]
-name = "bean-price"
-path = "src/bin/bean_price.rs"
-required-features = ["bean-compat"]
 
 [dependencies]
 rustledger-core.workspace = true
