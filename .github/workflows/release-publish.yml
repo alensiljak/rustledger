@@ -150,8 +150,9 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - name: Update npm for OIDC support
-        run: npm install -g npm@latest
+      # Node 22 includes an npm version that supports OIDC trusted publishing.
+      # Do NOT run `npm install -g npm@latest` — it can corrupt the bundled
+      # npm installation on this runner setup (MODULE_NOT_FOUND: promise-retry).
       - name: Publish to npm (trusted publishing)
         run: |
           cd crates/rustledger-wasm/pkg
@@ -190,8 +191,9 @@ jobs:
         with:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
-      - name: Update npm for OIDC support
-        run: npm install -g npm@latest
+      # Node 22 includes an npm version that supports OIDC trusted publishing.
+      # Do NOT run `npm install -g npm@latest` — it can corrupt the bundled
+      # npm installation on this runner setup (MODULE_NOT_FOUND: promise-retry).
       - name: Wait for npm registry propagation
         run: |
           VERSION=${RELEASE_TAG#v}
