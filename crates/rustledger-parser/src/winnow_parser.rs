@@ -503,6 +503,34 @@ fn parse_primary(stream: &mut TokenStream<'_>) -> ParseRes<Decimal> {
             stream.advance();
             return parse_primary(stream);
         }
+        // Date token in expression context: re-parse as arithmetic (issue #876).
+        // The Logos lexer greedily matches `\d{4}[-/]\d{1,2}[-/]\d{1,2}` as a
+        // Date token, but in an expression/amount position `1000-12-32` should
+        // be evaluated as 1000 - 12 - 32 = 956. We split the Date text into
+        // its numeric components and compute the result here.
+        if let Token::Date(s) = &t.token {
+            let sep = if s.contains('-') { '-' } else { '/' };
+            let parts: Vec<&str> = s.splitn(3, sep).collect();
+            if parts.len() == 3
+                && let (Ok(a), Ok(b), Ok(c)) = (
+                    Decimal::from_str(parts[0]),
+                    Decimal::from_str(parts[1]),
+                    Decimal::from_str(parts[2]),
+                )
+            {
+                // Only treat as arithmetic if the separator is '-' (subtraction).
+                // Slash-separated values like `2024/1/5` in expression context
+                // would mean division, but that's unusual; we still re-parse them
+                // as division for consistency.
+                stream.advance();
+                if sep == '-' {
+                    let result = a.checked_sub(b).and_then(|r| r.checked_sub(c)).ok_or(())?;
+                    return Ok(result);
+                }
+                let result = a.checked_div(b).and_then(|r| r.checked_div(c)).ok_or(())?;
+                return Ok(result);
+            }
+        }
     }
     parse_number(stream)
 }
@@ -2742,5 +2770,58 @@ mod tests {
         let result = parse(source);
         assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
         assert_eq!(result.comments.len(), 3);
+    }
+
+    /// Regression test for issue #876 (beancount/beancount#986).
+    /// Arithmetic expressions like `1000-12-32` in posting amounts must be
+    /// evaluated as subtraction (1000 - 12 - 32 = 956), not tokenized as dates.
+    #[test]
+    fn test_date_arithmetic_ambiguity_subtraction() {
+        let source = "2024-01-15 balance Assets:Bank 1000-12-32 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(956),
+                "1000-12-32 should evaluate to 956"
+            );
+            assert_eq!(b.amount.currency.as_str(), "USD");
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Regression test for issue #876: another date-like arithmetic expression.
+    /// `2000-6-4` in a posting amount should evaluate to 2000 - 6 - 4 = 1990.
+    #[test]
+    fn test_date_arithmetic_ambiguity_single_digit() {
+        let source = "2024-01-15 balance Assets:Bank 2000-6-4 USD\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        if let Directive::Balance(b) = &result.directives[0].value {
+            assert_eq!(
+                b.amount.number,
+                Decimal::from(1990),
+                "2000-6-4 should evaluate to 1990"
+            );
+        } else {
+            panic!("Expected Balance directive");
+        }
+    }
+
+    /// Regression test for issue #876: normal dates at line start must still
+    /// be parsed as dates and not be affected by the arithmetic recovery.
+    #[test]
+    fn test_date_at_line_start_still_works() {
+        let source = "2024-01-15 * \"Test\"\n  Assets:Bank  100 USD\n  Expenses:Other\n";
+        let result = parse(source);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+        assert_eq!(result.directives.len(), 1);
+        if let Directive::Transaction(txn) = &result.directives[0].value {
+            assert_eq!(txn.postings.len(), 2);
+        } else {
+            panic!("Expected Transaction directive");
+        }
     }
 }
