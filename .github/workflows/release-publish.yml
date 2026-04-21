@@ -156,7 +156,7 @@ jobs:
       - name: Publish to npm (trusted publishing)
         run: |
           cd crates/rustledger-wasm/pkg
-          npm publish --access public --provenance || true
+          npm publish --access public --provenance
   # Trigger website rebuild to use new WASM package
   trigger-website:
     name: Trigger website rebuild
@@ -219,7 +219,7 @@ jobs:
       - name: Publish to npm (trusted publishing)
         run: |
           cd packages/mcp-server
-          npm publish --access public --provenance || true
+          npm publish --access public --provenance
   # Build and push Docker images
   publish-docker:
     name: Build Docker images
