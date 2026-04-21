@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.13.0) - 2026-04-21
+
+### Bug Fixes
+
+- resolve Rust 1.95 clippy warnings and remaining jiff issues
+
+### Features
+
+- expose option warnings (E7001–E7006) in LSP and WASM
+
+### Refactoring
+
+- fix false-positive dead_code suppression, narrow WASM visibility
+- *(core)* replace chrono with jiff in rustledger-core
+- migrate remaining crates from chrono to jiff
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.13.0) - 2026-04-21
+
+### Bug Fixes
+
+- address Copilot review on price source timeout docs and test helpers
+- resolve remaining Rust 1.95 clippy lints in rustledger CLI
+- replace map().unwrap_or(false) with is_ok_and() in integration test
+- add missing postings table columns for beancount compatibility
+- weight for @@ total price, describe id type, evaluate_column parity
+- add visible meta column to postings table
+- address review comments on plugin execution
+- remove duplicate WASM plugin execution in check command
+- address review comments on plugin consolidation
+- accept E8002 in Python module plugin error test
+- address review — safety, portability, and test coverage
+
+### Documentation
+
+- fix inaccuracies found during codebase audit
+- update all references to bean-* wrapper scripts
+
+### Features
+
+- add Nushell shell completions
+
+### Refactoring
+
+- remove duplicated code and dead code across codebase
+- remove more dead code found in second pass
+- third pass — remove unused error variant, constant, and field
+- consolidate plugin execution into run_plugins()
+- make bean-compat opt-in, add rledger compat install
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

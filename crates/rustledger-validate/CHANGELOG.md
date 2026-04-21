@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.13.0) - 2026-04-21
+
+### Bug Fixes
+
+- support full Unicode in account names
+- address Copilot review — tighten validator, fix Options, update docs
+- address review comments on sort ordering
+- tighten test and document empty cost spec skip logic
+- align validator reduction detection with booking engine
+
+### Documentation
+
+- update syntax.md and code comments for Unicode account support
+- clarify wording per review — "no cost amount" not "empty"
+
+### Refactoring
+
+- fix false-positive dead_code suppression, narrow WASM visibility
+- *(core)* replace chrono with jiff in rustledger-core
+- migrate remaining crates from chrono to jiff
+- remove duplicated booking logic from validator
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes

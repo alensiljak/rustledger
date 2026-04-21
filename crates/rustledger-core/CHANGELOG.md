@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0](https://github.com/rustledger/rustledger/compare/v0.12.0...v0.13.0) - 2026-04-21
+
+### Bug Fixes
+
+- replace sort_by with sort_by_key for Rust 1.95 clippy compat
+- implement cost merge operator {*}
+- address review comments on cost merge operator
+- compute merge cost directly from lots, validate cost currency
+- resolve clippy warnings (manual_map, redundant_clone)
+- replace redundant closure with method reference (clippy)
+- address review comments on chrono-to-jiff migration
+- clippy, formatting, and cast precedence issues
+- remove unused NaiveDate imports
+- order augmentations before reductions on same date
+- address review comments on sort ordering
+- use method reference instead of redundant closure
+- move booking method tests before Display tests section
+- use is_ok() instead of redundant pattern matching
+
+### Refactoring
+
+- remove more dead code found in second pass
+- extract shared average_cost_from_positions helper
+
+### Testing
+
+- add more coverage for cost merge operator
+- add comprehensive booking method coverage tests
+- add STRICT_WITH_SIZE property-based tests
+
 ## [0.12.0](https://github.com/rustledger/rustledger/compare/v0.11.0...v0.12.0) - 2026-04-11
 
 ### Bug Fixes
