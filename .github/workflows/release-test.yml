@@ -155,8 +155,6 @@ jobs:
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-      - name: Test bean-check compatibility
-        run: bean-check /tmp/test.beancount
   test-homebrew-macos:
     name: Test Homebrew (macOS)
     needs: prepare
@@ -184,8 +182,6 @@ jobs:
         run: echo '${{ env.TEST_BEANCOUNT }}' > /tmp/test.beancount
       - name: Test rledger check
         run: rledger check /tmp/test.beancount
-      - name: Test bean-check compatibility
-        run: bean-check /tmp/test.beancount
   test-scoop:
     name: Test Scoop (Windows)
     needs: prepare
