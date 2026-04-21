@@ -214,7 +214,7 @@ impl BookingEngine {
                 if let Some(inv) = working_inventories.get_mut(&posting.account) {
                     // Check if inventory is_reduced_by these units
                     // (signs differ for the same currency)
-                    let is_reduction = inv.is_reduced_by(units);
+                    let is_reduction = inv.is_reduced_by(units, true);
 
                     if is_reduction {
                         // Use reduce (not try_reduce) to actually update the working inventory.
@@ -369,7 +369,7 @@ impl BookingEngine {
                     let is_reduction = self
                         .inventories
                         .get(&posting.account)
-                        .is_some_and(|inv| inv.is_reduced_by(units));
+                        .is_some_and(|inv| inv.is_reduced_by(units, true));
 
                     // Fill in date for augmentations only (not reductions)
                     let inferred_date = if is_reduction {
@@ -442,7 +442,7 @@ impl BookingEngine {
 
                 // Determine if this is a reduction using is_reduced_by logic:
                 // Units reduce inventory when signs differ for the same currency
-                let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units);
+                let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units, true);
 
                 if is_reduction {
                     // Reduce from inventory
@@ -1163,6 +1163,77 @@ mod tests {
     /// [`rustledger_core::AccountedBookingError`] and `BookingError::Inventory`
     /// delegates to it transparently — so this test exercises the same path
     /// the validator and `cmd/check.rs` use.
+    // =========================================================================
+    // Regression test for issue #875 / beancount#889
+    //
+    // Scenario: buy stock with cost, sell without cost spec (leaves a simple
+    // negative position), then buy more with cost spec. The third transaction
+    // must succeed as an augmentation, not fail as a reduction.
+    // =========================================================================
+
+    #[test]
+    fn test_augmentation_after_sell_without_cost_spec() {
+        // Regression test for issue #875 / beancount#889.
+        //
+        // Before the fix, the sell-without-cost-spec left a -25 HOOG simple
+        // position, causing the subsequent buy-with-cost-spec to be
+        // misclassified as a reduction (because is_reduced_by saw opposite
+        // signs without distinguishing cost-bearing vs simple positions).
+        let mut engine = BookingEngine::new();
+
+        // 2024-01-10: Buy 100 HOOG {1.50 EUR}
+        let buy1 = Transaction::new(date(2024, 1, 10), "Buy 100 HOOG")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(100), "HOOG")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(1.50))
+                        .with_currency("EUR"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-150), "EUR")));
+
+        engine.apply(&buy1);
+
+        // 2024-01-15: Sell 25 HOOG without cost spec (price-only)
+        let sell = Transaction::new(date(2024, 1, 15), "Sell 25 HOOG without cost spec")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(-25), "HOOG"))
+                    .with_price(PriceAnnotation::Unit(Amount::new(dec!(1.60), "EUR"))),
+            )
+            .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(40), "EUR")));
+
+        engine.apply(&sell);
+
+        // 2024-01-20: Buy 50 more HOOG {1.70 EUR} - this MUST succeed
+        let buy2 = Transaction::new(date(2024, 1, 20), "Buy 50 more HOOG - should succeed")
+            .with_posting(
+                Posting::new("Assets:Stocks", Amount::new(dec!(50), "HOOG")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(1.70))
+                        .with_currency("EUR"),
+                ),
+            )
+            .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-85), "EUR")));
+
+        // This should NOT fail. Before the fix, the engine would see the
+        // -25 HOOG simple position and try to reduce, which would fail
+        // because the cost spec wouldn't match any existing lot.
+        let result = engine.book(&buy2);
+        assert!(
+            result.is_ok(),
+            "Buy with cost spec after sell without cost spec should succeed as augmentation, \
+             but got error: {:?}",
+            result.err()
+        );
+
+        engine.apply(&buy2);
+
+        // Verify final inventory state
+        let inv = engine.inventory(&"Assets:Stocks".into()).unwrap();
+        // 100 (original) - 25 (sold simple) + 50 (new lot) = 125 HOOG total
+        assert_eq!(inv.units("HOOG"), dec!(125));
+    }
+
     #[test]
     fn test_insufficient_units_display_contains_not_enough() {
         let err = BookingError::Inventory(

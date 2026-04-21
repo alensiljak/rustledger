@@ -453,7 +453,7 @@ pub fn update_inventories(
         // reduces inventory when the inventory has positions with the opposite
         // sign for the same currency. This correctly handles sell-to-open
         // (selling into empty inventory) as an augmentation, not a reduction.
-        let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units);
+        let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units, true);
 
         if is_reduction {
             process_inventory_reduction(inv, posting, units, booking_method, txn, errors);

@@ -351,13 +351,21 @@ impl Inventory {
     /// Returns `true` if there's a position with the same currency but opposite
     /// sign, meaning these units would reduce the inventory rather than add to it.
     ///
+    /// When `has_cost_spec` is `true`, only positions **with** a cost basis are
+    /// considered for reduction matching.  Simple (no-cost) positions are ignored
+    /// because they live in a different "cost layer" — a sell-without-cost-spec
+    /// that left a negative simple position should not cause a subsequent
+    /// cost-bearing augmentation to be misclassified as a reduction.
+    /// See: issue #875, beancount#889.
+    ///
     /// This is used to determine whether a posting is a sale/reduction or a
     /// purchase/augmentation.
     #[must_use]
-    pub fn is_reduced_by(&self, units: &Amount) -> bool {
+    pub fn is_reduced_by(&self, units: &Amount, has_cost_spec: bool) -> bool {
         self.positions.iter().any(|pos| {
             pos.units.currency == units.currency
                 && pos.units.number.is_sign_positive() != units.number.is_sign_positive()
+                && (!has_cost_spec || pos.cost.is_some())
         })
     }
 
@@ -2121,6 +2129,56 @@ mod tests {
     // produced #748. Any change to the Display strings below will break
     // these tests, forcing the author to consciously re-check pta-standards
     // conformance assertions and downstream user tooling.
+
+    // =========================================================================
+    // Regression test for issue #875 / beancount#889
+    //
+    // When a sell-without-cost-spec leaves a negative simple position in the
+    // inventory, a subsequent augmentation WITH a cost spec should NOT be
+    // misclassified as a reduction. `is_reduced_by` must only consider
+    // cost-bearing positions when the incoming posting has a cost spec.
+    // =========================================================================
+
+    #[test]
+    fn test_is_reduced_by_ignores_simple_positions_when_has_cost_spec() {
+        // Regression test for issue #875 / beancount#889.
+        //
+        // Scenario:
+        //   1. Buy 100 HOOG {1.50 EUR}  -> inventory: [100 HOOG {1.50 EUR}]
+        //   2. Sell 25 HOOG @ 1.60 EUR   -> inventory: [100 HOOG {1.50 EUR}, -25 HOOG (simple)]
+        //   3. Buy 50 HOOG {1.70 EUR}    -> should be augmentation, NOT reduction
+        //
+        // Before fix: is_reduced_by saw the -25 HOOG simple position and
+        // incorrectly reported that +50 HOOG would reduce the inventory.
+        let mut inv = Inventory::new();
+
+        // Step 1: buy 100 HOOG with cost
+        let cost = Cost::new(dec!(1.50), "EUR").with_date(date(2024, 1, 10));
+        inv.add(Position::with_cost(Amount::new(dec!(100), "HOOG"), cost));
+
+        // Step 2: sell 25 HOOG without cost spec (simple position)
+        inv.add(Position::simple(Amount::new(dec!(-25), "HOOG")));
+
+        // Step 3: check if buying 50 HOOG with cost spec would be a reduction
+        let buy_units = Amount::new(dec!(50), "HOOG");
+
+        // With has_cost_spec=true, only cost-bearing positions should be
+        // considered. The 100 HOOG {1.50 EUR} is positive and so is the
+        // incoming 50 HOOG -> same sign -> NOT a reduction.
+        assert!(
+            !inv.is_reduced_by(&buy_units, true),
+            "augmentation with cost spec should NOT be treated as reduction \
+             when only a simple (no-cost) position has opposite sign"
+        );
+
+        // With has_cost_spec=false, all positions are considered,
+        // including the -25 HOOG simple position -> IS a reduction.
+        assert!(
+            inv.is_reduced_by(&buy_units, false),
+            "without cost spec filter, the -25 HOOG simple position \
+             should cause is_reduced_by to return true"
+        );
+    }
 
     #[test]
     fn test_accounted_error_display_insufficient_units() {
