@@ -100,18 +100,33 @@ impl CsvImporter {
     }
 
     /// Extract transactions from string content with enrichment metadata.
+    ///
+    /// Builds a [`RulesEngine`] from the config's mappings, regex mappings,
+    /// and optionally the merchant dictionary. Each directive is enriched with
+    /// categorization confidence, method, and a stable fingerprint.
     pub fn extract_string_enriched(
         &self,
         content: &str,
         csv_config: &CsvConfig,
     ) -> Result<EnrichedImportResult> {
         let result = self.extract_string(content, csv_config)?;
+
+        // Build the rules engine once for all directives
+        let mut engine = rustledger_ops::categorize::RulesEngine::new();
+        engine.load_from_mappings(&csv_config.mappings);
+        if !csv_config.regex_mappings.is_empty() {
+            engine.load_from_regex_mappings(&csv_config.regex_mappings);
+        }
+        if csv_config.use_merchant_dict {
+            engine.load_merchant_dict();
+        }
+
         let entries = result
             .directives
             .into_iter()
             .enumerate()
             .map(|(i, directive)| {
-                let enrichment = self.enrich_directive(&directive, csv_config, i);
+                let enrichment = Self::enrich_directive(&directive, &mut engine, i);
                 (directive, enrichment)
             })
             .collect();
@@ -125,17 +140,14 @@ impl CsvImporter {
 
     /// Build enrichment metadata for a single imported directive.
     fn enrich_directive(
-        &self,
         directive: &Directive,
-        csv_config: &CsvConfig,
+        engine: &mut rustledger_ops::categorize::RulesEngine,
         index: usize,
     ) -> Enrichment {
         let (confidence, method) = if let Directive::Transaction(txn) = directive {
-            // Determine if we matched a mapping rule or used the default
             let payee = txn.payee.as_ref().map(rustledger_core::InternedStr::as_str);
-            let matched = self.match_mapping(csv_config, payee, txn.narration.as_str());
-            if matched.is_some() {
-                (1.0, CategorizationMethod::Rule)
+            if let Some(rule_match) = engine.categorize(payee, txn.narration.as_str()) {
+                (rule_match.confidence, rule_match.method)
             } else {
                 (0.0, CategorizationMethod::Default)
             }
@@ -944,6 +956,8 @@ not-a-date,Coffee,-5.00
             default_expense: None,
             default_income: None,
             mappings: Vec::new(),
+            regex_mappings: Vec::new(),
+            use_merchant_dict: false,
         };
 
         let importer = CsvImporter::new(ImporterConfig {

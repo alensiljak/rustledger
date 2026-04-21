@@ -10,11 +10,15 @@
 //!
 //! - [`fingerprint`] — structural hashing and stable fingerprinting of transactions
 //! - [`dedup`] — duplicate detection (structural, fuzzy, and fingerprint-based)
+//! - [`categorize`] — rules engine for transaction categorization (substring, regex, exact match)
+//! - [`merchants`] — built-in merchant dictionary (~500 common patterns)
 //! - [`enrichment`] — shared types for operation results (confidence, method, alternatives)
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod categorize;
 pub mod dedup;
 pub mod enrichment;
 pub mod fingerprint;
+pub mod merchants;

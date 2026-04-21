@@ -3325,6 +3325,7 @@ version = "0.13.0"
 dependencies = [
  "blake3",
  "proptest",
+ "regex",
  "rust_decimal",
  "rustledger-plugin-types",
 ]
