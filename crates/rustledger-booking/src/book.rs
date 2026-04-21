@@ -9,7 +9,7 @@
 use rustc_hash::FxHashMap;
 use rustledger_core::{
     AccountedBookingError, Amount, BookingMethod, Cost, CostSpec, IncompleteAmount, InternedStr,
-    Inventory, Position, Posting, Transaction,
+    Inventory, Position, Posting, ReductionScope, Transaction,
 };
 use thiserror::Error;
 
@@ -214,7 +214,7 @@ impl BookingEngine {
                 if let Some(inv) = working_inventories.get_mut(&posting.account) {
                     // Check if inventory is_reduced_by these units
                     // (signs differ for the same currency)
-                    let is_reduction = inv.is_reduced_by(units, true);
+                    let is_reduction = inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 
                     if is_reduction {
                         // Use reduce (not try_reduce) to actually update the working inventory.
@@ -366,10 +366,9 @@ impl BookingEngine {
 
                     // Check if this is a reduction (opposite sign exists in inventory)
                     // Reductions get their date from matched lot, augmentations get txn date
-                    let is_reduction = self
-                        .inventories
-                        .get(&posting.account)
-                        .is_some_and(|inv| inv.is_reduced_by(units, true));
+                    let is_reduction = self.inventories.get(&posting.account).is_some_and(|inv| {
+                        inv.is_reduced_by(units, ReductionScope::CostBearingOnly)
+                    });
 
                     // Fill in date for augmentations only (not reductions)
                     let inferred_date = if is_reduction {
@@ -442,7 +441,8 @@ impl BookingEngine {
 
                 // Determine if this is a reduction using is_reduced_by logic:
                 // Units reduce inventory when signs differ for the same currency
-                let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units, true);
+                let is_reduction = posting.cost.is_some()
+                    && inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 
                 if is_reduction {
                     // Reduce from inventory
@@ -1163,6 +1163,7 @@ mod tests {
     /// [`rustledger_core::AccountedBookingError`] and `BookingError::Inventory`
     /// delegates to it transparently — so this test exercises the same path
     /// the validator and `cmd/check.rs` use.
+
     // =========================================================================
     // Regression test for issue #875 / beancount#889
     //
@@ -1226,7 +1227,8 @@ mod tests {
             result.err()
         );
 
-        engine.apply(&buy2);
+        let booked = result.unwrap();
+        engine.apply(&booked.transaction);
 
         // Verify final inventory state
         let inv = engine.inventory(&"Assets:Stocks".into()).unwrap();

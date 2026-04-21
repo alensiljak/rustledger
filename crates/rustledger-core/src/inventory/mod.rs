@@ -72,6 +72,24 @@ impl fmt::Display for BookingMethod {
     }
 }
 
+/// Controls which positions are considered when checking whether incoming
+/// units reduce (i.e. have the opposite sign of) an existing inventory.
+///
+/// - [`AllPositions`](ReductionScope::AllPositions): every position is
+///   considered, regardless of whether it carries a cost.
+/// - [`CostBearingOnly`](ReductionScope::CostBearingOnly): only positions
+///   with a cost are considered.  This prevents a negative simple (no-cost)
+///   position — left behind by a sell-without-cost-spec — from causing a
+///   subsequent cost-bearing augmentation to be misclassified as a reduction.
+///   See: issue #875, beancount#889.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReductionScope {
+    /// Consider all positions (cost-bearing and simple).
+    AllPositions,
+    /// Consider only positions that carry a cost.
+    CostBearingOnly,
+}
+
 /// Result of a booking operation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BookingResult {
@@ -361,11 +379,14 @@ impl Inventory {
     /// This is used to determine whether a posting is a sale/reduction or a
     /// purchase/augmentation.
     #[must_use]
-    pub fn is_reduced_by(&self, units: &Amount, has_cost_spec: bool) -> bool {
+    pub fn is_reduced_by(&self, units: &Amount, scope: ReductionScope) -> bool {
         self.positions.iter().any(|pos| {
             pos.units.currency == units.currency
                 && pos.units.number.is_sign_positive() != units.number.is_sign_positive()
-                && (!has_cost_spec || pos.cost.is_some())
+                && match scope {
+                    ReductionScope::AllPositions => true,
+                    ReductionScope::CostBearingOnly => pos.cost.is_some(),
+                }
         })
     }
 
@@ -2166,15 +2187,15 @@ mod tests {
         // considered. The 100 HOOG {1.50 EUR} is positive and so is the
         // incoming 50 HOOG -> same sign -> NOT a reduction.
         assert!(
-            !inv.is_reduced_by(&buy_units, true),
+            !inv.is_reduced_by(&buy_units, ReductionScope::CostBearingOnly),
             "augmentation with cost spec should NOT be treated as reduction \
              when only a simple (no-cost) position has opposite sign"
         );
 
-        // With has_cost_spec=false, all positions are considered,
+        // With AllPositions, all positions are considered,
         // including the -25 HOOG simple position -> IS a reduction.
         assert!(
-            inv.is_reduced_by(&buy_units, false),
+            inv.is_reduced_by(&buy_units, ReductionScope::AllPositions),
             "without cost spec filter, the -25 HOOG simple position \
              should cause is_reduced_by to return true"
         );

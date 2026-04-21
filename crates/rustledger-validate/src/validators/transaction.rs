@@ -2,7 +2,9 @@
 
 use rust_decimal::Decimal;
 use rustc_hash::FxHashMap;
-use rustledger_core::{Amount, BookingMethod, InternedStr, Inventory, Posting, Transaction};
+use rustledger_core::{
+    Amount, BookingMethod, InternedStr, Inventory, Posting, ReductionScope, Transaction,
+};
 use std::collections::HashMap;
 
 use crate::error::{ErrorCode, ValidationError};
@@ -453,7 +455,8 @@ pub fn update_inventories(
         // reduces inventory when the inventory has positions with the opposite
         // sign for the same currency. This correctly handles sell-to-open
         // (selling into empty inventory) as an augmentation, not a reduction.
-        let is_reduction = posting.cost.is_some() && inv.is_reduced_by(units, true);
+        let is_reduction =
+            posting.cost.is_some() && inv.is_reduced_by(units, ReductionScope::CostBearingOnly);
 
         if is_reduction {
             process_inventory_reduction(inv, posting, units, booking_method, txn, errors);
