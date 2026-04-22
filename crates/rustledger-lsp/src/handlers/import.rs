@@ -228,7 +228,7 @@ pub fn import_code_lens(directives: &[Spanned<Directive>], source: &str) -> Vec<
         },
         command: Some(Command {
             title,
-            command: String::new(),
+            command: "rustledger.importSummary".to_string(),
             arguments: None,
         }),
         data: None,

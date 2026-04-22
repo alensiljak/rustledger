@@ -19,10 +19,9 @@ pub struct MerchantEntry {
     pub category: &'static str,
 }
 
-/// Built-in merchant patterns, parsed at compile time from `data/merchants.csv`.
+/// Built-in merchant patterns for common transaction categorization.
 ///
-/// To add patterns, edit `data/merchants.csv` (format: `pattern,account,category`).
-/// Lines starting with `#` are comments.
+/// See `data/merchants.csv` for the reference data these patterns are based on.
 pub static MERCHANT_PATTERNS: &[MerchantEntry] = &[
     // ===== Groceries =====
     MerchantEntry {

@@ -70,7 +70,7 @@ pub struct CsvConfig {
     /// Patterns are compiled as case-insensitive regexes.
     pub regex_mappings: Vec<(String, String)>,
     /// Whether to use the built-in merchant dictionary as a fallback.
-    /// The dictionary provides ~80 common merchant patterns at low priority.
+    /// The dictionary provides common merchant patterns at low priority.
     pub use_merchant_dict: bool,
 }
 

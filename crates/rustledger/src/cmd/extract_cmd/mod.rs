@@ -133,7 +133,11 @@ pub struct Args {
     invert_sign: bool,
 
     /// Auto-detect CSV format (delimiter, columns, date format)
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = [
+        "date_column", "date_format", "narration_column", "amount_column",
+        "delimiter", "skip_rows", "no_header", "debit_column", "credit_column",
+        "payee_column",
+    ])]
     auto: bool,
 
     /// CSV has no header row

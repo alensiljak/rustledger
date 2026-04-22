@@ -59,6 +59,7 @@ pub fn reconcile(
             for posting in &txn.postings {
                 if posting.account == ending_balance.account
                     && let Some(units) = &posting.units
+                    && units.currency == ending_balance.currency
                     && let Ok(amount) = Decimal::from_str(&units.number)
                 {
                     total += amount;

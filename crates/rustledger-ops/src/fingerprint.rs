@@ -15,6 +15,7 @@
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::str::FromStr;
 
 use rustledger_plugin_types::{
     AmountData, CostData, PostingData, PriceAnnotationData, TransactionData,
@@ -191,7 +192,10 @@ impl Fingerprint {
         hasher.update(date.as_bytes());
         hasher.update(b"|");
         if let Some(amt) = amount {
-            hasher.update(amt.as_bytes());
+            // Normalize amount so "50" and "50.00" produce the same fingerprint.
+            let normalized_amt = rust_decimal::Decimal::from_str(amt)
+                .map_or_else(|_| amt.to_string(), |d| d.normalize().to_string());
+            hasher.update(normalized_amt.as_bytes());
         }
         hasher.update(b"|");
         hasher.update(normalized.as_bytes());

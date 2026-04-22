@@ -42,7 +42,7 @@ impl RulePattern {
         match self {
             Self::Substring(s) => text.contains(s.as_str()),
             Self::Regex(r) => r.is_match(text),
-            Self::Exact(s) => text == s.as_str(),
+            Self::Exact(s) => text.eq_ignore_ascii_case(s.as_str()),
         }
     }
 }
