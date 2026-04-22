@@ -668,6 +668,13 @@ pub fn all_diagnostics(
         }
     }
 
+    // Import review diagnostics: scan for transactions with import-confidence
+    // metadata and emit hints/warnings based on confidence level.
+    diagnostics.extend(super::import::import_diagnostics(
+        &result.directives,
+        source,
+    ));
+
     diagnostics
 }
 

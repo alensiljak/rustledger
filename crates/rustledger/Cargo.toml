@@ -35,6 +35,7 @@ rustledger-booking.workspace = true
 rustledger-validate.workspace = true
 rustledger-query.workspace = true
 rustledger-plugin.workspace = true
+rustledger-ops.workspace = true
 rustledger-importer.workspace = true
 clap.workspace = true
 clap_complete.workspace = true

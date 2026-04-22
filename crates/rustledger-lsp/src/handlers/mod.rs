@@ -20,9 +20,6 @@ pub mod execute_command;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
-// NOTE: The import handler provides code-lens and diagnostic helpers but is not
-// yet wired into the main LSP request loop.  Integrating it requires changes to
-// the `publish_diagnostics` flow and will be done in a follow-up PR.
 pub mod import;
 pub mod inlay_hints;
 pub mod linked_editing;

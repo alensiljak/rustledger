@@ -3190,6 +3190,7 @@ dependencies = [
  "rustledger-core",
  "rustledger-importer",
  "rustledger-loader",
+ "rustledger-ops",
  "rustledger-parser",
  "rustledger-plugin",
  "rustledger-query",
