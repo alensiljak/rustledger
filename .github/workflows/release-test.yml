@@ -298,7 +298,7 @@ jobs:
           echo "Timeout waiting for @rustledger/wasm@${VERSION}"
           exit 1
       - name: Install @rustledger/wasm
-        run: npm install @rustledger/wasm
+        run: npm install "@rustledger/wasm@${VERSION}"
       - name: Test import
         run: |
           node -e "
@@ -328,7 +328,7 @@ jobs:
           echo "Timeout waiting for @rustledger/mcp-server@${VERSION}"
           exit 1
       - name: Install @rustledger/mcp-server
-        run: npm install @rustledger/mcp-server
+        run: npm install "@rustledger/mcp-server@${VERSION}"
       - name: Test MCP server package
         run: |
           # Verify the package has a valid entry point
