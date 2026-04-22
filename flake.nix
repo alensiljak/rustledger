@@ -138,6 +138,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
+              meta.mainProgram = "rledger";
             }
           );
 

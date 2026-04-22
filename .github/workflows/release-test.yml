@@ -286,21 +286,19 @@ jobs:
     steps:
       - name: Wait for npm propagation
         run: |
-          echo "Waiting for @rustledger/wasm on npm..."
+          echo "Waiting for @rustledger/wasm@$VERSION on npm..."
           for i in $(seq 1 30); do
-            NPM_VERSION=$(npm view @rustledger/wasm version 2>/dev/null || echo "not found")
-            echo "npm version: $NPM_VERSION"
-            if [ "$NPM_VERSION" = "$VERSION" ]; then
-              echo "npm is up to date"
+            if npm view "@rustledger/wasm@${VERSION}" version >/dev/null 2>&1; then
+              echo "@rustledger/wasm@${VERSION} is available"
               exit 0
             fi
             echo "Attempt $i/30: Not yet available, waiting 20s..."
             sleep 20
           done
-          echo "Timeout waiting for npm"
+          echo "Timeout waiting for @rustledger/wasm@${VERSION}"
           exit 1
       - name: Install @rustledger/wasm
-        run: npm install @rustledger/wasm
+        run: npm install "@rustledger/wasm@${VERSION}"
       - name: Test import
         run: |
           node -e "
@@ -318,21 +316,19 @@ jobs:
     steps:
       - name: Wait for npm propagation
         run: |
-          echo "Waiting for @rustledger/mcp-server on npm..."
+          echo "Waiting for @rustledger/mcp-server@$VERSION on npm..."
           for i in $(seq 1 30); do
-            NPM_VERSION=$(npm view @rustledger/mcp-server version 2>/dev/null || echo "not found")
-            echo "npm version: $NPM_VERSION"
-            if [ "$NPM_VERSION" = "$VERSION" ]; then
-              echo "npm is up to date"
+            if npm view "@rustledger/mcp-server@${VERSION}" version >/dev/null 2>&1; then
+              echo "@rustledger/mcp-server@${VERSION} is available"
               exit 0
             fi
             echo "Attempt $i/30: Not yet available, waiting 20s..."
             sleep 20
           done
-          echo "Timeout waiting for npm"
+          echo "Timeout waiting for @rustledger/mcp-server@${VERSION}"
           exit 1
       - name: Install @rustledger/mcp-server
-        run: npm install @rustledger/mcp-server
+        run: npm install "@rustledger/mcp-server@${VERSION}"
       - name: Test MCP server package
         run: |
           # Verify the package has a valid entry point
