@@ -24,6 +24,7 @@ pub mod categorize;
 pub mod dedup;
 pub mod enrichment;
 pub mod fingerprint;
+pub mod llm;
 pub mod merchants;
 pub mod ml;
 pub mod reconcile;

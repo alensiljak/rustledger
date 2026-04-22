@@ -90,8 +90,147 @@ export function handleToolCall(
     case "format_file":
       return handleFormatFile(args);
 
+    // === Import Tools ===
+    case "import_categorize":
+      return handleImportCategorize(args);
+    case "import_review":
+      return handleImportReview(args);
+
     default:
       return errorResponse(`Unknown tool: ${name}`);
+  }
+}
+
+// === Import Tools ===
+
+function handleImportCategorize(
+  args: ToolArguments | undefined
+): ToolResponse {
+  const validation = validateArgs(args, ["source", "narration", "date"]);
+  if (validation) return validation;
+
+  try {
+    const source = args!.source as string;
+    const result = rustledger.parse(source);
+    const parsed = JSON.parse(result);
+
+    // Extract expense/income accounts from the ledger
+    const accounts = new Set<string>();
+    if (parsed.directives) {
+      for (const d of parsed.directives) {
+        if (d.type === "open" && d.account) {
+          if (
+            d.account.startsWith("Expenses:") ||
+            d.account.startsWith("Income:")
+          ) {
+            accounts.add(d.account);
+          }
+        }
+        if (d.type === "transaction" && d.postings) {
+          for (const p of d.postings) {
+            if (
+              p.account.startsWith("Expenses:") ||
+              p.account.startsWith("Income:")
+            ) {
+              accounts.add(p.account);
+            }
+          }
+        }
+      }
+    }
+
+    const sortedAccounts = Array.from(accounts).sort();
+    const payee = (args!.payee as string) || undefined;
+    const narration = args!.narration as string;
+    const amount = (args!.amount as string) || undefined;
+    const currency = (args!.currency as string) || "USD";
+    const date = args!.date as string;
+
+    // Build a categorization prompt
+    let prompt = "Categorize this financial transaction into the most appropriate account.\n\n";
+    prompt += "Transaction:\n";
+    prompt += `  Date: ${date}\n`;
+    if (payee) prompt += `  Payee: ${payee}\n`;
+    prompt += `  Description: ${narration}\n`;
+    if (amount) prompt += `  Amount: ${amount} ${currency}\n`;
+    prompt += "\nAvailable accounts:\n";
+    for (const acct of sortedAccounts) {
+      prompt += `  - ${acct}\n`;
+    }
+    prompt += "\nRespond with ONLY the account name on the first line, ";
+    prompt += "followed by a brief reason on the second line.\n";
+
+    return jsonResponse({
+      prompt,
+      known_accounts: sortedAccounts,
+      transaction: { payee, narration, amount, currency, date },
+    });
+  } catch (error) {
+    return errorResponse(
+      `Failed to build categorization prompt: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function handleImportReview(args: ToolArguments | undefined): ToolResponse {
+  const validation = validateArgs(args, ["source"]);
+  if (validation) return validation;
+
+  try {
+    const source = args!.source as string;
+    const result = rustledger.parse(source);
+    const parsed = JSON.parse(result);
+
+    const needsReview: Array<{
+      date: string;
+      narration: string;
+      payee?: string;
+      account: string;
+      confidence: number;
+      method: string;
+    }> = [];
+
+    if (parsed.directives) {
+      for (const d of parsed.directives) {
+        if (d.type === "transaction" && d.meta) {
+          const confidence = d.meta["import-confidence"];
+          if (confidence !== undefined) {
+            const method = d.meta["import-method"] || "unknown";
+            const account =
+              d.postings && d.postings.length > 1
+                ? d.postings[1].account
+                : "unknown";
+            needsReview.push({
+              date: d.date,
+              narration: d.narration || "",
+              payee: d.payee || undefined,
+              account,
+              confidence: Number(confidence),
+              method: String(method),
+            });
+          }
+        }
+      }
+    }
+
+    const high = needsReview.filter((t) => t.confidence > 0.9);
+    const medium = needsReview.filter(
+      (t) => t.confidence >= 0.5 && t.confidence <= 0.9
+    );
+    const low = needsReview.filter((t) => t.confidence < 0.5);
+
+    return jsonResponse({
+      total: needsReview.length,
+      high_confidence: high.length,
+      medium_confidence: medium.length,
+      low_confidence: low.length,
+      needs_review: [...low, ...medium],
+      accepted: high,
+    });
+  } catch (error) {
+    return errorResponse(
+      `Failed to review imports: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 }
 

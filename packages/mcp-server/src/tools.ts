@@ -535,4 +535,62 @@ export const TOOLS: ToolDefinition[] = [
   validateFileTool,
   queryFileTool,
   formatFileTool,
+  // Import Tools
+  importCategorizeTool,
+  importReviewTool,
 ];
+
+export const importCategorizeTool: ToolDefinition = {
+  name: "import_categorize",
+  description:
+    "Suggest an expense/income account for a transaction based on its payee and description. " +
+    "Uses the ledger's existing accounts as candidates. Returns a prompt you can use to " +
+    "ask the LLM for categorization, along with the list of known accounts.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      source: {
+        type: "string",
+        description: "The beancount ledger source (to extract known accounts)",
+      },
+      payee: {
+        type: "string",
+        description: "The transaction payee (e.g., 'WHOLE FOODS MARKET')",
+      },
+      narration: {
+        type: "string",
+        description: "The transaction description/narration",
+      },
+      amount: {
+        type: "string",
+        description: "The transaction amount (e.g., '-85.23')",
+      },
+      currency: {
+        type: "string",
+        description: "The currency (default: USD)",
+      },
+      date: {
+        type: "string",
+        description: "The transaction date (YYYY-MM-DD)",
+      },
+    },
+    required: ["source", "narration", "date"],
+  },
+};
+
+export const importReviewTool: ToolDefinition = {
+  name: "import_review",
+  description:
+    "Find transactions in the ledger that need import review (have import-confidence metadata). " +
+    "Returns transactions grouped by confidence level.",
+  inputSchema: {
+    type: "object" as const,
+    properties: {
+      source: {
+        type: "string",
+        description: "The beancount ledger source",
+      },
+    },
+    required: ["source"],
+  },
+};
