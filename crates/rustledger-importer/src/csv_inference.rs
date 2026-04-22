@@ -96,7 +96,9 @@ pub fn infer_csv_config(content: &str) -> Option<InferredCsvConfig> {
 
     // Classify each column
     let date_col = find_date_column(&headers, &sample, num_cols);
-    let (amount_col, debit_col, credit_col) = find_amount_columns(&headers, &sample, num_cols);
+    let date_col_idx = date_col.as_ref().map(|(i, _)| *i);
+    let (amount_col, debit_col, credit_col) =
+        find_amount_columns(&headers, &sample, num_cols, date_col_idx);
     let (narration_col, payee_col) = find_text_columns(
         &headers,
         num_cols,
@@ -381,10 +383,14 @@ fn find_date_column(
 }
 
 /// Find amount column(s). Returns `(single_amount, debit, credit)`.
+///
+/// `date_col` is the already-detected date column index, which is skipped
+/// during the fallback numeric-column scan (dates can look numeric).
 fn find_amount_columns(
     headers: &[&str],
     sample: &[&Vec<String>],
     num_cols: usize,
+    date_col: Option<usize>,
 ) -> (Option<usize>, Option<usize>, Option<usize>) {
     let amount_keywords = ["amount", "sum", "value", "total"];
     let debit_keywords = ["debit", "withdrawal", "out", "charge"];
@@ -424,6 +430,11 @@ fn find_amount_columns(
 
     // Fall back to finding numeric columns
     for col_idx in 0..num_cols {
+        // Skip the date column — dates can look numeric
+        if date_col == Some(col_idx) {
+            continue;
+        }
+
         let values: Vec<&str> = sample
             .iter()
             .filter_map(|row| row.get(col_idx).map(String::as_str))
@@ -438,7 +449,6 @@ fn find_amount_columns(
 
         // If 80%+ look like numbers, this is probably an amount column
         if number_count * 5 >= values.len() * 4 && amount_col.is_none() {
-            // Skip if this is already the date column (dates can look numeric)
             amount_col = Some(col_idx);
         }
     }

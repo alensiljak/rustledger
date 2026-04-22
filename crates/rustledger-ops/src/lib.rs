@@ -16,6 +16,7 @@
 //! - [`reconcile`] — balance reconciliation against statement ending balances
 //! - [`ml`] — ML-based categorization (TF-IDF + Naive Bayes via linfa)
 //! - [`transfer`] — inter-account transfer detection and linking
+//! - [`llm`] — LLM prompt building for transaction categorization
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]

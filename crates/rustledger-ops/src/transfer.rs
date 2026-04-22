@@ -170,7 +170,6 @@ fn first_posting_amount_currency(d: &DirectiveWrapper) -> Option<(Decimal, &str)
 
 /// Check if two date strings are within a given window (in days).
 fn within_date_window(date1: &str, date2: &str, days: i64) -> bool {
-    use rustledger_plugin_types as _; // Dates are YYYY-MM-DD strings
     // Simple date comparison for YYYY-MM-DD format
     let d1: jiff::civil::Date = match date1.parse() {
         Ok(d) => d,

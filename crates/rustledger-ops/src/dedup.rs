@@ -193,7 +193,7 @@ fn fuzzy_text_match(a: &str, b: &str, threshold: f64) -> bool {
     let match_count = shorter.iter().filter(|w| longer.contains(w)).count();
     #[allow(clippy::cast_precision_loss)]
     let ratio = match_count as f64 / shorter.len() as f64;
-    ratio > threshold
+    ratio >= threshold
 }
 
 #[cfg(test)]

@@ -29,6 +29,9 @@ pub struct Rule {
 #[derive(Debug)]
 pub enum RulePattern {
     /// Case-insensitive substring match (fast, no regex overhead).
+    ///
+    /// The stored value **must be lowercase** because [`RulesEngine::categorize`]
+    /// lowercases input text before comparison using a case-sensitive `contains()`.
     Substring(String),
     /// Compiled regex pattern.
     Regex(Regex),
@@ -67,23 +70,21 @@ pub struct RuleMatch {
 #[derive(Debug)]
 pub struct RulesEngine {
     rules: Vec<Rule>,
-    sorted: bool,
 }
 
 impl RulesEngine {
     /// Create an empty rules engine.
     #[must_use]
     pub const fn new() -> Self {
-        Self {
-            rules: Vec::new(),
-            sorted: true,
-        }
+        Self { rules: Vec::new() }
     }
 
     /// Add a single rule.
+    ///
+    /// Rules are kept sorted by priority (descending) after each insertion.
     pub fn add_rule(&mut self, rule: Rule) {
         self.rules.push(rule);
-        self.sorted = false;
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     /// Load rules from substring-based mappings (existing `importers.toml` format).
@@ -98,7 +99,7 @@ impl RulesEngine {
                 priority: 0,
             });
         }
-        self.sorted = false;
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     /// Load rules from regex-based mappings.
@@ -119,7 +120,7 @@ impl RulesEngine {
                 });
             }
         }
-        self.sorted = false;
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     /// Load the built-in merchant dictionary as low-priority rules.
@@ -137,16 +138,14 @@ impl RulesEngine {
                 });
             }
         }
-        self.sorted = false;
+        self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
     }
 
     /// Categorize a transaction by matching payee and narration against rules.
     ///
     /// Returns the first matching rule's account and metadata, or `None` if
     /// no rule matches.
-    pub fn categorize(&mut self, payee: Option<&str>, narration: &str) -> Option<RuleMatch> {
-        self.ensure_sorted();
-
+    pub fn categorize(&self, payee: Option<&str>, narration: &str) -> Option<RuleMatch> {
         let payee_lower = payee.map(str::to_lowercase);
         let narration_lower = narration.to_lowercase();
 
@@ -194,14 +193,6 @@ impl RulesEngine {
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.rules.is_empty()
-    }
-
-    /// Sort rules by priority (descending) if not already sorted.
-    fn ensure_sorted(&mut self) {
-        if !self.sorted {
-            self.rules.sort_by_key(|r| std::cmp::Reverse(r.priority));
-            self.sorted = true;
-        }
     }
 }
 
@@ -342,7 +333,7 @@ mod tests {
 
     #[test]
     fn empty_engine() {
-        let mut engine = RulesEngine::new();
+        let engine = RulesEngine::new();
         assert!(engine.is_empty());
         assert_eq!(engine.len(), 0);
         assert!(engine.categorize(Some("anything"), "anything").is_none());

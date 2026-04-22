@@ -126,7 +126,7 @@ impl CsvImporter {
             .into_iter()
             .enumerate()
             .map(|(i, directive)| {
-                let enrichment = Self::enrich_directive(&directive, &mut engine, i);
+                let enrichment = Self::enrich_directive(&directive, &engine, i);
                 (directive, enrichment)
             })
             .collect();
@@ -141,7 +141,7 @@ impl CsvImporter {
     /// Build enrichment metadata for a single imported directive.
     fn enrich_directive(
         directive: &Directive,
-        engine: &mut rustledger_ops::categorize::RulesEngine,
+        engine: &rustledger_ops::categorize::RulesEngine,
         index: usize,
     ) -> Enrichment {
         let (confidence, method) = if let Directive::Transaction(txn) = directive {
