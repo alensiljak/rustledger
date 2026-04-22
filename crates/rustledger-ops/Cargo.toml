@@ -18,6 +18,7 @@ bench = false
 [dependencies]
 rustledger-plugin-types.workspace = true
 rust_decimal.workspace = true
+jiff.workspace = true
 blake3.workspace = true
 regex.workspace = true
 

@@ -22,3 +22,4 @@ pub mod dedup;
 pub mod enrichment;
 pub mod fingerprint;
 pub mod merchants;
+pub mod transfer;
