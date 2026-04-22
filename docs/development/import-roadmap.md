@@ -7,15 +7,23 @@
 | Import Trait System | ✅ Done | `Importer` trait, `ImportResult`, registry |
 | CSV Importer | ✅ Done | Column mapping, date formats, debit/credit split |
 | OFX Importer | ✅ Done | OFX/QFX file parsing |
+| CSV Auto-Inference | ✅ Done | Delimiter, date format, column role detection (`--auto` flag) |
+| Ops Crate (`rustledger-ops`) | ✅ Done | Pure operations: dedup, categorize, fingerprint, reconcile, merchants, transfer |
+| Rules Engine | ✅ Done | Substring, regex, and exact match rules with priority ordering |
+| Merchant Dictionary | ✅ Done | ~60 built-in patterns (groceries, dining, transport, subscriptions, etc.) |
+| Transaction Fingerprinting | ✅ Done | Structural hashing via blake3 for stable dedup |
+| Enriched Import Results | ✅ Done | `EnrichedImportResult` with confidence scores and categorization method |
 | Institution Profiles | 🔮 Future | YAML-based bank definitions |
 | Balance Validation | 🔮 Future | Statement balance assertions |
 | Multi-Source Matching | 🔮 Future | Cross-validate sources |
 | PDF Extraction | 🔮 Future | Document AI / local OCR |
 | API Integration | 🔮 Future | SimpleFIN, Plaid |
-| Categorization | 🔮 Future | Rule-based + ML |
+| ML Categorization | 🔮 Future | Learn from user's existing ledger |
+| LLM/MCP Categorization | 🔮 Future | LLM-assisted via MCP |
+| WASM Import Plugins | 🔮 Future | Custom importers as WASM plugins |
 | Source Archive | 🔮 Future | SQLite append-only store |
 
-**Current version**: Basic import framework (Phase 1 partial)
+**Current version**: Enrichment pipeline (Phase 1 complete, Phase 4.1 partial)
 
 ______________________________________________________________________
 
@@ -1441,7 +1449,7 @@ ______________________________________________________________________
 
 ## Implementation Phases
 
-### Phase 1: Foundation (v0.7.x) - IN PROGRESS
+### Phase 1: Foundation (v0.7.x) - COMPLETE
 
 **Goal**: Basic import with balance validation
 
@@ -1476,6 +1484,8 @@ pub struct TransactionFingerprint {
 
 - [x] Generic CSV parser with column mapping ✅
 - [x] OFX/QFX parser ✅
+- [x] CSV auto-inference (`--auto` flag) ✅
+- [x] Enrichment pipeline (fingerprinting, categorization, confidence) ✅
 - [ ] Institution profile loader (YAML/TOML)
 - [ ] Built-in profiles for top 20 US banks
 - [ ] Balance extraction and validation
@@ -1613,17 +1623,20 @@ ______________________________________________________________________
 
 **Goal**: Auto-categorize transactions accurately
 
-#### 4.1 Rule-Based Categorization
+#### 4.1 Rule-Based Categorization ✅ IMPLEMENTED
 
-```yaml
-rules:
-  - match: "AMAZON|AMZN"
-    account: Expenses:Shopping:Amazon
-  - match: "UBER|LYFT"
-    account: Expenses:Transport:Rideshare
-  - match: regex("INTEREST PAYMENT.*")
-    account: Income:Interest
-```
+Implemented in `rustledger-ops::categorize::RulesEngine`:
+
+- Substring matching (case-insensitive)
+- Regex patterns (compiled, case-insensitive)
+- Exact matching
+- Priority ordering (user rules > merchant dictionary)
+- Built-in merchant dictionary with ~60 common patterns (`rustledger-ops::merchants`)
+
+The importer integrates the rules engine via `CsvConfigBuilder::use_merchant_dict()` and
+`CsvConfigBuilder::regex_mappings()`. User-defined `[importers.mappings]` in TOML config
+are loaded as substring rules at priority 0, while merchant dictionary entries use
+priority -1000 (always lower than user rules).
 
 #### 4.2 ML-Assisted Categorization
 
