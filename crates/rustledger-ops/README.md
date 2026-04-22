@@ -14,7 +14,11 @@ Analogous to Python beancount's `ops/` module.
 |--------|-------------|
 | `fingerprint` | Structural hashing and stable fingerprinting of transactions |
 | `dedup` | Duplicate detection (structural, fuzzy, and fingerprint-based) |
+| `categorize` | Rule-based and pattern-based account categorization |
+| `merchants` | Merchant name normalization and lookup dictionary |
 | `enrichment` | Shared types for operation results (confidence, method, alternatives) |
+| `transfer` | Transfer detection between own accounts |
+| `reconcile` | Reconciliation of imported vs. existing directives |
 
 ## Usage
 

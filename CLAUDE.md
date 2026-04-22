@@ -68,7 +68,7 @@ rustledger is a pure Rust implementation of Beancount, the double-entry bookkeep
 
 ## Architecture
 
-The project is a Cargo workspace with 13 crates plus editor extensions:
+The project is a Cargo workspace with 14 crates plus editor extensions:
 
 | Crate | Purpose |
 |-------|---------|
@@ -81,6 +81,7 @@ The project is a Cargo workspace with 13 crates plus editor extensions:
 | `rustledger-plugin` | Native and WASM plugin system (30 plugins) |
 | `rustledger-plugin-types` | Shared plugin type definitions |
 | `rustledger-importer` | Import framework for bank statements |
+| `rustledger-ops` | Pure operations on directives — dedup, categorize, reconcile |
 | `rustledger` | CLI tool (`rledger check`, `rledger query`, etc.) |
 | `rustledger-wasm` | WebAssembly library target |
 | `rustledger-lsp` | Language Server Protocol implementation |

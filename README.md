@@ -202,6 +202,7 @@ rledger format --in-place ledger.beancount
 | `rustledger-plugin` | 30 built-in plugins + Python plugin support |
 | `rustledger-plugin-types` | Shared plugin type definitions |
 | `rustledger-importer` | CSV/OFX import framework |
+| `rustledger-ops` | Pure operations on directives — dedup, categorize, reconcile |
 | `rustledger-lsp` | Language Server Protocol for editor integration |
 | `rustledger-wasm` | WebAssembly bindings for JavaScript/TypeScript |
 | `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |

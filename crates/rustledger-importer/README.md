@@ -36,6 +36,35 @@ for directive in result.directives {
 }
 ```
 
+## Enriched Imports
+
+The enrichment pipeline adds intelligence on top of basic CSV/OFX extraction:
+
+- **Auto-inference** of CSV format (delimiter, date format, column roles)
+- **Merchant dictionary** for automatic account categorization
+- **Fingerprinting** for dedup against existing ledger entries
+- **Confidence scores** on every enrichment decision
+
+```rust
+use rustledger_importer::{auto_extract, CsvConfigBuilder};
+use std::path::Path;
+
+// Zero-config: auto-detect format and enrich
+let result = auto_extract(Path::new("bank.csv"), "Assets:Bank:Checking")?;
+
+for entry in &result.enriched {
+    println!("{}: {} (confidence {:.0}%)",
+        entry.directive, entry.category, entry.confidence * 100.0);
+}
+
+// Or opt-in to enrichment via the builder
+let config = CsvConfigBuilder::new()
+    .account("Assets:Bank:Checking")
+    .currency("USD")
+    .use_merchant_dict()
+    .build();
+```
+
 ## Key Types
 
 | Type | Description |
@@ -45,6 +74,9 @@ for directive in result.directives {
 | `ImportResult` | Result containing directives and warnings |
 | `ImporterRegistry` | Registry of available importers |
 | `OfxImporter` | OFX/QFX file importer |
+| `EnrichedImportResult` | Result with confidence scores and fingerprints |
+| `CsvConfigBuilder::use_merchant_dict()` | Enable built-in merchant dictionary |
+| `auto_extract()` | Zero-config import with auto-detection |
 
 ## Importer Trait
 
