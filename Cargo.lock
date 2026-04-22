@@ -3303,6 +3303,7 @@ dependencies = [
  "lsp-types",
  "parking_lot",
  "ropey",
+ "rust_decimal",
  "rustledger-booking",
  "rustledger-core",
  "rustledger-loader",

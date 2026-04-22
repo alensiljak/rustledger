@@ -20,6 +20,7 @@ pub mod execute_command;
 pub mod folding;
 pub mod formatting;
 pub mod hover;
+pub mod import;
 pub mod inlay_hints;
 pub mod linked_editing;
 pub mod on_type_formatting;
