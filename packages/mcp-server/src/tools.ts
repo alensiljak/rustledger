@@ -502,44 +502,7 @@ export const formatFileTool: ToolDefinition = {
   },
 };
 
-// All tools combined
-export const TOOLS: ToolDefinition[] = [
-  // Original Tools
-  validateTool,
-  queryTool,
-  balancesTool,
-  formatTool,
-  parseTool,
-  completionsTool,
-  listPluginsTool,
-  runPluginTool,
-  // Editor Tools
-  editorCompletionsTool,
-  editorHoverTool,
-  editorDefinitionTool,
-  editorDocumentSymbolsTool,
-  editorReferencesTool,
-  // Analysis Tools
-  ledgerStatsTool,
-  listAccountsTool,
-  listCommoditiesTool,
-  accountActivityTool,
-  // Utility Tools
-  formatCheckTool,
-  bqlTablesTool,
-  directiveAtLineTool,
-  findTransactionsTool,
-  // Report Tool
-  reportTool,
-  // File Operation Tools
-  validateFileTool,
-  queryFileTool,
-  formatFileTool,
-  // Import Tools
-  importCategorizeTool,
-  importReviewTool,
-];
-
+// Import Tools
 export const importCategorizeTool: ToolDefinition = {
   name: "import_categorize",
   description:
@@ -594,3 +557,41 @@ export const importReviewTool: ToolDefinition = {
     required: ["source"],
   },
 };
+
+// All tools combined
+export const TOOLS: ToolDefinition[] = [
+  // Original Tools
+  validateTool,
+  queryTool,
+  balancesTool,
+  formatTool,
+  parseTool,
+  completionsTool,
+  listPluginsTool,
+  runPluginTool,
+  // Editor Tools
+  editorCompletionsTool,
+  editorHoverTool,
+  editorDefinitionTool,
+  editorDocumentSymbolsTool,
+  editorReferencesTool,
+  // Analysis Tools
+  ledgerStatsTool,
+  listAccountsTool,
+  listCommoditiesTool,
+  accountActivityTool,
+  // Utility Tools
+  formatCheckTool,
+  bqlTablesTool,
+  directiveAtLineTool,
+  findTransactionsTool,
+  // Report Tool
+  reportTool,
+  // File Operation Tools
+  validateFileTool,
+  queryFileTool,
+  formatFileTool,
+  // Import Tools
+  importCategorizeTool,
+  importReviewTool,
+];
