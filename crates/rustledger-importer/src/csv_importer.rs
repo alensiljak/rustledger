@@ -101,7 +101,7 @@ impl CsvImporter {
 
     /// Extract transactions from string content with enrichment metadata.
     ///
-    /// Builds a [`RulesEngine`] from the config's mappings, regex mappings,
+    /// Builds a [`rustledger_ops::categorize::RulesEngine`] from the config's mappings, regex mappings,
     /// and optionally the merchant dictionary. Each directive is enriched with
     /// categorization confidence, method, and a stable fingerprint.
     pub fn extract_string_enriched(

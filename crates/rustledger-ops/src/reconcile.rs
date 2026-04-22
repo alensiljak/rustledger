@@ -155,10 +155,10 @@ mod tests {
         let balance = StatementBalance {
             date: "2024-01-31".to_string(),
             account: "Assets:Checking".to_string(),
-            number: Decimal::new(102000, 2), // 1020.00 (opening 1000 + 20 net)
+            number: Decimal::new(102_000, 2), // 1020.00 (opening 1000 + 20 net)
             currency: "USD".to_string(),
         };
-        let result = reconcile(&directives, &balance, Some(Decimal::new(100000, 2)));
+        let result = reconcile(&directives, &balance, Some(Decimal::new(100_000, 2)));
         assert!(result.matches);
         assert_eq!(result.difference, Decimal::ZERO);
     }
@@ -169,11 +169,11 @@ mod tests {
         let balance = StatementBalance {
             date: "2024-01-31".to_string(),
             account: "Assets:Checking".to_string(),
-            number: Decimal::new(100000, 2), // 1000.00
+            number: Decimal::new(100_000, 2), // 1000.00
             currency: "USD".to_string(),
         };
         // Opening 1000, spent 50, should be 950 but statement says 1000
-        let result = reconcile(&directives, &balance, Some(Decimal::new(100000, 2)));
+        let result = reconcile(&directives, &balance, Some(Decimal::new(100_000, 2)));
         assert!(!result.matches);
         assert_eq!(result.difference, Decimal::new(5000, 2)); // 50.00
     }
@@ -215,7 +215,7 @@ mod tests {
         let balance = StatementBalance {
             date: "2024-01-31".to_string(),
             account: "Assets:Checking".to_string(),
-            number: Decimal::new(100000, 2),
+            number: Decimal::new(100_000, 2),
             currency: "USD".to_string(),
         };
         let directive = create_balance_directive(&balance);
@@ -234,7 +234,7 @@ mod tests {
         let balance = StatementBalance {
             date: "2024-01-31".to_string(),
             account: "Assets:Checking".to_string(),
-            number: Decimal::new(100000, 2),
+            number: Decimal::new(100_000, 2),
             currency: "USD".to_string(),
         };
         let directive = create_balance_directive(&balance);
