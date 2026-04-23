@@ -62,7 +62,7 @@ const PARALLEL_SORT_THRESHOLD: usize = 5000;
 use rust_decimal::Decimal;
 use rustc_hash::{FxHashMap, FxHashSet};
 use rustledger_core::{BookingMethod, Directive, InternedStr, Inventory};
-use rustledger_parser::Spanned;
+use rustledger_parser::{SYNTHESIZED_FILE_ID, Spanned};
 
 /// Account state for tracking lifecycle.
 #[derive(Debug, Clone)]
@@ -389,6 +389,12 @@ pub fn validate_spanned_with_options(
         let directive = &spanned.value;
         let date = directive.date();
 
+        // Snapshot before ANY errors are pushed for this directive so the
+        // downstream patching loop can enrich every error tied to this
+        // directive — including the ordering / future-date checks below,
+        // not just the ones produced by the per-kind validators (issue #896).
+        let error_count_before = errors.len();
+
         // Check for date ordering (info only - we sort anyway)
         if let Some(last) = state.last_date
             && date < last
@@ -411,9 +417,6 @@ pub fn validate_spanned_with_options(
                 spanned,
             ));
         }
-
-        // Track error count before helper function so we can patch new errors with location
-        let error_count_before = errors.len();
 
         match directive {
             Directive::Open(open) => {
@@ -443,11 +446,21 @@ pub fn validate_spanned_with_options(
             _ => {}
         }
 
-        // Patch any new errors with location info from the current directive
+        // Patch any new errors with location info from the current directive,
+        // and tag plugin-synthesized directives with an advisory note so users
+        // can trace errors that don't correspond to anything in their source
+        // files back to a plugin (see issue #896).
         for error in errors.iter_mut().skip(error_count_before) {
             if error.span.is_none() {
                 error.span = Some(spanned.span);
                 error.file_id = Some(spanned.file_id);
+            }
+            if error.note.is_none() && spanned.file_id == SYNTHESIZED_FILE_ID {
+                error.note = Some(
+                    "directive was synthesized by a plugin (no source location); \
+                     check your `plugin \"…\"` declarations for the responsible plugin"
+                        .to_string(),
+                );
             }
         }
     }
