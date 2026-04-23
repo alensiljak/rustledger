@@ -35,10 +35,14 @@ pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<V
     if state.options.check_documents {
         let doc_path = Path::new(&doc.path);
 
+        let mut file_was_found = false;
         let full_path = if doc_path.is_absolute() {
+            file_was_found = doc_path.exists();
             doc_path.to_path_buf()
         } else if let Some(base) = &state.options.document_base {
-            base.join(doc_path)
+            let p = base.join(doc_path);
+            file_was_found = p.exists();
+            p
         } else if !state.options.document_dirs.is_empty() {
             // Try resolving relative path against each document directory
             let mut found = None;
@@ -50,14 +54,18 @@ pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<V
                 }
             }
             match found {
-                Some(p) => p,
+                Some(p) => {
+                    file_was_found = true;
+                    p
+                }
                 None => doc_path.to_path_buf(),
             }
         } else {
+            file_was_found = doc_path.exists();
             doc_path.to_path_buf()
         };
 
-        if !full_path.exists() {
+        if !file_was_found {
             let mut error = ValidationError::new(
                 ErrorCode::DocumentNotFound,
                 format!("Document file not found: {}", doc.path),
@@ -72,7 +80,7 @@ pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<V
                     .options
                     .document_dirs
                     .iter()
-                    .map(|d| format!("{}/{}", d, doc.path))
+                    .map(|d| Path::new(d).join(doc_path).display().to_string())
                     .collect();
                 error = error.with_context(format!("searched: {}", searched.join(", ")));
             } else {

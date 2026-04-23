@@ -779,7 +779,7 @@ fn test_accept_decimal_with_integer_part() {
 }
 
 /// Case: invalid-booking-method-lowercase / booking-method-case-sensitive
-/// Booking methods must be uppercase (FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE).
+/// Booking methods must be uppercase (FIFO, STRICT, `STRICT_WITH_SIZE`, LIFO, HIFO, NONE, AVERAGE).
 /// Lowercase variants like "fifo" must be rejected.
 #[test]
 fn test_reject_lowercase_booking_method() {
@@ -800,6 +800,40 @@ fn test_accept_uppercase_booking_method() {
         result.errors.is_empty(),
         "uppercase booking method 'FIFO' should be valid, errors: {:?}",
         result.errors
+    );
+}
+
+/// `STRICT_WITH_SIZE` booking method must be accepted on open directives.
+#[test]
+fn test_accept_strict_with_size_booking_method() {
+    let source = "2024-01-01 open Assets:Stock AAPL \"STRICT_WITH_SIZE\"\n";
+    let result = parse(source);
+    assert!(
+        result.errors.is_empty(),
+        "booking method 'STRICT_WITH_SIZE' should be valid, errors: {:?}",
+        result.errors
+    );
+
+    if let Directive::Open(open) = &result.directives[0].value {
+        assert_eq!(open.booking, Some("STRICT_WITH_SIZE".to_string()));
+    } else {
+        panic!("expected open directive");
+    }
+}
+
+/// Invalid booking method error message should include `STRICT_WITH_SIZE` in the valid list.
+#[test]
+fn test_invalid_booking_method_error_includes_strict_with_size() {
+    let source = "2024-01-01 open Assets:Stock AAPL \"invalid_method\"\n";
+    let result = parse(source);
+    assert!(
+        !result.errors.is_empty(),
+        "expected parse error for invalid booking method"
+    );
+    let error_msg = result.errors[0].message();
+    assert!(
+        error_msg.contains("STRICT_WITH_SIZE"),
+        "error message should list STRICT_WITH_SIZE as a valid method, got: {error_msg}"
     );
 }
 

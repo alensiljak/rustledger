@@ -182,7 +182,7 @@ pub enum ParseErrorKind {
     UnclosedPushmeta(String),
     /// Deprecated pipe symbol in transaction.
     DeprecatedPipeSymbol,
-    /// Invalid booking method (must be uppercase: FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE).
+    /// Invalid booking method (must be uppercase: FIFO, STRICT, `STRICT_WITH_SIZE`, LIFO, HIFO, NONE, AVERAGE).
     InvalidBookingMethod(String),
 }
 

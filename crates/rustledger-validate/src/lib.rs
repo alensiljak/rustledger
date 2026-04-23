@@ -906,7 +906,7 @@ mod tests {
             Directive::Document(Document {
                 date: date(2024, 1, 15),
                 account: "Assets:Bank".into(),
-                path: format!("{}/receipt.pdf", doc_path_str),
+                path: format!("{doc_path_str}/receipt.pdf"),
                 tags: vec![],
                 links: vec![],
                 meta: Default::default(),
