@@ -54,6 +54,13 @@ pub fn handle_code_actions(
         actions.push(action);
     }
 
+    // Import review actions (accept categorization, batch accept)
+    actions.extend(super::import::import_code_actions(
+        &parse_result.directives,
+        source,
+        range,
+    ));
+
     if actions.is_empty() {
         None
     } else {

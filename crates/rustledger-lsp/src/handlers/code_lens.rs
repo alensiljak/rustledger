@@ -123,6 +123,12 @@ pub fn handle_code_lens(
         }
     }
 
+    // Import summary lens (e.g., "12 imported | 3 need review")
+    lenses.extend(super::import::import_code_lens(
+        &parse_result.directives,
+        source,
+    ));
+
     if lenses.is_empty() {
         None
     } else {

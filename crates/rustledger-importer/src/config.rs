@@ -66,6 +66,12 @@ pub struct CsvConfig {
     /// Patterns are matched case-insensitively against payee and narration fields.
     /// First match wins.
     pub mappings: Vec<(String, String)>,
+    /// Regex-based account mappings: pattern → account name.
+    /// Patterns are compiled as case-insensitive regexes.
+    pub regex_mappings: Vec<(String, String)>,
+    /// Whether to use the built-in merchant dictionary as a fallback.
+    /// The dictionary provides common merchant patterns at low priority.
+    pub use_merchant_dict: bool,
 }
 
 impl Default for CsvConfig {
@@ -87,6 +93,8 @@ impl Default for CsvConfig {
             default_expense: None,
             default_income: None,
             mappings: Vec::new(),
+            regex_mappings: Vec::new(),
+            use_merchant_dict: false,
         }
     }
 }
@@ -346,6 +354,18 @@ impl CsvConfigBuilder {
             .into_iter()
             .map(|(pattern, account)| (pattern.to_lowercase(), account))
             .collect();
+        self
+    }
+
+    /// Set regex-based account mappings: pattern → account name.
+    pub fn regex_mappings(mut self, mappings: Vec<(String, String)>) -> Self {
+        self.config.regex_mappings = mappings;
+        self
+    }
+
+    /// Enable the built-in merchant dictionary as a fallback.
+    pub const fn use_merchant_dict(mut self, enable: bool) -> Self {
+        self.config.use_merchant_dict = enable;
         self
     }
 

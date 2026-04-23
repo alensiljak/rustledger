@@ -50,7 +50,15 @@ This document describes rustledger's crate structure and data flow.
               │                     │                       │
               │                     └──► core, booking, validate, plugin, query
               └────────────────────────► core, parser, booking, validate, loader, query
-                                                            └──► core only
+                                                            └──► core, ops
+
+    ┌─────────────────────┐
+    │   rustledger-ops    │
+    │ (dedup, categorize, │
+    │  reconcile, etc.)   │
+    └────────┬────────────┘
+              │
+              └──► plugin-types only
 ```
 
 ## Crate Descriptions
@@ -77,8 +85,9 @@ This document describes rustledger's crate structure and data flow.
 | `rustledger-query` | BQL query engine | `Query`, `Executor`, `Table`, `Row` |
 | `rustledger-plugin` | Native + WASM + Python plugins | `NativePlugin`, `NativePluginRegistry`, `PluginManager` |
 | `rustledger-plugin-types` | WASM plugin interface types | `PluginInput`, `PluginOutput`, `DirectiveWrapper` |
+| `rustledger-ops` | Pure operations on directives | `RulesEngine`, `find_structural_duplicates`, `structural_hash`, `Enrichment` |
 | `rustledger-lsp` | Language Server Protocol | LSP handlers for all standard features |
-| `rustledger-importer` | Bank statement import | `CsvImporter`, `OfxImporter` |
+| `rustledger-importer` | Bank statement import | `CsvImporter`, `OfxImporter`, `auto_extract`, `EnrichedImportResult` |
 
 ### Distribution Layer
 

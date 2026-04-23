@@ -32,16 +32,46 @@
 
 pub mod config;
 pub mod csv_importer;
+pub mod csv_inference;
 pub mod ofx_importer;
 pub mod registry;
 
 use anyhow::Result;
 use rustledger_core::Directive;
+use rustledger_ops::enrichment::Enrichment;
 use std::path::Path;
 
 pub use config::ImporterConfig;
 pub use ofx_importer::OfxImporter;
 pub use registry::ImporterRegistry;
+
+use rustledger_ops::fingerprint::Fingerprint;
+
+/// Compute an import fingerprint from a directive.
+///
+/// For transactions, uses the first posting's amount and the payee+narration
+/// text. Returns `None` for non-transaction directives.
+pub(crate) fn directive_fingerprint(directive: &Directive) -> Option<Fingerprint> {
+    let Directive::Transaction(txn) = directive else {
+        return None;
+    };
+    let amount_str = txn.postings.first().and_then(|p| {
+        p.units
+            .as_ref()
+            .and_then(|u| u.number().map(|n| n.to_string()))
+    });
+    let mut text = String::new();
+    if let Some(ref payee) = txn.payee {
+        text.push_str(payee.as_str());
+        text.push(' ');
+    }
+    text.push_str(txn.narration.as_str());
+    Some(Fingerprint::compute(
+        &txn.date.to_string(),
+        amount_str.as_deref(),
+        &text,
+    ))
+}
 
 /// Result of an import operation.
 #[derive(Debug, Clone)]
@@ -76,6 +106,58 @@ impl ImportResult {
     }
 }
 
+/// Result of an enriched import operation.
+///
+/// Each directive is paired with an [`Enrichment`] that carries metadata about
+/// how it was categorized, its confidence score, and a stable fingerprint for
+/// deduplication.
+#[derive(Debug, Clone)]
+pub struct EnrichedImportResult {
+    /// Directive–enrichment pairs.
+    pub entries: Vec<(Directive, Enrichment)>,
+    /// Warnings encountered during import.
+    pub warnings: Vec<String>,
+}
+
+impl EnrichedImportResult {
+    /// Create a new enriched import result.
+    pub const fn new(entries: Vec<(Directive, Enrichment)>) -> Self {
+        Self {
+            entries,
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Create an empty enriched import result.
+    pub const fn empty() -> Self {
+        Self {
+            entries: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// Add a warning.
+    pub fn with_warning(mut self, warning: impl Into<String>) -> Self {
+        self.warnings.push(warning.into());
+        self
+    }
+
+    /// Convert to a plain [`ImportResult`], discarding enrichment metadata.
+    #[must_use]
+    pub fn into_import_result(self) -> ImportResult {
+        ImportResult {
+            directives: self.entries.into_iter().map(|(d, _)| d).collect(),
+            warnings: self.warnings,
+        }
+    }
+}
+
+impl From<EnrichedImportResult> for ImportResult {
+    fn from(enriched: EnrichedImportResult) -> Self {
+        enriched.into_import_result()
+    }
+}
+
 /// Trait for file importers.
 ///
 /// Implementors of this trait can extract beancount directives from various
@@ -107,6 +189,48 @@ pub fn extract_from_file(path: &Path, config: &ImporterConfig) -> Result<ImportR
 /// Extract transactions from file contents (useful for testing).
 pub fn extract_from_string(content: &str, config: &ImporterConfig) -> Result<ImportResult> {
     config.extract_from_string(content)
+}
+
+/// Auto-extract transactions from a file by inferring its format.
+///
+/// If the file is OFX/QFX, uses the OFX importer directly. Otherwise,
+/// attempts to infer the CSV format from the file content. Returns the
+/// enriched result with fingerprints and confidence scores.
+///
+/// # Errors
+///
+/// Returns an error if the file can't be read, the format can't be inferred,
+/// or extraction fails.
+pub fn auto_extract(
+    path: &std::path::Path,
+    account: &str,
+    currency: &str,
+) -> Result<EnrichedImportResult> {
+    // Check for OFX first
+    if path
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("ofx") || ext.eq_ignore_ascii_case("qfx"))
+    {
+        let ofx = ofx_importer::OfxImporter::new(account, currency);
+        return ofx.extract_from_string_enriched(&std::fs::read_to_string(path)?);
+    }
+
+    // Try CSV auto-inference
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read file {}: {e}", path.display()))?;
+
+    let inferred = csv_inference::infer_csv_config(&content)
+        .ok_or_else(|| anyhow::anyhow!("Could not infer CSV format from {}", path.display()))?;
+
+    let csv_config = inferred.to_csv_config();
+    let importer_config = config::ImporterConfig {
+        account: account.to_string(),
+        currency: Some(currency.to_string()),
+        amount_format: config::AmountFormat::default(),
+        importer_type: config::ImporterType::Csv(csv_config.clone()),
+    };
+    let importer = csv_importer::CsvImporter::new(importer_config);
+    importer.extract_string_enriched(&content, &csv_config)
 }
 
 #[cfg(test)]
@@ -215,5 +339,124 @@ mod tests {
         // Verify both original and clone have the warning
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(cloned.warnings.len(), 1);
+    }
+
+    // ========== EnrichedImportResult Tests ==========
+
+    fn make_test_enrichment(index: usize, confidence: f64) -> Enrichment {
+        Enrichment {
+            directive_index: index,
+            confidence,
+            method: rustledger_ops::enrichment::CategorizationMethod::Rule,
+            alternatives: vec![],
+            fingerprint: None,
+        }
+    }
+
+    fn make_test_txn_directive() -> Directive {
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Test")
+            .with_posting(Posting::new(
+                "Assets:Bank",
+                Amount::new(Decimal::from_str("-50").unwrap(), "USD"),
+            ))
+            .with_posting(Posting::new(
+                "Expenses:Food",
+                Amount::new(Decimal::from_str("50").unwrap(), "USD"),
+            ));
+        Directive::Transaction(txn)
+    }
+
+    #[test]
+    fn test_enriched_import_result_new() {
+        let directive = make_test_txn_directive();
+        let enrichment = make_test_enrichment(0, 0.95);
+        let entries = vec![(directive, enrichment)];
+        let result = EnrichedImportResult::new(entries);
+        assert_eq!(result.entries.len(), 1);
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_empty() {
+        let result = EnrichedImportResult::empty();
+        assert!(result.entries.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_with_warning() {
+        let result = EnrichedImportResult::empty().with_warning("Test warning");
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.warnings[0], "Test warning");
+    }
+
+    #[test]
+    fn test_enriched_import_result_multiple_warnings() {
+        let result = EnrichedImportResult::empty()
+            .with_warning("Warning 1")
+            .with_warning("Warning 2");
+        assert_eq!(result.warnings.len(), 2);
+    }
+
+    #[test]
+    fn test_enriched_into_import_result() {
+        let d1 = make_test_txn_directive();
+        let d2 = make_test_txn_directive();
+        let entries = vec![
+            (d1, make_test_enrichment(0, 0.95)),
+            (d2, make_test_enrichment(1, 0.3)),
+        ];
+        let enriched = EnrichedImportResult::new(entries).with_warning("A warning");
+
+        let plain = enriched.into_import_result();
+        // Directives preserved, enrichment dropped
+        assert_eq!(plain.directives.len(), 2);
+        // Warnings preserved
+        assert_eq!(plain.warnings.len(), 1);
+        assert_eq!(plain.warnings[0], "A warning");
+    }
+
+    #[test]
+    fn test_enriched_from_into_import_result() {
+        let entries = vec![(make_test_txn_directive(), make_test_enrichment(0, 1.0))];
+        let enriched = EnrichedImportResult::new(entries);
+
+        // Use the From<EnrichedImportResult> for ImportResult trait
+        let plain: ImportResult = enriched.into();
+        assert_eq!(plain.directives.len(), 1);
+        assert!(plain.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_debug_and_clone() {
+        let result = EnrichedImportResult::empty().with_warning("Test");
+        let debug_str = format!("{result:?}");
+        assert!(debug_str.contains("EnrichedImportResult"));
+        let cloned = result;
+        assert_eq!(cloned.warnings.len(), 1);
+    }
+
+    // ========== directive_fingerprint Tests ==========
+
+    #[test]
+    fn test_directive_fingerprint_for_transaction() {
+        let directive = make_test_txn_directive();
+        let fp = directive_fingerprint(&directive);
+        assert!(fp.is_some());
+    }
+
+    #[test]
+    fn test_directive_fingerprint_none_for_non_transaction() {
+        // Use a Balance directive
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
+        let balance = rustledger_core::Balance::new(
+            date,
+            "Assets:Bank",
+            Amount::new(Decimal::from_str("1000").unwrap(), "USD"),
+        );
+        let directive = Directive::Balance(balance);
+        let fp = directive_fingerprint(&directive);
+        assert!(fp.is_none());
     }
 }

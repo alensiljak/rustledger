@@ -142,6 +142,60 @@ Or specify a custom config path:
 rledger extract --importers-config path/to/importers.toml --importer credit_card chase-card.csv
 ```
 
+## Enriched Imports
+
+The import pipeline can automatically enrich transactions beyond basic CSV/OFX
+extraction:
+
+- **Auto-inference**: Automatically detect CSV delimiter, date format, and column roles
+- **Merchant dictionary**: ~60 built-in merchant patterns (grocery, dining, transport, subscriptions, etc.) for automatic account categorization
+- **Transaction fingerprinting**: Stable structural hashes for deduplication against existing ledger entries
+- **Confidence scores**: Every enrichment decision carries a confidence value
+
+### Auto-Detect Mode
+
+Use `--auto` to skip manual column configuration. The importer will infer
+delimiter, date format, and column roles from the file content:
+
+```bash
+rledger extract bank-statement.csv -a Assets:Bank:Checking --auto
+```
+
+This conflicts with manual column options (`--date-column`, `--amount-column`,
+etc.) since the whole point is to infer them automatically.
+
+### Merchant Dictionary
+
+The built-in merchant dictionary maps common payee patterns (Amazon, Starbucks,
+Netflix, Uber, etc.) to expense accounts. It is used as a low-priority fallback
+-- user-defined mappings in `importers.toml` always take priority.
+
+To enable the merchant dictionary in your importer configuration, use
+`use_merchant_dict` in the library API via `CsvConfigBuilder`. This is not
+yet available as a TOML config field.
+
+### Regex Mappings
+
+In addition to substring-based `[importers.mappings]`, the library supports
+regex-based mappings via the `CsvConfigBuilder::regex_mappings()` API. Regex
+patterns are compiled as case-insensitive and matched against payee and
+narration fields.
+
+### How Enrichment Works
+
+All enrichment operations live in the `rustledger-ops` crate, which provides
+pure functions with no I/O coupling:
+
+- `rustledger_ops::categorize::RulesEngine` -- the rules engine that evaluates
+  substring, regex, and merchant dictionary rules in priority order
+- `rustledger_ops::fingerprint` -- structural hashing for deduplication
+- `rustledger_ops::dedup` -- duplicate detection (structural and fuzzy)
+- `rustledger_ops::enrichment::Enrichment` -- metadata describing how each
+  transaction was categorized, with confidence and alternatives
+
+The importer crate (`rustledger-importer`) consumes these operations and returns
+`EnrichedImportResult` with directive-enrichment pairs.
+
 ## Duplicate Detection
 
 Avoid importing the same transactions twice:

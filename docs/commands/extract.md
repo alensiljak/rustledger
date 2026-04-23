@@ -28,6 +28,12 @@ rledger extract [OPTIONS] [FILE]
 | `--config <FILE>` | Path to importers.toml configuration file |
 | `--list-importers` | List available importers from config file and exit |
 
+### Auto-Detection
+
+| Option | Description |
+|--------|-------------|
+| `--auto` | Auto-detect CSV format (delimiter, columns, date format). Conflicts with manual column options. |
+
 ### Direct CLI Import
 
 | Option | Description |
@@ -88,6 +94,16 @@ skip_header = true
 rledger extract --importer chase chase-statement.csv
 ```
 
+### Auto-Detect CSV Format
+
+```bash
+rledger extract bank-statement.csv -a Assets:Bank:Checking --auto
+```
+
+The `--auto` flag infers the delimiter, date format, and column roles from the
+file content. It cannot be combined with manual column options like
+`--date-column` or `--amount-column`.
+
 ### OFX Import
 
 ```bash
@@ -145,6 +161,20 @@ default_expense = "Expenses:Unknown"
 "PAYROLL" = "Income:Salary"
 ```
 
+### Enrichment Options
+
+The importer library supports additional enrichment features via the
+`CsvConfigBuilder` API:
+
+| Builder Method | Description |
+|----------------|-------------|
+| `use_merchant_dict(true)` | Enable the built-in merchant dictionary (~60 common patterns) as a low-priority fallback for account categorization |
+| `regex_mappings(vec)` | Add regex-based account mappings (case-insensitive, compiled at load time) |
+
+These options are available in the Rust library API but are not yet exposed as
+fields in `importers.toml` configuration. Substring-based mappings in
+`[importers.mappings]` are supported in TOML and work the same way.
+
 ### Multiple Importers
 
 ```toml
@@ -194,3 +224,4 @@ rledger extract statement.csv \
 ## See Also
 
 - [Importing Guide](../guides/importing.md) - Detailed import tutorial
+- [Architecture: rustledger-ops](../reference/architecture.md) - Crate providing the enrichment operations

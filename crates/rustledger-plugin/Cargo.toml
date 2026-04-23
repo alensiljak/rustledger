@@ -27,6 +27,7 @@ python-plugins = [
 
 [dependencies]
 rustledger-core.workspace = true
+rustledger-ops.workspace = true
 rustledger-plugin-types.workspace = true
 wasmtime = { workspace = true, optional = true }
 wasmtime-wasi = { workspace = true, optional = true }

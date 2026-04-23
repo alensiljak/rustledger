@@ -132,6 +132,14 @@ pub struct Args {
     #[arg(long)]
     invert_sign: bool,
 
+    /// Auto-detect CSV format (delimiter, columns, date format)
+    #[arg(long, conflicts_with_all = [
+        "date_column", "date_format", "narration_column", "amount_column",
+        "delimiter", "skip_rows", "no_header", "debit_column", "credit_column",
+        "payee_column",
+    ])]
+    auto: bool,
+
     /// CSV has no header row
     #[arg(long)]
     no_header: bool,
@@ -143,6 +151,14 @@ pub struct Args {
     /// Existing ledger file for duplicate detection
     #[arg(long, value_name = "FILE")]
     existing: Option<PathBuf>,
+
+    /// Append a balance assertion with the given amount (e.g., "1234.56")
+    #[arg(long, value_name = "AMOUNT")]
+    balance: Option<String>,
+
+    /// Date for the balance assertion (defaults to today)
+    #[arg(long, value_name = "DATE")]
+    balance_date: Option<String>,
 }
 
 /// List available importers from a config file.
@@ -278,6 +294,32 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
                 config_path.display()
             );
             build_config_from_entry(entry)?
+        } else if args.auto {
+            // Auto-detect CSV format
+            let content = std::fs::read_to_string(file)
+                .with_context(|| format!("Failed to read file: {}", file.display()))?;
+
+            let inferred = rustledger_importer::csv_inference::infer_csv_config(&content)
+                .ok_or_else(|| anyhow!(
+                    "Could not auto-detect CSV format for {}. Try specifying columns explicitly.",
+                    file.display()
+                ))?;
+
+            eprintln!(
+                "Auto-detected format (confidence: {:.0}%):",
+                inferred.confidence * 100.0
+            );
+            eprintln!("  delimiter: {:?}", inferred.delimiter);
+            eprintln!("  date_format: {}", inferred.date_format);
+            eprintln!("  has_header: {}", inferred.has_header);
+
+            let csv_config = inferred.to_csv_config();
+            ImporterConfig {
+                account: args.account.clone(),
+                currency: Some(args.currency.clone()),
+                amount_format: rustledger_importer::config::AmountFormat::default(),
+                importer_type: rustledger_importer::config::ImporterType::Csv(csv_config),
+            }
         } else {
             // No config file: build from CLI arguments
             let mut builder = ImporterConfig::csv()
@@ -349,6 +391,37 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
         filtered
     } else {
         result.directives
+    };
+
+    // Append balance assertion if --balance is specified
+    let directives = if let Some(ref balance_amount) = args.balance {
+        use rust_decimal::Decimal;
+        use std::str::FromStr;
+
+        let amount = Decimal::from_str(balance_amount)
+            .with_context(|| format!("Invalid balance amount: {balance_amount}"))?;
+        let date = args
+            .balance_date
+            .clone()
+            .unwrap_or_else(|| jiff::Zoned::now().date().to_string());
+
+        let balance = rustledger_ops::reconcile::StatementBalance {
+            date,
+            account: args.account.clone(),
+            number: amount,
+            currency: args.currency.clone(),
+        };
+        let balance_wrapper = rustledger_ops::reconcile::create_balance_directive(&balance);
+
+        // Convert DirectiveWrapper to core Directive
+        let balance_directive = rustledger_plugin::convert::wrapper_to_directive(&balance_wrapper)
+            .map_err(|e| anyhow!("Failed to create balance directive: {e:?}"))?;
+
+        let mut with_balance = directives;
+        with_balance.push(balance_directive);
+        with_balance
+    } else {
+        directives
     };
 
     // Write output to file or stdout

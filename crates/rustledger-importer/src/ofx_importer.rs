@@ -3,10 +3,11 @@
 //! This module implements importing transactions from OFX (Open Financial Exchange)
 //! and QFX (Quicken Financial Exchange) files commonly exported by banks.
 
-use crate::{ImportResult, Importer};
+use crate::{EnrichedImportResult, ImportResult, Importer};
 use anyhow::{Context, Result};
 use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
+use rustledger_ops::enrichment::{CategorizationMethod, Enrichment};
 use std::fs;
 use std::path::Path;
 
@@ -71,6 +72,34 @@ impl OfxImporter {
             result = result.with_warning(warning);
         }
         Ok(result)
+    }
+
+    /// Extract transactions from OFX content with enrichment metadata.
+    pub fn extract_from_string_enriched(&self, content: &str) -> Result<EnrichedImportResult> {
+        let result = self.extract_from_string(content)?;
+        let entries = result
+            .directives
+            .into_iter()
+            .enumerate()
+            .map(|(i, directive)| {
+                let fingerprint = crate::directive_fingerprint(&directive);
+
+                let enrichment = Enrichment {
+                    directive_index: i,
+                    confidence: 0.0, // OFX has no categorization
+                    method: CategorizationMethod::Default,
+                    alternatives: vec![],
+                    fingerprint,
+                };
+                (directive, enrichment)
+            })
+            .collect();
+
+        let mut enriched = EnrichedImportResult::new(entries);
+        for warning in result.warnings {
+            enriched = enriched.with_warning(warning);
+        }
+        Ok(enriched)
     }
 
     fn parse_transaction(
