@@ -20,14 +20,34 @@ use crate::ledger_state::LedgerState;
 /// Uses the already-merged account type names from the loader's `Options`,
 /// which handles multi-file ledgers where `name_*` options may be in included files.
 ///
+/// Relative document directories are resolved against `base_dir` to ensure
+/// consistent path resolution with the loader's `run_plugins` behavior.
+///
 /// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
-fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> ValidationOptions {
+fn build_validation_options_from_loader(
+    loader_options: &LoaderOptions,
+    base_dir: &std::path::Path,
+) -> ValidationOptions {
+    let resolved_documents: Vec<String> = loader_options
+        .documents
+        .iter()
+        .map(|d| {
+            let path = std::path::Path::new(d);
+            if path.is_absolute() {
+                d.clone()
+            } else {
+                base_dir.join(path).to_string_lossy().to_string()
+            }
+        })
+        .collect();
+
     ValidationOptions {
         account_types: loader_options
             .account_types()
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        document_dirs: resolved_documents,
         ..Default::default()
     }
 }
@@ -38,17 +58,29 @@ fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> Valid
 /// `name_expenses` options to support custom (including Unicode) account type names.
 /// Other `ValidationOptions` fields are left at their default values.
 ///
+/// Relative document directories are resolved against `base_dir` if provided.
+/// When `base_dir` is `None`, relative paths are kept as-is (fallback for
+/// single-file validation where no source map is available).
+///
 /// Used when no ledger is loaded (single-file validation).
+///
+/// Note on `document_dirs`: In single-file mode, `documents` paths are stored
+/// as raw strings from the parsed options. The validator handles resolution
+/// internally using the file's parent directory as the base when needed.
+/// We intentionally pass the raw strings here rather than resolving them
+/// ourselves, to avoid duplicating the validator's resolution logic.
 ///
 /// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
 fn build_validation_options_from_file(
     file_options: &[(String, String, Span)],
+    base_dir: Option<&std::path::Path>,
 ) -> ValidationOptions {
     let mut opts = ValidationOptions::default();
 
     // Start with validator defaults, override with file options.
     // This avoids duplicating the canonical default account type names.
     let mut account_types = opts.account_types.clone();
+    let mut document_dirs = Vec::new();
 
     for (key, value, _span) in file_options {
         match key.as_str() {
@@ -67,11 +99,22 @@ fn build_validation_options_from_file(
             "name_expenses" if account_types.len() > 4 => {
                 account_types[4] = value.clone();
             }
+            "documents" => {
+                let path = std::path::Path::new(value);
+                if path.is_absolute() {
+                    document_dirs.push(value.clone());
+                } else if let Some(base) = base_dir {
+                    document_dirs.push(base.join(path).to_string_lossy().to_string());
+                } else {
+                    document_dirs.push(value.clone());
+                }
+            }
             _ => {}
         }
     }
 
     opts.account_types = account_types;
+    opts.document_dirs = document_dirs;
     opts
 }
 
@@ -442,6 +485,10 @@ fn build_live_directive_overlay(
 /// * `source` - Source text of the current file
 /// * `ledger_state` - Optional: Full ledger state for multi-file validation
 /// * `current_file_id` - Optional: File ID of the current file (to filter errors)
+/// * `current_file_path` - Optional: Path to the current file. In single-file
+///   mode (no `ledger_state`), this file's parent directory is used as the
+///   base for resolving relative `option "documents"` paths. Pass `None` in
+///   tests that don't touch `document` directives.
 /// * `other_buffer_overlays` - Fresh parses for every **other** open buffer
 ///   that is part of the ledger, keyed by file_id. Pass `&[]` in single-file
 ///   mode or for tests that don't care about cross-buffer consistency.
@@ -458,6 +505,7 @@ pub fn all_diagnostics(
     source: &str,
     ledger_state: Option<&LedgerState>,
     current_file_id: Option<u16>,
+    current_file_path: Option<&std::path::Path>,
     other_buffer_overlays: &[(u16, &[Spanned<Directive>])],
 ) -> Vec<Diagnostic> {
     let mut diagnostics = parse_errors_to_diagnostics(result, source);
@@ -518,9 +566,19 @@ pub fn all_diagnostics(
             let validation_options = if let Some(ls) = ledger_state
                 && let Some(ledger) = ls.ledger()
             {
-                build_validation_options_from_loader(&ledger.options)
+                let base_dir = ledger
+                    .source_map
+                    .files()
+                    .first()
+                    .and_then(|f| f.path.parent())
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                build_validation_options_from_loader(&ledger.options, base_dir)
             } else {
-                build_validation_options_from_file(&result.options)
+                // Single-file: resolve relative document dirs against the
+                // current file's parent directory so they don't end up being
+                // interpreted relative to the LSP process CWD.
+                let base_dir = current_file_path.and_then(|p| p.parent());
+                build_validation_options_from_file(&result.options, base_dir)
             };
 
             // Build plugin context for running plugins before validation.
@@ -723,7 +781,7 @@ mod tests {
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
         // Single-file validation (no ledger state)
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
 
         // Should have at least these validation errors:
         // - E1001: Account Income:Typo was never opened
@@ -788,7 +846,7 @@ mod tests {
         assert!(result.errors.is_empty(), "Should have no parse errors");
 
         // Single-file validation (no ledger state)
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
 
         // Filter to only ERROR severity diagnostics (allow warnings/info)
         let error_diagnostics: Vec<&Diagnostic> = diagnostics
@@ -1397,6 +1455,7 @@ option "name_equity" "Капитал"
             buffer_unbalanced,
             Some(&ledger_state),
             Some(file_id),
+            None,
             &[],
         );
         let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
@@ -1420,6 +1479,7 @@ option "name_equity" "Капитал"
             on_disk,
             Some(&ledger_state),
             Some(file_id),
+            None,
             &[],
         );
         let clean_error_count = clean_diagnostics
@@ -1534,6 +1594,7 @@ include "credit_card.beancount"
             main_content,
             Some(&ledger_state),
             Some(main_file_id),
+            None,
             &[],
         );
         let baseline_codes: Vec<_> = baseline.iter().map(get_code).collect();
@@ -1557,6 +1618,7 @@ include "credit_card.beancount"
             main_content,
             Some(&ledger_state),
             Some(main_file_id),
+            None,
             &[(
                 credit_card_file_id,
                 credit_card_buffer_parse.directives.as_slice(),
@@ -1592,7 +1654,7 @@ include "credit_card.beancount"
 
         // all_diagnostics() now runs plugins in single-file mode, so
         // auto_accounts should auto-generate the missing opens.
-        let diags = all_diagnostics(&result, source, None, None, &[]);
+        let diags = all_diagnostics(&result, source, None, None, None, &[]);
         let codes: Vec<_> = diags.iter().map(get_code).collect();
 
         assert!(
@@ -1704,7 +1766,7 @@ include "credit_card.beancount"
         // Use all_diagnostics (single-file mode) — this should run the
         // effective_date plugin and NOT produce a false E2001 for the
         // 2024-02-04 balance assertion.
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
         let codes: Vec<_> = diagnostics.iter().map(get_code).collect();
 
         // The key assertion: no E2001 balance error at 2024-02-04.
@@ -1732,7 +1794,7 @@ include "credit_card.beancount"
         let result = parse(source);
         assert!(result.errors.is_empty());
 
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
 
         // Should have an E8006 info diagnostic about the non-native plugin
         let info_diags: Vec<_> = diagnostics
@@ -1771,7 +1833,7 @@ include "credit_card.beancount"
         let result = parse(source);
         assert!(result.errors.is_empty());
 
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
         let info_diags: Vec<_> = diagnostics
             .iter()
             .filter(|d| get_code(d) == "E8006")
@@ -1799,7 +1861,7 @@ plugin "auto_accounts"
 
         // This exercises the plugin execution path. Even if no errors are
         // produced (document_discovery is lenient), the code path is covered.
-        let diagnostics = all_diagnostics(&result, source, None, None, &[]);
+        let diagnostics = all_diagnostics(&result, source, None, None, None, &[]);
 
         // auto_accounts should still work — no E1001
         let codes: Vec<_> = diagnostics.iter().map(get_code).collect();

@@ -1407,6 +1407,7 @@ impl MainLoopState {
             text,
             ledger_state,
             current_file_id,
+            current_canonical_path.as_deref(),
             &other_buffer_overlays,
         );
         drop(ledger_guard); // Release lock before sending

@@ -182,7 +182,7 @@ pub enum ParseErrorKind {
     UnclosedPushmeta(String),
     /// Deprecated pipe symbol in transaction.
     DeprecatedPipeSymbol,
-    /// Invalid booking method (must be uppercase: FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE).
+    /// Invalid booking method (must be uppercase: FIFO, STRICT, `STRICT_WITH_SIZE`, LIFO, HIFO, NONE, AVERAGE).
     InvalidBookingMethod(String),
 }
 
@@ -228,7 +228,7 @@ impl fmt::Display for ParseErrorKind {
             Self::InvalidBookingMethod(m) => {
                 write!(
                     f,
-                    "invalid booking method '{m}': must be one of FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE"
+                    "invalid booking method '{m}': must be one of FIFO, STRICT, STRICT_WITH_SIZE, LIFO, HIFO, NONE, AVERAGE"
                 )
             }
         }

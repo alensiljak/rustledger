@@ -3537,6 +3537,7 @@ dependencies = [
  "rustledger-booking",
  "rustledger-core",
  "rustledger-parser",
+ "tempfile",
  "thiserror 2.0.18",
 ]
 

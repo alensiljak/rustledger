@@ -1,0 +1,27 @@
+option "operating_currency" "USD"
+option "booking_method" "STRICT_WITH_SIZE"
+
+2020-01-01 open Assets:Stock
+2020-01-01 open Assets:Cash    USD
+
+2020-02-01 * "Buy lot 1"
+  Assets:Stock    10 CORP {1 USD}
+  Assets:Cash    -10 USD
+
+2020-03-01 * "Buy lot 2"
+  Assets:Stock    10 CORP {2 USD}
+  Assets:Cash    -20 USD
+
+2020-04-01 * "Buy lot 3"
+  Assets:Stock    5 CORP {3 USD}
+  Assets:Cash    -15 USD
+
+; Sell 5 - STRICT_WITH_SIZE should match lot 3 (exact size, oldest match)
+2020-05-01 * "Sell exact size"
+  Assets:Stock    -5 CORP {}
+  Assets:Cash      15 USD
+
+; Sell 10 - STRICT_WITH_SIZE should match lot 1 (exact size, oldest match)
+2020-06-01 * "Sell exact size"
+  Assets:Stock    -10 CORP {}
+  Assets:Cash      10 USD

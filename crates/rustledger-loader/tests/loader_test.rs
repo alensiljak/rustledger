@@ -676,6 +676,154 @@ fn test_api_booking_method_used_when_file_does_not_set_option() {
 }
 
 // ============================================================================
+// Booking Method Tests for All Methods
+// ============================================================================
+
+#[test]
+fn test_booking_method_lifo() {
+    let path = fixtures_path("booking_lifo.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under LIFO, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_hifo() {
+    let path = fixtures_path("booking_hifo.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under HIFO, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_average() {
+    // Note: AVERAGE is a rustledger extension — Python beancount v3.2.0
+    // does not implement it and reports "AVERAGE method is not supported".
+    // This test verifies rustledger handles it correctly without errors.
+    let path = fixtures_path("booking_average.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under AVERAGE, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_none() {
+    let path = fixtures_path("booking_none.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under NONE, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_strict_with_size() {
+    let path = fixtures_path("booking_strict_with_size.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors under STRICT_WITH_SIZE, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_strict_ambiguous_errors() {
+    let path = fixtures_path("booking_strict_ambiguous.beancount");
+    let options = LoadOptions::default();
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        !booking_errors.is_empty(),
+        "expected BOOK errors under STRICT with ambiguous lots, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_per_account_booking_method() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("per_account_booking.beancount");
+    std::fs::write(
+        &path,
+        r#"option "operating_currency" "USD"
+option "booking_method" "STRICT"
+
+2020-01-01 open Assets:Stock "FIFO"
+2020-01-01 open Assets:Cash    USD
+
+2020-02-01 * "Buy lot 1"
+  Assets:Stock    10 CORP {1 USD}
+  Assets:Cash    -10 USD
+
+2020-03-01 * "Buy lot 2"
+  Assets:Stock    10 CORP {2 USD}
+  Assets:Cash    -20 USD
+
+; Sell 5 - per-account FIFO should match lot 1 without ambiguity
+2020-04-01 * "Sell"
+  Assets:Stock    -5 CORP {}
+  Assets:Cash      10 USD
+"#,
+    )
+    .unwrap();
+
+    let options = LoadOptions::default(); // default = Strict
+    let ledger = load(&path, &options).expect("should load and process");
+
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors with per-account FIFO override, got: {booking_errors:?}"
+    );
+}
+
+#[test]
+fn test_booking_method_api_override() {
+    // File sets FIFO, but API overrides to LIFO
+    let path = fixtures_path("booking_method_fifo.beancount");
+    let options = LoadOptions {
+        booking_method: rustledger_core::BookingMethod::Lifo,
+        ..Default::default()
+    };
+
+    let ledger = load(&path, &options).expect("should load and process");
+
+    // File-level option takes precedence when explicitly set
+    let booking_errors: Vec<_> = ledger.errors.iter().filter(|e| e.code == "BOOK").collect();
+    assert!(
+        booking_errors.is_empty(),
+        "expected no BOOK errors (file FIFO overrides API LIFO), got: {booking_errors:?}"
+    );
+}
+
+// ============================================================================
 // Document Discovery Tests (Issue #466)
 // ============================================================================
 

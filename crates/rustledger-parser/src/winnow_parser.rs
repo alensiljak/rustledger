@@ -1322,8 +1322,15 @@ fn parse_open_directive(stream: &mut TokenStream<'_>) -> ParseRes<ParsedItem> {
 
     let booking = if let Ok(s) = parse_string_owned(stream) {
         // Validate booking method: must be one of the valid uppercase methods per beancount v3.
-        const VALID_BOOKING_METHODS: &[&str] =
-            &["FIFO", "STRICT", "LIFO", "HIFO", "NONE", "AVERAGE"];
+        const VALID_BOOKING_METHODS: &[&str] = &[
+            "FIFO",
+            "STRICT",
+            "STRICT_WITH_SIZE",
+            "LIFO",
+            "HIFO",
+            "NONE",
+            "AVERAGE",
+        ];
         if !VALID_BOOKING_METHODS.contains(&s.as_str()) {
             skip_comment(stream);
             let span = stream.span_from(start_pos);
