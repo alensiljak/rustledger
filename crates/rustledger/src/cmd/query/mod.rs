@@ -161,7 +161,13 @@ pub fn run(args: &Args) -> Result<()> {
     // Batch query: no pager (matching Python bean-query behavior).
     // Pager is only used in interactive REPL mode.
     let settings = ShellSettings::from_args(args, display_context);
-    output::execute_query(&query_str, &directives, &settings, &mut io::stdout())
+    if let Some(ref output_path) = settings.output_file {
+        let mut file = fs::File::create(output_path)
+            .with_context(|| format!("failed to create output file {}", output_path.display()))?;
+        output::execute_query(&query_str, &directives, &settings, &mut file)
+    } else {
+        output::execute_query(&query_str, &directives, &settings, &mut io::stdout())
+    }
 }
 
 /// Shell settings for query output and interactive mode.
