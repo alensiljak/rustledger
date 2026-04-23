@@ -199,7 +199,7 @@ fn fuzzy_text_match(a: &str, b: &str, threshold: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustledger_plugin_types::{AmountData, PostingData, TransactionData};
+    use rustledger_plugin_types::{AmountData, DirectiveData, PostingData, TransactionData};
 
     fn make_directive(
         date: &str,
@@ -355,5 +355,187 @@ mod tests {
     fn fuzzy_text_match_empty() {
         assert!(!fuzzy_text_match("", "hello", 0.5));
         assert!(!fuzzy_text_match("hello", "", 0.5));
+    }
+
+    // ===== Additional fuzzy dedup tests =====
+
+    #[test]
+    fn fuzzy_multiple_matches_only_first_returned() {
+        // Two existing transactions match the same new one; only first match per new txn
+        let new = vec![make_directive(
+            "2024-01-15",
+            Some("Store"),
+            "Groceries",
+            "-50.00",
+        )];
+        let existing = vec![
+            make_directive("2024-01-15", Some("Store"), "Groceries", "-50.00"),
+            make_directive("2024-01-15", Some("Store"), "Groceries run", "-50.00"),
+        ];
+        let config = FuzzyDedupConfig::default();
+        let matches = find_fuzzy_duplicates(&new, &existing, &config);
+        // Should only return one match (the first existing match, due to `break`)
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].new_index, 0);
+        assert_eq!(matches[0].existing_index, 0);
+    }
+
+    #[test]
+    fn fuzzy_non_transaction_directives_are_skipped() {
+        let note_directive = DirectiveWrapper {
+            directive_type: "note".to_string(),
+            date: "2024-01-15".to_string(),
+            filename: None,
+            lineno: None,
+            data: DirectiveData::Note(rustledger_plugin_types::NoteData {
+                account: "Assets:Bank".to_string(),
+                comment: "A note".to_string(),
+                metadata: vec![],
+            }),
+        };
+        let txn = make_directive("2024-01-15", Some("Store"), "Groceries", "-50.00");
+
+        // Note in new directives - should be skipped
+        let matches = find_fuzzy_duplicates(
+            &[note_directive.clone()],
+            &[txn.clone()],
+            &FuzzyDedupConfig::default(),
+        );
+        assert!(matches.is_empty());
+
+        // Note in existing directives - should be skipped
+        let matches =
+            find_fuzzy_duplicates(&[txn], &[note_directive], &FuzzyDedupConfig::default());
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_empty_directives_list() {
+        let config = FuzzyDedupConfig::default();
+
+        // Both empty
+        let matches = find_fuzzy_duplicates(&[], &[], &config);
+        assert!(matches.is_empty());
+
+        // New empty
+        let existing = vec![make_directive(
+            "2024-01-15",
+            Some("Store"),
+            "Test",
+            "-50.00",
+        )];
+        let matches = find_fuzzy_duplicates(&[], &existing, &config);
+        assert!(matches.is_empty());
+
+        // Existing empty
+        let new = vec![make_directive(
+            "2024-01-15",
+            Some("Store"),
+            "Test",
+            "-50.00",
+        )];
+        let matches = find_fuzzy_duplicates(&new, &[], &config);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_matching_with_narration_only() {
+        // No payee, match on narration text only
+        let new = vec![make_directive(
+            "2024-01-15",
+            None,
+            "whole foods market",
+            "-50.00",
+        )];
+        let existing = vec![make_directive(
+            "2024-01-15",
+            None,
+            "Whole Foods Market #123",
+            "-50.00",
+        )];
+        let config = FuzzyDedupConfig::default();
+        let matches = find_fuzzy_duplicates(&new, &existing, &config);
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn fuzzy_matching_payee_vs_narration() {
+        // Payee in new matches narration in existing (both lowercased)
+        let new = vec![make_directive(
+            "2024-01-15",
+            Some("Whole Foods"),
+            "Payment",
+            "-50.00",
+        )];
+        let existing = vec![make_directive(
+            "2024-01-15",
+            None,
+            "whole foods market",
+            "-50.00",
+        )];
+        let config = FuzzyDedupConfig::default();
+        let matches = find_fuzzy_duplicates(&new, &existing, &config);
+        // "whole foods payment" vs "whole foods market" — shares 2/3 words (67%) > 50%
+        assert_eq!(matches.len(), 1);
+    }
+
+    #[test]
+    fn structural_empty_directives_list() {
+        let dups = find_structural_duplicates(&[]);
+        assert!(dups.is_empty());
+    }
+
+    #[test]
+    fn structural_non_transaction_not_duplicated() {
+        let note1 = DirectiveWrapper {
+            directive_type: "note".to_string(),
+            date: "2024-01-15".to_string(),
+            filename: None,
+            lineno: None,
+            data: DirectiveData::Note(rustledger_plugin_types::NoteData {
+                account: "Assets:Bank".to_string(),
+                comment: "Same note".to_string(),
+                metadata: vec![],
+            }),
+        };
+        let note2 = note1.clone();
+        let dups = find_structural_duplicates(&[note1, note2]);
+        assert!(dups.is_empty());
+    }
+
+    #[test]
+    fn fuzzy_dedup_config_default() {
+        let config = FuzzyDedupConfig::default();
+        assert!((config.text_similarity_threshold - 0.5).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn fuzzy_high_threshold_rejects_partial_matches() {
+        let new = vec![make_directive("2024-01-15", None, "whole foods", "-50.00")];
+        let existing = vec![make_directive(
+            "2024-01-15",
+            None,
+            "whole foods market special",
+            "-50.00",
+        )];
+        // At threshold 0.9, "whole foods" (2 words) needs 90% of 2 = 1.8 → 2 matches in longer
+        // "whole foods" are both in longer text, so 2/2 = 100% → still passes
+        let config = FuzzyDedupConfig {
+            text_similarity_threshold: 0.9,
+        };
+        let matches = find_fuzzy_duplicates(&new, &existing, &config);
+        assert_eq!(matches.len(), 1);
+
+        // Totally different words at high threshold should not match
+        let new = vec![make_directive("2024-01-15", None, "alpha beta", "-50.00")];
+        let existing = vec![make_directive(
+            "2024-01-15",
+            None,
+            "alpha gamma delta",
+            "-50.00",
+        )];
+        let matches = find_fuzzy_duplicates(&new, &existing, &config);
+        // "alpha beta" shares 1/2 words with "alpha gamma delta" → 50% < 90%
+        assert!(matches.is_empty());
     }
 }

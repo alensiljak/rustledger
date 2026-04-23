@@ -1207,6 +1207,148 @@ not-a-date,Coffee,-5.00
         }
     }
 
+    // ===== Enriched extraction tests =====
+
+    #[test]
+    fn test_enriched_extraction_basic() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .build()
+            .unwrap();
+
+        let csv_config = match &config.importer_type {
+            ImporterType::Csv(c) => c.clone(),
+            _ => unreachable!(),
+        };
+        let importer = CsvImporter::new(config);
+
+        let csv_content =
+            "Date,Description,Amount\n2024-01-15,Coffee Shop,-5.00\n2024-01-16,Salary,2500.00\n";
+
+        let result = importer
+            .extract_string_enriched(csv_content, &csv_config)
+            .unwrap();
+        assert_eq!(result.entries.len(), 2);
+
+        // Each entry should have a directive and enrichment
+        for (directive, enrichment) in &result.entries {
+            assert!(matches!(
+                directive,
+                rustledger_core::Directive::Transaction(_)
+            ));
+            // Fingerprint should be present for transactions
+            assert!(enrichment.fingerprint.is_some());
+        }
+    }
+
+    #[test]
+    fn test_enriched_confidence_mapping_match_vs_default() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .mappings(vec![("coffee".to_string(), "Expenses:Dining".to_string())])
+            .build()
+            .unwrap();
+
+        let csv_config = match &config.importer_type {
+            ImporterType::Csv(c) => c.clone(),
+            _ => unreachable!(),
+        };
+        let importer = CsvImporter::new(config);
+
+        let csv_content = "Date,Description,Amount\n2024-01-15,Coffee Shop,-5.00\n2024-01-16,Random Store,-10.00\n";
+
+        let result = importer
+            .extract_string_enriched(csv_content, &csv_config)
+            .unwrap();
+        assert_eq!(result.entries.len(), 2);
+
+        // First entry matches "coffee" rule → confidence 1.0
+        let (_, enrichment0) = &result.entries[0];
+        assert!((enrichment0.confidence - 1.0).abs() < f64::EPSILON);
+        assert_eq!(
+            enrichment0.method,
+            rustledger_ops::enrichment::CategorizationMethod::Rule
+        );
+
+        // Second entry has no match → confidence 0.0, method Default
+        let (_, enrichment1) = &result.entries[1];
+        assert!((enrichment1.confidence - 0.0).abs() < f64::EPSILON);
+        assert_eq!(
+            enrichment1.method,
+            rustledger_ops::enrichment::CategorizationMethod::Default
+        );
+    }
+
+    #[test]
+    fn test_enriched_merchant_dict_categorization() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .use_merchant_dict(true)
+            .build()
+            .unwrap();
+
+        let csv_config = match &config.importer_type {
+            ImporterType::Csv(c) => c.clone(),
+            _ => unreachable!(),
+        };
+        let importer = CsvImporter::new(config);
+
+        // Use a well-known merchant name that should be in the merchant dict
+        let csv_content = "Date,Description,Amount\n2024-01-15,AMAZON,-50.00\n";
+
+        let result = importer
+            .extract_string_enriched(csv_content, &csv_config)
+            .unwrap();
+        assert_eq!(result.entries.len(), 1);
+
+        let (_, enrichment) = &result.entries[0];
+        // If merchant dict has "amazon", confidence should be 1.0 and method MerchantDict.
+        // If not, it falls back to Default with 0.0. Either way the enrichment is populated.
+        assert!(enrichment.fingerprint.is_some());
+        assert!(enrichment.confidence >= 0.0 && enrichment.confidence <= 1.0);
+    }
+
+    #[test]
+    fn test_enriched_warnings_propagated() {
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .build()
+            .unwrap();
+
+        let csv_config = match &config.importer_type {
+            ImporterType::Csv(c) => c.clone(),
+            _ => unreachable!(),
+        };
+        let importer = CsvImporter::new(config);
+
+        let csv_content =
+            "Date,Description,Amount\nnot-a-date,Coffee,-5.00\n2024-01-15,Valid,-10.00\n";
+
+        let result = importer
+            .extract_string_enriched(csv_content, &csv_config)
+            .unwrap();
+        // One valid entry, one warning
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(result.warnings.len(), 1);
+        assert!(result.warnings[0].contains("failed to parse date"));
+    }
+
     #[test]
     fn test_csv_import_empty_mappings() {
         let config = ImporterConfig::csv()

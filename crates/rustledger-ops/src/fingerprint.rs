@@ -295,7 +295,9 @@ fn normalize_text(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rustledger_plugin_types::{AmountData, PostingData, TransactionData};
+    use rustledger_plugin_types::{
+        AmountData, CostData, PostingData, PriceAnnotationData, TransactionData,
+    };
 
     fn make_txn(payee: Option<&str>, narration: &str, amount: &str) -> TransactionData {
         TransactionData {
@@ -452,5 +454,295 @@ mod tests {
     fn fingerprint_from_hex_invalid_chars() {
         let err = Fingerprint::from_hex("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").unwrap_err();
         assert_eq!(err, FingerprintError::InvalidHex);
+    }
+
+    // ===== Structural hash edge case tests (ported from native_plugins_test.rs) =====
+
+    #[test]
+    fn distinct_costs_produce_different_hashes() {
+        let mut txn1 = make_txn(Some("Store"), "Buy shares", "100.00");
+        txn1.postings[0].cost = Some(CostData {
+            number_per: Some("10.00".to_string()),
+            number_total: None,
+            currency: Some("USD".to_string()),
+            date: None,
+            label: None,
+            merge: false,
+        });
+        let mut txn2 = make_txn(Some("Store"), "Buy shares", "100.00");
+        txn2.postings[0].cost = Some(CostData {
+            number_per: Some("11.00".to_string()),
+            number_total: None,
+            currency: Some("USD".to_string()),
+            date: None,
+            label: None,
+            merge: false,
+        });
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn distinct_prices_produce_different_hashes() {
+        let mut txn1 = make_txn(Some("Store"), "Buy shares", "100.00");
+        txn1.postings[0].price = Some(PriceAnnotationData {
+            is_total: false,
+            amount: Some(AmountData {
+                number: "10.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            number: None,
+            currency: None,
+        });
+        let mut txn2 = make_txn(Some("Store"), "Buy shares", "100.00");
+        txn2.postings[0].price = Some(PriceAnnotationData {
+            is_total: false,
+            amount: Some(AmountData {
+                number: "11.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            number: None,
+            currency: None,
+        });
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn reordered_postings_produce_different_hashes() {
+        let posting_a = PostingData {
+            account: "Assets:Bank".to_string(),
+            units: Some(AmountData {
+                number: "-50.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            cost: None,
+            price: None,
+            flag: None,
+            metadata: vec![],
+        };
+        let posting_b = PostingData {
+            account: "Expenses:Food".to_string(),
+            units: Some(AmountData {
+                number: "50.00".to_string(),
+                currency: "USD".to_string(),
+            }),
+            cost: None,
+            price: None,
+            flag: None,
+            metadata: vec![],
+        };
+
+        let txn1 = TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![posting_a.clone(), posting_b.clone()],
+        };
+        let txn2 = TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![posting_b, posting_a],
+        };
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn none_vs_empty_payee_differ() {
+        let txn_none = make_txn(None, "Test", "100");
+        let txn_empty = TransactionData {
+            flag: "*".to_string(),
+            payee: Some(String::new()),
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![PostingData {
+                account: "Assets:Bank".to_string(),
+                units: Some(AmountData {
+                    number: "100".to_string(),
+                    currency: "USD".to_string(),
+                }),
+                cost: None,
+                price: None,
+                flag: None,
+                metadata: vec![],
+            }],
+        };
+        assert_ne!(
+            structural_hash("2024-01-15", &txn_none),
+            structural_hash("2024-01-15", &txn_empty)
+        );
+    }
+
+    #[test]
+    fn empty_vs_absent_tags_are_duplicates() {
+        // A transaction with no tags and one with an empty tags vec should hash the same
+        let txn1 = make_txn(None, "Test", "100");
+        let txn2 = TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![PostingData {
+                account: "Assets:Bank".to_string(),
+                units: Some(AmountData {
+                    number: "100".to_string(),
+                    currency: "USD".to_string(),
+                }),
+                cost: None,
+                price: None,
+                flag: None,
+                metadata: vec![],
+            }],
+        };
+        assert_eq!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn distinct_posting_counts_differ() {
+        let txn1 = make_txn(None, "Test", "100");
+        let txn2 = TransactionData {
+            flag: "*".to_string(),
+            payee: None,
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![
+                PostingData {
+                    account: "Assets:Bank".to_string(),
+                    units: Some(AmountData {
+                        number: "100".to_string(),
+                        currency: "USD".to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+                PostingData {
+                    account: "Expenses:Food".to_string(),
+                    units: Some(AmountData {
+                        number: "-100".to_string(),
+                        currency: "USD".to_string(),
+                    }),
+                    cost: None,
+                    price: None,
+                    flag: None,
+                    metadata: vec![],
+                },
+            ],
+        };
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn distinct_flags_differ() {
+        let mut txn1 = make_txn(None, "Test", "100");
+        txn1.flag = "*".to_string();
+        let mut txn2 = make_txn(None, "Test", "100");
+        txn2.flag = "!".to_string();
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn link_order_independence() {
+        let mut txn1 = make_txn(None, "Test", "100");
+        txn1.links = vec!["link-a".to_string(), "link-b".to_string()];
+        let mut txn2 = make_txn(None, "Test", "100");
+        txn2.links = vec!["link-b".to_string(), "link-a".to_string()];
+        assert_eq!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn duplicate_tags_are_deduped() {
+        let mut txn1 = make_txn(None, "Test", "100");
+        txn1.tags = vec!["a".to_string(), "a".to_string()];
+        let mut txn2 = make_txn(None, "Test", "100");
+        txn2.tags = vec!["a".to_string()];
+        assert_eq!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn posting_flag_affects_hash() {
+        let mut txn1 = make_txn(None, "Test", "100");
+        txn1.postings[0].flag = Some("!".to_string());
+        let txn2 = make_txn(None, "Test", "100");
+        assert_ne!(
+            structural_hash("2024-01-15", &txn1),
+            structural_hash("2024-01-15", &txn2)
+        );
+    }
+
+    #[test]
+    fn fingerprint_none_amount() {
+        let fp1 = Fingerprint::compute("2024-01-15", None, "Store");
+        let fp2 = Fingerprint::compute("2024-01-15", Some("-50.00"), "Store");
+        assert_ne!(fp1, fp2);
+    }
+
+    #[test]
+    fn fingerprint_normalizes_amount() {
+        // "50" and "50.00" should produce the same fingerprint
+        let fp1 = Fingerprint::compute("2024-01-15", Some("50"), "Store");
+        let fp2 = Fingerprint::compute("2024-01-15", Some("50.00"), "Store");
+        assert_eq!(fp1, fp2);
+    }
+
+    #[test]
+    fn fingerprint_from_transaction_no_postings() {
+        let txn = TransactionData {
+            flag: "*".to_string(),
+            payee: Some("Store".to_string()),
+            narration: "Test".to_string(),
+            tags: vec![],
+            links: vec![],
+            metadata: vec![],
+            postings: vec![],
+        };
+        let fp = Fingerprint::from_transaction("2024-01-15", &txn);
+        // Should still compute (amount=None)
+        let expected = Fingerprint::compute("2024-01-15", None, "Store Test");
+        assert_eq!(fp, expected);
+    }
+
+    #[test]
+    fn fingerprint_error_display() {
+        let err = FingerprintError::InvalidLength(10);
+        assert_eq!(err.to_string(), "fingerprint hex must be 32 chars, got 10");
+        let err = FingerprintError::InvalidHex;
+        assert_eq!(err.to_string(), "invalid hex in fingerprint");
     }
 }

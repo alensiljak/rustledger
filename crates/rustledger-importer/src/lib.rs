@@ -340,4 +340,123 @@ mod tests {
         assert_eq!(result.warnings.len(), 1);
         assert_eq!(cloned.warnings.len(), 1);
     }
+
+    // ========== EnrichedImportResult Tests ==========
+
+    fn make_test_enrichment(index: usize, confidence: f64) -> Enrichment {
+        Enrichment {
+            directive_index: index,
+            confidence,
+            method: rustledger_ops::enrichment::CategorizationMethod::Rule,
+            alternatives: vec![],
+            fingerprint: None,
+        }
+    }
+
+    fn make_test_txn_directive() -> Directive {
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
+        let txn = Transaction::new(date, "Test")
+            .with_posting(Posting::new(
+                "Assets:Bank",
+                Amount::new(Decimal::from_str("-50").unwrap(), "USD"),
+            ))
+            .with_posting(Posting::new(
+                "Expenses:Food",
+                Amount::new(Decimal::from_str("50").unwrap(), "USD"),
+            ));
+        Directive::Transaction(txn)
+    }
+
+    #[test]
+    fn test_enriched_import_result_new() {
+        let directive = make_test_txn_directive();
+        let enrichment = make_test_enrichment(0, 0.95);
+        let entries = vec![(directive, enrichment)];
+        let result = EnrichedImportResult::new(entries);
+        assert_eq!(result.entries.len(), 1);
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_empty() {
+        let result = EnrichedImportResult::empty();
+        assert!(result.entries.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_with_warning() {
+        let result = EnrichedImportResult::empty().with_warning("Test warning");
+        assert_eq!(result.warnings.len(), 1);
+        assert_eq!(result.warnings[0], "Test warning");
+    }
+
+    #[test]
+    fn test_enriched_import_result_multiple_warnings() {
+        let result = EnrichedImportResult::empty()
+            .with_warning("Warning 1")
+            .with_warning("Warning 2");
+        assert_eq!(result.warnings.len(), 2);
+    }
+
+    #[test]
+    fn test_enriched_into_import_result() {
+        let d1 = make_test_txn_directive();
+        let d2 = make_test_txn_directive();
+        let entries = vec![
+            (d1, make_test_enrichment(0, 0.95)),
+            (d2, make_test_enrichment(1, 0.3)),
+        ];
+        let enriched = EnrichedImportResult::new(entries).with_warning("A warning");
+
+        let plain = enriched.into_import_result();
+        // Directives preserved, enrichment dropped
+        assert_eq!(plain.directives.len(), 2);
+        // Warnings preserved
+        assert_eq!(plain.warnings.len(), 1);
+        assert_eq!(plain.warnings[0], "A warning");
+    }
+
+    #[test]
+    fn test_enriched_from_into_import_result() {
+        let entries = vec![(make_test_txn_directive(), make_test_enrichment(0, 1.0))];
+        let enriched = EnrichedImportResult::new(entries);
+
+        // Use the From<EnrichedImportResult> for ImportResult trait
+        let plain: ImportResult = enriched.into();
+        assert_eq!(plain.directives.len(), 1);
+        assert!(plain.warnings.is_empty());
+    }
+
+    #[test]
+    fn test_enriched_import_result_debug_and_clone() {
+        let result = EnrichedImportResult::empty().with_warning("Test");
+        let debug_str = format!("{result:?}");
+        assert!(debug_str.contains("EnrichedImportResult"));
+        let cloned = result.clone();
+        assert_eq!(cloned.warnings.len(), 1);
+    }
+
+    // ========== directive_fingerprint Tests ==========
+
+    #[test]
+    fn test_directive_fingerprint_for_transaction() {
+        let directive = make_test_txn_directive();
+        let fp = directive_fingerprint(&directive);
+        assert!(fp.is_some());
+    }
+
+    #[test]
+    fn test_directive_fingerprint_none_for_non_transaction() {
+        // Use a Balance directive
+        let date = rustledger_core::naive_date(2024, 1, 15).unwrap();
+        let balance = rustledger_core::Balance::new(
+            date,
+            "Assets:Bank",
+            Amount::new(Decimal::from_str("1000").unwrap(), "USD"),
+        );
+        let directive = Directive::Balance(balance);
+        let fp = directive_fingerprint(&directive);
+        assert!(fp.is_none());
+    }
 }

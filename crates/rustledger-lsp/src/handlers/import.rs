@@ -403,4 +403,233 @@ mod tests {
         let lenses = import_code_lens(&directives, &source);
         assert!(lenses.is_empty());
     }
+
+    // ===== Code action tests =====
+
+    fn make_imported_txn_at(
+        confidence: f64,
+        method: &str,
+        account: &str,
+        start: usize,
+        end: usize,
+    ) -> Spanned<Directive> {
+        let date = naive_date(2024, 1, 15).unwrap();
+        let mut meta = Metadata::default();
+        meta.insert(
+            META_CONFIDENCE.to_string(),
+            MetaValue::Number(Decimal::from_str(&confidence.to_string()).unwrap()),
+        );
+        meta.insert(
+            META_METHOD.to_string(),
+            MetaValue::String(method.to_string()),
+        );
+
+        let txn = Transaction {
+            date,
+            flag: '*',
+            payee: None,
+            narration: "Test".into(),
+            tags: vec![],
+            links: vec![],
+            meta,
+            postings: vec![
+                Posting::new(
+                    "Assets:Bank",
+                    rustledger_core::Amount::new(Decimal::from_str("-50").unwrap(), "USD"),
+                ),
+                Posting::new(
+                    account,
+                    rustledger_core::Amount::new(Decimal::from_str("50").unwrap(), "USD"),
+                ),
+            ],
+            trailing_comments: vec![],
+        };
+
+        Spanned {
+            value: Directive::Transaction(txn),
+            span: Span { start, end },
+            file_id: 0,
+        }
+    }
+
+    #[test]
+    fn code_actions_appear_for_txns_in_range() {
+        // Source: 400 chars, two txns at different positions
+        let source = " ".repeat(400);
+        let directives = vec![
+            make_imported_txn_at(0.95, "rule", "Expenses:Groceries", 0, 100),
+            make_imported_txn_at(0.6, "ml", "Expenses:Dining", 200, 300),
+        ];
+
+        // Request actions covering only the first transaction
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 50,
+            },
+        };
+        let actions = import_code_actions(&directives, &source, range);
+
+        // Should have action for first txn + batch action (2 high-confidence)
+        let accept_actions: Vec<_> = actions
+            .iter()
+            .filter(|a| a.title.starts_with("Accept import:"))
+            .collect();
+        assert_eq!(accept_actions.len(), 1);
+        assert!(accept_actions[0].title.contains("Expenses:Groceries"));
+    }
+
+    #[test]
+    fn code_actions_not_outside_range() {
+        let source = " ".repeat(400);
+        let directives = vec![make_imported_txn_at(
+            0.95,
+            "rule",
+            "Expenses:Groceries",
+            200,
+            300,
+        )];
+
+        // Request actions for range 0..50 which does NOT overlap the txn at 200..300
+        // Line index: since source is all spaces on line 0, byte 200 is still line 0, char 200
+        // So we need a range that ends before char 200
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 50,
+            },
+        };
+        let actions = import_code_actions(&directives, &source, range);
+
+        // No accept actions for individual txns (only batch if applicable)
+        let accept_actions: Vec<_> = actions
+            .iter()
+            .filter(|a| a.title.starts_with("Accept import:"))
+            .collect();
+        assert!(accept_actions.is_empty());
+    }
+
+    #[test]
+    fn code_actions_batch_accept_count() {
+        let source = " ".repeat(600);
+        let directives = vec![
+            make_imported_txn_at(0.95, "rule", "Expenses:Groceries", 0, 100),
+            make_imported_txn_at(0.99, "rule", "Expenses:Dining", 100, 200),
+            make_imported_txn_at(0.3, "default", "Expenses:Unknown", 200, 300),
+        ];
+
+        // Request actions covering all transactions
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 599,
+            },
+        };
+        let actions = import_code_actions(&directives, &source, range);
+
+        // Should have batch accept with count = 2 (only the two > 0.9)
+        let batch_action = actions
+            .iter()
+            .find(|a| a.title.contains("Accept all"))
+            .expect("batch action should exist");
+        assert!(batch_action.title.contains("2"));
+    }
+
+    #[test]
+    fn code_actions_no_batch_when_single_high_confidence() {
+        let source = " ".repeat(400);
+        let directives = vec![
+            make_imported_txn_at(0.95, "rule", "Expenses:Groceries", 0, 100),
+            make_imported_txn_at(0.3, "default", "Expenses:Unknown", 100, 200),
+        ];
+
+        let range = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 399,
+            },
+        };
+        let actions = import_code_actions(&directives, &source, range);
+
+        // Only 1 high confidence → no batch action
+        let batch_actions: Vec<_> = actions
+            .iter()
+            .filter(|a| a.title.contains("Accept all"))
+            .collect();
+        assert!(batch_actions.is_empty());
+    }
+
+    #[test]
+    fn ranges_overlap_basic() {
+        let a = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 10,
+            },
+        };
+        let b = Range {
+            start: Position {
+                line: 0,
+                character: 5,
+            },
+            end: Position {
+                line: 0,
+                character: 15,
+            },
+        };
+        assert!(ranges_overlap(a, b));
+    }
+
+    #[test]
+    fn ranges_no_overlap() {
+        let a = Range {
+            start: Position {
+                line: 0,
+                character: 0,
+            },
+            end: Position {
+                line: 0,
+                character: 5,
+            },
+        };
+        let b = Range {
+            start: Position {
+                line: 0,
+                character: 10,
+            },
+            end: Position {
+                line: 0,
+                character: 15,
+            },
+        };
+        assert!(!ranges_overlap(a, b));
+    }
+
+    #[test]
+    fn diagnostics_source_is_set() {
+        let source = make_source();
+        let directives = vec![make_imported_txn(0.95, "rule", "Expenses:Groceries")];
+        let diags = import_diagnostics(&directives, &source);
+        assert_eq!(diags[0].source.as_deref(), Some("rustledger-import"));
+    }
 }
