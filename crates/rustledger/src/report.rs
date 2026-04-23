@@ -156,6 +156,9 @@ pub fn report_validation_errors<W: Write>(
         if let Some(ctx) = &error.context {
             writeln!(writer, "  context: {ctx}")?;
         }
+        if let Some(note) = &error.note {
+            writeln!(writer, "  note: {note}")?;
+        }
         writeln!(writer)?;
     }
 

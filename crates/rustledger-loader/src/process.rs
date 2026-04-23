@@ -657,7 +657,9 @@ pub fn run_plugins(
         let directive = wrapper_to_directive(wrapper)
             .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
 
-        // Reconstruct span from filename/lineno if available
+        // Reconstruct span from filename/lineno if available, falling back to
+        // the plugin-synthesized sentinel when no source location is recoverable.
+        // See `rustledger_parser::SYNTHESIZED_FILE_ID` and issue #896.
         let (span, file_id) =
             if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
                 if let Some(&fid) = filename_to_file_id.get(filename) {
@@ -666,15 +668,24 @@ pub fn run_plugins(
                         let span_start = file.line_start(lineno as usize).unwrap_or(0);
                         (rustledger_parser::Span::new(span_start, span_start), fid)
                     } else {
-                        (rustledger_parser::Span::new(0, 0), 0)
+                        (
+                            rustledger_parser::Span::new(0, 0),
+                            rustledger_parser::SYNTHESIZED_FILE_ID,
+                        )
                     }
                 } else {
-                    // Unknown file (plugin-generated) - use zero span
-                    (rustledger_parser::Span::new(0, 0), 0)
+                    // Plugin-generated directive with an unknown/synthetic filename.
+                    (
+                        rustledger_parser::Span::new(0, 0),
+                        rustledger_parser::SYNTHESIZED_FILE_ID,
+                    )
                 }
             } else {
-                // No location info - use zero span
-                (rustledger_parser::Span::new(0, 0), 0)
+                // Plugin-generated directive with no source location at all.
+                (
+                    rustledger_parser::Span::new(0, 0),
+                    rustledger_parser::SYNTHESIZED_FILE_ID,
+                )
             };
 
         new_directives.push(Spanned::new(directive, span).with_file_id(file_id as usize));
@@ -740,10 +751,17 @@ fn run_validation(
         } else {
             ErrorSeverity::Error
         };
+        // Fold the advisory note (if any) into the message so it propagates
+        // through every downstream format (LedgerError, JSON diagnostic, CLI
+        // report, LSP diagnostic) without each one needing a dedicated field.
+        let message = match &err.note {
+            Some(note) => format!("{err}\n  note: {note}"),
+            None => err.to_string(),
+        };
         errors.push(LedgerError {
             severity: severity_level,
             code: err.code.code().to_string(),
-            message: err.to_string(),
+            message,
             location: None,
             phase: phase.to_string(),
         });
