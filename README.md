@@ -34,6 +34,7 @@ ______________________________________________________________________
 | **Runs anywhere** | WebAssembly support for browser and Node.js |
 | **Better errors** | Detailed error messages with source locations |
 | **30 built-in plugins** | Plus Python plugin compatibility via WASI sandbox |
+| **Bank import** | CSV/OFX import with auto-detection, dedup, and categorization |
 
 <details>
 <summary><strong>Comparison with other tools</strong></summary>
@@ -105,7 +106,7 @@ rledger query ledger.beancount "SELECT account, SUM(position) GROUP BY account"
 | `rledger report` | Generate balance, account, and statistics reports |
 | `rledger add` | Add transactions interactively or via quick mode |
 | `rledger doctor` | Debugging tools for ledger issues |
-| `rledger extract` | Import transactions from CSV/OFX bank statements |
+| `rledger extract` | Import transactions from CSV/OFX bank statements with auto-detection, dedup, and categorization |
 | `rledger price` | Fetch commodity prices from online sources |
 | `rledger-lsp` | Language Server Protocol for editor integration |
 
@@ -188,6 +189,69 @@ rledger format --in-place ledger.beancount
 
 </details>
 
+## Import & Categorization
+
+rustledger includes a complete bank import pipeline (`rledger extract`) with automatic CSV/OFX parsing, duplicate detection, transaction categorization, and balance reconciliation.
+
+### CSV Import with Auto-Detection
+
+```bash
+# Auto-detect delimiter, date format, and column roles
+rledger extract bank-statement.csv --auto -a Assets:Bank:Checking
+
+# Check against existing ledger to avoid duplicates
+rledger extract statement.csv --auto -a Assets:Bank --existing ledger.beancount
+
+# Append balance assertion from bank statement
+rledger extract statement.csv --auto -a Assets:Bank --balance 5000.00
+
+# List available importers from config
+rledger extract --list-importers --config importers.toml
+```
+
+### Importers Configuration
+
+Create `importers.toml` for reusable import profiles:
+
+```toml
+[[importers]]
+name = "chase"
+account = "Assets:Bank:Chase"
+date_column = "Transaction Date"
+amount_column = "Amount"
+date_format = "%m/%d/%Y"
+
+[importers.mappings]
+"AMAZON" = "Expenses:Shopping"
+"WHOLE FOODS" = "Expenses:Groceries"
+```
+
+```bash
+rledger extract --importer chase chase-statement.csv
+```
+
+Config is searched in: current directory, `~/.config/rledger/importers.toml`, or via `--config`.
+
+### Transaction Categorization
+
+A 3-tier pipeline automatically categorizes transactions:
+
+1. **Rules engine** — substring, regex, and exact match patterns from `importers.toml`
+2. **Merchant dictionary** — ~80 built-in patterns across 10 categories (grocery, dining, transport, subscriptions, etc.)
+3. **ML categorization** — TF-IDF + Naive Bayes classification via `linfa`
+
+### Transfer Detection
+
+Automatically identifies inter-account transfers by matching opposite-sign amounts within date windows, with keyword boosting for common transfer indicators.
+
+### Duplicate Detection
+
+Fuzzy matching on date + amount + payee/narration prevents importing the same transaction twice. Structural fingerprinting (BLAKE3) provides stable hashes for comparison.
+
+### Balance Reconciliation
+
+The `--balance` flag appends a balance assertion directive matching your bank statement's ending balance, helping verify import accuracy.
+
 ## Crates
 
 | Crate | Description |
@@ -201,8 +265,8 @@ rledger format --in-place ledger.beancount
 | `rustledger-query` | BQL query engine |
 | `rustledger-plugin` | 30 built-in plugins + Python plugin support |
 | `rustledger-plugin-types` | Shared plugin type definitions |
-| `rustledger-importer` | CSV/OFX import framework |
-| `rustledger-ops` | Pure operations on directives — dedup, categorize, reconcile |
+| `rustledger-importer` | CSV/OFX import framework with auto-detection, enrichment, and configurable importers |
+| `rustledger-ops` | Pure operations — ML categorization, LLM prompts, dedup, transfer detection, balance reconciliation, merchant dictionary |
 | `rustledger-lsp` | Language Server Protocol for editor integration |
 | `rustledger-wasm` | WebAssembly bindings for JavaScript/TypeScript |
 | `rustledger-ffi-wasi` | FFI via WASI for embedding in any language |
@@ -370,10 +434,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
 
 **Documentation:**
 
-- [Architecture](docs/ARCHITECTURE.md) - Crate structure and data flow
-- [BQL Reference](docs/BQL_REFERENCE.md) - Query language guide
-- [Importing](docs/IMPORTING.md) - CSV/OFX bank import tutorial
-- [Validation errors](docs/VALIDATION_ERRORS.md) - Error code reference
+- [Architecture](docs/reference/architecture.md) - Crate structure and data flow
+- [BQL Reference](docs/reference/bql.md) - Query language guide
+- [Importing](docs/guides/importing.md) - CSV/OFX bank import tutorial
+- [Validation errors](docs/reference/errors.md) - Error code reference
 - [API docs](https://docs.rs/rustledger-core) - Rust API documentation
 
 By submitting a pull request, you agree to the [Contributor License Agreement](CLA.md).
