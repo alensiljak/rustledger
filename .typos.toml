@@ -8,6 +8,8 @@ HSA = "HSA"
 SELEKT = "SELEKT"
 # Crate name (deflate compression)
 flate = "flate"
+# ICU crate name (not a typo of "writable")
+writeable = "writeable"
 # Chumsky parser combinator method name (British spelling)
 labelled = "labelled"
 # Intentional typos in parser for typo-correction suggestions

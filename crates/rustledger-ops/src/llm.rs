@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn extract_accounts() {
-        use rustledger_plugin_types::{AmountData, OpenData, PostingData, TransactionData};
+        use rustledger_plugin_types::OpenData;
 
         let directives = vec![
             DirectiveWrapper {
