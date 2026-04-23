@@ -4014,6 +4014,181 @@ fn test_value_no_currency_aggregated_returns_as_is() {
 }
 
 // ============================================================================
+// VALUE(position, DATE) Python-beancount compat tests (issue #892)
+// ============================================================================
+
+/// Mirrors the fixture used to empirically validate Python bean-query behavior:
+/// one position of 4 SP purchased at 250 USD cost, with four price points
+/// spanning before and after the relevant dates (including a far-future price).
+fn make_issue_892_directives() -> Vec<Directive> {
+    vec![
+        Directive::Open(Open::new(date(2020, 1, 1), "Assets:Brokerage")),
+        Directive::Open(Open::new(date(2020, 1, 1), "Equity:Opening")),
+        Directive::Price(Price::new(
+            date(2020, 1, 1),
+            "SP",
+            Amount::new(dec!(250), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2020, 6, 1),
+            "SP",
+            Amount::new(dec!(300), "USD"),
+        )),
+        Directive::Price(Price::new(
+            date(2021, 1, 1),
+            "SP",
+            Amount::new(dec!(500), "USD"),
+        )),
+        // Far-future price to prove that `value(pos)` with no date argument
+        // uses the latest price (which matches Python's date=None behavior)
+        // rather than today's date.
+        Directive::Price(Price::new(
+            date(2099, 1, 1),
+            "SP",
+            Amount::new(dec!(9999), "USD"),
+        )),
+        Directive::Transaction(
+            Transaction::new(date(2020, 1, 1), "Buy stock").with_posting(
+                Posting::new("Assets:Brokerage", Amount::new(dec!(4), "SP")).with_cost(
+                    CostSpec::empty()
+                        .with_number_per(dec!(250))
+                        .with_currency("USD")
+                        .with_date(date(2020, 1, 1)),
+                ),
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn test_value_date_arg_returns_price_at_or_before() {
+    // value(position, 2020-06-01) should use the price on-or-before 2020-06-01.
+    // The fixture has a 300 USD price dated 2020-06-01, so 4 SP * 300 = 1200 USD.
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT number(value(position, 2020-06-01)) AS v
+          WHERE account ~ 'Brokerage'",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(1200)));
+}
+
+#[test]
+fn test_value_date_arg_uses_earlier_price_when_no_match_on_date() {
+    // value(position, 2020-02-15): no price directive on that exact date,
+    // so use the most recent price before it — the 250 USD price from 2020-01-01.
+    // 4 SP * 250 = 1000 USD (this matches the result the issue reporter got from
+    // Python bean-query with their own simpler fixture).
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT number(value(position, 2020-02-15)) AS v
+          WHERE account ~ 'Brokerage'",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(1000)));
+}
+
+#[test]
+fn test_value_date_arg_returns_raw_units_when_no_price_available() {
+    // value(position, 2019-01-01): no price exists on or before that date,
+    // so the position is returned as-is (raw units). Python beancount does
+    // the same — its convert.get_value() falls through to `return units`.
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT number(value(position, 2019-01-01)) AS v
+          WHERE account ~ 'Brokerage'",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(4)));
+}
+
+#[test]
+fn test_value_no_date_arg_still_uses_latest_price() {
+    // Regression: value(position) without a date continues to use the latest
+    // price (4 * 9999 = 39996), including future-dated prices. Matches Python.
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT number(value(position)) AS v
+          WHERE account ~ 'Brokerage'",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(39996)));
+}
+
+#[test]
+fn test_value_date_arg_in_aggregate_context() {
+    // Issue #892 fix must cover the aggregate-evaluation path too —
+    // see executor/mod.rs `evaluate_function_on_values` for "VALUE".
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT account, number(value(sum(position), 2020-06-01)) AS v
+          WHERE account ~ 'Brokerage'
+          GROUP BY account",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][1], Value::Number(dec!(1200)));
+}
+
+#[test]
+fn test_value_currency_string_is_rustledger_extension() {
+    // Regression: the existing `value(x, 'USD')` extension (not in Python
+    // beancount — Python uses CONVERT for this) continues to work and uses
+    // the latest price. A caller wanting an explicit currency AND a historical
+    // price should use CONVERT(x, 'USD', date).
+    let directives = make_issue_892_directives();
+    let result = execute_query(
+        r"SELECT number(value(position, 'USD')) AS v
+          WHERE account ~ 'Brokerage'",
+        &directives,
+    );
+    assert_eq!(result.len(), 1);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(39996)));
+}
+
+#[test]
+fn test_value_rejects_invalid_second_argument_type() {
+    // The error message should mention both accepted types (date and currency).
+    let directives = make_issue_892_directives();
+    let query = parse(r"SELECT value(position, 42) AS v WHERE account ~ 'Brokerage'")
+        .expect("query should parse");
+    let mut executor = Executor::new(&directives);
+    let err = executor.execute(&query).expect_err("should reject integer");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("date") && msg.contains("currency"),
+        "error should mention both accepted types, got: {msg}"
+    );
+}
+
+#[test]
+fn test_value_rejects_invalid_second_argument_in_aggregate_context() {
+    // Parallel coverage to the non-aggregate test above: the aggregate-evaluation
+    // path (evaluate_function_on_values) has its own dispatch and should reject
+    // non-date/non-string second arguments with the same error message.
+    let directives = make_issue_892_directives();
+    let query = parse(
+        r"SELECT account, value(sum(position), 42) AS v
+          WHERE account ~ 'Brokerage'
+          GROUP BY account",
+    )
+    .expect("query should parse");
+    let mut executor = Executor::new(&directives);
+    let err = executor
+        .execute(&query)
+        .expect_err("aggregate-context should reject integer too");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("date") && msg.contains("currency"),
+        "aggregate error should mention both accepted types, got: {msg}"
+    );
+}
+
+// ============================================================================
 // #prices System Table Tests (Issue #562)
 // ============================================================================
 
