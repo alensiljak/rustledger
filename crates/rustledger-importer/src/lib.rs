@@ -433,7 +433,7 @@ mod tests {
         let result = EnrichedImportResult::empty().with_warning("Test");
         let debug_str = format!("{result:?}");
         assert!(debug_str.contains("EnrichedImportResult"));
-        let cloned = result.clone();
+        let cloned = result;
         assert_eq!(cloned.warnings.len(), 1);
     }
 

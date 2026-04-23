@@ -1220,10 +1220,8 @@ not-a-date,Coffee,-5.00
             .build()
             .unwrap();
 
-        let csv_config = match &config.importer_type {
-            ImporterType::Csv(c) => c.clone(),
-            _ => unreachable!(),
-        };
+        let ImporterType::Csv(csv_config) = &config.importer_type;
+        let csv_config = csv_config.clone();
         let importer = CsvImporter::new(config);
 
         let csv_content =
@@ -1257,10 +1255,8 @@ not-a-date,Coffee,-5.00
             .build()
             .unwrap();
 
-        let csv_config = match &config.importer_type {
-            ImporterType::Csv(c) => c.clone(),
-            _ => unreachable!(),
-        };
+        let ImporterType::Csv(csv_config) = &config.importer_type;
+        let csv_config = csv_config.clone();
         let importer = CsvImporter::new(config);
 
         let csv_content = "Date,Description,Amount\n2024-01-15,Coffee Shop,-5.00\n2024-01-16,Random Store,-10.00\n";
@@ -1299,10 +1295,8 @@ not-a-date,Coffee,-5.00
             .build()
             .unwrap();
 
-        let csv_config = match &config.importer_type {
-            ImporterType::Csv(c) => c.clone(),
-            _ => unreachable!(),
-        };
+        let ImporterType::Csv(csv_config) = &config.importer_type;
+        let csv_config = csv_config.clone();
         let importer = CsvImporter::new(config);
 
         // Use a well-known merchant name that should be in the merchant dict
@@ -1331,10 +1325,8 @@ not-a-date,Coffee,-5.00
             .build()
             .unwrap();
 
-        let csv_config = match &config.importer_type {
-            ImporterType::Csv(c) => c.clone(),
-            _ => unreachable!(),
-        };
+        let ImporterType::Csv(csv_config) = &config.importer_type;
+        let csv_config = csv_config.clone();
         let importer = CsvImporter::new(config);
 
         let csv_content =

@@ -397,8 +397,8 @@ mod tests {
 
         // Note in new directives - should be skipped
         let matches = find_fuzzy_duplicates(
-            &[note_directive.clone()],
-            &[txn.clone()],
+            std::slice::from_ref(&note_directive),
+            std::slice::from_ref(&txn),
             &FuzzyDedupConfig::default(),
         );
         assert!(matches.is_empty());
