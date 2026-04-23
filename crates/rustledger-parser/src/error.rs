@@ -228,7 +228,7 @@ impl fmt::Display for ParseErrorKind {
             Self::InvalidBookingMethod(m) => {
                 write!(
                     f,
-                    "invalid booking method '{m}': must be one of FIFO, STRICT, LIFO, HIFO, NONE, AVERAGE"
+                    "invalid booking method '{m}': must be one of FIFO, STRICT, STRICT_WITH_SIZE, LIFO, HIFO, NONE, AVERAGE"
                 )
             }
         }
