@@ -21,6 +21,19 @@ pub fn validate_note(state: &LedgerState, note: &Note, errors: &mut Vec<Validati
 }
 
 /// Validate a Document directive.
+///
+/// When `options.check_documents` is enabled, the referenced file must exist.
+/// Relative paths are resolved in this order:
+///
+/// 1. Absolute path: used as-is.
+/// 2. `options.document_base`: joined with the document path.
+/// 3. `options.document_dirs`: tried in order; first existing match wins.
+/// 4. Fallback: the path is checked as-is (relative to the process CWD).
+///
+/// `document_base` takes precedence over `document_dirs` because it
+/// represents an explicit base set by the caller (e.g. the main ledger
+/// directory), whereas `document_dirs` is a search path derived from
+/// `option "documents"` declarations.
 pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<ValidationError>) {
     // Check account exists
     if !state.accounts.contains_key(&doc.account) {
