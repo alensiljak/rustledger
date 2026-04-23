@@ -262,7 +262,7 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     // 4. Validation
     #[cfg(feature = "validation")]
     if options.validate {
-        run_validation(&directives, &raw.options, &mut errors);
+        run_validation(&directives, &raw.options, &raw.source_map, &mut errors);
     }
 
     Ok(Ledger {
@@ -689,6 +689,7 @@ pub fn run_plugins(
 fn run_validation(
     directives: &[Spanned<Directive>],
     file_options: &Options,
+    source_map: &SourceMap,
     errors: &mut Vec<LedgerError>,
 ) {
     use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
@@ -699,9 +700,30 @@ fn run_validation(
         .map(|s| (*s).to_string())
         .collect();
 
+    // Resolve document directories relative to the ledger's base directory
+    // so validation finds documents using the same path resolution as run_plugins.
+    let base_dir = source_map
+        .files()
+        .first()
+        .and_then(|f| f.path.parent())
+        .unwrap_or_else(|| std::path::Path::new("."));
+
+    let resolved_document_dirs: Vec<String> = file_options
+        .documents
+        .iter()
+        .map(|d| {
+            let path = std::path::Path::new(d);
+            if path.is_absolute() {
+                d.clone()
+            } else {
+                base_dir.join(path).to_string_lossy().to_string()
+            }
+        })
+        .collect();
+
     let validation_options = ValidationOptions {
         account_types,
-        document_dirs: file_options.documents.clone(),
+        document_dirs: resolved_document_dirs,
         infer_tolerance_from_cost: file_options.infer_tolerance_from_cost,
         tolerance_multiplier: file_options.inferred_tolerance_multiplier,
         inferred_tolerance_default: file_options.inferred_tolerance_default.clone(),

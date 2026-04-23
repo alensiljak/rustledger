@@ -20,15 +20,34 @@ use crate::ledger_state::LedgerState;
 /// Uses the already-merged account type names from the loader's `Options`,
 /// which handles multi-file ledgers where `name_*` options may be in included files.
 ///
+/// Relative document directories are resolved against `base_dir` to ensure
+/// consistent path resolution with the loader's `run_plugins` behavior.
+///
 /// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
-fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> ValidationOptions {
+fn build_validation_options_from_loader(
+    loader_options: &LoaderOptions,
+    base_dir: &std::path::Path,
+) -> ValidationOptions {
+    let resolved_documents: Vec<String> = loader_options
+        .documents
+        .iter()
+        .map(|d| {
+            let path = std::path::Path::new(d);
+            if path.is_absolute() {
+                d.clone()
+            } else {
+                base_dir.join(path).to_string_lossy().to_string()
+            }
+        })
+        .collect();
+
     ValidationOptions {
         account_types: loader_options
             .account_types()
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
-        document_dirs: loader_options.documents.clone(),
+        document_dirs: resolved_documents,
         ..Default::default()
     }
 }
@@ -39,11 +58,22 @@ fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> Valid
 /// `name_expenses` options to support custom (including Unicode) account type names.
 /// Other `ValidationOptions` fields are left at their default values.
 ///
+/// Relative document directories are resolved against `base_dir` if provided.
+/// When `base_dir` is `None`, relative paths are kept as-is (fallback for
+/// single-file validation where no source map is available).
+///
 /// Used when no ledger is loaded (single-file validation).
+///
+/// Note on `document_dirs`: In single-file mode, `documents` paths are stored
+/// as raw strings from the parsed options. The validator handles resolution
+/// internally using the file's parent directory as the base when needed.
+/// We intentionally pass the raw strings here rather than resolving them
+/// ourselves, to avoid duplicating the validator's resolution logic.
 ///
 /// See issue #572: <https://github.com/rustledger/rustledger/issues/572>
 fn build_validation_options_from_file(
     file_options: &[(String, String, Span)],
+    base_dir: Option<&std::path::Path>,
 ) -> ValidationOptions {
     let mut opts = ValidationOptions::default();
 
@@ -70,7 +100,14 @@ fn build_validation_options_from_file(
                 account_types[4] = value.clone();
             }
             "documents" => {
-                document_dirs.push(value.clone());
+                let path = std::path::Path::new(value);
+                if path.is_absolute() {
+                    document_dirs.push(value.clone());
+                } else if let Some(base) = base_dir {
+                    document_dirs.push(base.join(path).to_string_lossy().to_string());
+                } else {
+                    document_dirs.push(value.clone());
+                }
             }
             _ => {}
         }
@@ -524,9 +561,15 @@ pub fn all_diagnostics(
             let validation_options = if let Some(ls) = ledger_state
                 && let Some(ledger) = ls.ledger()
             {
-                build_validation_options_from_loader(&ledger.options)
+                let base_dir = ledger
+                    .source_map
+                    .files()
+                    .first()
+                    .and_then(|f| f.path.parent())
+                    .unwrap_or_else(|| std::path::Path::new("."));
+                build_validation_options_from_loader(&ledger.options, base_dir)
             } else {
-                build_validation_options_from_file(&result.options)
+                build_validation_options_from_file(&result.options, None)
             };
 
             // Build plugin context for running plugins before validation.
