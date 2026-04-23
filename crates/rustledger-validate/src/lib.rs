@@ -89,6 +89,9 @@ pub struct ValidationOptions {
     pub warn_future_dates: bool,
     /// Base directory for resolving relative document paths.
     pub document_base: Option<std::path::PathBuf>,
+    /// Document directories from `option "documents"`.
+    /// Relative document paths are resolved against these directories.
+    pub document_dirs: Vec<String>,
     /// Valid account type prefixes (from options like `name_assets`, `name_liabilities`, etc.).
     /// Defaults to `["Assets", "Liabilities", "Equity", "Income", "Expenses"]`.
     pub account_types: Vec<String>,
@@ -110,6 +113,7 @@ impl Default for ValidationOptions {
             check_documents: true, // Python beancount validates document files by default
             warn_future_dates: false,
             document_base: None,
+            document_dirs: Vec::new(),
             account_types: vec![
                 "Assets".to_string(),
                 "Liabilities".to_string(),
@@ -814,6 +818,110 @@ mod tests {
         assert!(
             errors.iter().any(|e| e.code == ErrorCode::AccountNotOpen),
             "Should error for document on unopened account"
+        );
+    }
+
+    #[test]
+    fn test_validate_document_relative_path_in_document_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_subdir = dir.path().join("documents");
+        std::fs::create_dir_all(&doc_subdir).unwrap();
+        std::fs::write(doc_subdir.join("receipt.pdf"), "test").unwrap();
+
+        let doc_path = doc_subdir.to_string_lossy().to_string();
+
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Document(Document {
+                date: date(2024, 1, 15),
+                account: "Assets:Bank".into(),
+                path: "receipt.pdf".to_string(),
+                tags: vec![],
+                links: vec![],
+                meta: Default::default(),
+            }),
+        ];
+
+        // Without document_dirs, should fail
+        let errors = validate(&directives);
+        assert!(
+            errors.iter().any(|e| e.code == ErrorCode::DocumentNotFound),
+            "Should error when document_dirs not set"
+        );
+
+        // With document_dirs pointing to the directory, should pass
+        let options = ValidationOptions {
+            document_dirs: vec![doc_path],
+            ..Default::default()
+        };
+        let errors = validate_with_options(&directives, options);
+        assert!(
+            !errors.iter().any(|e| e.code == ErrorCode::DocumentNotFound),
+            "Should find document in document_dirs: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_validate_document_relative_path_not_found_in_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_subdir = dir.path().join("documents");
+        std::fs::create_dir_all(&doc_subdir).unwrap();
+
+        let doc_path = doc_subdir.to_string_lossy().to_string();
+
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Document(Document {
+                date: date(2024, 1, 15),
+                account: "Assets:Bank".into(),
+                path: "nonexistent.pdf".to_string(),
+                tags: vec![],
+                links: vec![],
+                meta: Default::default(),
+            }),
+        ];
+
+        let options = ValidationOptions {
+            document_dirs: vec![doc_path],
+            ..Default::default()
+        };
+        let errors = validate_with_options(&directives, options);
+        assert!(
+            errors.iter().any(|e| e.code == ErrorCode::DocumentNotFound),
+            "Should error when file not found in any document_dir"
+        );
+    }
+
+    #[test]
+    fn test_validate_document_absolute_path_ignores_document_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let doc_subdir = dir.path().join("documents");
+        std::fs::create_dir_all(&doc_subdir).unwrap();
+        std::fs::write(doc_subdir.join("receipt.pdf"), "test").unwrap();
+
+        let doc_path_str = doc_subdir.to_string_lossy().to_string();
+
+        let directives = vec![
+            Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+            Directive::Document(Document {
+                date: date(2024, 1, 15),
+                account: "Assets:Bank".into(),
+                path: format!("{}/receipt.pdf", doc_path_str),
+                tags: vec![],
+                links: vec![],
+                meta: Default::default(),
+            }),
+        ];
+
+        // Absolute path should work regardless of document_dirs
+        let options = ValidationOptions {
+            document_dirs: vec!["/nonexistent/path".to_string()],
+            ..Default::default()
+        };
+        let errors = validate_with_options(&directives, options);
+        assert!(
+            !errors.iter().any(|e| e.code == ErrorCode::DocumentNotFound),
+            "Absolute path should work even with wrong document_dirs: {errors:?}"
         );
     }
 

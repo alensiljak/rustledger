@@ -39,19 +39,47 @@ pub fn validate_document(state: &LedgerState, doc: &Document, errors: &mut Vec<V
             doc_path.to_path_buf()
         } else if let Some(base) = &state.options.document_base {
             base.join(doc_path)
+        } else if !state.options.document_dirs.is_empty() {
+            // Try resolving relative path against each document directory
+            let mut found = None;
+            for dir in &state.options.document_dirs {
+                let candidate = Path::new(dir).join(doc_path);
+                if candidate.exists() {
+                    found = Some(candidate);
+                    break;
+                }
+            }
+            match found {
+                Some(p) => p,
+                None => doc_path.to_path_buf(),
+            }
         } else {
             doc_path.to_path_buf()
         };
 
         if !full_path.exists() {
-            errors.push(
-                ValidationError::new(
-                    ErrorCode::DocumentNotFound,
-                    format!("Document file not found: {}", doc.path),
-                    doc.date,
-                )
-                .with_context(format!("resolved path: {}", full_path.display())),
+            let mut error = ValidationError::new(
+                ErrorCode::DocumentNotFound,
+                format!("Document file not found: {}", doc.path),
+                doc.date,
             );
+
+            if doc_path.is_relative()
+                && state.options.document_base.is_none()
+                && !state.options.document_dirs.is_empty()
+            {
+                let searched: Vec<String> = state
+                    .options
+                    .document_dirs
+                    .iter()
+                    .map(|d| format!("{}/{}", d, doc.path))
+                    .collect();
+                error = error.with_context(format!("searched: {}", searched.join(", ")));
+            } else {
+                error = error.with_context(format!("resolved path: {}", full_path.display()));
+            }
+
+            errors.push(error);
         }
     }
 }

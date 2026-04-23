@@ -28,6 +28,7 @@ fn build_validation_options_from_loader(loader_options: &LoaderOptions) -> Valid
             .iter()
             .map(|s| (*s).to_string())
             .collect(),
+        document_dirs: loader_options.documents.clone(),
         ..Default::default()
     }
 }
@@ -49,6 +50,7 @@ fn build_validation_options_from_file(
     // Start with validator defaults, override with file options.
     // This avoids duplicating the canonical default account type names.
     let mut account_types = opts.account_types.clone();
+    let mut document_dirs = Vec::new();
 
     for (key, value, _span) in file_options {
         match key.as_str() {
@@ -67,11 +69,15 @@ fn build_validation_options_from_file(
             "name_expenses" if account_types.len() > 4 => {
                 account_types[4] = value.clone();
             }
+            "documents" => {
+                document_dirs.push(value.clone());
+            }
             _ => {}
         }
     }
 
     opts.account_types = account_types;
+    opts.document_dirs = document_dirs;
     opts
 }
 

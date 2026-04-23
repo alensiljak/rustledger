@@ -701,6 +701,7 @@ fn run_validation(
 
     let validation_options = ValidationOptions {
         account_types,
+        document_dirs: file_options.documents.clone(),
         infer_tolerance_from_cost: file_options.infer_tolerance_from_cost,
         tolerance_multiplier: file_options.inferred_tolerance_multiplier,
         inferred_tolerance_default: file_options.inferred_tolerance_default.clone(),
