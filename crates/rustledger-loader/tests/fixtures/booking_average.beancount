@@ -1,0 +1,23 @@
+option "operating_currency" "USD"
+option "booking_method" "AVERAGE"
+
+2020-01-01 open Assets:Stock
+2020-01-01 open Assets:Cash    USD
+2020-01-01 open Income:Gains    USD
+
+; Buy lot 1: 10 shares at $100 each
+2020-02-01 * "Buy lot 1"
+  Assets:Stock    10 CORP {100 USD}
+  Assets:Cash    -1000 USD
+
+; Buy lot 2: 10 shares at $110 each
+2020-03-01 * "Buy lot 2"
+  Assets:Stock    10 CORP {110 USD}
+  Assets:Cash    -1100 USD
+
+; Sell 5 shares with empty cost spec
+; AVERAGE should merge lots (avg cost $105) and reduce without ambiguity
+2020-04-01 * "Sell partial"
+  Assets:Stock    -5 CORP {}
+  Assets:Cash      525 USD
+  Income:Gains
