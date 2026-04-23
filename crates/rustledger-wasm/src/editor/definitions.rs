@@ -56,6 +56,7 @@ fn find_account_definition_cached(
 }
 
 /// Get the definition location for the symbol at the given position (non-cached, used by tests).
+#[cfg(test)]
 pub fn get_definition(
     source: &str,
     line: u32,

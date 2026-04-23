@@ -1,5 +1,6 @@
 //! Completion support for the editor.
 
+#[cfg(test)]
 use rustledger_parser::ParseResult;
 
 use crate::types::{CompletionKind, EditorCompletion, EditorCompletionResult};
@@ -70,6 +71,7 @@ pub fn get_completions_cached(
 }
 
 /// Get completions at the given position (non-cached, used by tests).
+#[cfg(test)]
 pub fn get_completions(
     source: &str,
     line: u32,

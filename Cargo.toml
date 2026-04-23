@@ -122,6 +122,9 @@ rkyv = "0.8"
 # Async
 tokio = { version = "1", features = ["full"] }
 
+# WASM getrandom support (needed for wasm32-unknown-unknown target)
+getrandom = { version = "0.2", features = ["js"] }
+
 # LSP
 lsp-server = "0.7"
 lsp-types = "0.97"
