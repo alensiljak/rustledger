@@ -232,6 +232,7 @@ impl Fingerprint {
         let mut s = String::with_capacity(32);
         for byte in &self.0 {
             use std::fmt::Write;
+            // Writing to a String is infallible
             write!(s, "{byte:02x}").expect("hex write to String cannot fail");
         }
         s

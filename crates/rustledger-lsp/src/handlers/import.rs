@@ -235,9 +235,21 @@ pub fn import_code_lens(directives: &[Spanned<Directive>], source: &str) -> Vec<
     }]
 }
 
-/// Check if two ranges overlap.
+/// Check if two ranges overlap, including character positions for single-line ranges.
 fn ranges_overlap(a: Range, b: Range) -> bool {
-    a.start.line <= b.end.line && b.start.line <= a.end.line
+    // a ends before b starts
+    if a.end.line < b.start.line
+        || (a.end.line == b.start.line && a.end.character < b.start.character)
+    {
+        return false;
+    }
+    // b ends before a starts
+    if b.end.line < a.start.line
+        || (b.end.line == a.start.line && b.end.character < a.start.character)
+    {
+        return false;
+    }
+    true
 }
 
 /// Extract f64 from MetaValue.

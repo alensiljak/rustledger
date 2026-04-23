@@ -12,6 +12,7 @@
 
 use rust_decimal::Decimal;
 use rustledger_plugin_types::{DirectiveData, DirectiveWrapper};
+use std::collections::HashSet;
 use std::str::FromStr;
 
 /// Configuration for transfer matching.
@@ -61,6 +62,9 @@ pub fn find_transfers(
     config: &TransferConfig,
 ) -> Vec<TransferMatch> {
     let mut matches = Vec::new();
+    // Track all matched directives globally so a directive in one group
+    // cannot be matched by multiple other groups.
+    let mut globally_matched: HashSet<(usize, usize)> = HashSet::new();
 
     // Compare each pair of groups
     for (g1, (_, directives1)) in groups.iter().enumerate() {
@@ -69,7 +73,15 @@ pub fn find_transfers(
                 continue; // Avoid duplicate comparisons
             }
 
-            find_matches_between(g1, directives1, g2, directives2, config, &mut matches);
+            find_matches_between(
+                g1,
+                directives1,
+                g2,
+                directives2,
+                config,
+                &mut matches,
+                &mut globally_matched,
+            );
         }
     }
 
@@ -84,17 +96,19 @@ fn find_matches_between(
     directives2: &[DirectiveWrapper],
     config: &TransferConfig,
     matches: &mut Vec<TransferMatch>,
+    globally_matched: &mut HashSet<(usize, usize)>,
 ) {
-    // Track which directives have already been matched
-    let mut matched_in_g2: Vec<bool> = vec![false; directives2.len()];
-
     for (i, d1) in directives1.iter().enumerate() {
+        if globally_matched.contains(&(g1, i)) {
+            continue;
+        }
+
         let Some((amount1, currency1)) = first_posting_amount_currency(d1) else {
             continue;
         };
 
         for (j, d2) in directives2.iter().enumerate() {
-            if matched_in_g2[j] {
+            if globally_matched.contains(&(g2, j)) {
                 continue;
             }
 
@@ -150,7 +164,8 @@ fn find_matches_between(
                 confidence,
             });
 
-            matched_in_g2[j] = true;
+            globally_matched.insert((g1, i));
+            globally_matched.insert((g2, j));
             break; // One match per source transaction
         }
     }
@@ -179,7 +194,10 @@ fn within_date_window(date1: &str, date2: &str, days: i64) -> bool {
         Ok(d) => d,
         Err(_) => return false,
     };
-    let diff = d2.since(d1).unwrap_or_default().get_days().abs();
+    let Ok(span) = d2.since(d1) else {
+        return false;
+    };
+    let diff = span.get_days().abs();
     i64::from(diff) <= days
 }
 

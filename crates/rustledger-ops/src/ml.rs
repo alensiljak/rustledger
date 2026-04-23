@@ -192,6 +192,11 @@ impl CategorizationModel {
     ///
     /// Returns up to `top_n` predictions sorted by confidence (highest first).
     /// Each prediction is an `(account, probability)` pair.
+    ///
+    /// **Note:** Confidence scores are not calibrated. The predicted class always
+    /// receives a confidence of `0.8` and all other classes receive `0.0`.
+    /// Computing calibrated probabilities requires log-likelihood estimation,
+    /// which is a future enhancement.
     #[must_use]
     pub fn predict(&self, narration: &str, payee: Option<&str>) -> Vec<(String, f64)> {
         let mut text = String::new();

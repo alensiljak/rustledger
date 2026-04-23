@@ -8,7 +8,6 @@ use anyhow::{Context, Result};
 use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
 use rustledger_ops::enrichment::{CategorizationMethod, Enrichment};
-use rustledger_ops::fingerprint::Fingerprint;
 use std::fs;
 use std::path::Path;
 
@@ -83,26 +82,7 @@ impl OfxImporter {
             .into_iter()
             .enumerate()
             .map(|(i, directive)| {
-                let fingerprint = if let Directive::Transaction(txn) = &directive {
-                    let amount_str = txn.postings.first().and_then(|p| {
-                        p.units
-                            .as_ref()
-                            .and_then(|u| u.number().map(|n| n.to_string()))
-                    });
-                    let mut text = String::new();
-                    if let Some(ref payee) = txn.payee {
-                        text.push_str(payee.as_str());
-                        text.push(' ');
-                    }
-                    text.push_str(txn.narration.as_str());
-                    Some(Fingerprint::compute(
-                        &txn.date.to_string(),
-                        amount_str.as_deref(),
-                        &text,
-                    ))
-                } else {
-                    None
-                };
+                let fingerprint = crate::directive_fingerprint(&directive);
 
                 let enrichment = Enrichment {
                     directive_index: i,

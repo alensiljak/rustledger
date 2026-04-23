@@ -45,6 +45,34 @@ pub use config::ImporterConfig;
 pub use ofx_importer::OfxImporter;
 pub use registry::ImporterRegistry;
 
+use rustledger_ops::fingerprint::Fingerprint;
+
+/// Compute an import fingerprint from a directive.
+///
+/// For transactions, uses the first posting's amount and the payee+narration
+/// text. Returns `None` for non-transaction directives.
+pub(crate) fn directive_fingerprint(directive: &Directive) -> Option<Fingerprint> {
+    let Directive::Transaction(txn) = directive else {
+        return None;
+    };
+    let amount_str = txn.postings.first().and_then(|p| {
+        p.units
+            .as_ref()
+            .and_then(|u| u.number().map(|n| n.to_string()))
+    });
+    let mut text = String::new();
+    if let Some(ref payee) = txn.payee {
+        text.push_str(payee.as_str());
+        text.push(' ');
+    }
+    text.push_str(txn.narration.as_str());
+    Some(Fingerprint::compute(
+        &txn.date.to_string(),
+        amount_str.as_deref(),
+        &text,
+    ))
+}
+
 /// Result of an import operation.
 #[derive(Debug, Clone)]
 pub struct ImportResult {
