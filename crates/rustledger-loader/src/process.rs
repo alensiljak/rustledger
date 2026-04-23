@@ -694,41 +694,38 @@ fn run_validation(
 ) {
     use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
 
-    let account_types: Vec<String> = file_options
-        .account_types()
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-
-    // Resolve document directories relative to the ledger's base directory
-    // so validation finds documents using the same path resolution as run_plugins.
+    // Resolve document directories relative to the main file's directory
     let base_dir = source_map
         .files()
         .first()
         .and_then(|f| f.path.parent())
         .unwrap_or_else(|| std::path::Path::new("."));
 
-    let resolved_document_dirs: Vec<String> = file_options
+    let resolved_document_dirs: Vec<std::path::PathBuf> = file_options
         .documents
         .iter()
         .map(|d| {
             let path = std::path::Path::new(d);
             if path.is_absolute() {
-                d.clone()
+                path.to_path_buf()
             } else {
-                base_dir.join(path).to_string_lossy().to_string()
+                base_dir.join(path)
             }
         })
         .collect();
 
-    let validation_options = ValidationOptions {
-        account_types,
-        document_dirs: resolved_document_dirs,
-        infer_tolerance_from_cost: file_options.infer_tolerance_from_cost,
-        tolerance_multiplier: file_options.inferred_tolerance_multiplier,
-        inferred_tolerance_default: file_options.inferred_tolerance_default.clone(),
-        ..Default::default()
-    };
+    let account_types: Vec<String> = file_options
+        .account_types()
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+
+    let validation_options = ValidationOptions::default()
+        .with_account_types(account_types)
+        .with_document_dirs(resolved_document_dirs)
+        .with_infer_tolerance_from_cost(file_options.infer_tolerance_from_cost)
+        .with_tolerance_multiplier(file_options.inferred_tolerance_multiplier)
+        .with_inferred_tolerance_default(file_options.inferred_tolerance_default.clone());
 
     let validation_errors = validate_spanned_with_options(directives, validation_options);
 
