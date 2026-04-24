@@ -7564,3 +7564,78 @@ fn test_entry_meta_from_entries_table() {
     assert_eq!(result.rows.len(), 1);
     assert_eq!(result.rows[0][1], Value::String("employer".to_string()));
 }
+
+// ============================================================================
+// Empty-group literal evaluation (issue #902)
+// ============================================================================
+
+#[test]
+fn test_convert_sum_with_literal_currency_on_empty_where() {
+    // Reporter's exact query. Before the fix, this errored with
+    // `CONVERT: second argument must be a currency string` — because the
+    // 'USD' literal was being replaced with Null when the group was empty.
+    let result = execute_query(
+        "SELECT convert(sum(position), 'USD') WHERE account ~ '^Income'",
+        &[],
+    );
+    assert_eq!(result.len(), 1);
+    // CONVERT on an empty/null sum returns zero in the target currency.
+    match &result.rows[0][0] {
+        Value::Amount(a) => {
+            assert_eq!(a.number, dec!(0));
+            assert_eq!(a.currency.as_ref(), "USD");
+        }
+        other => panic!("expected Amount(0 USD), got {other:?}"),
+    }
+}
+
+#[test]
+fn test_value_sum_with_literal_date_on_empty_where() {
+    // Parallel to the CONVERT test: `VALUE(sum(position), DATE)` on an
+    // empty group must not silently replace the DATE literal with Null.
+    // Before the fix, the same bug would make VALUE's dispatch reject the
+    // 2nd argument with a misleading error about "date or currency string".
+    let result = execute_query(
+        "SELECT value(sum(position), 2020-06-01) WHERE account ~ '^Nothing'",
+        &[],
+    );
+    assert_eq!(result.len(), 1);
+    // With no postings to sum, the result should be Null (inventory couldn't
+    // produce an amount) — NOT an error about the second argument.
+    assert!(
+        matches!(
+            &result.rows[0][0],
+            Value::Null | Value::Amount(_) | Value::Inventory(_)
+        ),
+        "expected Null or empty Amount/Inventory, got {:?}",
+        result.rows[0][0]
+    );
+}
+
+#[test]
+fn test_convert_with_null_second_arg_has_helpful_error_message() {
+    // Even with our aggregation fix, it is still possible to write a query
+    // where the second argument legitimately evaluates to Null at runtime
+    // (e.g. via a metadata lookup with no matching key). In that case the
+    // error message should mention NULL explicitly instead of claiming the
+    // user's input wasn't a string.
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Lunch")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(10), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-10), "USD"))),
+        ),
+    ];
+    let query = parse("SELECT convert(position, meta('nonexistent_key'))").expect("should parse");
+    let mut executor = Executor::new(&directives);
+    let err = executor
+        .execute(&query)
+        .expect_err("CONVERT with NULL second arg should error");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("NULL") && msg.contains("currency string"),
+        "error should explicitly mention NULL + what was expected, got: {msg}"
+    );
+}

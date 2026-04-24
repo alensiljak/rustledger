@@ -303,6 +303,17 @@ impl Executor<'_> {
             match self.evaluate_expr(&func.args[1], ctx)? {
                 Value::Date(d) => (None, Some(d)),
                 Value::String(s) => (Some(s), None),
+                Value::Null => {
+                    return Err(QueryError::Type(
+                        concat!(
+                            "VALUE: second argument evaluated to NULL; ",
+                            "expected a date or currency string ",
+                            "(this often means an aggregate expression couldn't ",
+                            "evaluate against an empty group — see issue #902)",
+                        )
+                        .to_string(),
+                    ));
+                }
                 _ => {
                     return Err(QueryError::Type(
                         "VALUE second argument must be a date or currency string".to_string(),
