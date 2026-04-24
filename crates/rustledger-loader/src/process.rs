@@ -118,6 +118,7 @@ pub struct Ledger {
 /// This encompasses all error types that can occur during loading,
 /// booking, plugin execution, and validation.
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct LedgerError {
     /// Error severity.
     pub severity: ErrorSeverity,
@@ -127,6 +128,15 @@ pub struct LedgerError {
     pub message: String,
     /// Source location, if available.
     pub location: Option<ErrorLocation>,
+    /// Byte span (inclusive start, exclusive end) in the source file,
+    /// used by rich renderers (e.g. miette) to draw a snippet around
+    /// the offending directive. Consumers that only need `file:line:col`
+    /// should use `location`; those that want to show the surrounding
+    /// source text want this.
+    pub source_span: Option<(usize, usize)>,
+    /// Source file ID — index into the ledger's [`SourceMap`]. Used
+    /// alongside `source_span` for snippet rendering.
+    pub file_id: Option<u16>,
     /// Processing phase that produced this error: "parse", "validate", or "plugin".
     pub phase: String,
 }
@@ -159,6 +169,8 @@ impl LedgerError {
             code: code.into(),
             message: message.into(),
             location: None,
+            source_span: None,
+            file_id: None,
             phase: "validate".to_string(),
         }
     }
@@ -170,8 +182,18 @@ impl LedgerError {
             code: code.into(),
             message: message.into(),
             location: None,
+            source_span: None,
+            file_id: None,
             phase: "validate".to_string(),
         }
+    }
+
+    /// Attach a source span and file ID so rich renderers can draw a snippet.
+    #[must_use]
+    pub const fn with_source_span(mut self, span: (usize, usize), file_id: u16) -> Self {
+        self.source_span = Some(span);
+        self.file_id = Some(file_id);
+        self
     }
 
     /// Set the processing phase for this error.
@@ -758,11 +780,26 @@ fn run_validation(
             Some(note) => format!("{err}\n  note: {note}"),
             None => err.to_string(),
         };
+        // Resolve span + file_id into a file/line/column triple so CLI and
+        // LSP consumers can render `file:line:col` headers without having
+        // to do the lookup themselves (issue #901).
+        let location = err.span.and_then(|span| {
+            let fid = err.file_id? as usize;
+            let file = source_map.get(fid)?;
+            let (line, column) = file.line_col(span.start);
+            Some(ErrorLocation {
+                file: file.path.clone(),
+                line,
+                column,
+            })
+        });
         errors.push(LedgerError {
             severity: severity_level,
             code: err.code.code().to_string(),
             message,
-            location: None,
+            location,
+            source_span: err.span.map(|s| (s.start, s.end)),
+            file_id: err.file_id,
             phase: phase.to_string(),
         });
     }
