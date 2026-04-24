@@ -662,6 +662,17 @@ impl<'a> Executor<'a> {
                     match &args[1] {
                         Value::Date(d) => (None, Some(*d)),
                         Value::String(s) => (Some(s.as_str()), None),
+                        Value::Null => {
+                            return Err(QueryError::Type(
+                                concat!(
+                                    "VALUE: second argument evaluated to NULL; ",
+                                    "expected a date or currency string ",
+                                    "(this often means an aggregate expression couldn't ",
+                                    "evaluate against an empty group — see issue #902)",
+                                )
+                                .to_string(),
+                            ));
+                        }
                         _ => {
                             return Err(QueryError::Type(
                                 "VALUE second argument must be a date or currency string"
@@ -961,6 +972,17 @@ impl<'a> Executor<'a> {
 
                 let target_currency = match &args[1] {
                     Value::String(s) => s.clone(),
+                    Value::Null => {
+                        return Err(QueryError::Type(
+                            concat!(
+                                "CONVERT: second argument evaluated to NULL; ",
+                                "expected a currency string ",
+                                "(this often means an aggregate expression couldn't ",
+                                "evaluate against an empty group — see issue #902)",
+                            )
+                            .to_string(),
+                        ));
+                    }
                     _ => {
                         return Err(QueryError::Type(
                             "CONVERT: second argument must be a currency string".to_string(),
