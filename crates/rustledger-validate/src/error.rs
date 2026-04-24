@@ -180,8 +180,13 @@ impl std::fmt::Display for ErrorCode {
 }
 
 /// A validation error.
+///
+/// The `Display` impl emits just the message text (no `[E1234]` prefix).
+/// CLI and IDE renderers are expected to prepend the error code themselves,
+/// which avoids the double-tagging seen in older output like
+/// `error[E3001]: [E3001] ...` (see issue #901).
 #[derive(Debug, Clone, Error)]
-#[error("[{code}] {message}")]
+#[error("{message}")]
 #[non_exhaustive]
 pub struct ValidationError {
     /// Error code.
