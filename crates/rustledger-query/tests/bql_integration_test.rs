@@ -2519,7 +2519,7 @@ fn test_in_operator_single_element_set() {
         ),
     ];
 
-    // Single element set requires trailing comma to distinguish from parenthesized expression
+    // Single element set with trailing comma parses as Expr::Set([..])
     let result = execute_query(r"SELECT currency WHERE currency IN ('EUR',)", &directives);
 
     assert_eq!(result.rows.len(), 2, "Expected 2 EUR postings");
@@ -2529,6 +2529,52 @@ fn test_in_operator_single_element_set() {
             other => panic!("Expected String for currency, got {other:?}"),
         };
         assert_eq!(currency, "EUR");
+    }
+}
+
+/// Regression test for issue #916: `IN ('one_value')` (no trailing comma)
+/// should match `'one_value'`, behaving like `= 'one_value'`. The parser
+/// resolves this to a parenthesized scalar; the executor falls back to
+/// scalar equality, matching SQL/Python bean-query semantics.
+#[test]
+fn test_in_operator_single_element_no_trailing_comma() {
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Bank")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Expenses:Food")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "EUR expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(100), "EUR")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-100), "EUR"))),
+        ),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 16), "USD expense")
+                .with_posting(Posting::new("Expenses:Food", Amount::new(dec!(50), "USD")))
+                .with_posting(Posting::new("Assets:Bank", Amount::new(dec!(-50), "USD"))),
+        ),
+    ];
+
+    let result = execute_query(r"SELECT currency WHERE currency IN ('EUR')", &directives);
+    assert_eq!(result.rows.len(), 2, "Expected 2 EUR postings");
+    for row in &result.rows {
+        let currency = match &row[0] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency, got {other:?}"),
+        };
+        assert_eq!(currency, "EUR");
+    }
+
+    // NOT IN ('EUR') should select non-EUR rows
+    let result = execute_query(
+        r"SELECT currency WHERE currency NOT IN ('EUR')",
+        &directives,
+    );
+    assert_eq!(result.rows.len(), 2, "Expected 2 non-EUR postings");
+    for row in &result.rows {
+        let currency = match &row[0] {
+            Value::String(s) => s.as_str(),
+            other => panic!("Expected String for currency, got {other:?}"),
+        };
+        assert_eq!(currency, "USD");
     }
 }
 
