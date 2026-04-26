@@ -81,7 +81,7 @@ impl Executor<'_> {
                     }
                     // Fall back to scalar equality so `x IN ('a')` ≡ `x = 'a'`,
                     // matching SQL/bean-query semantics (issue #916).
-                    _ => Ok(Value::Boolean(self.values_equal(&left, &right))),
+                    other => Ok(Value::Boolean(self.values_equal(&left, &other))),
                 }
             }
             BinaryOperator::NotRegex => {
@@ -127,7 +127,7 @@ impl Executor<'_> {
                     }
                     // Fall back to scalar inequality so `x NOT IN ('a')` ≡ `x != 'a'`,
                     // matching SQL/bean-query semantics (issue #916).
-                    _ => Ok(Value::Boolean(!self.values_equal(&left, &right))),
+                    other => Ok(Value::Boolean(!self.values_equal(&left, &other))),
                 }
             }
             BinaryOperator::Add => {

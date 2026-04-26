@@ -2576,6 +2576,21 @@ fn test_in_operator_single_element_no_trailing_comma() {
         };
         assert_eq!(currency, "USD");
     }
+
+    // HAVING uses the borrowed `binary_op_on_values` path; exercise the same
+    // single-element fallback there so both code paths are covered.
+    let result = execute_query(
+        r"SELECT currency, sum(number) AS total
+          GROUP BY currency
+          HAVING currency IN ('EUR')",
+        &directives,
+    );
+    assert_eq!(result.rows.len(), 1, "Expected 1 EUR group");
+    let currency = match &result.rows[0][0] {
+        Value::String(s) => s.as_str(),
+        other => panic!("Expected String for currency, got {other:?}"),
+    };
+    assert_eq!(currency, "EUR");
 }
 
 /// Test IN with parenthesized column (not a set literal).
