@@ -452,6 +452,95 @@ fn test_execute_account_functions() {
     assert_eq!(result.columns.len(), 3);
 }
 
+/// Regression test for issue #938: `ROOT(account, n)` was rejecting integer
+/// literals because the parser produced `Value::Number(Decimal)` for all
+/// numeric literals, while `eval_root` strictly required `Value::Integer`.
+/// Fixed by teaching the parser to emit `Literal::Integer` for whole-number
+/// literals.
+#[test]
+fn test_root_with_segment_count() {
+    let directives = make_test_directives();
+    let result = execute_query("SELECT DISTINCT ROOT(account, 2)", &directives);
+
+    assert_eq!(result.columns.len(), 1);
+    let roots: std::collections::HashSet<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Test fixture has Assets:Bank:{Checking,Savings}, Expenses:{Food,Transport},
+    // Income:Salary. ROOT(_, 2) keeps the first two segments.
+    assert!(roots.contains("Assets:Bank"));
+    assert!(roots.contains("Expenses:Food"));
+    assert!(roots.contains("Expenses:Transport"));
+    assert!(roots.contains("Income:Salary"));
+}
+
+/// Follow-up to #938: now that whole-number literals reach integer-only paths,
+/// `ROOT(account, -1)` would previously cast `-1i64 as usize` to `usize::MAX`
+/// and silently return the full account string. The fix in `eval_root` rejects
+/// negatives with a typed error.
+#[test]
+fn test_root_rejects_negative_segment_count() {
+    let directives = make_test_directives();
+    let query = parse("SELECT ROOT(account, -1)").expect("query should parse");
+    let mut executor = Executor::new(&directives);
+    let err = executor
+        .execute(&query)
+        .expect_err("ROOT with negative segment count should error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("non-negative"),
+        "error should mention non-negative, got: {msg}"
+    );
+}
+
+/// Regression test for POSSIGN with literal integer arguments. Before the
+/// #938 fix, `POSSIGN(100, 'Income:Salary')` reached only the `Value::Number`
+/// arm because literals were always parsed as Number. After the fix, the
+/// arg becomes `Value::Integer(100)` and would have failed without the
+/// matching arm added in `eval_possign`.
+#[test]
+fn test_possign_with_integer_literal_arg() {
+    let directives = make_test_directives();
+
+    // Income (credit-normal) → sign is negated
+    let result = execute_query("SELECT POSSIGN(100, 'Income:Salary')", &directives);
+    assert!(matches!(result.rows[0][0], Value::Number(n) if n == dec!(-100)));
+
+    // Assets (debit-normal) → sign preserved
+    let result = execute_query("SELECT POSSIGN(100, 'Assets:Bank:Checking')", &directives);
+    assert!(matches!(result.rows[0][0], Value::Number(n) if n == dec!(100)));
+}
+
+/// Side-effect of the #938 fix: SUBSTR previously could not be invoked with
+/// literal integer arguments because `(String, Integer, Integer)` arms in
+/// `eval_substr` were unreachable when literals only produced `Number`.
+#[test]
+fn test_substr_with_integer_literal_args() {
+    let directives = make_test_directives();
+    let result = execute_query("SELECT DISTINCT SUBSTR(account, 0, 6)", &directives);
+
+    let prefixes: std::collections::HashSet<String> = result
+        .rows
+        .iter()
+        .filter_map(|row| match &row[0] {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+
+    // Account names like "Assets:Bank:Checking" → first 6 chars "Assets",
+    // "Expenses:Food" → "Expens", "Income:Salary" → "Income".
+    assert!(prefixes.contains("Assets"));
+    assert!(prefixes.contains("Expens"));
+    assert!(prefixes.contains("Income"));
+}
+
 // ============================================================================
 // JOURNAL Query Tests
 // ============================================================================
@@ -1200,10 +1289,10 @@ fn test_insert_values() {
 
     assert_eq!(result.rows.len(), 2);
     assert_eq!(result.rows[0][0], Value::String("Checking".to_string()));
-    // Numbers are parsed as Decimal (Number type)
-    assert_eq!(result.rows[0][1], Value::Number(dec!(100)));
+    // Whole-number literals parse as Integer (see issue #938).
+    assert_eq!(result.rows[0][1], Value::Integer(100));
     assert_eq!(result.rows[1][0], Value::String("Savings".to_string()));
-    assert_eq!(result.rows[1][1], Value::Number(dec!(500)));
+    assert_eq!(result.rows[1][1], Value::Integer(500));
 }
 
 #[test]
@@ -1279,10 +1368,10 @@ fn test_select_from_table_with_order_limit() {
     let result = executor.execute(&select_query).expect("should execute");
 
     assert_eq!(result.rows.len(), 3);
-    // Numbers are parsed as Decimal (Number type)
-    assert_eq!(result.rows[0][0], Value::Number(dec!(5)));
-    assert_eq!(result.rows[1][0], Value::Number(dec!(4)));
-    assert_eq!(result.rows[2][0], Value::Number(dec!(3)));
+    // Whole-number literals parse as Integer (see issue #938).
+    assert_eq!(result.rows[0][0], Value::Integer(5));
+    assert_eq!(result.rows[1][0], Value::Integer(4));
+    assert_eq!(result.rows[2][0], Value::Integer(3));
 }
 
 #[test]
@@ -1585,8 +1674,8 @@ fn test_select_from_table_filter() {
         .expect("should execute");
 
     assert_eq!(result.len(), 2);
-    assert_eq!(result.rows[0][0], Value::Number(dec!(10)));
-    assert_eq!(result.rows[1][0], Value::Number(dec!(20)));
+    assert_eq!(result.rows[0][0], Value::Integer(10));
+    assert_eq!(result.rows[1][0], Value::Integer(20));
 }
 
 #[test]
