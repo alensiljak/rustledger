@@ -4,8 +4,8 @@
 
 use rust_decimal_macros::dec;
 use rustledger_core::{
-    Amount, Close, Commodity, CostSpec, Directive, Document, Event, NaiveDate, Note, Open, Posting,
-    PriceAnnotation, Transaction,
+    Amount, Close, Commodity, CostSpec, Directive, Document, Event, Inventory, NaiveDate, Note,
+    Open, Posting, PriceAnnotation, Transaction,
 };
 use rustledger_query::{Executor, QueryResult, Value, parse};
 
@@ -491,6 +491,133 @@ fn test_execute_balances_with_from() {
 
     // Should have balances
     assert!(!result.is_empty());
+}
+
+// ----------------------------------------------------------------------------
+// `balance` column — cumulative across WHERE-filtered postings (bean-query
+// semantics). See issue #929 and the surrounding discussion.
+// ----------------------------------------------------------------------------
+
+#[test]
+fn test_balance_is_cumulative_across_accounts() {
+    // The fixture's first three Asset-touching postings (in iteration order):
+    //  txn 1 (2024-01-15 salary): Assets:Bank:Checking +5000
+    //  txn 2 (2024-01-20 groceries): Assets:Bank:Checking -150
+    //  txn 3 (2024-01-22 gas): Assets:Bank:Checking -45
+    // With cumulative semantics each row's `balance` is the running total of
+    // all WHERE-matched postings up to and including that row, regardless of
+    // account. So the third row (still Checking) should be 5000 - 150 - 45 = 4805.
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT date, balance WHERE account ~ "^Assets" ORDER BY date"#,
+        &directives,
+    );
+    assert!(
+        result.len() >= 3,
+        "expected at least 3 rows, got {}",
+        result.len()
+    );
+    // Row 3 cumulative: 5000 - 150 - 45 = 4805 USD.
+    if let Value::Inventory(inv) = &result.rows[2][1] {
+        let positions = inv.positions();
+        assert_eq!(
+            positions.len(),
+            1,
+            "expected single-currency total, got {positions:?}"
+        );
+        assert_eq!(positions[0].units.number, dec!(4805));
+        assert_eq!(positions[0].units.currency.as_ref(), "USD");
+    } else {
+        panic!("expected Inventory, got {:?}", result.rows[2][1]);
+    }
+}
+
+/// Find the first row whose `account` column equals the given name and
+/// return its `balance` column as an Inventory. Avoids depending on the
+/// executor's sort being stable for equal date keys (txn 4 has both
+/// Savings and Checking on 2024-01-25, so a positional lookup like
+/// `result.rows[3]` is flaky).
+fn find_balance_by_account<'a>(
+    result: &'a QueryResult,
+    account: &str,
+    balance_col_idx: usize,
+) -> &'a Inventory {
+    for row in &result.rows {
+        if let Value::String(a) = &row[1]
+            && a == account
+            && let Value::Inventory(inv) = &row[balance_col_idx]
+        {
+            return inv;
+        }
+    }
+    panic!("no row with account={account} and Inventory balance found")
+}
+
+#[test]
+fn test_balance_carries_across_different_accounts() {
+    // Txn 4 (2024-01-25) adds Assets:Bank:Savings +1000 AND
+    // Assets:Bank:Checking -1000. Cumulative after the Savings row should
+    // be 4805 + 1000 = 5805 USD — i.e., it carries forward the Checking
+    // history from earlier rows. The previous (per-account) implementation
+    // would have shown only 1000, since that's all Savings has seen.
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT date, account, balance WHERE account ~ "^Assets" ORDER BY date, account"#,
+        &directives,
+    );
+    let inv = find_balance_by_account(&result, "Assets:Bank:Savings", 2);
+    assert_eq!(inv.positions()[0].units.number, dec!(5805));
+}
+
+#[test]
+fn test_account_balance_is_per_account() {
+    // `account_balance` keeps the per-account view we used to expose as
+    // `balance`. For the same query, each row should show only that
+    // account's cumulative posting amounts — Savings shows 1000, NOT the
+    // cumulative 5805.
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT date, account, account_balance WHERE account ~ "^Assets" ORDER BY date, account"#,
+        &directives,
+    );
+    let savings = find_balance_by_account(&result, "Assets:Bank:Savings", 2);
+    assert_eq!(savings.positions()[0].units.number, dec!(1000));
+
+    // Pre-Savings, Checking has run 5000 - 150 - 45 = 4805 across the
+    // first three Assets postings. Find the gas row (2024-01-22) by
+    // account to verify its account_balance (date matching first row
+    // would otherwise be ambiguous if multiple Checking rows exist).
+    let mut last_checking_balance = None;
+    for row in &result.rows {
+        if let Value::String(a) = &row[1]
+            && a == "Assets:Bank:Checking"
+            && let Value::Inventory(inv) = &row[2]
+        {
+            last_checking_balance = Some(inv.positions()[0].units.number);
+        }
+    }
+    // After all 5 Checking postings (5000, -150, -45, -1000, -80): final = 3725.
+    assert_eq!(last_checking_balance, Some(dec!(3725)));
+}
+
+#[test]
+fn test_where_rejected_postings_do_not_pollute_cumulative_balance() {
+    // The fixture has Income/Expenses postings paired with every Assets
+    // posting. If the cumulative balance were updated before the WHERE
+    // filter, the Income postings (-5000) would cancel the Assets +5000.
+    // After the fix, only WHERE-matching postings contribute.
+    let directives = make_test_directives();
+    let result = execute_query(
+        r#"SELECT date, balance WHERE account ~ "^Assets" ORDER BY date"#,
+        &directives,
+    );
+    // The very first row is the salary posting to Checking: balance = 5000.
+    // If cumulative were polluted by Income's -5000, this would be 0.
+    if let Value::Inventory(inv) = &result.rows[0][1] {
+        assert_eq!(inv.positions()[0].units.number, dec!(5000));
+    } else {
+        panic!("expected Inventory at first row");
+    }
 }
 
 #[test]
