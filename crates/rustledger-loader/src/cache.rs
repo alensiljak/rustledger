@@ -13,8 +13,20 @@
 //!
 //! # Cache location
 //!
-//! Cache files are stored alongside the main ledger file with a `.cache` extension.
-//! For example, `ledger.beancount` would have cache at `ledger.beancount.cache`.
+//! By default, cache files are stored alongside the main ledger as a hidden
+//! dotfile: `ledger.beancount` → `.ledger.beancount.cache`. This matches Python
+//! beancount's `.{filename}.picklecache` convention.
+//!
+//! Two environment variables control the location, both compatible with
+//! Python beancount and honored at the loader level (so any consumer of
+//! [`load_cache_entry`] / [`save_cache_entry`] gets the kill switch for free):
+//!
+//! - `BEANCOUNT_DISABLE_LOAD_CACHE`: when set (even to an empty value),
+//!   [`load_cache_entry`] returns `None` and [`save_cache_entry`] is a no-op.
+//! - `BEANCOUNT_LOAD_CACHE_FILENAME`: a path pattern that may contain
+//!   `{filename}` (replaced with the source basename). Relative paths resolve
+//!   against the source directory; absolute paths are used as-is. If the
+//!   target directory doesn't exist, [`save_cache_entry`] creates it.
 
 use crate::Options;
 use rust_decimal::Decimal;
@@ -263,8 +275,85 @@ fn compute_hash(files: &[&Path]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-/// Get the cache file path for a given source file.
-fn cache_path(source: &Path) -> std::path::PathBuf {
+/// Environment variable that overrides the default cache filename pattern.
+///
+/// The value is a path that may contain `{filename}` as a placeholder for the
+/// source file's basename. Relative paths are resolved against the source
+/// file's directory; absolute paths are used as-is. Mirrors Python beancount's
+/// `BEANCOUNT_LOAD_CACHE_FILENAME`.
+pub const CACHE_FILENAME_ENV: &str = "BEANCOUNT_LOAD_CACHE_FILENAME";
+
+/// Environment variable that disables the binary cache entirely when set.
+///
+/// Mirrors Python beancount's `BEANCOUNT_DISABLE_LOAD_CACHE`.
+pub const DISABLE_CACHE_ENV: &str = "BEANCOUNT_DISABLE_LOAD_CACHE";
+
+/// Returns the cache file path for a given source file.
+///
+/// Resolution order:
+/// 1. If `BEANCOUNT_LOAD_CACHE_FILENAME` is set, substitute `{filename}` with
+///    the source basename and resolve relative paths against the source dir.
+/// 2. Otherwise, default to a hidden dotfile alongside the source via
+///    [`default_cache_path`]: `path/to/main.beancount` →
+///    `path/to/.main.beancount.cache`.
+///
+/// The dotfile prefix matches Python beancount's `.{filename}.picklecache`
+/// convention, so the cache stays out of the way of `ls` and most file
+/// explorers without breaking from the established beancount ecosystem
+/// behavior. See issue #939.
+///
+/// This function reads process env. Tests that need a deterministic path
+/// regardless of the caller's environment should use [`default_cache_path`]
+/// directly.
+pub fn cache_path(source: &Path) -> PathBuf {
+    if let Ok(pattern) = std::env::var(CACHE_FILENAME_ENV)
+        && !pattern.is_empty()
+    {
+        return resolve_cache_pattern(source, &pattern);
+    }
+    default_cache_path(source)
+}
+
+/// Returns the default cache file path (no env-var lookup).
+///
+/// Use this when you need a path that is independent of process env, e.g.
+/// in tests that mustn't be perturbed by a developer's
+/// `BEANCOUNT_LOAD_CACHE_FILENAME`.
+#[must_use]
+pub fn default_cache_path(source: &Path) -> PathBuf {
+    let mut path = source.to_path_buf();
+    let name = path.file_name().map_or_else(
+        || ".ledger.cache".to_string(),
+        |n| format!(".{}.cache", n.to_string_lossy()),
+    );
+    path.set_file_name(name);
+    path
+}
+
+/// Resolve a `BEANCOUNT_LOAD_CACHE_FILENAME` pattern against a source path.
+///
+/// The `"{filename}"` token below is a literal user-facing substitution
+/// placeholder (matching Python beancount), not a `format!` argument — hence
+/// the explicit allow.
+#[allow(clippy::literal_string_with_formatting_args)]
+fn resolve_cache_pattern(source: &Path, pattern: &str) -> PathBuf {
+    let filename = source.file_name().map_or_else(
+        || "ledger".to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let resolved = pattern.replace("{filename}", &filename);
+    let p = PathBuf::from(&resolved);
+    if p.is_absolute() {
+        return p;
+    }
+    source.parent().map_or(p.clone(), |parent| parent.join(&p))
+}
+
+/// Returns the legacy (pre-#939) cache path: `<source>.cache` alongside source.
+///
+/// Used by `save_cache_entry` to opportunistically clean up stale cache files
+/// from earlier rustledger versions. Not part of the lookup path.
+fn legacy_cache_path(source: &Path) -> PathBuf {
     let mut path = source.to_path_buf();
     let name = path.file_name().map_or_else(
         || "ledger.cache".to_string(),
@@ -274,11 +363,25 @@ fn cache_path(source: &Path) -> std::path::PathBuf {
     path
 }
 
+/// Returns true if `BEANCOUNT_DISABLE_LOAD_CACHE` is set in the environment.
+///
+/// Mere presence disables — value is ignored, including empty string. Matches
+/// Python beancount's `os.getenv("BEANCOUNT_DISABLE_LOAD_CACHE") is None`
+/// check.
+#[must_use]
+pub fn cache_disabled_by_env() -> bool {
+    std::env::var_os(DISABLE_CACHE_ENV).is_some()
+}
+
 /// Try to load a cache entry from disk.
 ///
 /// Returns `Some(CacheEntry)` if cache is valid and file hashes match,
-/// `None` if cache is missing, invalid, or outdated.
+/// `None` if cache is missing, invalid, outdated, or
+/// `BEANCOUNT_DISABLE_LOAD_CACHE` is set.
 pub fn load_cache_entry(main_file: &Path) -> Option<CacheEntry> {
+    if cache_disabled_by_env() {
+        return None;
+    }
     let cache_file = cache_path(main_file);
     let mut file = fs::File::open(&cache_file).ok()?;
 
@@ -314,7 +417,12 @@ pub fn load_cache_entry(main_file: &Path) -> Option<CacheEntry> {
 }
 
 /// Save a cache entry to disk.
+///
+/// No-op (returns Ok) when `BEANCOUNT_DISABLE_LOAD_CACHE` is set.
 pub fn save_cache_entry(main_file: &Path, entry: &CacheEntry) -> Result<(), std::io::Error> {
+    if cache_disabled_by_env() {
+        return Ok(());
+    }
     let cache_file = cache_path(main_file);
 
     // Compute hash from the files in the entry
@@ -335,9 +443,27 @@ pub fn save_cache_entry(main_file: &Path, entry: &CacheEntry) -> Result<(), std:
         data_len: data.len() as u64,
     };
 
+    // Custom BEANCOUNT_LOAD_CACHE_FILENAME patterns can point at a directory
+    // that doesn't exist yet (e.g. ~/.cache/rledger/foo.cache on a fresh
+    // install). Create the parent eagerly so caching isn't silently disabled.
+    if let Some(parent) = cache_file.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::create_dir_all(parent)?;
+    }
+
     let mut file = fs::File::create(&cache_file)?;
     file.write_all(&header.to_bytes())?;
     file.write_all(&data)?;
+
+    // One-shot cleanup of pre-#939 visible cache files. Only attempt when the
+    // legacy path differs from the new path (i.e., we're not using a custom
+    // pattern that happens to land on the old name) and silently ignore
+    // failures — leaving the file is harmless, just untidy.
+    let legacy = legacy_cache_path(main_file);
+    if legacy != cache_file && legacy.exists() {
+        let _ = fs::remove_file(&legacy);
+    }
 
     Ok(())
 }
@@ -357,9 +483,17 @@ fn deserialize_directives(data: &[u8]) -> Option<Vec<Spanned<Directive>>> {
 }
 
 /// Invalidate the cache for a file.
+///
+/// Removes both the current cache file and any legacy pre-#939
+/// `<file>.cache` sidecar so a subsequent load can't pick up stale data.
 pub fn invalidate_cache(main_file: &Path) {
     let cache_file = cache_path(main_file);
-    let _ = fs::remove_file(cache_file);
+    let _ = fs::remove_file(&cache_file);
+
+    let legacy = legacy_cache_path(main_file);
+    if legacy != cache_file {
+        let _ = fs::remove_file(&legacy);
+    }
 }
 
 /// Re-intern all strings in directives to deduplicate memory.
@@ -637,20 +771,67 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_cache_path() {
-        let source = Path::new("/tmp/ledger.beancount");
-        let cache = cache_path(source);
-        assert_eq!(cache, Path::new("/tmp/ledger.beancount.cache"));
+    // Note: end-to-end coverage of `cache_path()` (including the
+    // `BEANCOUNT_LOAD_CACHE_FILENAME` env var) lives in
+    // `tests/cache_env_var_test.rs`, which can mutate process env without
+    // tripping the crate's `forbid(unsafe_code)`. The tests below cover the
+    // pure pattern-resolution logic and the legacy-path helper.
 
-        let source2 = Path::new("relative/path/my.beancount");
-        let cache2 = cache_path(source2);
-        assert_eq!(cache2, Path::new("relative/path/my.beancount.cache"));
+    /// Fail fast if a developer has set the cache env vars locally — the
+    /// roundtrip tests in this module call `save_cache_entry`/`invalidate_cache`
+    /// which read process env, and a custom pattern would silently redirect
+    /// writes elsewhere (or fail in surprising ways). CI runs with a clean env.
+    fn assert_clean_cache_env() {
+        for var in [CACHE_FILENAME_ENV, DISABLE_CACHE_ENV] {
+            assert!(
+                std::env::var_os(var).is_none(),
+                "unset {var} before running this test"
+            );
+        }
+    }
+
+    #[test]
+    fn test_resolve_cache_pattern_relative_with_substitution() {
+        let source = Path::new("/home/user/finances/main.beancount");
+        let resolved = resolve_cache_pattern(source, ".cache/{filename}.bin");
+        assert_eq!(
+            resolved,
+            Path::new("/home/user/finances/.cache/main.beancount.bin")
+        );
+    }
+
+    #[test]
+    fn test_resolve_cache_pattern_absolute() {
+        let source = Path::new("/home/user/main.beancount");
+        let resolved = resolve_cache_pattern(source, "/var/cache/rledger/{filename}.cache");
+        assert_eq!(
+            resolved,
+            Path::new("/var/cache/rledger/main.beancount.cache")
+        );
+    }
+
+    #[test]
+    fn test_resolve_cache_pattern_no_substitution() {
+        // Pattern without {filename} is used verbatim.
+        let source = Path::new("/home/user/main.beancount");
+        let resolved = resolve_cache_pattern(source, "fixed.cache");
+        assert_eq!(resolved, Path::new("/home/user/fixed.cache"));
+    }
+
+    #[test]
+    fn test_legacy_cache_path() {
+        let source = Path::new("/tmp/ledger.beancount");
+        assert_eq!(
+            legacy_cache_path(source),
+            Path::new("/tmp/ledger.beancount.cache")
+        );
     }
 
     #[test]
     fn test_save_load_cache_entry_roundtrip() {
         use std::io::Write;
+
+        assert_clean_cache_env();
 
         // Create a temp directory
         let temp_dir = std::env::temp_dir().join("rustledger_cache_test");
@@ -701,6 +882,8 @@ mod tests {
     fn test_invalidate_cache() {
         use std::io::Write;
 
+        assert_clean_cache_env();
+
         let temp_dir = std::env::temp_dir().join("rustledger_invalidate_test");
         let _ = fs::create_dir_all(&temp_dir);
 
@@ -733,6 +916,31 @@ mod tests {
     }
 
     #[test]
+    fn test_invalidate_cache_removes_legacy_sidecar() {
+        // invalidate_cache should remove both the new dotfile cache and any
+        // pre-#939 visible cache file alongside the source.
+        assert_clean_cache_env();
+
+        let temp_dir = std::env::temp_dir().join("rustledger_invalidate_legacy_test");
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let beancount_file = temp_dir.join("legacy.beancount");
+        // Synthesize a leftover legacy cache file (no need to be valid — we're
+        // only testing that invalidate removes it).
+        let legacy = legacy_cache_path(&beancount_file);
+        fs::write(&legacy, b"stale").unwrap();
+        assert!(legacy.exists());
+
+        invalidate_cache(&beancount_file);
+        assert!(
+            !legacy.exists(),
+            "invalidate_cache should remove the legacy sidecar file"
+        );
+
+        let _ = fs::remove_dir(&temp_dir);
+    }
+
+    #[test]
     fn test_load_cache_missing_file() {
         let missing = Path::new("/nonexistent/path/to/file.beancount");
         assert!(load_cache_entry(missing).is_none());
@@ -742,17 +950,20 @@ mod tests {
     fn test_load_cache_invalid_magic() {
         use std::io::Write;
 
+        assert_clean_cache_env();
+
         let temp_dir = std::env::temp_dir().join("rustledger_magic_test");
         let _ = fs::create_dir_all(&temp_dir);
 
-        let cache_file = temp_dir.join("test.beancount.cache");
+        let beancount_file = temp_dir.join("test.beancount");
+        // Write a malformed cache file at the path load_cache_entry will look up.
+        let cache_file = cache_path(&beancount_file);
         let mut f = fs::File::create(&cache_file).unwrap();
         // Write invalid magic
         f.write_all(b"INVALID\0").unwrap();
         f.write_all(&[0u8; CacheHeader::SIZE - 8]).unwrap();
         drop(f);
 
-        let beancount_file = temp_dir.join("test.beancount");
         assert!(load_cache_entry(&beancount_file).is_none());
 
         // Cleanup
