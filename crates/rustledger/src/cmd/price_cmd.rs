@@ -3,13 +3,14 @@
 //! Fetches current prices for commodities from configurable online sources.
 
 use crate::cmd::completions::ShellType;
+use crate::cmd::price::discovery::{DiscoveredCommodity, discover_symbols};
 use crate::cmd::price::sources::PriceSource;
 use crate::cmd::price::{PriceRequest, PriceSourceRegistry};
 use crate::config::{CommodityMapping, PriceConfig};
 use anyhow::{Context, Result};
 use clap::Parser;
 use rustledger_core::NaiveDate;
-use rustledger_loader::Loader;
+use rustledger_loader::LoadOptions;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -80,6 +81,13 @@ pub struct PriceArgs {
     /// Clear the price cache before fetching.
     #[arg(long)]
     clear_cache: bool,
+
+    /// When discovering symbols from `-f`, include commodities that aren't
+    /// currently held (zero balance across all open accounts). The default
+    /// matches `bean-price`: only fetch prices for commodities you actually
+    /// hold.
+    #[arg(long)]
+    all_commodities: bool,
 }
 
 /// Run the price command.
@@ -112,8 +120,6 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
         return list_sources(&registry);
     }
 
-    let mut symbols_to_fetch: Vec<String> = args.symbols.clone();
-
     // Build symbol mapping from CLI args
     let mut cli_mapping: HashMap<String, CommodityMapping> = HashMap::new();
     for mapping in &args.mapping {
@@ -122,32 +128,54 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
         }
     }
 
-    // If a file is provided, extract commodity symbols
-    if let Some(ref file) = args.file {
-        let mut loader = Loader::new();
-        let ledger = loader.load(file)?;
-
-        // Get commodities that might have ticker symbols
-        for spanned in &ledger.directives {
-            if let rustledger_core::Directive::Commodity(comm) = &spanned.value {
-                let symbol = comm.currency.as_str();
-                // Check if it looks like a ticker symbol (uppercase letters)
-                if symbol
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '-')
-                    && symbol.len() <= 10
-                    && !symbols_to_fetch.contains(&symbol.to_string())
-                {
-                    symbols_to_fetch.push(symbol.to_string());
-                }
-            }
+    // Discover symbols from the ledger (if -f given) plus any CLI symbols.
+    // The discovery layer handles `price:` / `quote_currency:` metadata and
+    // the active-commodity filter (issue #948).
+    let discovered: HashMap<String, DiscoveredCommodity> = if let Some(ref file) = args.file {
+        // Load with booking so interpolated postings (units missing in source,
+        // filled in by the booking engine) get explicit amounts. Without this,
+        // the active-commodity check at `discovery::active_commodities` would
+        // miss the held side of any auto-balanced posting and could mark
+        // currently-held commodities as inactive.
+        let opts = LoadOptions {
+            // Skip plugins / validation here: discovery only cares about
+            // booked postings, and plugin/validation failures shouldn't
+            // block fetching prices on an otherwise-loadable file.
+            run_plugins: false,
+            validate: false,
+            ..LoadOptions::default()
+        };
+        let ledger = rustledger_loader::load(file, &opts)
+            .with_context(|| format!("failed to load {} for symbol discovery", file.display()))?;
+        discover_symbols(
+            &ledger.directives,
+            &ledger.options,
+            &args.symbols,
+            args.all_commodities,
+        )
+    } else {
+        let mut out = HashMap::new();
+        for s in &args.symbols {
+            out.insert(s.clone(), DiscoveredCommodity::default());
         }
-    }
+        out
+    };
+
+    // Stable order: alphabetical by symbol so output is deterministic across
+    // runs (the underlying discovery uses a HashMap).
+    let mut symbols_to_fetch: Vec<String> = discovered.keys().cloned().collect();
+    symbols_to_fetch.sort();
 
     if symbols_to_fetch.is_empty() {
         eprintln!(
             "No symbols to fetch. Provide symbols as arguments or use -f with a beancount file."
         );
+        if !args.all_commodities && args.file.is_some() {
+            eprintln!(
+                "Hint: only commodities currently held are fetched by default. \
+                 Pass --all-commodities to include inactive ones."
+            );
+        }
         return Ok(());
     }
 
@@ -168,11 +196,27 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
     // Handle --source-cmd (ad-hoc external command)
     // This is placed after symbol discovery so -f flag works with --source-cmd
     if let Some(cmd) = &args.source_cmd {
-        return run_with_external_command(args, cmd, &symbols_to_fetch, date, price_config);
+        return run_with_external_command(
+            args,
+            cmd,
+            &symbols_to_fetch,
+            date,
+            price_config,
+            &discovered,
+        );
     }
 
-    // Merge CLI mapping with config mapping (CLI takes precedence)
+    // Merge mappings in increasing precedence (later inserts override earlier
+    // ones via `HashMap::insert`). The effective high-to-low order is:
+    //   1. CLI --mapping (last to insert, wins)
+    //   2. Discovered `price:` metadata from commodity directives (#948)
+    //   3. Config [price.mapping] (first to insert, lowest precedence)
     let mut combined_mapping = price_config.mapping.clone();
+    for (symbol, info) in &discovered {
+        if let Some(m) = &info.mapping {
+            combined_mapping.insert(symbol.clone(), m.clone());
+        }
+    }
     for (k, v) in cli_mapping {
         combined_mapping.insert(k, v);
     }
@@ -187,8 +231,15 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
         .unwrap_or(price_config.effective_default_source());
 
     for symbol in &symbols_to_fetch {
+        // Per-commodity quote currency from `quote_currency:` (or first
+        // `price:` entry) overrides the global --currency for this symbol.
+        let effective_currency = discovered
+            .get(symbol)
+            .and_then(|d| d.quote_currency.as_deref())
+            .unwrap_or(&args.currency);
+
         // Check cache first
-        let key = cache_key(source_name_for_cache, symbol, &args.currency, date);
+        let key = cache_key(source_name_for_cache, symbol, effective_currency, date);
         if let Some(ref c) = cache
             && let Some(cached) = c.get(&key)
         {
@@ -201,9 +252,9 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
 
         // Fetch from network
         let result = if let Some(source_name) = &args.source {
-            fetch_with_source(&registry, source_name, symbol, &args.currency, date)
+            fetch_with_source(&registry, source_name, symbol, effective_currency, date)
         } else {
-            registry.fetch_price(symbol, &args.currency, date, &combined_mapping)
+            registry.fetch_price(symbol, effective_currency, date, &combined_mapping)
         };
 
         match result {
@@ -211,7 +262,7 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
                 if let Some(ref mut c) = cache {
                     // Use the actual source that responded (may differ from
                     // default due to fallback chains)
-                    let actual_key = cache_key(&response.source, symbol, &args.currency, date);
+                    let actual_key = cache_key(&response.source, symbol, effective_currency, date);
                     c.insert(&actual_key, &response);
                     // Also store under the default source key for fast lookup
                     if actual_key != key {
@@ -286,6 +337,7 @@ fn run_with_external_command(
     symbols: &[String],
     date: Option<NaiveDate>,
     price_config: &PriceConfig,
+    discovered: &HashMap<String, DiscoveredCommodity>,
 ) -> Result<()> {
     use crate::cmd::price::external::ExternalCommandSource;
 
@@ -305,9 +357,15 @@ fn run_with_external_command(
     let mut handle = stdout.lock();
 
     for symbol in symbols {
+        // Honor per-commodity quote_currency / price: metadata for --source-cmd
+        // too, matching the network-fetch path.
+        let effective_currency = discovered
+            .get(symbol)
+            .and_then(|d| d.quote_currency.as_deref())
+            .unwrap_or(&args.currency);
         let request = PriceRequest {
             ticker: symbol.clone(),
-            currency: args.currency.clone(),
+            currency: effective_currency.to_string(),
             date,
         };
 
@@ -444,5 +502,17 @@ mod tests {
         let args = Args::parse_from(["price", "--clear-cache", "--no-cache", "AAPL"]);
         assert!(args.price_args.clear_cache);
         assert!(args.price_args.no_cache);
+    }
+
+    #[test]
+    fn test_price_args_all_commodities_default_off() {
+        let args = Args::parse_from(["price", "AAPL"]);
+        assert!(!args.price_args.all_commodities);
+    }
+
+    #[test]
+    fn test_price_args_all_commodities_flag() {
+        let args = Args::parse_from(["price", "--all-commodities", "-f", "ledger.beancount"]);
+        assert!(args.price_args.all_commodities);
     }
 }
