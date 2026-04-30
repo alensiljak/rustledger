@@ -231,15 +231,18 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
         .unwrap_or(price_config.effective_default_source());
 
     for symbol in &symbols_to_fetch {
-        // Per-commodity quote currency from `quote_currency:` (or first
-        // `price:` entry) overrides the global --currency for this symbol.
-        let effective_currency = discovered
-            .get(symbol)
-            .and_then(|d| d.quote_currency.as_deref())
-            .unwrap_or(&args.currency);
+        // Resolve quote currency against `price_config.mapping`, not the
+        // merged `combined_mapping`. CLI `--mapping AUD:NEW-TICKER` creates
+        // a `Simple` entry that overwrites a config-file `Detailed` entry
+        // for the same symbol — using `combined_mapping` here would silently
+        // drop the config's `quote_currency` even though the user only
+        // intended to override the ticker. Source/ticker lookup still uses
+        // the merged map below; only currency resolution stays config-only.
+        let effective_currency =
+            resolve_quote_currency(symbol, &discovered, &price_config.mapping, &args.currency);
 
         // Check cache first
-        let key = cache_key(source_name_for_cache, symbol, effective_currency, date);
+        let key = cache_key(source_name_for_cache, symbol, &effective_currency, date);
         if let Some(ref c) = cache
             && let Some(cached) = c.get(&key)
         {
@@ -252,9 +255,9 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
 
         // Fetch from network
         let result = if let Some(source_name) = &args.source {
-            fetch_with_source(&registry, source_name, symbol, effective_currency, date)
+            fetch_with_source(&registry, source_name, symbol, &effective_currency, date)
         } else {
-            registry.fetch_price(symbol, effective_currency, date, &combined_mapping)
+            registry.fetch_price(symbol, &effective_currency, date, &combined_mapping)
         };
 
         match result {
@@ -262,7 +265,7 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
                 if let Some(ref mut c) = cache {
                     // Use the actual source that responded (may differ from
                     // default due to fallback chains)
-                    let actual_key = cache_key(&response.source, symbol, effective_currency, date);
+                    let actual_key = cache_key(&response.source, symbol, &effective_currency, date);
                     c.insert(&actual_key, &response);
                     // Also store under the default source key for fast lookup
                     if actual_key != key {
@@ -287,6 +290,33 @@ pub fn run(args: &PriceArgs, price_config: &PriceConfig) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Resolve the effective quote currency for a single symbol.
+///
+/// Precedence (high to low), per issue #952:
+/// 1. `quote_currency:` metadata on the commodity directive (or the first
+///    `price:` entry's quote currency), captured by `discovery` at load time
+/// 2. `quote_currency = "..."` in the `[price.mapping.X]` config-file block
+/// 3. The global `--currency` flag default
+fn resolve_quote_currency(
+    symbol: &str,
+    discovered: &HashMap<String, DiscoveredCommodity>,
+    mapping: &HashMap<String, CommodityMapping>,
+    default_currency: &str,
+) -> String {
+    if let Some(c) = discovered
+        .get(symbol)
+        .and_then(|d| d.quote_currency.as_deref())
+    {
+        return c.to_string();
+    }
+    if let Some(CommodityMapping::Detailed(d)) = mapping.get(symbol)
+        && let Some(c) = &d.quote_currency
+    {
+        return c.clone();
+    }
+    default_currency.to_string()
 }
 
 /// Fetch a price using a specific source.
@@ -357,15 +387,14 @@ fn run_with_external_command(
     let mut handle = stdout.lock();
 
     for symbol in symbols {
-        // Honor per-commodity quote_currency / price: metadata for --source-cmd
-        // too, matching the network-fetch path.
-        let effective_currency = discovered
-            .get(symbol)
-            .and_then(|d| d.quote_currency.as_deref())
-            .unwrap_or(&args.currency);
+        // Same currency-resolution discipline as the network path: use the
+        // raw config mapping so a CLI `--mapping` Simple override can't
+        // silently wipe out a config-file `Detailed.quote_currency`.
+        let effective_currency =
+            resolve_quote_currency(symbol, discovered, &price_config.mapping, &args.currency);
         let request = PriceRequest {
             ticker: symbol.clone(),
-            currency: effective_currency.to_string(),
+            currency: effective_currency.clone(),
             date,
         };
 
@@ -514,5 +543,134 @@ mod tests {
     fn test_price_args_all_commodities_flag() {
         let args = Args::parse_from(["price", "--all-commodities", "-f", "ledger.beancount"]);
         assert!(args.price_args.all_commodities);
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_prefers_discovered_metadata() {
+        // Discovered metadata (from `quote_currency:` or `price:` on a commodity
+        // directive) wins over the config-file mapping.
+        let mut discovered = HashMap::new();
+        discovered.insert(
+            "AAPL".to_string(),
+            DiscoveredCommodity {
+                quote_currency: Some("EUR".to_string()),
+                ..DiscoveredCommodity::default()
+            },
+        );
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "AAPL".to_string(),
+            CommodityMapping::Detailed(crate::config::DetailedMapping {
+                source: crate::config::SourceRef::Single("yahoo".into()),
+                ticker: None,
+                quote_currency: Some("GBP".into()),
+            }),
+        );
+
+        assert_eq!(
+            resolve_quote_currency("AAPL", &discovered, &mapping, "USD"),
+            "EUR"
+        );
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_falls_back_to_config_mapping() {
+        // Issue #952: the AUD config-file `quote_currency` should override
+        // the global default when no discovery info is present.
+        let discovered = HashMap::new();
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "AUD".to_string(),
+            CommodityMapping::Detailed(crate::config::DetailedMapping {
+                source: crate::config::SourceRef::Single("ecb".into()),
+                ticker: None,
+                quote_currency: Some("EUR".into()),
+            }),
+        );
+
+        assert_eq!(
+            resolve_quote_currency("AUD", &discovered, &mapping, "USD"),
+            "EUR"
+        );
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_uses_default_when_unset() {
+        let discovered = HashMap::new();
+        let mapping = HashMap::new();
+        assert_eq!(
+            resolve_quote_currency("AAPL", &discovered, &mapping, "USD"),
+            "USD"
+        );
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_simple_mapping_does_not_set_currency() {
+        // `CommodityMapping::Simple("VTI")` carries no quote currency, so
+        // the global default applies.
+        let discovered = HashMap::new();
+        let mut mapping = HashMap::new();
+        mapping.insert("VTI".to_string(), CommodityMapping::Simple("VTI".into()));
+        assert_eq!(
+            resolve_quote_currency("VTI", &discovered, &mapping, "USD"),
+            "USD"
+        );
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_uses_raw_config_not_merged_mapping() {
+        // Regression for Copilot review on PR #953: a CLI `--mapping
+        // AUD:NEW-TICKER` overwrites the config-file `Detailed` entry with
+        // `Simple` in the merged map. If we resolved currency against the
+        // merged map, the config's `quote_currency` would be silently
+        // dropped. The fix is to resolve against the raw config map; the
+        // CLI override only affects ticker/source, not currency.
+        //
+        // This test simulates that exact precondition: `mapping` (the raw
+        // config) has the Detailed entry the user wrote; the merged
+        // combined_mapping (not passed to `resolve_quote_currency`) would
+        // have it overwritten with Simple. resolve_quote_currency must
+        // surface the config's "EUR".
+        let discovered = HashMap::new();
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "AUD".to_string(),
+            CommodityMapping::Detailed(crate::config::DetailedMapping {
+                source: crate::config::SourceRef::Single("ecb".into()),
+                ticker: None,
+                quote_currency: Some("EUR".into()),
+            }),
+        );
+        // Note: we deliberately do NOT pass a merged map that has
+        // CommodityMapping::Simple("AUD-EUR") for AUD here. `price_cmd::run`
+        // is responsible for passing `&price_config.mapping`, not the merged
+        // one. This unit test asserts the helper behaves correctly when
+        // given the raw config map; the call-site comment in `run`
+        // documents the contract.
+        assert_eq!(
+            resolve_quote_currency("AUD", &discovered, &mapping, "USD"),
+            "EUR"
+        );
+    }
+
+    #[test]
+    fn test_resolve_quote_currency_detailed_without_quote_currency_uses_default() {
+        // The common case: a config with `[price.mapping.X] source = "..."`
+        // and no `quote_currency` should fall through to the global default,
+        // not surface an empty string or panic.
+        let discovered = HashMap::new();
+        let mut mapping = HashMap::new();
+        mapping.insert(
+            "AAPL".to_string(),
+            CommodityMapping::Detailed(crate::config::DetailedMapping {
+                source: crate::config::SourceRef::Single("yahoo".into()),
+                ticker: None,
+                quote_currency: None,
+            }),
+        );
+        assert_eq!(
+            resolve_quote_currency("AAPL", &discovered, &mapping, "USD"),
+            "USD"
+        );
     }
 }
