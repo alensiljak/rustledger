@@ -718,7 +718,7 @@ impl Executor<'_> {
 
     /// Execute a JOURNAL query.
     pub(super) fn execute_journal(
-        &mut self,
+        &self,
         query: &crate::ast::JournalQuery,
     ) -> Result<QueryResult, QueryError> {
         // JOURNAL is a shorthand for SELECT with specific columns
@@ -737,6 +737,14 @@ impl Executor<'_> {
             "balance".to_string(),
         ];
         let mut result = QueryResult::new(columns);
+
+        // Cumulative balance across every matched posting in this JOURNAL run.
+        // Matches Python `bean-query`'s JOURNAL → SELECT translation, where the
+        // `balance` column is `summary_func(balance)` over the running
+        // cumulative inventory of WHERE-filtered postings — not per-account.
+        // Aligns with the cumulative `balance` semantics introduced for SELECT
+        // in PR #940; the JOURNAL command was missed in that change. Issue #955.
+        let mut cumulative_balance = rustledger_core::Inventory::new();
 
         // Filter transactions that touch the account
         for directive in self.directives {
@@ -758,37 +766,46 @@ impl Executor<'_> {
                     };
 
                     if matches {
-                        // Build the row
-                        let balance = self.balances.entry(posting.account.clone()).or_default();
-
-                        // Only process complete amounts
-                        if let Some(units) = posting.amount() {
-                            let pos = if let Some(cost_spec) = &posting.cost {
-                                if let Some(cost) = cost_spec.resolve(units.number, txn.date) {
-                                    Position::with_cost(units.clone(), cost)
-                                } else {
-                                    Position::simple(units.clone())
-                                }
+                        // Resolve the posting into a Position once. Used for
+                        // both the running balance accumulator and the
+                        // default-case position column. With cost when the
+                        // posting carries a cost annotation; bare units
+                        // otherwise.
+                        let pos = posting.amount().map(|units| {
+                            if let Some(cost_spec) = &posting.cost
+                                && let Some(cost) = cost_spec.resolve(units.number, txn.date)
+                            {
+                                Position::with_cost(units.clone(), cost)
                             } else {
                                 Position::simple(units.clone())
-                            };
-                            balance.add(pos.clone());
+                            }
+                        });
+
+                        if let Some(ref p) = pos {
+                            cumulative_balance.add(p.clone());
                         }
 
-                        // Apply AT function if specified
+                        // Apply AT function if specified.
+                        //
+                        // - default (no AT): show the full Position (units +
+                        //   cost when present), matching bean-query's
+                        //   JOURNAL column. Issue #955.
+                        // - AT COST: when a cost annotation is present and
+                        //   resolves, show the cost-currency total
+                        //   (units × per-unit cost). Otherwise fall back to
+                        //   the original units — so the output currency is
+                        //   not guaranteed to be the cost currency.
+                        // - AT UNITS: show just the units, dropping cost.
                         let position_value = if let Some(at_func) = &query.at_function {
                             match at_func.to_uppercase().as_str() {
                                 "COST" => {
                                     if let Some(units) = posting.amount() {
-                                        if let Some(cost_spec) = &posting.cost {
-                                            if let Some(cost) =
+                                        if let Some(cost_spec) = &posting.cost
+                                            && let Some(cost) =
                                                 cost_spec.resolve(units.number, txn.date)
-                                            {
-                                                let total = units.number * cost.number;
-                                                Value::Amount(Amount::new(total, &cost.currency))
-                                            } else {
-                                                Value::Amount(units.clone())
-                                            }
+                                        {
+                                            let total = units.number * cost.number;
+                                            Value::Amount(Amount::new(total, &cost.currency))
                                         } else {
                                             Value::Amount(units.clone())
                                         }
@@ -804,9 +821,8 @@ impl Executor<'_> {
                                     .map_or(Value::Null, |u| Value::Amount(u.clone())),
                             }
                         } else {
-                            posting
-                                .amount()
-                                .map_or(Value::Null, |u| Value::Amount(u.clone()))
+                            pos.as_ref()
+                                .map_or(Value::Null, |p| Value::Position(Box::new(p.clone())))
                         };
 
                         let row = vec![
@@ -820,7 +836,7 @@ impl Executor<'_> {
                             Value::String(txn.narration.to_string()),
                             Value::String(posting.account.to_string()),
                             position_value,
-                            Value::Inventory(Box::new(balance.clone())),
+                            Value::Inventory(Box::new(cumulative_balance.clone())),
                         ];
                         result.add_row(row);
                     }
