@@ -17,6 +17,31 @@ use crate::error::QueryError;
 use super::Executor;
 use super::types::{QueryResult, Row, Table, Value, hash_row};
 
+/// Normalized form of a `JOURNAL ... AT <mode>` clause.
+///
+/// Computed once per query rather than calling `to_uppercase()` per row —
+/// avoids per-row allocations and lets the inner loop branch on a copy
+/// type. `Other` covers any unrecognized AT mode (treated like the
+/// default branch in row construction).
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum AtMode {
+    None,
+    Cost,
+    Units,
+    Other,
+}
+
+impl AtMode {
+    const fn from_query(at_function: Option<&str>) -> Self {
+        match at_function {
+            None => Self::None,
+            Some(s) if s.eq_ignore_ascii_case("COST") => Self::Cost,
+            Some(s) if s.eq_ignore_ascii_case("UNITS") => Self::Units,
+            Some(_) => Self::Other,
+        }
+    }
+}
+
 impl Executor<'_> {
     /// Execute a SELECT query.
     pub(super) fn execute_select(&self, query: &SelectQuery) -> Result<QueryResult, QueryError> {
@@ -746,6 +771,11 @@ impl Executor<'_> {
         // in PR #940; the JOURNAL command was missed in that change. Issue #955.
         let mut cumulative_balance = rustledger_core::Inventory::new();
 
+        // Normalize the AT mode once per query rather than calling
+        // to_uppercase() per row (which would allocate twice — once for
+        // position_value, once for balance_for_row). Issue #957 self-review.
+        let at_mode = AtMode::from_query(query.at_function.as_deref());
+
         // Filter transactions that touch the account
         for directive in self.directives {
             if let Directive::Transaction(txn) = directive {
@@ -785,7 +815,8 @@ impl Executor<'_> {
                             cumulative_balance.add(p.clone());
                         }
 
-                        // Apply AT function if specified.
+                        // Apply AT function if specified, using the at_mode
+                        // precomputed once per query above.
                         //
                         // - default (no AT): show the full Position (units +
                         //   cost when present), matching bean-query's
@@ -796,33 +827,41 @@ impl Executor<'_> {
                         //   the original units — so the output currency is
                         //   not guaranteed to be the cost currency.
                         // - AT UNITS: show just the units, dropping cost.
-                        let position_value = if let Some(at_func) = &query.at_function {
-                            match at_func.to_uppercase().as_str() {
-                                "COST" => {
-                                    if let Some(units) = posting.amount() {
-                                        if let Some(cost_spec) = &posting.cost
-                                            && let Some(cost) =
-                                                cost_spec.resolve(units.number, txn.date)
-                                        {
-                                            let total = units.number * cost.number;
-                                            Value::Amount(Amount::new(total, &cost.currency))
-                                        } else {
-                                            Value::Amount(units.clone())
-                                        }
+                        let position_value = match at_mode {
+                            AtMode::None => pos
+                                .as_ref()
+                                .map_or(Value::Null, |p| Value::Position(Box::new(p.clone()))),
+                            AtMode::Cost => {
+                                if let Some(units) = posting.amount() {
+                                    if let Some(cost_spec) = &posting.cost
+                                        && let Some(cost) =
+                                            cost_spec.resolve(units.number, txn.date)
+                                    {
+                                        let total = units.number * cost.number;
+                                        Value::Amount(Amount::new(total, &cost.currency))
                                     } else {
-                                        Value::Null
+                                        Value::Amount(units.clone())
                                     }
+                                } else {
+                                    Value::Null
                                 }
-                                "UNITS" => posting
-                                    .amount()
-                                    .map_or(Value::Null, |u| Value::Amount(u.clone())),
-                                _ => posting
-                                    .amount()
-                                    .map_or(Value::Null, |u| Value::Amount(u.clone())),
                             }
-                        } else {
-                            pos.as_ref()
-                                .map_or(Value::Null, |p| Value::Position(Box::new(p.clone())))
+                            AtMode::Units | AtMode::Other => posting
+                                .amount()
+                                .map_or(Value::Null, |u| Value::Amount(u.clone())),
+                        };
+
+                        // Apply the same AT-mode transformation to the balance
+                        // column that bean-query's `summary_func(balance)`
+                        // applies. Issue #957: previously the balance always
+                        // showed the full cumulative inventory regardless of
+                        // AT mode; that diverged from bean-query, where AT
+                        // cost collapses the balance to cost-currency totals
+                        // and AT units strips lots from the balance.
+                        let balance_for_row = match at_mode {
+                            AtMode::Cost => cumulative_balance.at_cost(),
+                            AtMode::Units => cumulative_balance.at_units(),
+                            AtMode::None | AtMode::Other => cumulative_balance.clone(),
                         };
 
                         let row = vec![
@@ -836,7 +875,7 @@ impl Executor<'_> {
                             Value::String(txn.narration.to_string()),
                             Value::String(posting.account.to_string()),
                             position_value,
-                            Value::Inventory(Box::new(cumulative_balance.clone())),
+                            Value::Inventory(Box::new(balance_for_row)),
                         ];
                         result.add_row(row);
                     }
