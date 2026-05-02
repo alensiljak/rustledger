@@ -59,7 +59,9 @@ The first source in the chain is tried first; subsequent ones act as fallbacks. 
 
 The quote currency in the metadata overrides the global `--currency` for that one symbol, so you can mix USD-quoted stocks and EUR-quoted bonds in the same run.
 
-`price: ""` (empty string, or whitespace-only) is an explicit **opt-out from `-f / --file` discovery**: the commodity is never picked up from the ledger, even with `--undeclared`. Useful for currency codes that happen to collide with stock tickers (e.g. `BAM`, `UKW`) — see issue #962. Note: a symbol passed *explicitly* on the command line (e.g. `rledger price BAM`) is always fetched regardless of the opt-out, since CLI args are explicit user intent.
+`price: ""` (empty string, or whitespace-only) is an explicit **opt-out from `-f / --file` discovery**: the commodity is never picked up from the ledger, even with `--undeclared`. Useful for currency codes that happen to collide with stock tickers (e.g. `BAM`, `UKW`) — see issue #962.
+
+Note: the opt-out only affects file-based discovery. A symbol passed explicitly on the command line (e.g. `rledger price BAM`) is **not silently routed to `default_source`** — it goes through the same explicit-source-required check as any other CLI symbol (#966). To fetch a commodity that has a `price: ""` opt-out, you still need to give it an explicit source (`--source`, `--mapping`, a config block, or set `[price] use_default_source = true`).
 
 ### 2. `quote_currency:` metadata
 
@@ -118,6 +120,26 @@ The currency a price is quoted in is resolved separately, since a single source 
 3. The global `--currency` flag (or its default, `USD`)
 
 Note that `[price.mapping.X]` blocks reject unknown keys: a typo like `currency = "EUR"` (vs the supported `quote_currency`) will fail config load with a clear error rather than being silently dropped.
+
+### Explicit source declaration required by default (issue #966)
+
+Fetching a symbol that has none of:
+- a CLI `--source <name>` flag,
+- a `[price.mapping.X]` entry in your config,
+- a `price:` metadata annotation on the commodity directive,
+- a `quote_currency:` metadata annotation on the commodity directive (treated as opt-in to default-source dispatch with that quote currency),
+- a match against `--undeclared` (ticker-shape heuristic on a `commodity` directive without metadata),
+
+is an **error** rather than a silent dispatch to the configured `default_source`. This prevents the failure mode where currency codes (e.g. `BAM`, the Bosnian convertible mark) get sent to Yahoo and return a stock price for an unrelated ticker that happens to share the symbol.
+
+The four metadata/discovery paths above all opt into default-source dispatch — the strict guard only fires on commodities the user has *not* indicated should be fetched.
+
+To restore the previous behavior — where every unmapped symbol on the CLI also goes to `default_source` — set:
+
+```toml
+[price]
+use_default_source = true
+```
 
 ## Price Caching
 
@@ -206,6 +228,14 @@ Configure sources, mappings, and fallback chains in config:
 default_source = "yahoo"
 timeout = 30
 cache_ttl = 1800
+
+# Issue #966: by default, fetching a commodity that has no
+# `--source` flag, no [price.mapping.X] entry, and no `price:`
+# metadata is an error rather than a silent dispatch to
+# `default_source`. This prevents currency codes (e.g. BAM) from
+# being routed to a stock source and returning unrelated prices.
+# Set this to true to opt back into the previous behavior.
+# use_default_source = false
 
 [price.mapping]
 # Simple ticker mapping

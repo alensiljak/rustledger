@@ -94,6 +94,15 @@ pub struct PriceConfig {
     /// Commodity to source/ticker mappings.
     #[serde(default)]
     pub mapping: HashMap<String, CommodityMapping>,
+
+    /// When `false` (the default), fetching a commodity that has no
+    /// CLI `--source`, no `[price.mapping.X]` config, and no `price:`
+    /// metadata is an error rather than a silent dispatch to
+    /// `default_source`. Prevents the failure mode in #966 where, e.g.,
+    /// `rledger price BAM` was sent to Yahoo and returned a stock
+    /// price for an unrelated ticker that happened to share the
+    /// symbol. Set to `true` to opt back into the previous behavior.
+    pub use_default_source: Option<bool>,
 }
 
 /// Configuration for a custom price source.
@@ -605,6 +614,9 @@ impl PriceConfig {
         if other.cache_ttl.is_some() {
             self.cache_ttl = other.cache_ttl;
         }
+        if other.use_default_source.is_some() {
+            self.use_default_source = other.use_default_source;
+        }
 
         // Merge sources (other's sources override)
         for (name, source) in other.sources {
@@ -634,6 +646,15 @@ impl PriceConfig {
     /// Default: 1800 seconds (30 minutes), matching Python bean-price.
     pub fn effective_cache_ttl(&self) -> u64 {
         self.cache_ttl.unwrap_or(1800)
+    }
+
+    /// Whether to fall back to `default_source` for commodities lacking
+    /// any explicit source declaration. Defaults to `false` so silent
+    /// bad-data fetches (#966) don't happen — opt-in via
+    /// `[price] use_default_source = true` to restore the prior
+    /// behavior.
+    pub fn effective_use_default_source(&self) -> bool {
+        self.use_default_source.unwrap_or(false)
     }
 }
 
@@ -1725,6 +1746,7 @@ currency = "EUR"
                     );
                     m
                 },
+                use_default_source: None,
             },
             ..Default::default()
         };
@@ -1747,6 +1769,7 @@ currency = "EUR"
                     );
                     m
                 },
+                use_default_source: None,
             },
             ..Default::default()
         };
@@ -1773,6 +1796,7 @@ currency = "EUR"
         let config = PriceConfig::default();
         assert_eq!(config.effective_default_source(), "yahoo");
         assert_eq!(config.effective_timeout(), 30);
+        assert!(!config.effective_use_default_source());
 
         let custom = PriceConfig {
             default_source: Some("coinbase".to_string()),
@@ -1781,5 +1805,48 @@ currency = "EUR"
         };
         assert_eq!(custom.effective_default_source(), "coinbase");
         assert_eq!(custom.effective_timeout(), 60);
+    }
+
+    /// Copilot review on PR #971: the new `use_default_source` flag
+    /// must participate in layered config merging — without this,
+    /// setting it in a project/user config wouldn't take effect.
+    #[test]
+    fn test_merge_price_config_use_default_source() {
+        let base = Config {
+            price: PriceConfig {
+                use_default_source: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let override_cfg = Config {
+            price: PriceConfig {
+                use_default_source: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let merged = base.merge(override_cfg);
+        assert_eq!(merged.price.use_default_source, Some(true));
+
+        // And the reverse: explicit `false` in a higher-precedence layer
+        // overrides a `true` from a lower-precedence layer.
+        let base_true = Config {
+            price: PriceConfig {
+                use_default_source: Some(true),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let override_false = Config {
+            price: PriceConfig {
+                use_default_source: Some(false),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let merged = base_true.merge(override_false);
+        assert_eq!(merged.price.use_default_source, Some(false));
     }
 }
