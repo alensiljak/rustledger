@@ -55,7 +55,9 @@ Annotate a commodity with how to fetch its price. The format is `<quote-currency
   price: "EUR:ecb/AUD-EUR"
 ```
 
-The first source in the chain is tried first; subsequent ones act as fallbacks. The quote currency in the metadata overrides the global `--currency` for that one symbol, so you can mix USD-quoted stocks and EUR-quoted bonds in the same run.
+The first source in the chain is tried first; subsequent ones act as fallbacks. **Each spec carries its own ticker** — so `EUR:ecbrates/GBP-EUR,EUR:ecb/GBP` queries `ecbrates` with ticker `GBP-EUR` and, on failure, queries `ecb` with ticker `GBP`. (Issue #963: prior to this fix, all sources reused the first spec's ticker, which broke chains where sources expect different ticker shapes for the same underlying.)
+
+The quote currency in the metadata overrides the global `--currency` for that one symbol, so you can mix USD-quoted stocks and EUR-quoted bonds in the same run.
 
 `price: ""` (empty string, or whitespace-only) is an explicit **opt-out from `-f / --file` discovery**: the commodity is never picked up from the ledger, even with `--undeclared`. Useful for currency codes that happen to collide with stock tickers (e.g. `BAM`, `UKW`) — see issue #962. Note: a symbol passed *explicitly* on the command line (e.g. `rledger price BAM`) is always fetched regardless of the opt-out, since CLI args are explicit user intent.
 
@@ -219,9 +221,19 @@ ticker = "ETH"
 source = "ecb"
 quote_currency = "EUR"  # quote AUD in EUR even when --currency is USD
 
-# Fallback chain
+# Fallback chain (bare source names — all use the parent ticker)
 [price.mapping.VTI]
 source = ["yahoo", "alphavantage"]
+
+# Fallback chain with per-source tickers (issue #963).
+# Use this when sources expect different ticker shapes for the same
+# underlying instrument — e.g. ratesapi-style `GBP-EUR` vs ecb-style `GBP`.
+[price.mapping.GBP]
+source = [
+  { source = "ecbrates", ticker = "GBP-EUR" },
+  { source = "ecb", ticker = "GBP" },
+]
+quote_currency = "EUR"
 
 # Custom external command source
 [price.sources.mybank]
