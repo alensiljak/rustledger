@@ -104,6 +104,15 @@ pub fn discover_symbols(
         let Directive::Commodity(comm) = &spanned.value else {
             continue;
         };
+        // Match bean-price's `find_currencies_declared`: a commodity declared
+        // ON OR AFTER the as-of date is excluded from historical discovery.
+        // (Beanprice uses `entry.date >= date: break` since its directive list
+        // is date-sorted; we use `continue` because our slice may not be.)
+        if let Some(cutoff) = as_of
+            && comm.date >= cutoff
+        {
+            continue;
+        }
         let symbol = comm.currency.as_str();
 
         let classification = classify_commodity_meta(&comm.meta);
@@ -259,31 +268,78 @@ fn build_mapping(specs: &[PriceSpec]) -> Option<CommodityMapping> {
 
 /// Parse a `price:` metadata value into one or more specs.
 ///
-/// Format: `"<quote>:<source>/<ticker>"`, comma-separated for alternatives.
-/// Malformed entries are silently skipped (matches `bean-price`'s lenient
-/// parsing).
+/// Parses both rledger's and `bean-price`'s `price:` metadata syntaxes.
+///
+/// **bean-price form**: `<curr1>:<src1>,<src2>,...  <curr2>:<src1>,...`
+/// where currency blocks are separated by whitespace or `;`, and within
+/// each block sources are comma-separated, each as `<source>/<ticker>`.
+///
+/// **rledger form** (per #963/#970): `<curr>:<src>/<ticker>,<curr>:<src>/<ticker>,...`
+/// where each comma-separated entry repeats the currency.
+///
+/// The two are disambiguated per source-entry: if the part before the
+/// first `/` contains `:`, the entry is rledger's redundant form and
+/// supplies its own currency; otherwise it inherits the block's currency.
+/// That handles both natively without a mode flag and lets users mix the
+/// styles in one metadata string.
+///
+/// Examples (all valid):
+///   `"USD:yahoo/AAPL"`                               (single)
+///   `"USD:yahoo/AAPL,google/AAPL"`                   (bean-price multi-source)
+///   `"USD:yahoo/AAPL,USD:google/AAPL"`               (rledger redundant form)
+///   `"EUR:ecbrates/GBP-EUR,ecb/GBP"`                 (bean-price chain)
+///   `"USD:yahoo/AAPL CAD:google/AAPL"`               (bean-price multi-currency)
+///   `"USD:google/NASDAQ:AAPL"`                       (ticker contains `:`, fine)
+///
+/// Malformed entries are silently skipped — matches bean-price's lenient
+/// parsing (it logs a warning and continues; we already surface a malformed
+/// warning at the caller, see `classify_commodity_meta`).
 fn parse_price_metadata(raw: &str) -> Vec<PriceSpec> {
-    raw.split(',')
-        .filter_map(|chunk| {
-            let chunk = chunk.trim();
-            if chunk.is_empty() {
-                return None;
+    let mut specs = Vec::new();
+    // First split on whitespace/semicolons → currency blocks (bean-price multi-currency form).
+    for block in raw.split([' ', '\t', ';']) {
+        let block = block.trim();
+        if block.is_empty() {
+            continue;
+        }
+        let Some((block_quote, sources_str)) = block.split_once(':') else {
+            continue;
+        };
+        let block_quote = block_quote.trim();
+        if block_quote.is_empty() {
+            continue;
+        }
+        // Then split on `,` → sources within the currency block. Each
+        // source is either bean-price's bare `<source>/<ticker>` (inherits
+        // block currency) or rledger's redundant `<curr>:<source>/<ticker>`
+        // (overrides block currency). Disambiguate by whether the part
+        // before the first `/` contains a `:` — `:` AFTER the slash is
+        // part of the ticker, not a currency prefix.
+        for entry in sources_str.split(',') {
+            let entry = entry.trim();
+            if entry.is_empty() {
+                continue;
             }
-            let (quote, rest) = chunk.split_once(':')?;
-            let (source, ticker) = rest.split_once('/')?;
-            let quote = quote.trim();
-            let source = source.trim();
+            let Some((before_slash, ticker)) = entry.split_once('/') else {
+                continue;
+            };
+            let (effective_quote, source) = if let Some((q, src)) = before_slash.split_once(':') {
+                (q.trim(), src.trim())
+            } else {
+                (block_quote, before_slash.trim())
+            };
             let ticker = ticker.trim();
-            if quote.is_empty() || source.is_empty() || ticker.is_empty() {
-                return None;
+            if effective_quote.is_empty() || source.is_empty() || ticker.is_empty() {
+                continue;
             }
-            Some(PriceSpec {
-                quote_currency: quote.to_string(),
+            specs.push(PriceSpec {
+                quote_currency: effective_quote.to_string(),
                 source: source.to_string(),
                 ticker: ticker.to_string(),
-            })
-        })
-        .collect()
+            });
+        }
+    }
+    specs
 }
 
 const fn metavalue_as_str(v: &MetaValue) -> Option<&str> {
@@ -424,6 +480,69 @@ mod tests {
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].quote_currency, "USD");
         assert_eq!(specs[1].quote_currency, "EUR");
+    }
+
+    #[test]
+    fn parses_bean_price_multi_source_form() {
+        // Bean-price syntax: one currency block, comma-separated bare sources.
+        // Each source inherits the block's currency.
+        let specs = parse_price_metadata("EUR:ecbrates/GBP-EUR,ecb/GBP");
+        assert_eq!(
+            specs,
+            vec![
+                PriceSpec {
+                    quote_currency: "EUR".into(),
+                    source: "ecbrates".into(),
+                    ticker: "GBP-EUR".into(),
+                },
+                PriceSpec {
+                    quote_currency: "EUR".into(),
+                    source: "ecb".into(),
+                    ticker: "GBP".into(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_bean_price_multi_currency_form() {
+        // Bean-price syntax: currency blocks separated by whitespace.
+        // Note: the parser yields specs with distinct quote currencies, but
+        // the downstream `build_mapping` and `DiscoveredCommodity.quote_currency`
+        // only retain the first spec's currency — so today rledger fetches
+        // a multi-currency commodity in only one of its declared quotes.
+        // Tracked as a follow-up; bean-price emits one job per (base, quote).
+        let specs = parse_price_metadata("USD:yahoo/AAPL CAD:google/AAPL");
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].quote_currency, "USD");
+        assert_eq!(specs[0].source, "yahoo");
+        assert_eq!(specs[1].quote_currency, "CAD");
+        assert_eq!(specs[1].source, "google");
+        // Semicolon also accepted as a block separator.
+        let specs = parse_price_metadata("USD:yahoo/AAPL;CAD:google/AAPL");
+        assert_eq!(specs.len(), 2);
+    }
+
+    #[test]
+    fn parses_mixed_form() {
+        // First entry inherits from the block; second carries its own
+        // (redundant) `:` prefix per rledger's per-entry form.
+        let specs = parse_price_metadata("USD:yahoo/AAPL,USD:google/NASDAQ:AAPL");
+        assert_eq!(specs.len(), 2);
+        assert_eq!(specs[0].source, "yahoo");
+        assert_eq!(specs[1].source, "google");
+        assert_eq!(specs[1].ticker, "NASDAQ:AAPL");
+    }
+
+    #[test]
+    fn parses_ticker_with_embedded_colon_in_bean_price_form() {
+        // The disambiguation rule: a `:` AFTER the first `/` is part of
+        // the ticker, not a currency prefix.
+        let specs = parse_price_metadata("USD:google/NASDAQ:AAPL");
+        assert_eq!(specs.len(), 1);
+        assert_eq!(specs[0].quote_currency, "USD");
+        assert_eq!(specs[0].source, "google");
+        assert_eq!(specs[0].ticker, "NASDAQ:AAPL");
     }
 
     #[test]
@@ -584,6 +703,56 @@ mod tests {
         // Boundary: exactly on the close date — close is inclusive, so DOGE inactive.
         let active_close_day = active_commodities(&dirs, &Options::new(), Some(date(2024, 12, 31)));
         assert!(!active_close_day.contains("DOGE"));
+    }
+
+    #[test]
+    fn as_of_filters_commodity_directives_before_walking_them() {
+        // Bean-price compat: a commodity directive dated ON OR AFTER the
+        // cutoff is excluded — the commodity didn't exist yet at as-of date.
+        // Without this filter, a future-dated `commodity` declaration with
+        // `price:` metadata would still trigger discovery for a historical
+        // fetch.
+        let mut early = Commodity::new(date(2024, 1, 1), "AAPL");
+        early.meta.insert(
+            "price".to_string(),
+            MetaValue::String("USD:yahoo/AAPL".into()),
+        );
+        let mut late = Commodity::new(date(2030, 1, 1), "FUTURECOIN");
+        late.meta.insert(
+            "price".to_string(),
+            MetaValue::String("USD:yahoo/FUTURECOIN".into()),
+        );
+        let dirs = directives(vec![
+            Directive::Commodity(early),
+            Directive::Commodity(late),
+        ]);
+
+        // No as_of: both commodity declarations visible (neither is active,
+        // so both filtered by the active check; bypass with inactive=true).
+        let all = discover_symbols(&dirs, &Options::new(), true, false, None);
+        assert!(all.contains_key("AAPL"));
+        assert!(all.contains_key("FUTURECOIN"));
+
+        // as_of in 2025: AAPL declared before, FUTURECOIN declared after.
+        // Only AAPL should be discoverable.
+        let historical =
+            discover_symbols(&dirs, &Options::new(), true, false, Some(date(2025, 6, 1)));
+        assert!(historical.contains_key("AAPL"));
+        assert!(
+            !historical.contains_key("FUTURECOIN"),
+            "commodity declared 2030-01-01 must not be discovered when fetching as-of 2025-06-01"
+        );
+
+        // Boundary: exactly on the declaration date is exclusive (matches
+        // bean-price's `entry.date >= date` skip rule).
+        let on_decl_day =
+            discover_symbols(&dirs, &Options::new(), true, false, Some(date(2030, 1, 1)));
+        assert!(!on_decl_day.contains_key("FUTURECOIN"));
+
+        // One day after: now visible.
+        let after_decl =
+            discover_symbols(&dirs, &Options::new(), true, false, Some(date(2030, 1, 2)));
+        assert!(after_decl.contains_key("FUTURECOIN"));
     }
 
     #[test]
