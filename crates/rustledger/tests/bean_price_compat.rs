@@ -1,0 +1,235 @@
+//! Differential test harness: `rledger price` vs `bean-price` commodity discovery.
+//!
+//! Drives both binaries against fixture beancount files and asserts the set of
+//! `(symbol, quote_currency)` pairs they would fetch is identical. Foundation for
+//! issue #967's compat audit; per-candidate items can add their own fixtures here.
+//!
+//! **Scope**: commodity discovery only. Source-resolution precedence (audit item 5),
+//! per-spec ticker preservation (#970), and fallback chains (#963/#970) cannot be
+//! tested through this harness because rledger's `--source-cmd` flag bypasses the
+//! source layer entirely. Validating those requires either an HTTP mock or a future
+//! `--dry-run` flag on rledger that mirrors `bean-price -n`.
+//!
+//! `bean-price` ships in the nix dev shell (#976). On non-nix workflows the test
+//! skips with a notice rather than failing; CI runs in the dev shell so the
+//! skip path doesn't fire there.
+
+#![cfg(unix)]
+
+use std::collections::BTreeSet;
+use std::path::PathBuf;
+use std::process::Command;
+use tempfile::{NamedTempFile, TempDir};
+
+fn bean_price_available() -> bool {
+    Command::new("bean-price")
+        .arg("--help")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+// Bean-price -n line shape:
+//   `AAPL /USD                        @ latest     [ beanprice.sources.yahoo(AAPL) ]`
+// Tighter than split_whitespace: require uppercase ticker, slash-prefixed currency,
+// and the literal `@` separator before accepting.
+fn extract_bean_price_jobs(stdout: &str) -> BTreeSet<(String, String)> {
+    fn is_ticker(s: &str) -> bool {
+        !s.is_empty()
+            && s.chars().all(|c| {
+                c.is_ascii_uppercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_')
+            })
+            && s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+    }
+    fn is_currency(s: &str) -> bool {
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_uppercase())
+    }
+
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let sym = parts.next()?;
+            let cur = parts.next()?.strip_prefix('/')?;
+            if parts.next()? != "@" {
+                return None;
+            }
+            if !is_ticker(sym) || !is_currency(cur) {
+                return None;
+            }
+            Some((sym.to_string(), cur.to_string()))
+        })
+        .collect()
+}
+
+// rledger `--beancount` line shape: `2024-05-02 price AAPL 1.00 USD` — stable, documented.
+fn extract_rledger_jobs(stdout: &str) -> BTreeSet<(String, String)> {
+    stdout
+        .lines()
+        .filter_map(|line| {
+            let mut parts = line.split_whitespace();
+            let _date = parts.next()?;
+            if parts.next()? != "price" {
+                return None;
+            }
+            let sym = parts.next()?;
+            let _amount = parts.next()?;
+            let cur = parts.next()?;
+            Some((sym.to_string(), cur.to_string()))
+        })
+        .collect()
+}
+
+// `TempDir` (not `NamedTempFile`) so the script file has no open write handle — exec on Linux fails with ETXTBSY otherwise.
+//
+// Echo back the `--currency` arg rledger passes so the simple-format parser preserves
+// the requested currency. Without this, parse_simple_format hardcodes USD on
+// number-only output (a real bug in `--source-cmd`'s simple parser; tracked separately).
+fn stub_source() -> (TempDir, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("stub-source.sh");
+    let script = "#!/usr/bin/env bash\n\
+                  ccy=USD\n\
+                  while [ $# -gt 0 ]; do\n\
+                  \x20\x20case \"$1\" in\n\
+                  \x20\x20\x20\x20--currency) ccy=\"$2\"; shift 2 ;;\n\
+                  \x20\x20\x20\x20*) shift ;;\n\
+                  \x20\x20esac\n\
+                  done\n\
+                  echo \"1.00 $ccy\"\n";
+    std::fs::write(&path, script).unwrap();
+    let mut perms = std::fs::metadata(&path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).unwrap();
+    (dir, path)
+}
+
+fn write_fixture(content: &str) -> NamedTempFile {
+    let f = tempfile::Builder::new()
+        .suffix(".beancount")
+        .tempfile()
+        .unwrap();
+    std::fs::write(f.path(), content).unwrap();
+    f
+}
+
+fn run_bean_price(fixture: &std::path::Path) -> BTreeSet<(String, String)> {
+    let out = Command::new("bean-price")
+        .args(["-n", fixture.to_str().unwrap()])
+        .output()
+        .expect("bean-price -n should execute");
+    assert!(
+        out.status.success(),
+        "bean-price exited non-zero: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    extract_bean_price_jobs(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn run_rledger(fixture: &std::path::Path) -> BTreeSet<(String, String)> {
+    let (_dir, stub_path) = stub_source();
+    // rledger parses --source-cmd via shell_words::split, so a temp path containing
+    // whitespace would be word-split into multiple tokens and the exec would fail.
+    let stub_arg = shell_words::quote(stub_path.to_str().unwrap()).into_owned();
+    let out = Command::new(env!("CARGO_BIN_EXE_rledger"))
+        .args([
+            "price",
+            "-f",
+            fixture.to_str().unwrap(),
+            "--beancount",
+            "--source-cmd",
+            &stub_arg,
+        ])
+        .output()
+        .expect("rledger price should execute");
+    assert!(
+        out.status.success(),
+        "rledger price exited non-zero: stderr={}\nstdout={}",
+        String::from_utf8_lossy(&out.stderr),
+        String::from_utf8_lossy(&out.stdout),
+    );
+    extract_rledger_jobs(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn assert_same_commodities(fixture: &str, label: &str) {
+    if !bean_price_available() {
+        eprintln!(
+            "skipping bean-price compat ({label}): bean-price not on PATH \
+             (run inside `nix develop` to enable)"
+        );
+        return;
+    }
+    let f = write_fixture(fixture);
+    let bean_jobs = run_bean_price(f.path());
+    let rledger_jobs = run_rledger(f.path());
+    assert_eq!(
+        bean_jobs, rledger_jobs,
+        "fixture {label}: bean-price and rledger price disagreed on commodity discovery.\n\
+         bean-price = {bean_jobs:?}\n\
+         rledger    = {rledger_jobs:?}"
+    );
+}
+
+const FIXTURE_BASIC: &str = "\
+2024-01-01 commodity AAPL
+  price: \"USD:yahoo/AAPL\"
+
+2024-01-01 commodity SPY
+  price: \"USD:yahoo/SPY\"
+
+2024-01-01 open Assets:Brokerage
+2024-01-01 open Equity:Open
+
+2024-01-15 * \"buy\"
+  Assets:Brokerage  10 AAPL {150 USD}
+  Assets:Brokerage  5 SPY {500 USD}
+  Equity:Open
+";
+
+const FIXTURE_MIXED_CURRENCIES: &str = "\
+2024-01-01 commodity AAPL
+  price: \"USD:yahoo/AAPL\"
+
+2024-01-01 commodity SAP
+  price: \"EUR:yahoo/SAP.DE\"
+
+2024-01-01 open Assets:US
+2024-01-01 open Assets:DE
+2024-01-01 open Equity:Open
+
+2024-01-15 * \"buy AAPL\"
+  Assets:US  10 AAPL {150 USD}
+  Equity:Open
+
+2024-01-16 * \"buy SAP\"
+  Assets:DE  20 SAP {120 EUR}
+  Equity:Open
+";
+
+#[test]
+fn rledger_and_bean_price_discover_same_commodities_basic() {
+    assert_same_commodities(FIXTURE_BASIC, "basic");
+}
+
+#[test]
+fn rledger_and_bean_price_discover_same_commodities_mixed_currencies() {
+    assert_same_commodities(FIXTURE_MIXED_CURRENCIES, "mixed_currencies");
+}
+
+// Sanity check: when we're inside `nix develop`, `bean-price` must be on PATH —
+// otherwise removing beanprice from the flake would silently turn every harness
+// test into a no-op and we wouldn't notice. CI doesn't currently use the dev
+// shell so this guard only fires for local devs; making CI run inside nix is a
+// separate workflow change.
+#[cfg(target_os = "linux")]
+#[test]
+fn bean_price_must_be_on_path_in_dev_shell() {
+    if std::env::var_os("IN_NIX_SHELL").is_none() {
+        eprintln!("skipping: not running inside `nix develop`");
+        return;
+    }
+    assert!(
+        bean_price_available(),
+        "bean-price not on PATH inside nix dev shell — flake regression?"
+    );
+}
