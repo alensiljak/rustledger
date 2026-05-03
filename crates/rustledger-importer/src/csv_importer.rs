@@ -209,8 +209,9 @@ impl CsvImporter {
         // Get amount
         let amount = self.parse_amount(record, csv_config, header_map)?;
 
-        // Skip zero amount transactions
-        if amount == Decimal::ZERO {
+        // Skip zero-amount rows by default. Users can opt out via
+        // `skip_zero_amounts(false)` to preserve every source row (issue #972).
+        if csv_config.skip_zero_amounts && amount == Decimal::ZERO {
             return Ok(None);
         }
 
@@ -321,19 +322,40 @@ impl CsvImporter {
         // If we have separate debit/credit columns
         if csv_config.debit_column.is_some() || csv_config.credit_column.is_some() {
             let mut amount = Decimal::ZERO;
+            // Track whether ANY non-blank cell failed to parse. A blank cell
+            // is normal (banks leave one of debit/credit blank), but a non-
+            // blank cell that won't parse is a malformed row — surface it
+            // instead of silently importing 0 (which becomes a real 0.00
+            // transaction once `--include-zero-amounts` is set).
+            let mut any_parse_failure = false;
 
             if let Some(debit_col) = &csv_config.debit_column
                 && let Ok(debit_str) = self.get_column(record, debit_col, header_map)
-                && let Ok(val) = self.config.amount_format.parse(debit_str)
+                && !debit_str.trim().is_empty()
             {
-                amount -= val; // Debits are negative
+                match self.config.amount_format.parse(debit_str) {
+                    Ok(val) => amount -= val, // Debits are negative
+                    Err(_) => any_parse_failure = true,
+                }
             }
 
             if let Some(credit_col) = &csv_config.credit_column
                 && let Ok(credit_str) = self.get_column(record, credit_col, header_map)
-                && let Ok(val) = self.config.amount_format.parse(credit_str)
+                && !credit_str.trim().is_empty()
             {
-                amount += val; // Credits are positive
+                match self.config.amount_format.parse(credit_str) {
+                    Ok(val) => amount += val, // Credits are positive
+                    Err(_) => any_parse_failure = true,
+                }
+            }
+
+            // Strict: any non-blank cell that fails to parse is a malformed
+            // row, regardless of what the other side produced. Returning a
+            // half-credit value would silently mask the error (e.g. typo'd
+            // debit "abc" + credit "100" would import as +100, dropping the
+            // true debit).
+            if any_parse_failure {
+                anyhow::bail!("Failed to parse debit/credit amount");
             }
 
             return Ok(amount);
@@ -447,6 +469,44 @@ mod tests {
             let amount = txn.postings[0].amount().unwrap();
             assert_eq!(amount.number, Decimal::from_str("2500.00").unwrap());
         }
+    }
+
+    #[test]
+    fn test_csv_import_malformed_debit_or_credit_warns() {
+        // Per Copilot review on PR #982: a non-blank debit/credit cell that
+        // fails to parse should surface as a warning, not silently become a
+        // 0.00 (or half-valued) transaction. Blank cells remain normal.
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .debit_column("Debit")
+            .credit_column("Credit")
+            .build()
+            .unwrap();
+
+        // Both sides non-blank: debit malformed, credit valid. The credit-only
+        // path would silently import +100 and drop the typo'd debit; we want
+        // the row rejected with a warning instead.
+        let csv = "Date,Description,Debit,Credit\n2024-01-15,Bad debit,abc,100.00\n";
+        let result = config.extract_from_string(csv).unwrap();
+        assert!(
+            result.directives.is_empty(),
+            "malformed debit must not produce a transaction"
+        );
+        assert_eq!(result.warnings.len(), 1);
+        assert!(
+            result.warnings[0].contains("parse"),
+            "warning should mention parse failure: {}",
+            result.warnings[0]
+        );
+
+        // Both blank: no warning (skipped as zero by default).
+        let csv_blank = "Date,Description,Debit,Credit\n2024-01-15,Empty,,\n";
+        let result = config.extract_from_string(csv_blank).unwrap();
+        assert!(result.directives.is_empty());
+        assert!(result.warnings.is_empty(), "blank cells must not warn");
     }
 
     #[test]
@@ -787,6 +847,31 @@ not-a-date,Coffee,-5.00
     }
 
     #[test]
+    fn test_csv_import_zero_amount_preserved_when_opted_in() {
+        // Issue #972 follow-up: skip_zero_amounts(false) keeps the row.
+        let config = ImporterConfig::csv()
+            .account("Assets:Bank")
+            .currency("USD")
+            .date_column("Date")
+            .narration_column("Description")
+            .amount_column("Amount")
+            .skip_zero_amounts(false)
+            .build()
+            .unwrap();
+
+        let csv_content = r"Date,Description,Amount
+2024-01-15,Zero balance marker,0.00
+2024-01-16,Normal,-10.00
+";
+
+        let result = config.extract_from_string(csv_content).unwrap();
+        assert_eq!(result.directives.len(), 2, "both rows should be kept");
+        if let Directive::Transaction(txn) = &result.directives[0] {
+            assert_eq!(txn.narration.as_str(), "Zero balance marker");
+        }
+    }
+
+    #[test]
     fn test_csv_import_default_currency() {
         // No currency specified - should default to USD
         let config = ImporterConfig::csv()
@@ -938,6 +1023,7 @@ not-a-date,Coffee,-5.00
             mappings: Vec::new(),
             regex_mappings: Vec::new(),
             use_merchant_dict: false,
+            skip_zero_amounts: true,
         };
 
         let importer = CsvImporter::new(ImporterConfig {
