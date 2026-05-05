@@ -92,57 +92,53 @@ impl PriceDatabase {
 
     /// Add implicit prices from transaction postings.
     ///
-    /// Extracts prices from:
-    /// 1. Price annotations (`@ price` or `@@ total_price`) - takes priority
-    /// 2. Cost specifications (`{cost}`) when no valid price annotation
+    /// Delegates per-posting price math to
+    /// [`rustledger_core::extract_per_unit_price`], which is also used
+    /// by the native `implicit_prices` plugin
+    /// (`rustledger_plugin::native::plugins::implicit_prices`). Pre-fix
+    /// (issue #992) the two paths were independently implemented and
+    /// diverged on `@@` handling — the plugin emitted total amounts as
+    /// per-unit prices. The shared helper eliminates that drift by
+    /// construction.
     ///
-    /// This matches Python beancount's `implicit_prices` plugin behavior.
+    /// Resolution priority (matches Python beancount's
+    /// `implicit_prices` plugin):
+    /// 1. Price annotation (`@` or `@@`) when an amount is present
+    /// 2. Cost spec (`{...}`) as fallback
+    /// 3. Otherwise no price emitted
     pub fn add_implicit_prices_from_transaction(&mut self, txn: &Transaction) {
         for posting in &txn.postings {
-            // Get the posting's units (the commodity being priced)
-            if let Some(units) = posting.amount() {
-                // Priority 1: Price annotation (@ or @@) - if it yields a valid amount.
-                // If the annotation exists but amount() is None, we fall through to cost.
-                if let Some(price_annotation) = &posting.price
-                    && let Some(price_amount) = price_annotation.amount()
-                {
-                    // For @@ (total), calculate per-unit price
-                    let per_unit_price = if price_annotation.is_unit() {
-                        price_amount.number
-                    } else if !units.number.is_zero() {
-                        // Total price divided by units
-                        price_amount.number / units.number.abs()
-                    } else {
-                        continue;
-                    };
+            let Some(units) = posting.amount() else {
+                continue;
+            };
 
-                    self.add_implicit_price(
-                        txn.date,
-                        &units.currency,
-                        per_unit_price,
-                        &price_amount.currency,
-                    );
-                    // Successfully extracted from price annotation, skip cost fallback
-                    continue;
+            // Build the helper's annotation descriptor only when both
+            // an amount and currency are available; the helper pairs
+            // the returned per-unit value with the matching currency
+            // by construction.
+            let annotation = posting.price.as_ref().and_then(|annotation| {
+                let amount = annotation.amount()?;
+                Some((
+                    !annotation.is_unit(),
+                    amount.number,
+                    amount.currency.clone(),
+                ))
+            });
+            let cost = posting.cost.as_ref().and_then(|c| {
+                let currency = c.currency.clone()?;
+                if c.number_per.is_none() && c.number_total.is_none() {
+                    return None;
                 }
+                Some((c.number_per, c.number_total, currency))
+            });
 
-                // Priority 2: Cost specification (fallback if no valid price from annotation)
-                if let Some(cost_spec) = &posting.cost {
-                    if let (Some(number_per), Some(currency)) =
-                        (&cost_spec.number_per, &cost_spec.currency)
-                    {
-                        self.add_implicit_price(txn.date, &units.currency, *number_per, currency);
-                    } else if let (Some(number_total), Some(currency)) =
-                        (&cost_spec.number_total, &cost_spec.currency)
-                    {
-                        // Calculate per-unit from total
-                        if !units.number.is_zero() {
-                            let per_unit = *number_total / units.number.abs();
-                            self.add_implicit_price(txn.date, &units.currency, per_unit, currency);
-                        }
-                    }
-                }
-            }
+            let Some((per_unit, quote)) =
+                rustledger_core::extract_per_unit_price(units.number, annotation, cost)
+            else {
+                continue;
+            };
+
+            self.add_implicit_price(txn.date, &units.currency, per_unit, &quote);
         }
     }
 
@@ -790,5 +786,44 @@ mod tests {
 
         // At 2024-01-15 or later, should use implicit price 1.40 (latest)
         assert_eq!(db.get_latest_price("ABC", "EUR"), Some(dec!(1.40)));
+    }
+
+    /// Currency-pairing regression for the query path. Mirrors the
+    /// plugin-side `test_implicit_prices_zero_unit_total_falls_through_to_cost_currency`
+    /// (Copilot review on PR #997). With zero units, the `@@` total
+    /// annotation is unusable, so the per-unit value falls through to
+    /// the cost spec — and the quote currency MUST come from the cost,
+    /// not the dropped annotation. Pre-fix, both paths emitted
+    /// `(50, EUR)` instead of `(50, USD)`. The shared helper now binds
+    /// each value to its source currency, making this bug structurally
+    /// impossible. This test pins the query path's behavior so a
+    /// future caller-side refactor cannot silently regress it.
+    #[test]
+    fn test_implicit_price_zero_units_total_annotation_uses_cost_currency() {
+        use rustledger_core::{CostSpec, Posting, PriceAnnotation, Transaction};
+
+        let txn = Transaction::new(date(2024, 1, 15), "Close position").with_posting(
+            Posting::new("Assets:Stocks", Amount::new(dec!(0), "ABC"))
+                .with_cost(
+                    CostSpec::default()
+                        .with_number_per(dec!(50))
+                        .with_currency("USD"),
+                )
+                .with_price(PriceAnnotation::Total(Amount::new(dec!(100), "EUR"))),
+        );
+
+        let db = PriceDatabase::from_directives(&[Directive::Transaction(txn)]);
+
+        // Per-unit value (50) was paired with USD (cost currency),
+        // not EUR (dropped annotation currency).
+        assert_eq!(
+            db.get_price("ABC", "USD", date(2024, 1, 15)),
+            Some(dec!(50))
+        );
+        // ABC→EUR has no path: no direct entry, no inverse EUR→ABC,
+        // no chain through any other currency. Pre-fix this would
+        // have been Some(50) because the bogus (50, EUR) entry was
+        // recorded.
+        assert_eq!(db.get_price("ABC", "EUR", date(2024, 1, 15)), None);
     }
 }
