@@ -115,6 +115,76 @@ run_case "shape D: assert!(price_count != 0)" 1 \
     '#[test] fn t() { let price_count = 0; assert!(price_count != 0); }'
 
 # ----------------------------------------------------------------------
+# Multi-line forms (the line-anchored grep above misses these — the
+# multi-line form is more common when the assert carries a message).
+# ----------------------------------------------------------------------
+
+run_case "multi-line shape C: assert!(\\\\n    !x.is_empty(),\\\\n    \"msg\"\\\\n)" 1 \
+    '#[test] fn t() {
+    assert!(
+        !output.errors.is_empty(),
+        "should warn"
+    );
+}'
+
+run_case "multi-line shape B: assert_ne!(\\\\n    x.len(),\\\\n    0\\\\n)" 1 \
+    '#[test] fn t() {
+    assert_ne!(
+        emitted.len(),
+        0
+    );
+}'
+
+run_case "multi-line shape D: assert!(\\\\n    x.len() != 0,\\\\n    \"msg\"\\\\n)" 1 \
+    '#[test] fn t() {
+    assert!(
+        emitted.len() != 0,
+        "msg"
+    );
+}'
+
+# ----------------------------------------------------------------------
+# Word-boundary guards: prop_assert! / debug_assert! must NOT match
+# even though they contain the literal substring `assert!`.
+# ----------------------------------------------------------------------
+
+run_case "prop_assert!(!x.is_empty()) does NOT fire (property tests)" 0 \
+    '#[test] fn t() {
+    prop_assert!(
+        !output.directives.is_empty(),
+        "Plugin should produce valid output"
+    );
+}'
+
+run_case "debug_assert!(!x.is_empty()) does NOT fire (invariant)" 0 \
+    'fn invariant() {
+    debug_assert!(
+        !cache.is_empty(),
+        "cache should be populated by init"
+    );
+}'
+
+# Multi-line ML_PAT_B/D used to match ANY `, 0` / `!= 0` assertion;
+# they're now scoped to count/len/size LHS the same as PAT_B/D
+# (Copilot review on PR #1005). These guards confirm non-count
+# zero-comparisons do NOT fire the lint.
+run_case "ML_PAT_B guard: assert_ne!(balance, 0) (non-count) does NOT fire" 0 \
+    '#[test] fn t() {
+    assert_ne!(
+        balance,
+        0
+    );
+}'
+
+run_case "ML_PAT_D guard: assert!(balance != 0) (non-count) does NOT fire" 0 \
+    '#[test] fn t() {
+    assert!(
+        balance != 0,
+        "should be non-zero"
+    );
+}'
+
+# ----------------------------------------------------------------------
 # Allow annotation
 # ----------------------------------------------------------------------
 
