@@ -75,6 +75,56 @@ impl fmt::Display for MetaValue {
 /// Metadata is a key-value map attached to directives and postings.
 pub type Metadata = FxHashMap<String, MetaValue>;
 
+/// Try to interpret a [`MetaValue`] as a non-negative integer ≤ `u32::MAX`.
+///
+/// Used by the `precision` metadata feature on `commodity` directives (issue
+/// #991). Shared between the loader (which silently skips invalid values and
+/// falls back to inferred precision) and the validator (which surfaces the
+/// problem as an `InvalidPrecisionMetadata` warning), so both paths agree on
+/// what counts as valid.
+///
+/// # Errors
+///
+/// Returns a human-readable explanation when the value is not a number,
+/// is negative, has a fractional part, or is out of `u32` range.
+#[must_use = "ignoring the result silently drops invalid `precision:` metadata; the loader expects to skip invalid values, the validator expects to surface them"]
+pub fn parse_precision_meta(value: &MetaValue) -> Result<u32, String> {
+    use rust_decimal::prelude::ToPrimitive;
+    let MetaValue::Number(n) = value else {
+        return Err(format!(
+            "expected a non-negative integer, got {} value",
+            meta_value_kind(value)
+        ));
+    };
+    if n.is_sign_negative() {
+        return Err(format!("expected a non-negative integer, got {n}"));
+    }
+    if !n.fract().is_zero() {
+        return Err(format!("expected an integer, got {n}"));
+    }
+    n.to_u32().ok_or_else(|| {
+        format!(
+            "value {n} exceeds the maximum supported precision ({})",
+            u32::MAX
+        )
+    })
+}
+
+const fn meta_value_kind(v: &MetaValue) -> &'static str {
+    match v {
+        MetaValue::String(_) => "string",
+        MetaValue::Account(_) => "account",
+        MetaValue::Currency(_) => "currency",
+        MetaValue::Tag(_) => "tag",
+        MetaValue::Link(_) => "link",
+        MetaValue::Date(_) => "date",
+        MetaValue::Number(_) => "number",
+        MetaValue::Bool(_) => "bool",
+        MetaValue::Amount(_) => "amount",
+        MetaValue::None => "none",
+    }
+}
+
 /// A posting within a transaction.
 ///
 /// Postings represent the individual legs of a transaction. Each posting
@@ -1665,5 +1715,69 @@ mod tests {
         );
         let dir_balance = Directive::Balance(balance.clone());
         assert_eq!(format!("{dir_balance}"), format!("{balance}"));
+    }
+
+    // ----- parse_precision_meta (issue #991) ---------------------------------
+
+    #[test]
+    fn parse_precision_meta_accepts_non_negative_integers() {
+        assert_eq!(parse_precision_meta(&MetaValue::Number(dec!(0))), Ok(0));
+        assert_eq!(parse_precision_meta(&MetaValue::Number(dec!(2))), Ok(2));
+        assert_eq!(parse_precision_meta(&MetaValue::Number(dec!(28))), Ok(28));
+        // Integer-valued decimals (e.g. `precision: 2.0` in source) must
+        // round-trip the same as `precision: 2` — the parser will produce
+        // `Number(dec!(2.0))` for the dotted form.
+        assert_eq!(parse_precision_meta(&MetaValue::Number(dec!(2.0))), Ok(2));
+        assert_eq!(parse_precision_meta(&MetaValue::Number(dec!(0.000))), Ok(0));
+    }
+
+    #[test]
+    fn parse_precision_meta_rejects_negatives() {
+        let err = parse_precision_meta(&MetaValue::Number(dec!(-1))).unwrap_err();
+        assert!(err.contains("non-negative"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_precision_meta_rejects_fractional() {
+        let err = parse_precision_meta(&MetaValue::Number(dec!(2.5))).unwrap_err();
+        assert!(err.contains("integer"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_precision_meta_rejects_overflow() {
+        // 2^33 — out of u32 range.
+        let err = parse_precision_meta(&MetaValue::Number(dec!(8589934592))).unwrap_err();
+        assert!(err.contains("exceeds"), "got: {err}");
+    }
+
+    #[test]
+    fn parse_precision_meta_rejects_non_number_variants() {
+        // Cover every non-Number `MetaValue` variant so the kind-labeling
+        // arms in `meta_value_kind` are all exercised. Each error message
+        // names the kind ("string value", "bool value", etc.) so users
+        // see what they actually wrote.
+        use crate::Amount;
+        use rust_decimal_macros::dec;
+        let cases = [
+            (MetaValue::String("2".into()), "string"),
+            (MetaValue::Account("Assets:Cash".into()), "account"),
+            (MetaValue::Currency("USD".into()), "currency"),
+            (MetaValue::Tag("foo".into()), "tag"),
+            (MetaValue::Link("bar".into()), "link"),
+            (MetaValue::Date(date(2024, 1, 1)), "date"),
+            (MetaValue::Bool(true), "bool"),
+            (MetaValue::Amount(Amount::new(dec!(2), "USD")), "amount"),
+            (MetaValue::None, "none"),
+        ];
+        for (case, kind) in cases {
+            let err = match parse_precision_meta(&case) {
+                Ok(_) => panic!("should have rejected {case:?}"),
+                Err(e) => e,
+            };
+            assert!(
+                err.contains(kind),
+                "error for {case:?} should mention kind {kind:?}, got: {err}"
+            );
+        }
     }
 }
