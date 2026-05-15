@@ -71,8 +71,11 @@ pub fn load_and_book(source: &str) -> ProcessedLedger {
     // Extract options before process() consumes raw
     let options = extract_loader_options(&raw.options);
 
-    // Run the shared processing pipeline: sort → book → plugins
-    // Skip validation here - callers that need it will call run_validation()
+    // Run the shared processing pipeline:
+    // sort → synth-plugins → book → regular-plugins → finalize
+    // Skip validation here — callers that need it will call run_validation()
+    // (the validation pass itself is split into Early — before booking — and
+    // Late — after regular plugins; both are invoked when `validate: true`).
     let load_options = LoadOptions {
         validate: false,
         ..Default::default()
@@ -104,7 +107,7 @@ pub fn load_and_book(source: &str) -> ProcessedLedger {
 
 /// Run validation on a loaded ledger and return validation errors.
 pub fn run_validation(load: &ProcessedLedger) -> Vec<Error> {
-    use rustledger_validate::validate as validate_ledger;
+    use rustledger_validate::{Phase, ValidationOptions, ValidationSession};
 
     if !load.errors.is_empty() {
         return Vec::new();
@@ -118,7 +121,18 @@ pub fn run_validation(load: &ProcessedLedger) -> Vec<Error> {
         date_to_line.entry(date).or_insert(line);
     }
 
-    validate_ledger(&load.directives)
+    // WASM target sees already-booked directives, so run both phases
+    // back-to-back. Use a hardcoded far-future "today" to disable
+    // future-date warnings — WASM has no reliable wall clock and the
+    // legacy `validate()` shortcut also didn't fire these warnings
+    // unless `warn_future_dates` was explicitly enabled (it isn't here).
+    let today = rustledger_core::naive_date(2999, 12, 31).unwrap();
+    let mut session = ValidationSession::new(ValidationOptions::default());
+    let mut errors = session.run_phase(&load.directives, Phase::Early, today);
+    errors.extend(session.run_phase(&load.directives, Phase::Late, today));
+    errors.extend(session.finalize());
+
+    errors
         .into_iter()
         .map(|err| {
             let line = date_to_line.get(&err.date.to_string()).copied();

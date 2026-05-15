@@ -56,7 +56,15 @@ pub fn validate_open(state: &mut LedgerState, open: &Open, errors: &mut Vec<Vali
         .insert(open.account.clone(), Inventory::new());
 }
 
-/// Validate a Close directive.
+/// Early-phase Close validation — runs on pre-booking directives.
+///
+/// Checks that the account being closed exists and isn't already
+/// closed, then marks it as closed in the ledger state so subsequent
+/// transactions (in date-sorted order) correctly see it as inactive.
+///
+/// The "is the closing account balance non-zero?" check is deferred to
+/// [`validate_close_late`] because it depends on inventory state the
+/// late phase builds up.
 pub fn validate_close(state: &mut LedgerState, close: &Close, errors: &mut Vec<ValidationError>) {
     match state.accounts.get_mut(&close.account) {
         Some(account_state) => {
@@ -67,26 +75,6 @@ pub fn validate_close(state: &mut LedgerState, close: &Close, errors: &mut Vec<V
                     close.date,
                 ));
             } else {
-                // Check if account has non-zero balance (warning)
-                if let Some(inv) = state.inventories.get(&close.account)
-                    && !inv.is_empty()
-                {
-                    let positions: Vec<String> = inv
-                        .positions()
-                        .map(|p| format!("{} {}", p.units.number, p.units.currency))
-                        .collect();
-                    errors.push(
-                        ValidationError::new(
-                            ErrorCode::AccountCloseNotEmpty,
-                            format!(
-                                "Cannot close account {} with non-zero balance",
-                                close.account
-                            ),
-                            close.date,
-                        )
-                        .with_context(format!("balance: {}", positions.join(", "))),
-                    );
-                }
                 account_state.closed = Some(close.date);
             }
         }
@@ -97,5 +85,59 @@ pub fn validate_close(state: &mut LedgerState, close: &Close, errors: &mut Vec<V
                 close.date,
             ));
         }
+    }
+}
+
+/// Late-phase Close validation — runs after booking + plugins.
+///
+/// Reads `state.inventories[account]` (populated by late-phase
+/// `validate_transaction_late`'s `update_inventories` step in
+/// date-sorted order) and warns if the account being closed still
+/// holds a non-zero balance.
+pub fn validate_close_late(
+    state: &mut LedgerState,
+    close: &Close,
+    errors: &mut Vec<ValidationError>,
+) {
+    // Only check accounts that actually got closed (i.e., not those
+    // the early phase already flagged with E1001 or AccountClosed).
+    // The early phase sets `account_state.closed = Some(close.date)`
+    // on a successful close.
+    let Some(account_state) = state.accounts.get(&close.account) else {
+        return;
+    };
+    if account_state.closed != Some(close.date) {
+        return;
+    }
+    // Skip the duplicate Close that the early phase already rejected
+    // with `AccountClosed`. Without this guard, two same-day closes
+    // for the same account would both pass the `closed == Some(close.date)`
+    // check and double-emit `AccountCloseNotEmpty`. Keyed by
+    // (account, date) so that a legitimate later close after a reopen
+    // (if that's ever supported) still runs the inventory check.
+    if !state
+        .late_close_processed
+        .insert((close.account.clone(), close.date))
+    {
+        return;
+    }
+    if let Some(inv) = state.inventories.get(&close.account)
+        && !inv.is_empty()
+    {
+        let positions: Vec<String> = inv
+            .positions()
+            .map(|p| format!("{} {}", p.units.number, p.units.currency))
+            .collect();
+        errors.push(
+            ValidationError::new(
+                ErrorCode::AccountCloseNotEmpty,
+                format!(
+                    "Cannot close account {} with non-zero balance",
+                    close.account
+                ),
+                close.date,
+            )
+            .with_context(format!("balance: {}", positions.join(", "))),
+        );
     }
 }

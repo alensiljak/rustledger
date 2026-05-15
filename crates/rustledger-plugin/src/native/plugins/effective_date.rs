@@ -25,7 +25,7 @@ static HOLDING_ACCOUNT_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 use crate::types::{
-    AmountData, DirectiveData, DirectiveWrapper, MetaValueData, OpenData, PluginInput,
+    AmountData, DirectiveData, DirectiveWrapper, MetaValueData, OpenData, PluginInput, PluginOp,
     PluginOutput, PostingData, TransactionData,
 };
 
@@ -72,33 +72,34 @@ impl NativePlugin for EffectiveDatePlugin {
 
         let mut new_accounts: HashSet<String> = HashSet::new();
         let mut earliest_date: Option<String> = None;
+        // Accounts already opened by the user; suppress duplicate Opens
+        // for holding accounts the user has pre-declared (else Late
+        // validation emits E1002 AccountAlreadyOpen). Mirrors the
+        // pattern in `zerosum`, `currency_accounts`, `split_expenses`,
+        // and `capital_gains_classifier`.
+        let mut existing_opens: HashSet<String> = HashSet::new();
 
-        // Separate entries with effective_date postings from regular entries
-        let mut interesting_entries = Vec::new();
-        let mut filtered_entries = Vec::new();
-
-        for directive in input.directives {
-            if directive.directive_type == "transaction"
-                && let DirectiveData::Transaction(ref txn) = directive.data
-                && has_effective_date_posting(txn)
-            {
-                interesting_entries.push(directive);
-                continue;
-            }
-
-            // Track earliest date for Open directives
+        // Compute earliest date AND record existing opens in one pass.
+        for directive in &input.directives {
             if earliest_date.is_none() || directive.date < *earliest_date.as_ref().unwrap() {
                 earliest_date = Some(directive.date.clone());
             }
-            filtered_entries.push(directive);
+            if let DirectiveData::Open(open) = &directive.data {
+                existing_opens.insert(open.account.clone());
+            }
         }
 
-        // Process entries with effective dates
-        let mut new_entries = Vec::new();
+        let mut ops: Vec<PluginOp> = Vec::with_capacity(input.directives.len());
+        // Inserted new transactions (one per posting with effective_date),
+        // accumulated into ops after the main loop so the Modify(i, ...)
+        // entries stay paired with their input indices in input-order.
+        let mut inserted_txns: Vec<DirectiveWrapper> = Vec::new();
 
-        for mut directive in interesting_entries {
-            if earliest_date.is_none() || directive.date < *earliest_date.as_ref().unwrap() {
-                earliest_date = Some(directive.date.clone());
+        for (i, mut directive) in input.directives.into_iter().enumerate() {
+            let is_interesting = matches!(&directive.data, DirectiveData::Transaction(t) if has_effective_date_posting(t));
+            if !is_interesting {
+                ops.push(PluginOp::Keep(i));
+                continue;
             }
 
             // Generate a random link for this set of entries
@@ -162,7 +163,7 @@ impl NativePlugin for EffectiveDatePlugin {
                                 postings: vec![hold_posting, cleaned_original],
                             };
 
-                            new_entries.push(DirectiveWrapper {
+                            inserted_txns.push(DirectiveWrapper {
                                 directive_type: "transaction".to_string(),
                                 date: effective_date,
                                 filename: directive.filename.clone(),
@@ -182,14 +183,22 @@ impl NativePlugin for EffectiveDatePlugin {
                 txn.postings = modified_postings;
             }
 
-            new_entries.push(directive);
+            ops.push(PluginOp::Modify(i, directive));
         }
 
-        // Create Open directives for new accounts
-        let mut open_directives: Vec<DirectiveWrapper> = Vec::new();
+        // Append all inserted new-date transactions.
+        for w in inserted_txns {
+            ops.push(PluginOp::Insert(w));
+        }
+
+        // Insert Open directives for newly synthesized holding accounts
+        // the user hasn't already opened.
         if let Some(date) = &earliest_date {
             for account in &new_accounts {
-                open_directives.push(DirectiveWrapper {
+                if existing_opens.contains(account) {
+                    continue;
+                }
+                ops.push(PluginOp::Insert(DirectiveWrapper {
                     directive_type: "open".to_string(),
                     date: date.clone(),
                     filename: Some("<effective_date>".to_string()),
@@ -200,20 +209,12 @@ impl NativePlugin for EffectiveDatePlugin {
                         booking: None,
                         metadata: vec![],
                     }),
-                });
+                }));
             }
         }
 
-        // Sort new entries by date
-        new_entries.sort_by(|a, b| a.date.cmp(&b.date));
-
-        // Combine all entries
-        let mut all_directives = open_directives;
-        all_directives.extend(new_entries);
-        all_directives.extend(filtered_entries);
-
         PluginOutput {
-            directives: all_directives,
+            ops,
             errors: Vec::new(),
         }
     }
@@ -323,6 +324,7 @@ fn parse_config(config: &str) -> Result<HashMap<String, (String, String)>, Strin
 
 #[cfg(test)]
 mod tests {
+    use super::super::utils::materialize_ops;
     use super::*;
     use crate::types::*;
 
@@ -389,17 +391,18 @@ mod tests {
             config: None,
         };
 
+        let input_dirs = input.directives.clone();
         let output = plugin.process(input);
         assert_eq!(output.errors.len(), 0);
+        let directives = materialize_ops(&input_dirs, &output);
 
         // Should have: open directives + original modified + new at effective date
-        assert!(output.directives.len() >= 2);
+        assert!(directives.len() >= 2);
 
         // Check that we have a transaction at the effective date
-        let effective_txn_count = output
-            .directives
+        let effective_txn_count = directives
             .iter()
-            .filter(|d| d.date == "2024-02-01" && d.directive_type == "transaction")
+            .filter(|d| d.date == "2024-02-01" && matches!(d.data, DirectiveData::Transaction(_)))
             .count();
         assert_eq!(effective_txn_count, 1);
     }
@@ -420,14 +423,15 @@ mod tests {
             config: None,
         };
 
+        let input_dirs = input.directives.clone();
         let output = plugin.process(input);
         assert_eq!(output.errors.len(), 0);
+        let directives = materialize_ops(&input_dirs, &output);
 
         // Check that we have a transaction at the earlier effective date
-        let effective_txn_count = output
-            .directives
+        let effective_txn_count = directives
             .iter()
-            .filter(|d| d.date == "2024-01-15" && d.directive_type == "transaction")
+            .filter(|d| d.date == "2024-01-15" && matches!(d.data, DirectiveData::Transaction(_)))
             .count();
         assert_eq!(effective_txn_count, 1);
     }
@@ -482,13 +486,14 @@ mod tests {
             config: None,
         };
 
+        let input_dirs = input.directives.clone();
         let output = plugin.process(input);
         assert_eq!(output.errors.len(), 0);
+        let directives = materialize_ops(&input_dirs, &output);
         // Should have exactly 1 transaction (unchanged)
-        let txn_count = output
-            .directives
+        let txn_count = directives
             .iter()
-            .filter(|d| d.directive_type == "transaction")
+            .filter(|d| matches!(d.data, DirectiveData::Transaction(_)))
             .count();
         assert_eq!(txn_count, 1);
     }

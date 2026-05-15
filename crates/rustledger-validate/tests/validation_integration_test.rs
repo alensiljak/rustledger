@@ -8,7 +8,10 @@ use rustledger_core::{
     Amount, Balance, Close, Directive, NaiveDate, Open, Pad, Posting, PriceAnnotation, Transaction,
 };
 use rustledger_parser::{Span, Spanned};
-use rustledger_validate::{ErrorCode, ValidationOptions, validate, validate_spanned_with_options};
+use rustledger_validate::{ErrorCode, ValidationOptions};
+
+mod common;
+use common::{validate, validate_spanned_with_options};
 
 // ============================================================================
 // Helper Functions

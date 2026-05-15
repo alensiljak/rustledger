@@ -11,7 +11,7 @@ use rustledger_loader::Loader;
 use rustledger_plugin::{
     NativePluginRegistry, PluginInput, PluginOptions, directive_to_wrapper, wrapper_to_directive,
 };
-use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
+use rustledger_validate::{Phase, ValidationOptions, ValidationSession};
 
 use super::error::RpcError;
 use super::request::{
@@ -214,17 +214,37 @@ fn handle_load_file(params: &serde_json::Value) -> Result<serde_json::Value, Rpc
                     config: None,
                 };
 
+                // Materialize the plugin's ops back into a flat wrapper list.
+                let input_dirs = input.directives.clone();
                 let output = plugin.process(input);
 
                 for err in output.errors {
                     errors.push(Error::new(err.message));
                 }
 
+                let materialized = {
+                    let mut out: Vec<rustledger_plugin::types::DirectiveWrapper> =
+                        Vec::with_capacity(output.ops.len());
+                    for op in &output.ops {
+                        match op {
+                            rustledger_plugin::PluginOp::Keep(i) => {
+                                if let Some(w) = input_dirs.get(*i) {
+                                    out.push(w.clone());
+                                }
+                            }
+                            rustledger_plugin::PluginOp::Modify(_, w)
+                            | rustledger_plugin::PluginOp::Insert(w) => out.push(w.clone()),
+                            rustledger_plugin::PluginOp::Delete(_) => {}
+                        }
+                    }
+                    out
+                };
+
                 let mut new_directives = Vec::new();
                 let mut new_lines = Vec::new();
                 let mut new_files = Vec::new();
 
-                for wrapper in &output.directives {
+                for wrapper in &materialized {
                     if let Ok(directive) = wrapper_to_directive(wrapper) {
                         new_directives.push(directive);
                         new_lines.push(wrapper.lineno.unwrap_or(0));
@@ -304,9 +324,22 @@ fn handle_validate(params: &serde_json::Value) -> Result<serde_json::Value, RpcE
 
     // Only run semantic validation when there are no syntactic (parse) errors.
     // Booking errors are semantic and don't prevent validation from running.
+    //
+    // The FFI receives already-booked directives, so it runs Early +
+    // Late + finalize back-to-back through a single `ValidationSession`
+    // — same shape as the LSP. See `rustledger_validate::Phase` for the
+    // architecture rationale.
     if parse_error_count == 0 {
-        let validation_errors =
-            validate_spanned_with_options(&load.spanned_directives, ValidationOptions::default());
+        let today = jiff::Zoned::now().date();
+        let mut session = ValidationSession::new(ValidationOptions::default());
+        let mut validation_errors =
+            session.run_phase_spanned(&load.spanned_directives, Phase::Early, today);
+        validation_errors.extend(session.run_phase_spanned(
+            &load.spanned_directives,
+            Phase::Late,
+            today,
+        ));
+        validation_errors.extend(session.finalize());
         for err in validation_errors {
             let mut e = Error::new(&err.message).validate_phase();
             if let Some(span) = err.span {

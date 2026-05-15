@@ -9,7 +9,10 @@ use proptest::prelude::*;
 use rust_decimal::Decimal;
 use rustledger_core::NaiveDate;
 use rustledger_core::{Amount, Balance, Directive, IncompleteAmount, Open, Posting, Transaction};
-use rustledger_validate::{ErrorCode, validate};
+use rustledger_validate::ErrorCode;
+
+mod common;
+use common::validate;
 
 // ============================================================================
 // Test Strategies

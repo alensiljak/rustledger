@@ -65,7 +65,7 @@ pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<Validat
     let pending_pad = PendingPad {
         source_account: pad.source_account.clone(),
         date: pad.date,
-        used: false,
+        padded_currencies: rustc_hash::FxHashSet::default(),
     };
     state
         .pending_pads
@@ -74,23 +74,77 @@ pub fn validate_pad(state: &mut LedgerState, pad: &Pad, errors: &mut Vec<Validat
         .push(pending_pad);
 }
 
-/// Validate a Balance directive.
-pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec<ValidationError>) {
-    // Check account exists
+/// Early-phase balance validation — runs on pre-booking directives.
+///
+/// Only checks account presence (E1001). The actual-vs-asserted
+/// comparison is deferred to the late phase, since it depends on the
+/// inventory state that booking + the late-phase transaction validator
+/// build up.
+pub fn validate_balance_early(
+    state: &LedgerState,
+    bal: &Balance,
+    errors: &mut Vec<ValidationError>,
+) {
     if !state.accounts.contains_key(&bal.account) {
         errors.push(ValidationError::new(
             ErrorCode::AccountNotOpen,
             format!("Account {} was never opened", bal.account),
             bal.date,
         ));
+    }
+}
+
+/// Late-phase balance validation — runs after booking + plugins.
+///
+/// Applies pending pads if any (E2004 multi-pad warning), then compares
+/// the asserted balance against the accumulated inventory state.
+pub fn validate_balance_late(
+    state: &mut LedgerState,
+    bal: &Balance,
+    errors: &mut Vec<ValidationError>,
+) {
+    // The early phase already verified the account exists. If somehow
+    // it disappeared between phases (it shouldn't), bail out quietly —
+    // the early error is already in the report.
+    if !state.accounts.contains_key(&bal.account) {
         return;
     }
 
     // Check if there are pending pads for this account
     // Use get_mut instead of remove - a pad can apply to multiple currencies
     if let Some(pending_pads) = state.pending_pads.get_mut(&bal.account) {
-        // Check for multiple pads (E2004) - only warn if none have been used yet
-        if pending_pads.len() > 1 && !pending_pads.iter().any(|p| p.used) {
+        // Drop pads that have already served a balance in THIS specific
+        // currency. A single Pad can still serve multiple
+        // currency-specific Balance assertions on the same target —
+        // we only remove pads that have nothing left to offer for the
+        // currency being asserted right now. Without this, the vec grows
+        // for the lifetime of the session and E2003 / E2004 detection
+        // fires against pads that already served their purpose.
+        pending_pads.retain(|p| !p.padded_currencies.contains(&bal.amount.currency));
+
+        // A Pad on date D is effective for the NEXT Balance on the
+        // target account dated strictly after D (Python beancount
+        // semantics — Pad creates an entry "between" D and the next
+        // balance). Filter `pending_pads` to those whose date precedes
+        // this balance; later-dated pads are still pending for some
+        // future balance and must not be considered here. Required
+        // because the phase split pre-registers ALL pads during Early
+        // before any Balance runs in Late.
+        //
+        // The early-phase iteration sorts pads by date (see
+        // `validate_phase_inner`), so `pending_pads` is itself in
+        // date-sorted push order — `effective_idx.last()` is therefore
+        // the most recent effective pad (Python's `active_pad`).
+        let effective_idx: Vec<usize> = pending_pads
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.date < bal.date)
+            .map(|(i, _)| i)
+            .collect();
+
+        // Check for multiple effective pads (E2004) — every effective
+        // pad is unused (retain ran above), so we just need to count.
+        if effective_idx.len() > 1 {
             errors.push(
                 ValidationError::new(
                     ErrorCode::MultiplePadForBalance,
@@ -102,17 +156,17 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
                 )
                 .with_context(format!(
                     "pad dates: {}",
-                    pending_pads
+                    effective_idx
                         .iter()
-                        .map(|p| p.date.to_string())
+                        .map(|&i| pending_pads[i].date.to_string())
                         .collect::<Vec<_>>()
                         .join(", ")
                 )),
             );
         }
 
-        // Use the most recent pad
-        if let Some(pending_pad) = pending_pads.last_mut() {
+        // Use the most recent effective pad
+        if let Some(pending_pad) = effective_idx.last().and_then(|&i| pending_pads.get_mut(i)) {
             // Apply padding: calculate difference and add to both accounts
             // Balance assertions include sub-accounts, so sum them all up
             let actual =
@@ -139,13 +193,20 @@ pub fn validate_balance(state: &mut LedgerState, bal: &Balance, errors: &mut Vec
                         )));
                     }
 
-                    // Mark pad as used only if padding was actually needed
-                    pending_pad.used = true;
+                    // Record that this pad covered the asserted currency.
+                    pending_pad
+                        .padded_currencies
+                        .insert(bal.amount.currency.clone());
                 }
             }
+            // An effective pad applied (or matched a zero difference);
+            // either way, the regular balance check below would be
+            // redundant.
+            return;
         }
-        // After padding, the balance should match (no error needed)
-        return;
+        // No effective pad for this balance — fall through to the
+        // regular balance check so the user gets a real assertion
+        // result instead of silent skip.
     }
 
     // Get inventory and check balance (no padding case).

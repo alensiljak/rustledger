@@ -114,9 +114,11 @@ fn execute_plugin(directives: &[Directive], plugin_name: &str) -> Result<JsValue
         config: None,
     };
 
+    let input_dirs = input.directives.clone();
     let output = plugin.process(input);
+    let materialized = crate::api::materialize_plugin_ops(&input_dirs, &output);
 
-    let output_directives = match wrappers_to_directives(&output.directives) {
+    let output_directives = match wrappers_to_directives(&materialized) {
         Ok(dirs) => dirs,
         Err(e) => {
             let result = PluginResult {
@@ -477,8 +479,8 @@ pub struct Ledger {
 impl Ledger {
     /// Create a `Ledger` from multiple files with include resolution.
     ///
-    /// Loads, sorts, books, runs plugins, and validates the ledger using the
-    /// same processing pipeline as the CLI.
+    /// Loads and runs the same processing pipeline as the CLI:
+    /// sort → synth-plugins → Early validation → book → regular-plugins → Late validation → finalize.
     ///
     /// # Arguments
     ///

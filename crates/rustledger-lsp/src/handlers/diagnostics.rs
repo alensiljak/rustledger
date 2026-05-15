@@ -8,9 +8,7 @@ use rustledger_core::{BookingMethod, Directive};
 use rustledger_loader::{LoadOptions, Options as LoaderOptions, Plugin, SourceMap};
 use rustledger_parser::{ParseError, ParseResult, Span, Spanned};
 use rustledger_plugin::NativePluginRegistry;
-use rustledger_validate::{
-    Severity, ValidationError, ValidationOptions, validate_spanned_with_options,
-};
+use rustledger_validate::{Phase, Severity, ValidationError, ValidationOptions, ValidationSession};
 
 use super::utils::LineIndex;
 use crate::ledger_state::LedgerState;
@@ -165,10 +163,21 @@ pub struct PluginContext<'a> {
 
 /// Run validation on parsed directives and convert errors to LSP diagnostics.
 ///
-/// This function mirrors the `rledger check` pipeline: sort → book → plugins →
-/// validate. Without this ordering, files that depend on plugin transformations
-/// (e.g., `effective_date` splitting transactions across dates) would produce
-/// false validation errors.
+/// The `rledger check` pipeline is:
+/// sort → synth-plugins → Early validation → book → regular-plugins → Late validation → finalize.
+///
+/// This function is a **simplified single-pass approximation** of that
+/// pipeline: it runs `sort → book → all-plugins → validate` in one go.
+/// We deliberately do *not* split plugins into synth/regular passes or
+/// run Early/Late validation separately — the LSP path optimizes for
+/// fast incremental feedback while editing, and the loader's interleaved
+/// pipeline would require re-wiring around the LSP's directive overlay
+/// model. As a result the LSP may report a slightly different error set
+/// than `rledger check` in edge cases that depend on synth plugins'
+/// interaction with Early validation; the canonical behavior is the
+/// loader's. Running plugins after booking (rather than before) keeps
+/// plugin-transformed directives (e.g., `effective_date` splitting
+/// transactions across dates) visible to validation (#793).
 ///
 /// # Arguments
 /// * `directives` - Owned directive list to validate. The caller is
@@ -220,8 +229,14 @@ pub fn validation_errors_to_diagnostics(
         // If booking fails, we leave the transaction as-is and let validation catch it
     }
 
-    // Run plugins after booking, before validation — same order as process::process().
-    // This ensures plugin-transformed directives (e.g., effective_date splitting
+    // LSP simplification: run ALL plugins (synth + regular) post-booking,
+    // pre-validation. The loader's process::process() instead splits them —
+    // synth plugins run before Early validation, regular plugins run after
+    // booking, and Late validation runs last. The LSP path collapses these
+    // into a single pass for incremental-edit speed; see the rustdoc on
+    // validation_errors_to_diagnostics for the rationale and trade-offs.
+    // Running plugins here (rather than skipping them) still ensures
+    // plugin-transformed directives (e.g., effective_date splitting
     // transactions across dates) are seen by validation (#793).
     if let Some(ctx) = plugin_ctx {
         // Emit info diagnostics for non-native plugins. The loader's run_plugins()
@@ -276,6 +291,7 @@ pub fn validation_errors_to_diagnostics(
             &load_options,
             ctx.source_map,
             &mut plugin_errors,
+            rustledger_loader::PluginPass::All,
         ) {
             Ok(()) => {
                 // Convert plugin errors to diagnostics.
@@ -314,7 +330,15 @@ pub fn validation_errors_to_diagnostics(
         }
     }
 
-    let validation_errors = validate_spanned_with_options(&booked_directives, validation_options);
+    // LSP receives already-booked directives, so it has no booking step
+    // to interleave between phases. Run Early + Late back-to-back
+    // against the same input. See `rustledger_validate::Phase` for the
+    // architecture rationale.
+    let today = jiff::Zoned::now().date();
+    let mut session = ValidationSession::new(validation_options);
+    let mut validation_errors = session.run_phase_spanned(&booked_directives, Phase::Early, today);
+    validation_errors.extend(session.run_phase_spanned(&booked_directives, Phase::Late, today));
+    validation_errors.extend(session.finalize());
 
     // Filter errors to only those in the current file (if file_id filtering is enabled).
     // Also include errors with file_id == None, as these are global errors (e.g., duplicate

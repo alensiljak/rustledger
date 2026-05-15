@@ -1,4 +1,4 @@
-//! Processing pipeline: sort → book → plugins → validate.
+//! Processing pipeline: sort → synth-plugins → Early → book → regular-plugins → Late → finalize.
 //!
 //! This module orchestrates the full processing pipeline for a beancount ledger,
 //! equivalent to Python's `loader.load_file()` function.
@@ -213,11 +213,19 @@ impl LedgerError {
 
 /// Process a raw load result into a fully processed ledger.
 ///
-/// This applies the processing pipeline:
-/// 1. Sort directives by date
-/// 2. Run booking/interpolation
-/// 3. Run plugins
-/// 4. Run validation (optional)
+/// Pipeline (see numbered comments below for the rationale of each step):
+///
+/// ```text
+///   1. sort                         (canonical display order)
+///   2. synth plugins                (auto_accounts, document_discovery)
+///   3. Early validation             (account presence, structural, lifecycle)
+///   4. booking                      (cost spec resolution, interpolation)
+///   5. partition                    (set aside failed-booking txns)
+///   6. regular plugins              (file plugins + extras, on booked only)
+///   7. Late validation              (balance, currency, inventory, on booked only)
+///   8. finalize                     (unused-pad warnings)
+///   9. re-merge                     (booked + failed → final Ledger.directives)
+/// ```
 pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, ProcessError> {
     let mut directives = raw.directives;
     let mut errors: Vec<LedgerError> = Vec::new();
@@ -227,19 +235,79 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
         errors.push(LedgerError::error("LOAD", load_err.to_string()).with_phase("parse"));
     }
 
-    // 1. Sort by date, type priority, then cost-basis reductions last.
-    // Transactions without cost reductions (no negative-units + cost-spec
-    // postings) process before those that reduce lots, ensuring lots exist
-    // when matched regardless of file ordering.
-    directives.sort_by_cached_key(|d| {
-        (
-            d.value.date(),
-            d.value.priority(),
-            d.value.has_cost_reduction(),
-        )
-    });
+    // 1. Sort once into canonical display order: `(date, priority, file_id,
+    //    span.start)`. This is what BQL / JSON / format output expect and
+    //    what Python beancount produces via `(date, type_priority, lineno)`.
+    //    `span.start` is a byte offset that orders within a file the same
+    //    way line numbers would; `file_id` preserves include order across
+    //    files (issue #1049 — same rows, different tie-break would diverge
+    //    BQL output on same-date augmentation+reduction fixtures).
+    //
+    //    Booking needs a different iteration order — augmentations BEFORE
+    //    reductions on the same `(date, priority)` so lots exist when
+    //    matched — but it doesn't need the underlying vec reordered.
+    //    `run_booking` walks the vec via a transient `Vec<usize>` index
+    //    that adds `has_cost_reduction` as an extra tiebreaker; this
+    //    avoids a second full sort of `Vec<Spanned<Directive>>` (large
+    //    structs) after booking just to put display order back.
+    directives.sort_by_key(|d| (d.value.date(), d.value.priority(), d.file_id, d.span.start));
 
-    // 2. Booking/interpolation
+    // 2. Synth-only plugins — run BEFORE early validation so the
+    // synthesizers (`auto_accounts` and `document_discovery`) inject
+    // Opens / Documents that Early checks depend on (E1001 account
+    // presence, E5001 missing-document file). Only this narrow synth
+    // subset runs here; everything else waits until after booking
+    // (step 5) so cost-spec-reading plugins see filled-in
+    // `cost.number_per` values. See `PluginPass` rustdoc for the
+    // detailed split rationale.
+    #[cfg(feature = "plugins")]
+    if options.run_plugins || options.auto_accounts {
+        run_plugins(
+            &mut directives,
+            &raw.plugins,
+            &raw.options,
+            options,
+            &raw.source_map,
+            &mut errors,
+            PluginPass::PreBookingSynth,
+        )?;
+    }
+
+    // 3. Validation (early phase) — runs on pre-booking directives,
+    // AFTER plugins so account-presence checks (E1001) see any Opens
+    // that plugins like `auto_accounts` injected.
+    //
+    // This is what lets booking match Python's "prune zero-interp
+    // postings" behavior in step 4 without losing E1001 on the
+    // elided-zero-to-unopened-account case (rustledger#877).
+    //
+    // The `ValidationSession` carries state (open accounts,
+    // commodities, pending pads, accumulated tolerances) into the late
+    // phase at step 5 so balance assertions and inventory updates see
+    // everything the early phase recorded.
+    #[cfg(feature = "validation")]
+    let mut validation_session = if options.validate {
+        Some(rustledger_validate::ValidationSession::new(
+            build_validation_options(&raw.options, &raw.source_map),
+        ))
+    } else {
+        None
+    };
+
+    // Compute `today` once for both phases — avoids a midnight-crossing
+    // race where Early and Late could disagree on what day it is, and
+    // gives `FutureDate` warnings a single coherent reference point.
+    #[cfg(feature = "validation")]
+    let today = jiff::Zoned::now().date();
+
+    #[cfg(feature = "validation")]
+    if let Some(session) = validation_session.as_mut() {
+        let phase_errors =
+            session.run_phase_spanned(&directives, rustledger_validate::Phase::Early, today);
+        ledger_errors_extend(&mut errors, phase_errors, &raw.source_map);
+    }
+
+    // 4. Booking/interpolation
     //
     // The booking method comes from two sources: the API-level
     // `LoadOptions.booking_method` and the file-level `option
@@ -252,8 +320,23 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     // We check `set_options` (not `booking_method.is_empty()`) because
     // `Options::new()` defaults `booking_method` to "STRICT", so the
     // string is never empty.
+    //
+    // Booking drops zero-value interpolated postings as part of
+    // `interpolate()` — see the comment in
+    // `rustledger-booking/src/interpolate.rs`. The early validation
+    // pass above already caught E1001 on any unopened-account
+    // references, so it's safe to prune now (the now-removed
+    // `INTERPOLATED_MARKER` workaround in #1114 is obsolete).
+    // Run booking and receive the directives partitioned into
+    // `(booked, failed)`. Failed transactions are in pre-booking shape
+    // (unresolved cost specs, unfilled elided slots, possibly
+    // unbalanced); they don't flow into regular plugins or Late
+    // validation — booking already reported the root cause and the
+    // downstream checks would cascade misleading errors. They get
+    // re-merged for the final `Ledger.directives` so the user still
+    // sees their original input.
     #[cfg(feature = "booking")]
-    {
+    let (mut booked, failed): (Vec<Spanned<Directive>>, Vec<Spanned<Directive>>) = {
         let file_set_booking = raw.options.set_options.contains("booking_method");
         let effective_method = if file_set_booking {
             raw.options
@@ -263,61 +346,54 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
         } else {
             options.booking_method
         };
-        run_booking(&mut directives, effective_method, &mut errors);
-    }
+        run_booking(directives, effective_method, &mut errors)
+    };
+    #[cfg(not(feature = "booking"))]
+    let (mut booked, failed): (Vec<Spanned<Directive>>, Vec<Spanned<Directive>>) =
+        (directives, Vec::new());
 
-    // Booking has consumed the cost-reduction-aware order; switch to a
-    // file-position tie-break that's order-equivalent to Python
-    // beancount's `(date, type_priority, lineno)` for downstream
-    // consumers (plugins, validation, BQL queries, display). We sort by
-    // `(date, priority, file_id, span.start)` — `span.start` is a byte
-    // offset and `file_id` indexes the `SourceMap`, so within a file
-    // the offset orders directives the same way line numbers would
-    // (line N starts before line N+1), without paying for the byte→line
-    // conversion. Across files the `file_id` tie-break preserves the
-    // include order they were added to the `SourceMap`. Without this
-    // re-sort, BQL output diverges from bean-query on fixtures that
-    // mix augmentation and reduction transactions on the same date —
-    // same rows, different tie-break (issue #1049, ~10 of 53 BQL
-    // compat mismatches). Stable sort preserves the existing in-loader
-    // order among directives with identical sort keys.
-    directives.sort_by_key(|d| (d.value.date(), d.value.priority(), d.file_id, d.span.start));
-
-    // 3. Run plugins (including document discovery when run_plugins is enabled)
-    // Note: Document discovery only runs when run_plugins is true to respect raw mode semantics.
-    // LoadOptions::raw() sets run_plugins=false to prevent any directive mutations.
+    // 5. Post-booking plugins — file-declared plugins + CLI extras.
+    // Runs AFTER booking so cost-spec-reading plugins
+    // (`implicit_prices`, `capital_gains_classifier`,
+    // `check_average_cost`, `sell_gains`, `unrealized`, `valuation`)
+    // see filled-in `cost.number_per` values. This matches Python
+    // beancount's plugins-after-booking ordering and closes
+    // rustledger#1117. Failed transactions were partitioned out
+    // above; plugins only see successfully-booked input.
     #[cfg(feature = "plugins")]
-    if options.run_plugins || !options.extra_plugins.is_empty() || options.auto_accounts {
+    if options.run_plugins || !options.extra_plugins.is_empty() {
         run_plugins(
-            &mut directives,
+            &mut booked,
             &raw.plugins,
             &raw.options,
             options,
             &raw.source_map,
             &mut errors,
+            PluginPass::PostBooking,
         )?;
     }
 
-    // 4. Validation
+    // 6. Validation (late phase) — runs on booked + plugin-processed
+    // directives. Reuses the `ValidationSession` from step 2 so
+    // account/commodity/pad bookkeeping carries forward.
     #[cfg(feature = "validation")]
-    if options.validate {
-        run_validation(&directives, &raw.options, &raw.source_map, &mut errors);
+    if let Some(mut session) = validation_session {
+        let phase_errors =
+            session.run_phase_spanned(&booked, rustledger_validate::Phase::Late, today);
+        ledger_errors_extend(&mut errors, phase_errors, &raw.source_map);
+        let finalize_errors = session.finalize();
+        ledger_errors_extend(&mut errors, finalize_errors, &raw.source_map);
     }
 
-    // 5. Post-validation: prune zero-value interpolated postings.
-    //
-    // The booking pass tags every posting it filled in with the
-    // `INTERPOLATED_MARKER` metadata key. We can now drop the ones whose
-    // interpolated value came out to zero — they were kept through
-    // validation so things like E1001 (account not opened) could fire on
-    // them, but they don't belong in user-facing output (matches Python
-    // beancount, which drops zero-residual interpolated postings).
-    //
-    // Strip the marker from every interpolated posting that survives
-    // (i.e., non-zero filled amounts), so the internal tag never leaks
-    // into BQL queries, JSON output, or formatted ledgers.
-    #[cfg(feature = "booking")]
-    prune_zero_interpolated_postings(&mut directives);
+    // 7. Re-merge failed transactions back into the directive list
+    // for output. The user wrote them and expects to see them in the
+    // resulting `Ledger.directives`; we just kept them isolated from
+    // post-booking processing. Re-sort to restore canonical display
+    // order (booked retained order during plugin transformation; the
+    // sort restores the failed entries' positions).
+    let mut directives = booked;
+    directives.extend(failed);
+    directives.sort_by_key(|d| (d.value.date(), d.value.priority(), d.file_id, d.span.start));
 
     Ok(Ledger {
         directives,
@@ -329,53 +405,49 @@ pub fn process(raw: LoadResult, options: &LoadOptions) -> Result<Ledger, Process
     })
 }
 
-/// Drop zero-value interpolated postings from each transaction and strip
-/// the `INTERPOLATED_MARKER` tag from the rest.
+/// Run booking and interpolation on transactions, returning the
+/// directives partitioned into `(booked, failed)`.
 ///
-/// Run AFTER validation so the validator's account-presence checks (E1001)
-/// still see every elided posting. See `process()` step 5 for context.
-#[cfg(feature = "booking")]
-fn prune_zero_interpolated_postings(directives: &mut [Spanned<Directive>]) {
-    use rustledger_booking::INTERPOLATED_MARKER;
-    for spanned in directives.iter_mut() {
-        if let Directive::Transaction(txn) = &mut spanned.value {
-            txn.postings.retain(|p| {
-                let interpolated = p.meta.contains_key(INTERPOLATED_MARKER);
-                if !interpolated {
-                    return true;
-                }
-                // Posting was filled by booking. Drop iff the filled
-                // amount is exactly zero — surviving non-zero ones are
-                // real values the user wants to see.
-                let is_zero = p
-                    .units
-                    .as_ref()
-                    .and_then(|u| u.as_amount())
-                    .is_some_and(|a| a.number.is_zero());
-                !is_zero
-            });
-            // Survivors keep their value; strip the internal marker so
-            // it doesn't leak into user-facing output.
-            for posting in &mut txn.postings {
-                posting.meta.remove(INTERPOLATED_MARKER);
-            }
-        }
-    }
-}
-
-/// Run booking and interpolation on transactions.
+/// The caller has already sorted `directives` into canonical display
+/// order `(date, priority, file_id, span.start)`. Booking needs the
+/// extra constraint that cost-reduction transactions process AFTER
+/// augmentations on the same `(date, priority)` so lots exist when
+/// matched. Rather than re-sorting the whole vec, we walk it via a
+/// transient `Vec<usize>` of indices sorted by booking order. Stable
+/// sort preserves display-order tiebreaks between transactions with
+/// the same `has_cost_reduction` flag.
+///
+/// Failed transactions are partitioned out into the second return
+/// value so they don't flow into regular plugins or Late validation
+/// (they're in pre-booking shape — postings have unresolved cost
+/// specs and unfilled elided slots, so downstream processing would
+/// cascade misleading errors). The caller is responsible for
+/// re-merging `failed` into the final `Ledger.directives` for output
+/// so the user still sees their original input.
 #[cfg(feature = "booking")]
 fn run_booking(
-    directives: &mut Vec<Spanned<Directive>>,
+    mut directives: Vec<Spanned<Directive>>,
     booking_method: BookingMethod,
     errors: &mut Vec<LedgerError>,
-) {
+) -> (Vec<Spanned<Directive>>, Vec<Spanned<Directive>>) {
     use rustledger_booking::BookingEngine;
 
     let mut engine = BookingEngine::with_method(booking_method);
     engine.register_account_methods(directives.iter().map(|s| &s.value));
 
-    for spanned in directives.iter_mut() {
+    // Build an index ordered for booking: stable sort by
+    // `has_cost_reduction` only (display order — `(date, priority,
+    // file_id, span.start)` — is already encoded in the existing
+    // positional order, and stable_sort preserves that as the tiebreak).
+    let mut order: Vec<usize> = (0..directives.len()).collect();
+    order.sort_by_key(|&i| {
+        let d = &directives[i].value;
+        (d.date(), d.priority(), d.has_cost_reduction())
+    });
+
+    let mut failed_indices: Vec<usize> = Vec::new();
+    for &i in &order {
+        let spanned = &mut directives[i];
         if let Directive::Transaction(txn) = &mut spanned.value {
             match engine.book_and_interpolate(txn) {
                 Ok(result) => {
@@ -387,10 +459,61 @@ fn run_booking(
                         "BOOK",
                         format!("{} ({}, \"{}\")", e, txn.date, txn.narration),
                     ));
+                    failed_indices.push(i);
                 }
             }
         }
     }
+
+    // Partition into (booked, failed). Indices are valid in the current
+    // `directives` vec (no mutation has happened since they were
+    // collected); after this consuming iteration the vec is gone and
+    // partition is fait accompli — no window where a caller could
+    // accidentally mutate between collection and partition.
+    let failed_set: rustc_hash::FxHashSet<usize> = failed_indices.iter().copied().collect();
+    let mut booked = Vec::with_capacity(directives.len() - failed_indices.len());
+    let mut failed = Vec::with_capacity(failed_indices.len());
+    for (i, d) in directives.into_iter().enumerate() {
+        if failed_set.contains(&i) {
+            failed.push(d);
+        } else {
+            booked.push(d);
+        }
+    }
+    (booked, failed)
+}
+
+/// Which subset of plugins to run.
+///
+/// The loader pipeline calls `run_plugins` twice: once with
+/// [`PluginPass::PreBookingSynth`] before the Early validation phase
+/// (so synthesizers can inject Opens / Documents that early checks
+/// depend on), and once with [`PluginPass::PostBooking`] after booking
+/// (so cost-spec-reading plugins like `implicit_prices`,
+/// `capital_gains_classifier`, `check_average_cost`, `sell_gains`,
+/// `unrealized`, and `valuation` see filled-in `cost.number_per`
+/// values).
+///
+/// Standalone callers (LSP, FFI, tests) that operate on already-booked
+/// input should pass [`PluginPass::All`] for the historical single-pass
+/// behavior.
+#[cfg(feature = "plugins")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PluginPass {
+    /// Only plugins that synthesize directives the Early validator
+    /// depends on: `auto_accounts` (synthesizes Open directives) and
+    /// the built-in document discovery walker (synthesizes Document
+    /// directives the early phase checks for missing files).
+    PreBookingSynth,
+    /// All file-declared plugins and CLI `extra_plugins`, EXCLUDING
+    /// `auto_accounts` and `document_discovery` (those ran pre-booking).
+    /// Includes the 28 plugins that don't depend on synth state but
+    /// may depend on booked cost specs.
+    PostBooking,
+    /// Every plugin — historical single-pass behavior. Used by callers
+    /// (LSP, FFI, standalone tests) that don't run booking themselves
+    /// or that work on already-booked input.
+    All,
 }
 
 /// Run plugins on directives.
@@ -398,9 +521,10 @@ fn run_booking(
 /// Executes native plugins (and document discovery) on the given directives,
 /// modifying them in-place. Plugin errors are appended to `errors`.
 ///
-/// This is called by [`process()`] as part of the full pipeline, but can also
-/// be called standalone (e.g., by the LSP) when plugin execution is needed
-/// outside the normal load flow.
+/// `pass` selects which subset of plugins to run — see [`PluginPass`].
+/// The loader pipeline calls this twice (synth pass before Early,
+/// regular pass after booking). LSP / FFI / standalone callers pass
+/// `PluginPass::All` for the historical behavior.
 #[cfg(feature = "plugins")]
 pub fn run_plugins(
     directives: &mut Vec<Spanned<Directive>>,
@@ -409,10 +533,10 @@ pub fn run_plugins(
     options: &LoadOptions,
     source_map: &SourceMap,
     errors: &mut Vec<LedgerError>,
+    pass: PluginPass,
 ) -> Result<(), ProcessError> {
     use rustledger_plugin::{
         DocumentDiscoveryPlugin, NativePlugin, NativePluginRegistry, PluginInput, PluginOptions,
-        directive_to_wrapper_with_location, wrapper_to_directive,
     };
 
     // Resolve document directories relative to the main file's directory
@@ -423,7 +547,13 @@ pub fn run_plugins(
         .and_then(|f| f.path.parent())
         .unwrap_or_else(|| std::path::Path::new("."));
 
-    let has_document_dirs = options.run_plugins && !file_options.documents.is_empty();
+    // `document_discovery` is a synthesizer — runs in PreBookingSynth
+    // and All, skipped in PostBooking (it already injected directives
+    // during the synth pass).
+    let run_doc_discovery = matches!(pass, PluginPass::PreBookingSynth | PluginPass::All)
+        && options.run_plugins
+        && !file_options.documents.is_empty();
+    let has_document_dirs = run_doc_discovery;
     let resolved_documents: Vec<String> = if has_document_dirs {
         file_options
             .documents
@@ -441,30 +571,64 @@ pub fn run_plugins(
         Vec::new()
     };
 
+    // Build the native plugin registry up front so we can ask each
+    // plugin whether it's a synthesizer (via `NativePlugin::is_synth`)
+    // during the classification step below. Constructing the registry
+    // is O(n_plugins) and just instantiates the plugin structs; it's
+    // cheap to do before we know whether any plugins will actually
+    // run.
+    let registry = NativePluginRegistry::new();
+
     // Collect raw plugin names first (we'll resolve them with the registry later)
     // Tuple: (name, config, force_python)
     let mut raw_plugins: Vec<(String, Option<String>, bool)> = Vec::new();
 
-    // Add auto_accounts first if requested
-    if options.auto_accounts {
+    // Classify a plugin by name. Self-classification lives on the
+    // `NativePlugin::is_synth` trait method (see
+    // `rustledger-plugin/src/native/mod.rs`). Plugins not in the
+    // native registry (WASM, Python) default to non-synth — they
+    // run post-booking like file-authored beancount plugins.
+    let is_synth = |name: &str| -> bool { registry.find(name).is_some_and(NativePlugin::is_synth) };
+
+    // The API-level `options.auto_accounts` flag is a synth source.
+    if options.auto_accounts && matches!(pass, PluginPass::PreBookingSynth | PluginPass::All) {
         raw_plugins.push(("auto_accounts".to_string(), None, false));
     }
 
-    // Add plugins from the file
+    // File-declared plugins: synth plugins go in PreBookingSynth,
+    // everything else (including the 6 cost-spec-reading ones) goes in
+    // PostBooking. `PluginPass::All` runs everything for standalone
+    // callers (LSP / FFI / tests on already-booked input).
     if options.run_plugins {
         for plugin in file_plugins {
-            raw_plugins.push((
-                plugin.name.clone(),
-                plugin.config.clone(),
-                plugin.force_python,
-            ));
+            let synth = is_synth(&plugin.name);
+            let in_pass = match pass {
+                PluginPass::PreBookingSynth => synth,
+                PluginPass::PostBooking => !synth,
+                PluginPass::All => true,
+            };
+            if in_pass {
+                raw_plugins.push((
+                    plugin.name.clone(),
+                    plugin.config.clone(),
+                    plugin.force_python,
+                ));
+            }
         }
     }
 
-    // Add extra plugins from options
+    // CLI extras: same synth/regular split as file plugins.
     for (i, plugin_name) in options.extra_plugins.iter().enumerate() {
-        let config = options.extra_plugin_configs.get(i).cloned().flatten();
-        raw_plugins.push((plugin_name.clone(), config, false));
+        let synth = is_synth(plugin_name);
+        let in_pass = match pass {
+            PluginPass::PreBookingSynth => synth,
+            PluginPass::PostBooking => !synth,
+            PluginPass::All => true,
+        };
+        if in_pass {
+            let config = options.extra_plugin_configs.get(i).cloned().flatten();
+            raw_plugins.push((plugin_name.clone(), config, false));
+        }
     }
 
     // Check if we have any work to do - early return before creating registry
@@ -472,55 +636,33 @@ pub fn run_plugins(
         return Ok(());
     }
 
-    // Convert directives to plugin format with source locations
-    let mut wrappers: Vec<_> = directives
-        .iter()
-        .map(|spanned| {
-            let (filename, lineno) = if let Some(file) = source_map.get(spanned.file_id as usize) {
-                let (line, _col) = file.line_col(spanned.span.start);
-                (Some(file.path.display().to_string()), Some(line as u32))
-            } else {
-                (None, None)
-            };
-            directive_to_wrapper_with_location(&spanned.value, filename, lineno)
-        })
-        .collect();
-
     let plugin_options = PluginOptions {
         operating_currencies: file_options.operating_currency.clone(),
         title: file_options.title.clone(),
     };
 
-    // Run document discovery plugin if documents directories are configured
+    // Run document discovery plugin if documents directories are configured.
+    // Each plugin call builds wrappers freshly from the current `directives`,
+    // sends them to the plugin, receives `PluginOp`s, and applies the ops
+    // to update `directives` — spans on `Keep` / `Modify` ops are inherited
+    // from the original `directives` entry by index, so plugin-transformed
+    // directives retain byte-precise source locations.
     if has_document_dirs {
         let doc_plugin = DocumentDiscoveryPlugin::new(resolved_documents, base_dir.to_path_buf());
+        let wrappers = build_wrappers(directives, source_map);
         let input = PluginInput {
-            directives: std::mem::take(&mut wrappers),
+            directives: wrappers,
             options: plugin_options.clone(),
             config: None,
         };
         let output = doc_plugin.process(input);
-
-        // Collect plugin errors
-        for err in output.errors {
-            let ledger_err = match err.severity {
-                rustledger_plugin::PluginErrorSeverity::Error => {
-                    LedgerError::error("PLUGIN", err.message)
-                }
-                rustledger_plugin::PluginErrorSeverity::Warning => {
-                    LedgerError::warning("PLUGIN", err.message)
-                }
-            };
-            errors.push(ledger_err);
-        }
-
-        wrappers = output.directives;
+        record_plugin_errors(errors, output.errors, source_map);
+        apply_plugin_ops(directives, output.ops, errors, source_map)?;
     }
 
-    // Run each plugin (only create registry if we have plugins to run)
+    // Run each plugin (registry was constructed earlier for the
+    // synth classification step).
     if !raw_plugins.is_empty() {
-        let registry = NativePluginRegistry::new();
-
         for (raw_name, plugin_config, force_python) in &raw_plugins {
             // Resolve the plugin name - try direct match first, then prefixed variants.
             // Skip native resolution when force_python is set (plugin "python:..." prefix).
@@ -541,31 +683,15 @@ pub fn run_plugins(
             if let Some(name) = resolved_name
                 && let Some(plugin) = registry.find(name)
             {
-                // Move wrappers into the plugin input instead of cloning.
-                // The plugin returns modified directives in its output,
-                // which we reassign to `wrappers` below.
+                let wrappers = build_wrappers(directives, source_map);
                 let input = PluginInput {
-                    directives: std::mem::take(&mut wrappers),
+                    directives: wrappers,
                     options: plugin_options.clone(),
                     config: plugin_config.clone(),
                 };
-
                 let output = plugin.process(input);
-
-                // Collect plugin errors
-                for err in output.errors {
-                    let ledger_err = match err.severity {
-                        rustledger_plugin::PluginErrorSeverity::Error => {
-                            LedgerError::error("PLUGIN", err.message).with_phase("plugin")
-                        }
-                        rustledger_plugin::PluginErrorSeverity::Warning => {
-                            LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
-                        }
-                    };
-                    errors.push(ledger_err);
-                }
-
-                wrappers = output.directives;
+                record_plugin_errors(errors, output.errors, source_map);
+                apply_plugin_ops(directives, output.ops, errors, source_map)?;
             } else {
                 // Not a native plugin — categorize and handle
                 let plugin_path = std::path::Path::new(raw_name);
@@ -621,13 +747,14 @@ pub fn run_plugins(
                                 continue;
                             }
                         };
+                        let wrappers = build_wrappers(directives, source_map);
                         match run_wasm_plugin(&wasm_path, &wrappers, &plugin_options, plugin_config)
                         {
-                            Ok((output_directives, plugin_errors)) => {
+                            Ok((ops, plugin_errors)) => {
                                 for err in plugin_errors {
                                     errors.push(err);
                                 }
-                                wrappers = output_directives;
+                                apply_plugin_ops(directives, ops, errors, source_map)?;
                             }
                             Err(e) => {
                                 errors.push(
@@ -667,6 +794,7 @@ pub fn run_plugins(
                                 continue;
                             }
                         };
+                        let wrappers = build_wrappers(directives, source_map);
                         match run_python_plugin(
                             raw_name,
                             &resolved,
@@ -675,11 +803,11 @@ pub fn run_plugins(
                             &plugin_options,
                             plugin_config,
                         ) {
-                            Ok((output_directives, plugin_errors)) => {
+                            Ok((ops, plugin_errors)) => {
                                 for err in plugin_errors {
                                     errors.push(err);
                                 }
-                                wrappers = output_directives;
+                                apply_plugin_ops(directives, ops, errors, source_map)?;
                             }
                             Err(e) => {
                                 errors.push(LedgerError::error("E8002", e).with_phase("plugin"));
@@ -743,68 +871,227 @@ pub fn run_plugins(
         }
     }
 
-    // Build a filename -> file_id lookup for restoring locations
-    let filename_to_file_id: std::collections::HashMap<String, u16> = source_map
-        .files()
+    // No final wrapper→directive conversion needed: `apply_plugin_ops`
+    // updates `directives` in place after each plugin call, preserving
+    // original spans on Keep/Modify ops. Plugin-synthesized directives
+    // (Insert ops) get `SYNTHESIZED_FILE_ID` and a zero span.
+    Ok(())
+}
+
+/// Build a fresh `Vec<DirectiveWrapper>` from the current directives,
+/// carrying filename + line number for plugin-side error reporting.
+/// Spans don't need to round-trip through the wrappers — the loader
+/// preserves them via `apply_plugin_ops` matching on op index.
+#[cfg(feature = "plugins")]
+fn build_wrappers(
+    directives: &[Spanned<Directive>],
+    source_map: &SourceMap,
+) -> Vec<rustledger_plugin::DirectiveWrapper> {
+    use rustledger_plugin::directive_to_wrapper_with_location;
+
+    directives
         .iter()
-        .map(|f| (f.path.display().to_string(), f.id as u16))
-        .collect();
+        .map(|spanned| {
+            let (filename, lineno) = if let Some(file) = source_map.get(spanned.file_id as usize) {
+                let (line, _col) = file.line_col(spanned.span.start);
+                (Some(file.path.display().to_string()), Some(line as u32))
+            } else {
+                (None, None)
+            };
+            directive_to_wrapper_with_location(&spanned.value, filename, lineno)
+        })
+        .collect()
+}
 
-    // Convert back to directives, preserving source locations from wrappers
-    let mut new_directives = Vec::with_capacity(wrappers.len());
-    for wrapper in &wrappers {
-        let directive = wrapper_to_directive(wrapper)
-            .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+/// Push plugin errors into the ledger's error stream, tagged with
+/// `phase: "plugin"` and — when the plugin set `source_file` /
+/// `line_number` on the error — an attached `ErrorLocation` so
+/// downstream renderers (CLI, LSP, JSON output) can pinpoint where
+/// the plugin objected.
+///
+/// Source-location resolution: if the wrapper's `source_file` resolves
+/// to a real file in the source map, use that for `ErrorLocation.file`
+/// and treat `line_number` as the line index. Plugin-synthesized
+/// filenames (e.g. `"<auto_accounts>"`) that don't match any real
+/// file are passed through as `PathBuf::from(name)` so the rendered
+/// location still attributes the error to the originating plugin —
+/// better than silently dropping the field.
+#[cfg(feature = "plugins")]
+fn record_plugin_errors(
+    errors: &mut Vec<LedgerError>,
+    plugin_errors: Vec<rustledger_plugin::PluginError>,
+    source_map: &SourceMap,
+) {
+    for err in plugin_errors {
+        let mut ledger_err = match err.severity {
+            rustledger_plugin::PluginErrorSeverity::Error => {
+                LedgerError::error("PLUGIN", err.message).with_phase("plugin")
+            }
+            rustledger_plugin::PluginErrorSeverity::Warning => {
+                LedgerError::warning("PLUGIN", err.message).with_phase("plugin")
+            }
+        };
+        // Propagate plugin-set source location into `ErrorLocation`.
+        // Column defaults to 1 — plugin errors don't carry column info
+        // through the wrapper protocol.
+        if let (Some(file), Some(line)) = (&err.source_file, err.line_number) {
+            let resolved_path = source_map
+                .get_by_path(std::path::Path::new(file))
+                .map_or_else(|| std::path::PathBuf::from(file), |f| f.path.clone());
+            ledger_err = ledger_err.with_location(ErrorLocation {
+                file: resolved_path,
+                line: line as usize,
+                column: 1,
+            });
+        }
+        errors.push(ledger_err);
+    }
+}
 
-        // Reconstruct span from filename/lineno if available, falling back to
-        // the plugin-synthesized sentinel when no source location is recoverable.
-        // See `rustledger_parser::SYNTHESIZED_FILE_ID` and issue #896.
-        let (span, file_id) =
-            if let (Some(filename), Some(lineno)) = (&wrapper.filename, wrapper.lineno) {
-                if let Some(&fid) = filename_to_file_id.get(filename) {
-                    // Found the file - reconstruct approximate span from line number
-                    if let Some(file) = source_map.get(fid as usize) {
-                        let span_start = file.line_start(lineno as usize).unwrap_or(0);
-                        (rustledger_parser::Span::new(span_start, span_start), fid)
-                    } else {
-                        (
-                            rustledger_parser::Span::new(0, 0),
-                            rustledger_parser::SYNTHESIZED_FILE_ID,
-                        )
+/// Apply a plugin's `Vec<PluginOp>` to `directives` in place.
+///
+/// Validates that the op set forms a complete partition of the input
+/// indices (each input index appears in exactly one `Keep` / `Modify` /
+/// `Delete` op). Protocol violations produce a `PLUGIN` error in
+/// `errors` and leave `directives` untouched.
+///
+/// For `Keep(i)` / `Modify(i, w)`, the resulting `Spanned<Directive>`
+/// inherits `directives[i]`'s span and `file_id` — this is the core of
+/// the ops protocol's correctness guarantee (plugin-transformed
+/// directives keep their original source identity for error reporting).
+/// `Insert(w)` directives get `(Span::new(0, 0), SYNTHESIZED_FILE_ID)`.
+#[cfg(feature = "plugins")]
+fn apply_plugin_ops(
+    directives: &mut Vec<Spanned<Directive>>,
+    ops: Vec<rustledger_plugin::PluginOp>,
+    errors: &mut Vec<LedgerError>,
+    source_map: &SourceMap,
+) -> Result<(), ProcessError> {
+    use rustledger_plugin::PluginOp;
+    use rustledger_plugin::wrapper_to_directive;
+
+    let n = directives.len();
+
+    // Validate: every input index in {Keep, Modify, Delete} exactly once.
+    let mut seen = vec![false; n];
+    for op in &ops {
+        let idx = match op {
+            PluginOp::Keep(i) | PluginOp::Modify(i, _) | PluginOp::Delete(i) => Some(*i),
+            PluginOp::Insert(_) => None,
+        };
+        if let Some(i) = idx {
+            if i >= n {
+                errors.push(
+                    LedgerError::error(
+                        "PLUGIN",
+                        format!(
+                            "plugin op references out-of-bounds input index {i} (input has {n} directives)"
+                        ),
+                    )
+                    .with_phase("plugin"),
+                );
+                return Ok(());
+            }
+            if seen[i] {
+                errors.push(
+                    LedgerError::error(
+                        "PLUGIN",
+                        format!("plugin op references input index {i} more than once"),
+                    )
+                    .with_phase("plugin"),
+                );
+                return Ok(());
+            }
+            seen[i] = true;
+        }
+    }
+    for (i, was_seen) in seen.iter().enumerate() {
+        if !was_seen {
+            errors.push(
+                LedgerError::error(
+                    "PLUGIN",
+                    format!(
+                        "plugin omitted input directive {i} (must appear in exactly one of Keep/Modify/Delete)"
+                    ),
+                )
+                .with_phase("plugin"),
+            );
+            return Ok(());
+        }
+    }
+
+    // Materialize new directives, preserving spans for Keep/Modify.
+    let mut new_directives = Vec::with_capacity(ops.len());
+    for op in ops {
+        match op {
+            PluginOp::Keep(i) => {
+                new_directives.push(directives[i].clone());
+            }
+            PluginOp::Modify(i, wrapper) => {
+                let directive = wrapper_to_directive(&wrapper)
+                    .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+                new_directives.push(Spanned {
+                    value: directive,
+                    span: directives[i].span,
+                    file_id: directives[i].file_id,
+                });
+            }
+            PluginOp::Insert(wrapper) => {
+                // Resolve the wrapper's filename + line number, if set,
+                // into a real (file_id, span) when the filename
+                // corresponds to a loaded source file. Falls back to
+                // SYNTHESIZED_FILE_ID + zero span otherwise — including
+                // for plugin-only attribution like `"<auto_accounts>"`
+                // (which never matches a loaded file).
+                let (span, file_id) = match (&wrapper.filename, wrapper.lineno) {
+                    (Some(filename), Some(lineno)) => {
+                        if let Some(file) = source_map.get_by_path(std::path::Path::new(filename)) {
+                            let span_start = file.line_start(lineno as usize).unwrap_or(0);
+                            (
+                                rustledger_parser::Span::new(span_start, span_start),
+                                file.id as u16,
+                            )
+                        } else {
+                            (
+                                rustledger_parser::Span::new(0, 0),
+                                rustledger_parser::SYNTHESIZED_FILE_ID,
+                            )
+                        }
                     }
-                } else {
-                    // Plugin-generated directive with an unknown/synthetic filename.
-                    (
+                    _ => (
                         rustledger_parser::Span::new(0, 0),
                         rustledger_parser::SYNTHESIZED_FILE_ID,
-                    )
-                }
-            } else {
-                // Plugin-generated directive with no source location at all.
-                (
-                    rustledger_parser::Span::new(0, 0),
-                    rustledger_parser::SYNTHESIZED_FILE_ID,
-                )
-            };
-
-        new_directives.push(Spanned::new(directive, span).with_file_id(file_id as usize));
+                    ),
+                };
+                let directive = wrapper_to_directive(&wrapper)
+                    .map_err(|e| ProcessError::PluginConversion(e.to_string()))?;
+                new_directives.push(Spanned::new(directive, span).with_file_id(file_id as usize));
+            }
+            PluginOp::Delete(_) => {}
+        }
     }
 
     *directives = new_directives;
     Ok(())
 }
 
-/// Run validation on directives.
+/// Build a [`ValidationOptions`] from loader-level file options.
+///
+/// Factored out of the old `run_validation` so both the early and
+/// late phases in `process()` can share the same `ValidationSession`
+/// configuration. Document-dir resolution is relative to the main
+/// file's parent directory.
 #[cfg(feature = "validation")]
-fn run_validation(
-    directives: &[Spanned<Directive>],
+fn build_validation_options(
     file_options: &Options,
     source_map: &SourceMap,
-    errors: &mut Vec<LedgerError>,
-) {
-    use rustledger_validate::{ValidationOptions, validate_spanned_with_options};
+) -> rustledger_validate::ValidationOptions {
+    use rustledger_validate::ValidationOptions;
 
-    // Resolve document directories relative to the main file's directory
+    // Resolve document directories relative to the main file's
+    // directory. Absolute paths pass through; relative paths are
+    // joined onto the source map's first file's parent. Matches the
+    // pre-refactor `run_validation` behavior exactly.
     let base_dir = source_map
         .files()
         .first()
@@ -830,15 +1117,26 @@ fn run_validation(
         .map(|s| (*s).to_string())
         .collect();
 
-    let validation_options = ValidationOptions::default()
+    ValidationOptions::default()
         .with_account_types(account_types)
         .with_document_dirs(resolved_document_dirs)
         .with_infer_tolerance_from_cost(file_options.infer_tolerance_from_cost)
         .with_tolerance_multiplier(file_options.inferred_tolerance_multiplier)
-        .with_inferred_tolerance_default(file_options.inferred_tolerance_default.clone());
+        .with_inferred_tolerance_default(file_options.inferred_tolerance_default.clone())
+}
 
-    let validation_errors = validate_spanned_with_options(directives, validation_options);
-
+/// Convert a batch of [`rustledger_validate::ValidationError`]s into
+/// loader-level [`LedgerError`]s (with resolved `file:line:column`
+/// locations) and append to the existing list.
+///
+/// Factored out so both validation phases in `process()` share the
+/// same conversion path.
+#[cfg(feature = "validation")]
+fn ledger_errors_extend(
+    errors: &mut Vec<LedgerError>,
+    validation_errors: Vec<rustledger_validate::ValidationError>,
+    source_map: &SourceMap,
+) {
     for err in validation_errors {
         let phase = if err.code.is_parse_phase() {
             "parse"
@@ -885,7 +1183,7 @@ fn run_validation(
 /// Load and fully process a beancount file.
 ///
 /// This is the main entry point, equivalent to Python's `loader.load_file()`.
-/// It performs: parse → sort → book → plugins → validate.
+/// It performs: parse → sort → synth-plugins → Early → book → regular-plugins → Late → finalize.
 ///
 /// # Example
 ///
@@ -917,20 +1215,14 @@ pub fn load_raw(path: &Path) -> Result<LoadResult, LoadError> {
     crate::Loader::new().load(path)
 }
 
-/// Run a WASM plugin and return its output directives and errors.
+/// Run a WASM plugin and return its output ops and errors.
 #[cfg(feature = "wasm-plugins")]
 fn run_wasm_plugin(
     wasm_path: &std::path::Path,
-    directives: &[rustledger_plugin_types::DirectiveWrapper],
+    directives: &[rustledger_plugin::DirectiveWrapper],
     options: &rustledger_plugin::PluginOptions,
     config: &Option<String>,
-) -> Result<
-    (
-        Vec<rustledger_plugin_types::DirectiveWrapper>,
-        Vec<LedgerError>,
-    ),
-    String,
-> {
+) -> Result<(Vec<rustledger_plugin::PluginOp>, Vec<LedgerError>), String> {
     use rustledger_plugin::{PluginInput, PluginManager};
 
     let mut mgr = PluginManager::new();
@@ -961,7 +1253,7 @@ fn run_wasm_plugin(
         errors.push(ledger_err);
     }
 
-    Ok((output.directives, errors))
+    Ok((output.ops, errors))
 }
 
 /// Run a Python module plugin via the WASI-based Python runtime.
@@ -970,16 +1262,10 @@ fn run_python_plugin(
     module_name: &str,
     resolved_path: &std::path::Path,
     base_dir: &std::path::Path,
-    directives: &[rustledger_plugin_types::DirectiveWrapper],
+    directives: &[rustledger_plugin::DirectiveWrapper],
     options: &rustledger_plugin::PluginOptions,
     config: &Option<String>,
-) -> Result<
-    (
-        Vec<rustledger_plugin_types::DirectiveWrapper>,
-        Vec<LedgerError>,
-    ),
-    String,
-> {
+) -> Result<(Vec<rustledger_plugin::PluginOp>, Vec<LedgerError>), String> {
     use rustledger_plugin::{PluginInput, python::PythonRuntime};
 
     let runtime = PythonRuntime::new().map_err(|e| format!("Python runtime unavailable: {e}"))?;
@@ -1020,5 +1306,5 @@ fn run_python_plugin(
         errors.push(ledger_err);
     }
 
-    Ok((output.directives, errors))
+    Ok((output.ops, errors))
 }

@@ -76,7 +76,7 @@ The project is a Cargo workspace with 14 crates plus editor extensions:
 | `rustledger-parser` | Lexer and parser with error recovery |
 | `rustledger-loader` | File loading, includes, options |
 | `rustledger-booking` | Interpolation and booking engine (7 methods) |
-| `rustledger-validate` | Validation with 28 error codes |
+| `rustledger-validate` | Validation with 26 error codes |
 | `rustledger-query` | BQL query engine |
 | `rustledger-plugin` | Native and WASM plugin system (30 plugins) |
 | `rustledger-plugin-types` | Shared plugin type definitions |
@@ -222,6 +222,34 @@ Common models: `togetherai/zai-org/GLM-5`, `togetherai/deepseek-ai/DeepSeek-V3`,
 - **Loader**: Must prevent path traversal in `include` directives
 - **WASM**: Must be sandboxed, no file system access
 - **Dependencies**: Check for known vulnerabilities with `cargo deny`
+
+## Python Compatibility Policy
+
+rledger aims for full Python beancount compatibility on **correct behavior**, but deliberately **does not copy bugs we can fix locally**.
+
+Each Python bug we encounter falls into one of three buckets:
+
+1. **Fixable** — we deviate, stay stricter or more correct than Python. Examples: cost-spec precision (beanquery#275, fixed in #1106 / #1113), `FIRST` aggregator short-circuit (beanquery#279, we evaluate eagerly), empty-aggregate quirk (beanquery#1055, we return the SQL identity), elided-zero-to-unopened-account check (Python #877-equivalent, we catch via two-phase validation).
+
+2. **Not fixable locally** — we match Python and document the limitation. Example: the `rust_decimal` 28-digit ceiling (would require migrating to an arbitrary-precision library like `bigdecimal` — significant refactor for negligible practical benefit).
+
+3. **Out of scope** — we mask the Python-side divergence in the compat suite so it doesn't pollute the metric. Example: `KNOWN_PYTHON_DIVERGENCES` entries in `scripts/compat-bql-test.py`.
+
+### Checklist for a deliberate Python deviation
+
+When you choose to be stricter or more correct than Python on a specific case:
+
+- [ ] Add an inline code comment naming the Python issue (e.g. `// Stricter than Python: see beanquery#279 — we evaluate eagerly`).
+- [ ] Add a regression test pinning the stricter behavior in the appropriate crate.
+- [ ] If the deviation surfaces in the BQL compat suite, register it under `KNOWN_RUST_DIVERGENCES` in `scripts/compat-bql-test.py` (so the metric stays honest about which side has the bug).
+- [ ] If the deviation involves a pipeline architecture decision (e.g. multi-phase validation), document the architecture in a code comment so future contributors don't re-derive the rationale.
+
+### Pointers to existing examples
+
+- `rustledger-booking/src/interpolate.rs` — early/late validation split that catches Python #877's silent miss (see also `rustledger-validate::validate_early`).
+- `rustledger-query/src/executor/aggregation.rs` — eager balance evaluation that avoids beanquery#279.
+- `scripts/compat-bql-test.py` — `_is_beanquery_empty_aggregate_quirk` runtime predicate for beanquery#1055.
+- `rustledger-loader/src/process.rs` — split plugin pass (synth pre-booking, regular post-booking) so the Early validator sees plugin-synthesized Opens while cost-spec-reading plugins still see booked values. See `PluginPass` rustdoc. The pipeline is `sort → synth-plugins → Early → book → regular-plugins → Late → finalize`.
 
 ## Common Patterns
 
