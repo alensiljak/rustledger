@@ -4,7 +4,7 @@
 //! including position conversion, word extraction, and type checking.
 
 use lsp_types::{FormattingOptions, Position};
-use rustledger_core::{Directive, FormatConfig};
+use rustledger_core::FormatConfig;
 use rustledger_parser::ParseResult;
 
 /// Resolve the `FormatConfig` the LSP server uses for a given request.
@@ -278,63 +278,74 @@ pub fn is_currency_like_simple(s: &str) -> bool {
             .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit())
 }
 
+/// Spans of the actual *declared* currency token in each
+/// `Commodity` directive — exactly one per Commodity directive,
+/// namely the first `Currency` token within that directive's
+/// source span.
+///
+/// Used to disambiguate "declaration" from "use" in the LSP
+/// references and document-highlight handlers. A naive
+/// "occurrence span is contained within a Commodity directive
+/// span" check is wrong because Commodity directives can carry
+/// metadata whose values tokenize as `Currency` or `Amount`
+/// (e.g. `2024-01-01 commodity USD\n  alias: EUR` — `EUR` here
+/// is a metadata reference, not a declaration). The first
+/// currency within each Commodity span is unambiguously the
+/// declared one because the parser is strictly forward-advancing
+/// and the declared currency is parsed before the indented
+/// metadata block.
+///
+/// Returns a `HashSet` so callers can ask "is this occurrence a
+/// declaration?" in O(1).
+#[must_use]
+pub fn commodity_declaration_spans(
+    parse_result: &ParseResult,
+) -> std::collections::HashSet<rustledger_parser::Span> {
+    parse_result
+        .directives
+        .iter()
+        .filter_map(|d| {
+            if !matches!(&d.value, rustledger_core::Directive::Commodity(_)) {
+                return None;
+            }
+            parse_result
+                .currency_occurrences
+                .iter()
+                .find(|o| o.span.start >= d.span.start && o.span.end <= d.span.end)
+                .map(|o| o.span)
+        })
+        .collect()
+}
+
 /// Check if a string looks like a currency, validating against known currencies.
 ///
-/// This checks the format AND verifies the currency exists in the document.
+/// Validates the format (uppercase-and-digits, 2-24 chars) and then
+/// confirms the string actually appears as a parsed `Currency` token
+/// in the document by looking it up in `parse_result.currency_occurrences`.
+///
+/// The previous implementation manually walked the AST testing each
+/// position that can carry a currency (Commodity.currency,
+/// Open.currencies, Balance.amount, Posting.units / cost / price,
+/// Price directive). That had two problems:
+///
+/// 1. Any position the walk forgot — or any future directive type
+///    that carries a currency — would silently be excluded, and
+///    rename / references / document-highlight would refuse to fire
+///    on a real currency only mentioned there.
+/// 2. Code duplication: the parser already records every `Currency`
+///    token in `currency_occurrences`; the walk was a parallel and
+///    necessarily-incomplete reimplementation.
+///
+/// Consulting the parser's index makes the check exact by
+/// construction and shrinks the function from ~50 lines to ~5.
 pub fn is_currency_like(s: &str, parse_result: &ParseResult) -> bool {
-    // First check format: uppercase letters/numbers, 2-24 chars
     if !s.chars().all(|c| c.is_uppercase() || c.is_numeric()) || s.len() < 2 || s.len() > 24 {
         return false;
     }
-
-    // Then verify it's a known currency in the document
-    for spanned in &parse_result.directives {
-        match &spanned.value {
-            Directive::Commodity(comm) if comm.currency.as_ref() == s => {
-                return true;
-            }
-            Directive::Open(open) => {
-                for curr in &open.currencies {
-                    if curr.as_ref() == s {
-                        return true;
-                    }
-                }
-            }
-            Directive::Balance(bal) if bal.amount.currency.as_ref() == s => {
-                return true;
-            }
-            Directive::Transaction(txn) => {
-                for posting in &txn.postings {
-                    if let Some(units) = &posting.units
-                        && let Some(currency) = units.currency()
-                        && currency == s
-                    {
-                        return true;
-                    }
-                    if let Some(cost) = &posting.cost
-                        && let Some(currency) = &cost.currency
-                        && currency.as_ref() == s
-                    {
-                        return true;
-                    }
-                    if let Some(price) = &posting.price
-                        && let Some(amount) = price.amount()
-                        && amount.currency.as_ref() == s
-                    {
-                        return true;
-                    }
-                }
-            }
-            Directive::Price(price)
-                if price.currency.as_ref() == s || price.amount.currency.as_ref() == s =>
-            {
-                return true;
-            }
-            _ => {}
-        }
-    }
-
-    false
+    parse_result
+        .currency_occurrences
+        .iter()
+        .any(|occ| occ.value == s)
 }
 
 #[cfg(test)]
@@ -466,6 +477,51 @@ mod tests {
         assert!(!is_currency_like_simple("usd"));
         assert!(!is_currency_like_simple("U"));
         assert!(!is_currency_like_simple("TOOLONGCURRENCY"));
+    }
+
+    /// `is_currency_like` validates format AND confirms the string
+    /// actually appears as a parsed `Currency` token in the
+    /// document. This test pins both behaviors.
+    ///
+    /// Includes a coverage case for the latent gap the previous
+    /// manual-AST-walk implementation had: a currency mentioned
+    /// only in a `Price` directive returns true. (Whether the old
+    /// walk happened to cover `Price` doesn't matter for the new
+    /// implementation — it queries `currency_occurrences`, which
+    /// is exhaustive by construction.)
+    #[test]
+    fn test_is_currency_like() {
+        use rustledger_parser::parse;
+
+        let source = r#"2024-01-01 commodity USD
+2024-01-01 open Assets:Bank USD
+2024-01-15 * "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food  5.00 USD
+2024-01-20 price GBP  1.27 USD
+"#;
+        let parse_result = parse(source);
+
+        // Format check: must be uppercase/digits, length 2-24.
+        assert!(
+            !is_currency_like("usd", &parse_result),
+            "lowercase rejected"
+        );
+        assert!(!is_currency_like("U", &parse_result), "too short rejected");
+
+        // Format-valid but not present in document.
+        assert!(
+            !is_currency_like("XYZ", &parse_result),
+            "unknown currency rejected"
+        );
+
+        // Format-valid and present as Currency token.
+        assert!(is_currency_like("USD", &parse_result));
+
+        // Currency that appears ONLY in a Price directive (the
+        // latent gap of the previous manual AST walk if it had
+        // missed Price). `currency_occurrences` is exhaustive.
+        assert!(is_currency_like("GBP", &parse_result));
     }
 
     #[test]

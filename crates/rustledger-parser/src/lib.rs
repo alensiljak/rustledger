@@ -34,7 +34,7 @@ pub mod logos_lexer;
 mod parser;
 
 pub use error::{ParseError, ParseErrorKind};
-pub use rustledger_core::{SYNTHESIZED_FILE_ID, Span, Spanned};
+pub use rustledger_core::{InternedStr, SYNTHESIZED_FILE_ID, Span, Spanned};
 
 use rustledger_core::Directive;
 
@@ -55,6 +55,36 @@ pub struct ParseResult {
     pub errors: Vec<ParseError>,
     /// Deprecation warnings.
     pub warnings: Vec<ParseWarning>,
+    /// Every `Currency` token the parser consumed, paired with its
+    /// interned value and source-byte range.
+    ///
+    /// Source-position-aware tooling (LSP rename / references /
+    /// document-highlight) walks this list to produce edits, locations,
+    /// and highlights without resorting to string search of the source
+    /// — which produces false positives in comments, payee strings,
+    /// account-name segments, etc. The order matches source order
+    /// because the parser fills it as tokens are consumed (and the
+    /// parser is strictly forward-advancing, including on error
+    /// recovery).
+    ///
+    /// **Error-recovery contract.** Tokens consumed during a
+    /// directive that ultimately fails to parse remain in this list.
+    /// Rationale: the lexer's classification of a token as a
+    /// `Currency` is independent of whether the surrounding syntax is
+    /// valid, and tooling that wants to rename or highlight a
+    /// currency the user typed should follow that classification.
+    /// Do not "clean up" partially-consumed entries after a parse
+    /// failure — that would hide real currency identifiers from
+    /// downstream tooling while the user is mid-edit.
+    ///
+    /// **`file_id` is always 0 in parser output.** The parser
+    /// processes one file at a time and doesn't know its own file
+    /// id. The loader sets the correct id on each entry via
+    /// `.with_file_id(n)` when assembling a multi-file `SourceMap`,
+    /// the same way it does for `directives`. Per-file consumers
+    /// (today: every LSP handler) can ignore `file_id`; future
+    /// multi-file consumers must remember to thread it through.
+    pub currency_occurrences: Vec<Spanned<InternedStr>>,
 }
 
 /// A warning from the parser (non-fatal).
