@@ -92,6 +92,15 @@ pub fn handle_completion(
     if items.is_empty() {
         None
     } else {
+        // Visibility for the eventual `isIncomplete: true` /
+        // server-side prefix filtering work — if a future bug report
+        // says "autocomplete is slow on my N-thousand-account
+        // ledger", this log line tells you the response size without
+        // needing to instrument from scratch. Cheap because completion
+        // requests are user-driven, not hot-loop. The context is
+        // already logged above (line ~72) so the size alone here is
+        // enough to correlate.
+        tracing::debug!("Completion response: {} items", items.len());
         Some(CompletionResponse::Array(items))
     }
 }
@@ -272,9 +281,20 @@ fn complete_account_start(
         })
         .collect();
 
-    // Collect known accounts from the current file and ledger state
+    // Collect known accounts from the current file and ledger state.
+    //
+    // Return every known account: the LSP client filters by the
+    // user's typed prefix, and capping server-side here defeats that
+    // filtering (the client never sees accounts past the cap, so any
+    // prefix that matches a later-sorted account silently fails to
+    // complete). The pre-fix `.take(20)` produced exactly issue
+    // #1183, where `Expenses:ExpenseType20` and later accounts
+    // wouldn't autocomplete because the alphabetical cut-off landed
+    // at `ExpenseType19`. If completion latency on enormous ledgers
+    // ever becomes a concern, switch to `isIncomplete: true` with
+    // server-side prefix filtering rather than a blind cap.
     let known_accounts = get_all_accounts(parse_result, ledger_state);
-    for account in known_accounts.iter().take(20) {
+    for account in &known_accounts {
         items.push(CompletionItem {
             label: account.clone(),
             kind: Some(CompletionItemKind::VARIABLE),
@@ -369,9 +389,12 @@ fn complete_payee(
 ) -> Vec<CompletionItem> {
     let payees = get_all_payees(parse_result, ledger_state);
 
+    // Same `.take(20)` trap as account completion (issue #1183):
+    // the LSP client filters by the user's typed prefix, so capping
+    // server-side silently drops payees that sort after the cap.
+    // Return all; the client handles the volume.
     payees
         .into_iter()
-        .take(20)
         .map(|p| CompletionItem {
             label: p.clone(),
             kind: Some(CompletionItemKind::TEXT),
@@ -517,5 +540,136 @@ mod tests {
         let pos = Position::new(0, 17);
         // Must not panic
         let _ctx = detect_context(source, pos);
+    }
+
+    /// Regression for #1183: pre-fix `complete_account_start` capped
+    /// known-account completions at the first 20 entries (alphabetically
+    /// sorted), so accounts past that cut-off would silently fail to
+    /// autocomplete on the client side — the LSP client filters the
+    /// list it's given by the user's typed prefix, so any account the
+    /// server dropped at the cap was invisible to filtering. The
+    /// reporter's exact repro: 30 `Expenses:ExpenseType01..30` opens,
+    /// of which only 01..19 made the cut.
+    #[test]
+    fn complete_account_start_returns_all_known_accounts_above_legacy_cap() {
+        let source = "\
+2024-01-01 open Assets:Bank:Checking USD
+2024-01-01 open Income:Salary
+2024-01-01 open Income:SomethingElse
+2024-01-01 open Expenses:ExpenseType01
+2024-01-01 open Expenses:ExpenseType02
+2024-01-01 open Expenses:ExpenseType03
+2024-01-01 open Expenses:ExpenseType04
+2024-01-01 open Expenses:ExpenseType05
+2024-01-01 open Expenses:ExpenseType06
+2024-01-01 open Expenses:ExpenseType07
+2024-01-01 open Expenses:ExpenseType08
+2024-01-01 open Expenses:ExpenseType09
+2024-01-01 open Expenses:ExpenseType10
+2024-01-01 open Expenses:ExpenseType11
+2024-01-01 open Expenses:ExpenseType12
+2024-01-01 open Expenses:ExpenseType13
+2024-01-01 open Expenses:ExpenseType14
+2024-01-01 open Expenses:ExpenseType15
+2024-01-01 open Expenses:ExpenseType16
+2024-01-01 open Expenses:ExpenseType17
+2024-01-01 open Expenses:ExpenseType18
+2024-01-01 open Expenses:ExpenseType19
+2024-01-01 open Expenses:ExpenseType20
+2024-01-01 open Expenses:ExpenseType21
+2024-01-01 open Expenses:ExpenseType22
+2024-01-01 open Expenses:ExpenseType23
+2024-01-01 open Expenses:ExpenseType24
+2024-01-01 open Expenses:ExpenseType25
+2024-01-01 open Expenses:ExpenseType26
+2024-01-01 open Expenses:ExpenseType27
+2024-01-01 open Expenses:ExpenseType28
+2024-01-01 open Expenses:ExpenseType29
+2024-01-01 open Expenses:ExpenseType30
+";
+        let parsed = rustledger_parser::parse(source);
+        assert!(
+            parsed.errors.is_empty(),
+            "fixture must parse cleanly: {:?}",
+            parsed.errors,
+        );
+
+        let items = complete_account_start(&parsed, None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        // The handler also returns standard account-type entries
+        // (`Assets:`, `Expenses:`, …) — those are unrelated; the bug
+        // is about the *known* account names. Spot-check the two
+        // accounts that bracket the legacy cap.
+        assert!(
+            labels.contains(&"Expenses:ExpenseType19"),
+            "ExpenseType19 must be reachable (pre-fix this was the last that worked); \
+             labels = {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Expenses:ExpenseType20"),
+            "ExpenseType20 must be reachable (pre-fix this was the first that failed); \
+             labels = {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Expenses:ExpenseType30"),
+            "ExpenseType30 must be reachable (pre-fix all 20+ accounts were dropped); \
+             labels = {labels:?}"
+        );
+    }
+
+    /// Companion regression for #1183: the account-completion cap had
+    /// an identical `.take(20)` twin in `complete_payee`. Same shape,
+    /// same fix, same hazard for re-introduction — this test pins it
+    /// independently so a future contributor who restores the payee
+    /// cap can't ride on the account test missing it. Constructing 30
+    /// distinct payees requires 30 distinct transactions; the fixture
+    /// uses a tight `Buy<NN>` payee with one balanced posting pair.
+    #[test]
+    fn complete_payee_returns_all_known_payees_above_legacy_cap() {
+        use std::fmt::Write as _;
+
+        let mut source = String::from("2024-01-01 open Assets:Cash USD\n");
+        for n in 1..=30 {
+            // Each transaction names a unique payee so all 30 reach
+            // `extract_payees`. Pin every transaction to a real
+            // calendar date (2024-02-01) — beancount allows multiple
+            // transactions on the same day, and using `{n:02}` for
+            // the day would generate Feb 30, which isn't a valid
+            // date. Two-posting balanced form (`+1 / -1 USD` on the
+            // same account) satisfies the parser's posting-count
+            // requirement.
+            writeln!(
+                source,
+                "2024-02-01 * \"Buy{n:02}\" \"\"\n  Assets:Cash  1 USD\n  Assets:Cash  -1 USD",
+            )
+            .unwrap();
+        }
+
+        let parsed = rustledger_parser::parse(&source);
+        assert!(
+            parsed.errors.is_empty(),
+            "fixture must parse cleanly: {:?}",
+            parsed.errors,
+        );
+
+        let items = complete_payee(&parsed, None);
+        let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+
+        // Brackets across the legacy cap: pre-fix Buy01..Buy19 would
+        // show, Buy20+ would be silently dropped. The new behavior
+        // returns all 30.
+        assert!(
+            labels.contains(&"Buy19"),
+            "Buy19 must be reachable (pre-fix last that worked); labels = {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Buy20"),
+            "Buy20 must be reachable (pre-fix first that failed); labels = {labels:?}"
+        );
+        assert!(
+            labels.contains(&"Buy30"),
+            "Buy30 must be reachable (pre-fix all 20+ payees were dropped); labels = {labels:?}"
+        );
     }
 }
