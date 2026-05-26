@@ -3,7 +3,8 @@
 use rustledger_core::Directive;
 
 use crate::types::{
-    AmountValue, CellValue, CostValue, DirectiveJson, PositionValue, PostingCostJson, PostingJson,
+    AmountValue, CellValue, CostNumberJson, CostValue, DirectiveJson, PositionValue,
+    PostingCostJson, PostingJson,
 };
 
 /// Convert a Directive to its JSON representation.
@@ -40,7 +41,26 @@ pub fn directive_to_json(directive: &Directive) -> DirectiveJson {
                         currency: u.currency().map(ToString::to_string).unwrap_or_default(),
                     }),
                     cost: p.cost.as_ref().map(|c| PostingCostJson {
-                        number_per: c.number_per.map(|n| n.to_string()),
+                        // The wire `CostNumberJson` is a tagged enum
+                        // mirroring `CostNumber`; JS branches on `kind`.
+                        number: c.number.map(|n| match n {
+                            rustledger_core::CostNumber::PerUnit { value: d } => {
+                                CostNumberJson::PerUnit {
+                                    value: d.to_string(),
+                                }
+                            }
+                            rustledger_core::CostNumber::Total { value: d } => {
+                                CostNumberJson::Total {
+                                    value: d.to_string(),
+                                }
+                            }
+                            rustledger_core::CostNumber::PerUnitFromTotal(b) => {
+                                CostNumberJson::PerUnitFromTotal {
+                                    per_unit: b.per_unit.to_string(),
+                                    total: b.total.to_string(),
+                                }
+                            }
+                        }),
                         currency: c.currency.as_ref().map(ToString::to_string),
                         date: c.date.map(|d| d.to_string()),
                         label: c.label.clone(),

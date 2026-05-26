@@ -251,8 +251,9 @@ impl BookingEngine {
                                     // Set cost from the matched lot
                                     if let Some(cost) = &matched_pos.cost {
                                         new_posting.cost = Some(CostSpec {
-                                            number_per: Some(cost.number),
-                                            number_total: None,
+                                            number: Some(rustledger_core::CostNumber::PerUnit {
+                                                value: cost.number,
+                                            }),
                                             currency: Some(cost.currency.clone()),
                                             date: cost.date,
                                             label: cost.label.clone(),
@@ -279,8 +280,9 @@ impl BookingEngine {
 
                                 // Update posting with filled cost
                                 result.postings[idx].cost = Some(CostSpec {
-                                    number_per: Some(matched_cost.number),
-                                    number_total: None,
+                                    number: Some(rustledger_core::CostNumber::PerUnit {
+                                        value: matched_cost.number,
+                                    }),
                                     currency: Some(matched_cost.currency.clone()),
                                     date: matched_cost.date,
                                     label: None,
@@ -318,19 +320,24 @@ impl BookingEngine {
                     // If not a reduction: fall through to augmentation code below
                 }
 
-                if cost_spec.number_total.is_some() && cost_spec.number_per.is_none() {
-                    // This is an augmentation with total cost - convert to per-unit
-                    // e.g., `1.763 VIIIX {{300.00 USD}}` -> `1.763 VIIIX {170.165... USD}`
-                    // Preserve full precision to avoid cost basis errors when selling.
-                    if let (Some(total), Some(currency)) =
-                        (&cost_spec.number_total, &cost_spec.currency)
+                if let Some(rustledger_core::CostNumber::Total { value: total }) = cost_spec.number
+                {
+                    // Augmentation with total cost — convert to the
+                    // post-booking `PerUnitFromTotal` shape:
+                    //   `1.763 VIIIX {{300.00 USD}}` → derived per-unit
+                    //   170.165… with total 300.00 preserved.
+                    // The preserved total is load-bearing for
+                    // precision-preserving residual math (#1026) —
+                    // division-then-multiplication at the
+                    // `rust_decimal` 28-digit ceiling loses precision.
+                    if let Some(currency) = &cost_spec.currency
                         && !units.number.is_zero()
                     {
-                        // Calculate per-unit cost - preserve full precision
-                        let per_unit = *total / units.number.abs();
+                        let per_unit = total / units.number.abs();
                         result.postings[idx].cost = Some(CostSpec {
-                            number_per: Some(per_unit),
-                            number_total: cost_spec.number_total, // Preserve for precise residual calculation
+                            number: Some(rustledger_core::CostNumber::PerUnitFromTotal(
+                                rustledger_core::BookedCost::new(per_unit, total, units.number),
+                            )),
                             currency: Some(currency.clone()),
                             // Fill in transaction date if no date specified
                             date: cost_spec.date.or(Some(txn.date)),
@@ -342,9 +349,7 @@ impl BookingEngine {
                 }
 
                 // Fill in dates and currencies for augmentations (not already booked)
-                if !booked_indices.contains(&idx)
-                    && (cost_spec.number_per.is_some() || cost_spec.number_total.is_some())
-                {
+                if !booked_indices.contains(&idx) && cost_spec.number.is_some() {
                     // Cost spec has a number but may be missing date or currency
                     // Fill in missing parts from price annotation, other postings, and transaction date
                     let inferred_currency = cost_spec.currency.clone().or_else(|| {
@@ -377,8 +382,7 @@ impl BookingEngine {
                     // Only update if we actually inferred something
                     if inferred_currency.is_some() || inferred_date.is_some() {
                         result.postings[idx].cost = Some(CostSpec {
-                            number_per: cost_spec.number_per,
-                            number_total: cost_spec.number_total,
+                            number: cost_spec.number,
                             currency: inferred_currency.or_else(|| cost_spec.currency.clone()),
                             date: inferred_date.or(cost_spec.date),
                             label: cost_spec.label.clone(),
@@ -449,19 +453,20 @@ impl BookingEngine {
                 } else {
                     // Add to inventory
                     let position = if let Some(cost_spec) = &posting.cost {
-                        // Try per-unit cost first, then total cost
-                        let per_unit_cost = if let Some(per_unit) = &cost_spec.number_per {
-                            Some(*per_unit)
-                        } else if let Some(total) = &cost_spec.number_total {
-                            // Convert total cost to per-unit cost - preserve full precision
-                            // to avoid cost basis errors when selling
-                            if units.number.is_zero() {
-                                None
-                            } else {
-                                Some(*total / units.number.abs())
+                        // Resolve per-unit cost: PerUnit/PerUnitFromTotal
+                        // carry it directly; Total needs the
+                        // total/|units| division.
+                        let per_unit_cost = match cost_spec.number {
+                            Some(rustledger_core::CostNumber::PerUnit { value: per }) => Some(per),
+                            Some(rustledger_core::CostNumber::PerUnitFromTotal(b)) => {
+                                Some(b.per_unit)
                             }
-                        } else {
-                            None
+                            Some(rustledger_core::CostNumber::Total { value: total })
+                                if !units.number.is_zero() =>
+                            {
+                                Some(total / units.number.abs())
+                            }
+                            Some(rustledger_core::CostNumber::Total { value: _ }) | None => None,
                         };
 
                         // Infer cost currency from price annotation or other postings.
@@ -568,7 +573,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -593,7 +600,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -649,7 +658,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(1.763), "VIIIX")).with_cost(
                     CostSpec::empty()
-                        .with_number_total(dec!(300.00))
+                        .with_number(rustledger_core::CostNumber::Total {
+                            value: dec!(300.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -682,7 +693,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(1.763), "VIIIX")).with_cost(
                     CostSpec::empty()
-                        .with_number_total(dec!(300.00))
+                        .with_number(rustledger_core::CostNumber::Total {
+                            value: dec!(300.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -699,9 +712,14 @@ mod tests {
         let buy_posting = &booked_buy.transaction.postings[0];
         assert!(buy_posting.cost.is_some());
         let cost_spec = buy_posting.cost.as_ref().unwrap();
-        // Both total and per-unit should be set (total preserved for precise residual calc)
-        assert!(cost_spec.number_total.is_some());
-        assert!(cost_spec.number_per.is_some());
+        // Booking should have converted the user-written Total into
+        // the post-booking PerUnitFromTotal shape — the per-unit value
+        // is computed for lot tracking and the total is preserved for
+        // exact residual math.
+        assert!(matches!(
+            cost_spec.number,
+            Some(rustledger_core::CostNumber::PerUnitFromTotal(_))
+        ));
 
         // Sell all shares at $191 per unit
         let sell = Transaction::new(date(2016, 6, 15), "Sell stock")
@@ -736,7 +754,11 @@ mod tests {
         let sell = Transaction::new(date(2022, 6, 17), "SELLOPT")
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(-1), "AAPL"))
-                    .with_cost(CostSpec::empty().with_number_per(dec!(40.0)))
+                    .with_cost(
+                        CostSpec::empty().with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(40.0),
+                        }),
+                    )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(0.4), "USD"))),
             )
             .with_synthesized_posting(Posting::new("Assets:Stock", Amount::new(dec!(40.0), "USD")));
@@ -783,7 +805,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -824,7 +848,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -863,7 +889,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -926,7 +954,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -969,8 +999,10 @@ mod tests {
         //   Equity:Opening-Balances -1 USD
         let open = Transaction::new(date(2026, 1, 1), "Opening balance")
             .with_synthesized_posting(
-                Posting::new("Assets:Abc", Amount::new(dec!(1), "ABC"))
-                    .with_cost(CostSpec::empty().with_number_per(dec!(1))), // No currency!
+                Posting::new("Assets:Abc", Amount::new(dec!(1), "ABC")).with_cost(
+                    CostSpec::empty()
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1) }),
+                ), // No currency!
             )
             .with_synthesized_posting(Posting::new(
                 "Equity:Opening-Balances",
@@ -1005,7 +1037,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Abc", Amount::new(dec!(-1), "ABC")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(1))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1) })
                         .with_currency("USD"),
                 ),
             )
@@ -1036,7 +1068,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "ADA")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(0.50))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(0.50) })
                         .with_currency("USD")
                         .with_date(date(2021, 1, 1)),
                 ),
@@ -1049,7 +1081,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "ADA")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(0.52))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(0.52) })
                         .with_currency("USD")
                         .with_date(date(2022, 5, 19)),
                 ),
@@ -1176,7 +1208,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stocks", Amount::new(dec!(100), "HOOG")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(1.50))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1.50) })
                         .with_currency("EUR"),
                 ),
             )
@@ -1199,7 +1231,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stocks", Amount::new(dec!(50), "HOOG")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(1.70))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1.70) })
                         .with_currency("EUR"),
                 ),
             )

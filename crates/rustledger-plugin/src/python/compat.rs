@@ -75,6 +75,19 @@ Custom = namedtuple('Custom', ['meta', 'date', 'type', 'values'])
 
 Cost = namedtuple('Cost', ['number', 'currency', 'date', 'label'])
 
+# `CostSpec` shape matches upstream `beancount.core.data.CostSpec`
+# verbatim — `number_per` / `number_total` are the two flat fields
+# Python plugins read directly. The host's typed `CostNumber` enum
+# (rustledger_core::CostNumber) is flattened to these two fields by
+# `_parse_cost_spec` below.
+#
+# This is an INTENTIONAL legacy-shape match (Python compat policy
+# bucket 2: "not fixable locally" — see project CLAUDE.md). Upstream
+# beancount's Python API is what every existing Python plugin codes
+# against; presenting a different shape here would break every
+# Python plugin in the ecosystem. The host's stricter `CostNumber`
+# shape is the right model internally, but the Python compat surface
+# matches upstream's API by design.
 CostSpec = namedtuple('CostSpec', [
     'number_per', 'number_total', 'currency', 'date', 'label', 'merge'
 ])
@@ -154,12 +167,37 @@ def _parse_cost(d):
 
 
 def _parse_cost_spec(d):
-    """Parse a cost spec dict to CostSpec namedtuple."""
+    """Parse a cost spec dict to CostSpec namedtuple.
+
+    Reads the unified `kind`-tagged shape shared with FFI-WASI, WASM,
+    and plugin-types:
+        - {"kind": "per_unit", "value": "100"}            → number_per=100, number_total=None
+        - {"kind": "total", "value": "1500"}              → number_per=None, number_total=1500
+        - {"kind": "per_unit_from_total",
+           "per_unit": "150", "total": "300"}             → both populated
+        - null                                            → both None (bare `{}`)
+
+    The Python-side `CostSpec` namedtuple still presents two flat
+    fields for upstream beancount API compatibility; the bridge
+    flattens the typed enum into those fields here.
+    """
     if d is None:
         return None
+    number_per = None
+    number_total = None
+    n = d.get('number')
+    if isinstance(n, dict):
+        kind = n.get('kind')
+        if kind == 'per_unit':
+            number_per = _parse_decimal(n.get('value'))
+        elif kind == 'total':
+            number_total = _parse_decimal(n.get('value'))
+        elif kind == 'per_unit_from_total':
+            number_per = _parse_decimal(n.get('per_unit'))
+            number_total = _parse_decimal(n.get('total'))
     return CostSpec(
-        number_per=_parse_decimal(d.get('number_per')),
-        number_total=_parse_decimal(d.get('number_total')),
+        number_per=number_per,
+        number_total=number_total,
         currency=d.get('currency', ''),
         date=_parse_date(d.get('date')),
         label=d.get('label'),
@@ -334,30 +372,55 @@ def _serialize_cost(c):
 
 
 def _serialize_cost_spec(c):
-    """Serialize a CostSpec to dict (matches Rust CostData format)."""
+    """Serialize a CostSpec to dict (matches Rust CostData format).
+
+    Emits the unified `kind`-tagged number shape shared with FFI-WASI,
+    WASM, and plugin-types:
+        - per_unit only       → {"kind": "per_unit", "value": "100"}
+        - total only          → {"kind": "total", "value": "1500"}
+        - both (post-booking) → {"kind": "per_unit_from_total",
+                                 "per_unit": ..., "total": ...}
+        - neither             → number is None (bare `{}`)
+
+    Inputs accepted: CostSpec namedtuple (has number_per/number_total)
+    or Cost namedtuple (has number). The latter is mapped to per_unit.
+    """
     if c is None:
         return None
-    # Handle both Cost and CostSpec namedtuples
     if hasattr(c, 'number_per'):
-        # CostSpec
+        number_per = c.number_per
+        number_total = c.number_total if hasattr(c, 'number_total') else None
+        if number_per is not None and number_total is not None:
+            number = {
+                'kind': 'per_unit_from_total',
+                'per_unit': _serialize_decimal(number_per),
+                'total': _serialize_decimal(number_total),
+            }
+        elif number_per is not None:
+            number = {'kind': 'per_unit', 'value': _serialize_decimal(number_per)}
+        elif number_total is not None:
+            number = {'kind': 'total', 'value': _serialize_decimal(number_total)}
+        else:
+            number = None
         return {
-            'number_per': _serialize_decimal(c.number_per),
-            'number_total': _serialize_decimal(c.number_total) if hasattr(c, 'number_total') else None,
+            'number': number,
             'currency': c.currency if c.currency else None,
             'date': _serialize_date(c.date),
             'label': c.label,
             'merge': c.merge if hasattr(c, 'merge') else False
         }
+    # Cost namedtuple: a single `number` field, treated as per-unit.
+    if c.number is not None:
+        number = {'kind': 'per_unit', 'value': _serialize_decimal(c.number)}
     else:
-        # Cost (convert to CostSpec format)
-        return {
-            'number_per': _serialize_decimal(c.number),
-            'number_total': None,
-            'currency': c.currency if c.currency else None,
-            'date': _serialize_date(c.date),
-            'label': c.label,
-            'merge': False
-        }
+        number = None
+    return {
+        'number': number,
+        'currency': c.currency if c.currency else None,
+        'date': _serialize_date(c.date),
+        'label': c.label,
+        'merge': False
+    }
 
 
 def _serialize_posting(p):

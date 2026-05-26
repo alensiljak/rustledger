@@ -217,10 +217,7 @@ impl PriceDatabase {
             });
             let cost = posting.cost.as_ref().and_then(|c| {
                 let currency = c.currency.clone()?;
-                if c.number_per.is_none() && c.number_total.is_none() {
-                    return None;
-                }
-                Some((c.number_per, c.number_total, currency))
+                Some((c.number, currency))
             });
 
             let Some((per_unit, quote)) =
@@ -791,7 +788,7 @@ mod tests {
                 Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
                     .with_cost(
                         CostSpec::default()
-                            .with_number_per(dec!(1.25))
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1.25) })
                             .with_currency("EUR"),
                     )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(1.40), "EUR"))),
@@ -814,7 +811,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stocks", Amount::new(dec!(10), "XYZ")).with_cost(
                     CostSpec::default()
-                        .with_number_per(dec!(50.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(50.00) })
                         .with_currency("USD"),
                 ),
             )
@@ -858,7 +855,7 @@ mod tests {
                 Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
                     .with_cost(
                         CostSpec::default()
-                            .with_number_per(dec!(1.25))
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1.25) })
                             .with_currency("EUR"),
                     )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(1.40), "EUR"))),
@@ -882,7 +879,7 @@ mod tests {
             Posting::new("Assets:Stocks", Amount::new(dec!(0), "ABC"))
                 .with_cost(
                     CostSpec::default()
-                        .with_number_per(dec!(50))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(50) })
                         .with_currency("USD"),
                 )
                 .with_price(PriceAnnotation::total(Amount::new(dec!(100), "EUR"))),
@@ -915,7 +912,7 @@ mod tests {
                 Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
                     .with_cost(
                         CostSpec::default()
-                            .with_number_per(dec!(1.25))
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(1.25) })
                             .with_currency("EUR"),
                     )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(1.40), "EUR"))),
@@ -960,7 +957,9 @@ mod tests {
                         Posting::new("Assets:Stocks", Amount::new(dec!(-5), "ABC"))
                             .with_cost(
                                 CostSpec::default()
-                                    .with_number_per(dec!(1.25))
+                                    .with_number(rustledger_core::CostNumber::PerUnit {
+                                        value: dec!(1.25),
+                                    })
                                     .with_currency("EUR"),
                             )
                             .with_price(PriceAnnotation::unit(Amount::new(dec!(1.40), "EUR"))),
@@ -998,7 +997,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(-10), "BAM")).with_cost(
                             CostSpec::default()
-                                .with_number_per(dec!(0.5113))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(0.5113),
+                                })
                                 .with_currency("EUR"),
                         ),
                     )
@@ -1012,7 +1013,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(-20), "BAM")).with_cost(
                             CostSpec::default()
-                                .with_number_per(dec!(0.5113))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(0.5113),
+                                })
                                 .with_currency("EUR"),
                         ),
                     )
@@ -1071,7 +1074,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(-10), "BAM")).with_cost(
                             CostSpec::default()
-                                .with_number_per(dec!(0.5113))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(0.5113),
+                                })
                                 .with_currency("EUR"),
                         ),
                     )
@@ -1085,7 +1090,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(-20), "BAM")).with_cost(
                             CostSpec::default()
-                                .with_number_per(dec!(0.5113))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(0.5113),
+                                })
                                 .with_currency("EUR"),
                         ),
                     )

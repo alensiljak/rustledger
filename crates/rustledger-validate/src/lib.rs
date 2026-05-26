@@ -62,7 +62,7 @@ pub use error::{ErrorCode, Severity, ValidationError};
 /// residuals, inventory updates, balance assertions) run as
 /// [`Phase::Late`] AFTER booking AND after the regular plugin pass
 /// (so cost-spec-reading plugins like `implicit_prices` see filled
-/// `cost.number_per` values).
+/// per-unit values on the `CostNumber::PerUnitFromTotal` variant).
 ///
 /// The pipeline is therefore:
 ///     sort → synth-plugins → Early → book → regular-plugins → Late → finalize
@@ -1546,7 +1546,7 @@ mod tests {
         use rustledger_core::CostSpec;
 
         let cost_spec = CostSpec::empty()
-            .with_number_per(dec!(150))
+            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(150) })
             .with_currency("USD");
 
         let directives = vec![
@@ -1604,7 +1604,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                             CostSpec::empty()
-                                .with_number_per(dec!(150))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(150),
+                                })
                                 .with_currency("USD"),
                         ),
                     )
@@ -1619,7 +1621,9 @@ mod tests {
                     .with_synthesized_posting(
                         Posting::new("Assets:Stock", Amount::new(dec!(-5), "AAPL")).with_cost(
                             CostSpec::empty()
-                                .with_number_per(dec!(160))
+                                .with_number(rustledger_core::CostNumber::PerUnit {
+                                    value: dec!(160),
+                                })
                                 .with_currency("USD"),
                         ),
                     )
@@ -1644,7 +1648,7 @@ mod tests {
         use rustledger_core::CostSpec;
 
         let cost_spec = CostSpec::empty()
-            .with_number_per(dec!(150))
+            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(150) })
             .with_currency("USD");
 
         let directives = vec![
@@ -1714,7 +1718,7 @@ mod tests {
         use rustledger_core::CostSpec;
 
         let cost_spec = CostSpec::empty()
-            .with_number_per(dec!(150))
+            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(150) })
             .with_currency("USD");
 
         let directives = vec![
@@ -1858,7 +1862,7 @@ mod tests {
                 Transaction::new(date(2024, 1, 15), "Grant").with_synthesized_posting(
                     Posting::new("Assets:Stock", Amount::new(dec!(100), "AAPL")).with_cost(
                         rustledger_core::CostSpec::empty()
-                            .with_number_per(dec!(0))
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(0) })
                             .with_currency("USD"),
                     ),
                 ),
@@ -1881,7 +1885,7 @@ mod tests {
                 Transaction::new(date(2024, 1, 15), "Buy").with_synthesized_posting(
                     Posting::new("Assets:Stock", Amount::new(dec!(100), "AAPL")).with_cost(
                         rustledger_core::CostSpec::empty()
-                            .with_number_per(dec!(150))
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(150) })
                             .with_currency("USD"),
                     ),
                 ),

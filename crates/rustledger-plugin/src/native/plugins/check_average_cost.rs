@@ -109,11 +109,15 @@ impl NativePlugin for CheckAverageCostPlugin {
                     let key = (posting.account.clone(), units.currency.clone());
 
                     if units_num > Decimal::ZERO {
-                        // Acquisition: add to inventory
+                        // Acquisition: add to inventory. `per_unit()`
+                        // covers both PerUnit and PerUnitFromTotal;
+                        // raw Total (pre-booking) has no per-unit yet
+                        // and yields zero (gate is permissive there).
                         let cost_per = cost
-                            .number_per
+                            .number
                             .as_ref()
-                            .and_then(|s| Decimal::from_str(s).ok())
+                            .and_then(|cn| cn.per_unit())
+                            .map(|s| Decimal::from_str(s).unwrap_or_default())
                             .unwrap_or_default();
 
                         let entry = inventory
@@ -130,11 +134,13 @@ impl NativePlugin for CheckAverageCostPlugin {
                         {
                             let avg_cost = *total_cost / *total_units;
 
-                            // Get the cost used in this posting
+                            // Get the cost used in this posting.
+                            // Same per-unit-only read as above.
                             let used_cost = cost
-                                .number_per
+                                .number
                                 .as_ref()
-                                .and_then(|s| Decimal::from_str(s).ok())
+                                .and_then(|cn| cn.per_unit())
+                                .map(|s| Decimal::from_str(s).unwrap_or_default())
                                 .unwrap_or_default();
 
                             // Calculate relative difference
@@ -224,8 +230,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("100.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "100.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -257,8 +264,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("100.00".to_string()), // Matches average
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "100.00".to_string(),
+                                }), // Matches average
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -309,8 +317,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("100.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "100.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -342,8 +351,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("90.00".to_string()), // 10% different from avg
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "90.00".to_string(),
+                                }), // 10% different from avg
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -396,8 +406,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("100.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "100.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -429,8 +440,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("120.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "120.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -462,8 +474,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("110.00".to_string()), // Matches average
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "110.00".to_string(),
+                                }), // Matches average
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -535,8 +548,9 @@ mod check_average_cost_tests {
                                 currency: "AAPL".to_string(),
                             }),
                             cost: Some(CostData {
-                                number_per: Some("100.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "100.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,
@@ -570,8 +584,9 @@ mod check_average_cost_tests {
                             cost: Some(CostData {
                                 // 50% off the average — would fire for NONE,
                                 // but must be silent for STRICT/default.
-                                number_per: Some("50.00".to_string()),
-                                number_total: None,
+                                number: Some(rustledger_plugin_types::CostNumberData::PerUnit {
+                                    value: "50.00".to_string(),
+                                }),
                                 currency: Some("USD".to_string()),
                                 date: None,
                                 label: None,

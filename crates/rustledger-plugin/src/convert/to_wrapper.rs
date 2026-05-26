@@ -84,9 +84,25 @@ pub(super) fn amount_to_data(amount: &Amount) -> AmountData {
 }
 
 pub(super) fn cost_to_data(cost: &CostSpec) -> CostData {
+    use crate::types::CostNumberData;
     CostData {
-        number_per: cost.number_per.map(|n| n.to_string()),
-        number_total: cost.number_total.map(|n| n.to_string()),
+        // PerUnitFromTotal preserves both the derived per-unit AND the
+        // original `{{ total }}` on the wire. Plugins that want a
+        // per-unit value use `CostNumberData::per_unit()`; those that
+        // want the precise total (e.g. cost-basis reads matching
+        // Python's `beancount.core.convert.get_cost`) use `total()`.
+        number: cost.number.map(|n| match n {
+            rustledger_core::CostNumber::PerUnit { value: d } => CostNumberData::PerUnit {
+                value: d.to_string(),
+            },
+            rustledger_core::CostNumber::PerUnitFromTotal(b) => CostNumberData::PerUnitFromTotal {
+                per_unit: b.per_unit.to_string(),
+                total: b.total.to_string(),
+            },
+            rustledger_core::CostNumber::Total { value: d } => CostNumberData::Total {
+                value: d.to_string(),
+            },
+        }),
         currency: cost.currency.as_ref().map(ToString::to_string),
         date: cost.date.map(|d| d.to_string()),
         label: cost.label.clone(),

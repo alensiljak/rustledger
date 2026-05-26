@@ -197,20 +197,26 @@ pub fn calculate_residual(transaction: &Transaction) -> HashMap<Currency, Decima
                     .or_else(|| price_currency_of(posting))
                     .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
-                // Check number_total first: when both per-unit and total are present
-                // (booking preserves total), use the total directly for exact residual
-                // calculation. Division-then-multiplication loses precision.
-                if let (Some(total), Some(cost_curr)) =
-                    (&cost_spec.number_total, &inferred_currency)
-                {
-                    Some((cost_curr.clone(), *total * units.number.signum()))
-                } else if let (Some(per_unit), Some(cost_curr)) =
-                    (&cost_spec.number_per, &inferred_currency)
-                {
-                    let cost_amount = units.number * per_unit;
-                    Some((cost_curr.clone(), cost_amount))
-                } else {
-                    None // Cost spec without determinable amount (e.g., empty `{}`)
+                // `PerUnitFromTotal` and `Total` both carry a total
+                // that booking preserves for exact residual math —
+                // using the total avoids the
+                // division-then-multiplication precision loss that
+                // would happen if we recomputed from `per_unit`.
+                // `PerUnit` (user-written per-unit) goes through the
+                // multiplication path.
+                let cost_curr = inferred_currency.as_ref()?;
+                match cost_spec.number {
+                    Some(rustledger_core::CostNumber::Total { value: total }) => {
+                        Some((cost_curr.clone(), total * units.number.signum()))
+                    }
+                    Some(rustledger_core::CostNumber::PerUnitFromTotal(b)) => {
+                        Some((cost_curr.clone(), b.total * units.number.signum()))
+                    }
+                    Some(rustledger_core::CostNumber::PerUnit { value: per_unit }) => {
+                        let cost_amount = units.number * per_unit;
+                        Some((cost_curr.clone(), cost_amount))
+                    }
+                    None => None, // empty `{}`
                 }
             });
 
@@ -286,23 +292,24 @@ pub fn calculate_residual_precise(transaction: &Transaction) -> HashMap<Currency
                     .or_else(|| price_currency_of(posting))
                     .or_else(|| get_inferred_currency(&mut inferred_cost_currency));
 
-                // Check number_total first: when both per-unit and total are present
-                // (booking preserves total), use the total directly for exact residual
-                // calculation. Division-then-multiplication loses precision.
-                if let (Some(total), Some(cost_curr)) =
-                    (&cost_spec.number_total, &inferred_currency)
-                {
-                    Some((
+                // BigDecimal version of the same matcher as above.
+                // `PerUnitFromTotal` joins `Total` in the precision-
+                // preserving branch.
+                let cost_curr = inferred_currency.as_ref()?;
+                match cost_spec.number {
+                    Some(rustledger_core::CostNumber::Total { value: total }) => Some((
                         cost_curr.clone(),
-                        to_big(*total) * to_big(units.number.signum()),
-                    ))
-                } else if let (Some(per_unit), Some(cost_curr)) =
-                    (&cost_spec.number_per, &inferred_currency)
-                {
-                    let cost_amount = &units_number * to_big(*per_unit);
-                    Some((cost_curr.clone(), cost_amount))
-                } else {
-                    None
+                        to_big(total) * to_big(units.number.signum()),
+                    )),
+                    Some(rustledger_core::CostNumber::PerUnitFromTotal(b)) => Some((
+                        cost_curr.clone(),
+                        to_big(b.total) * to_big(units.number.signum()),
+                    )),
+                    Some(rustledger_core::CostNumber::PerUnit { value: per_unit }) => {
+                        let cost_amount = &units_number * to_big(per_unit);
+                        Some((cost_curr.clone(), cost_amount))
+                    }
+                    None => None,
                 }
             });
 
@@ -516,7 +523,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -542,7 +551,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_total(dec!(1500.00))
+                        .with_number(rustledger_core::CostNumber::Total {
+                            value: dec!(1500.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -564,7 +575,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(-10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_total(dec!(1500.00))
+                        .with_number(rustledger_core::CostNumber::Total {
+                            value: dec!(1500.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -833,7 +846,9 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
@@ -859,7 +874,9 @@ mod tests {
                 Posting::new("Assets:Stock", Amount::new(dec!(-10), "AAPL"))
                     .with_cost(
                         CostSpec::empty()
-                            .with_number_per(dec!(150.00))
+                            .with_number(rustledger_core::CostNumber::PerUnit {
+                                value: dec!(150.00),
+                            })
                             .with_currency("USD"),
                     )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(175.00), "USD"))),
@@ -888,14 +905,18 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock:US", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(150.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(150.00),
+                        })
                         .with_currency("USD"),
                 ),
             )
             .with_synthesized_posting(
                 Posting::new("Assets:Stock:EU", Amount::new(dec!(5), "SAP")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(100.00))
+                        .with_number(rustledger_core::CostNumber::PerUnit {
+                            value: dec!(100.00),
+                        })
                         .with_currency("EUR"),
                 ),
             )
@@ -947,7 +968,10 @@ mod tests {
                     "Assets:Vanguard:IRA:Trad:VFIFX",
                     Amount::new(dec!(10), "VFIFX"),
                 )
-                .with_cost(CostSpec::empty().with_number_per(dec!(100))),
+                .with_cost(
+                    CostSpec::empty()
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(100) }),
+                ),
             )
             .with_synthesized_posting(Posting::new(
                 "Equity:Opening-Balances",
@@ -973,8 +997,10 @@ mod tests {
         // 10 VFIFX {{1000}} with -1000 USD posting
         let txn = Transaction::new(date(2026, 1, 1), "Test")
             .with_synthesized_posting(
-                Posting::new("Assets:Stock", Amount::new(dec!(10), "VFIFX"))
-                    .with_cost(CostSpec::empty().with_number_total(dec!(1000))),
+                Posting::new("Assets:Stock", Amount::new(dec!(10), "VFIFX")).with_cost(
+                    CostSpec::empty()
+                        .with_number(rustledger_core::CostNumber::Total { value: dec!(1000) }),
+                ),
             )
             .with_synthesized_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD")));
 
@@ -990,7 +1016,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(100))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(100) })
                         .with_currency("EUR"), // Explicit EUR
                 ),
             )
@@ -1012,7 +1038,10 @@ mod tests {
         let txn = Transaction::new(date(2026, 1, 1), "Test")
             .with_synthesized_posting(
                 Posting::new("Assets:Stock", Amount::new(dec!(10), "AAPL"))
-                    .with_cost(CostSpec::empty().with_number_per(dec!(100)))
+                    .with_cost(
+                        CostSpec::empty()
+                            .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(100) }),
+                    )
                     .with_price(PriceAnnotation::unit(Amount::new(dec!(105), "EUR"))),
             )
             .with_synthesized_posting(Posting::new("Assets:Cash", Amount::new(dec!(-1000), "USD")));
@@ -1035,7 +1064,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(0))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(0) })
                         .with_currency("USD"),
                 ),
             )
@@ -1053,7 +1082,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(100), "TOKEN")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(10))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(10) })
                         .with_currency("EUR"),
                 ),
             )
@@ -1072,7 +1101,7 @@ mod tests {
             .with_synthesized_posting(
                 Posting::new("Assets:Crypto", Amount::new(dec!(1000), "SHIB")).with_cost(
                     CostSpec::empty()
-                        .with_number_per(dec!(0))
+                        .with_number(rustledger_core::CostNumber::PerUnit { value: dec!(0) })
                         .with_currency("JPY"),
                 ),
             )

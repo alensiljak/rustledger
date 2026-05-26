@@ -1,8 +1,8 @@
 //! Plugin that generates price entries from transaction costs and prices.
 
 use crate::types::{
-    AmountData, CostData, DirectiveData, DirectiveWrapper, PluginInput, PluginOp, PluginOutput,
-    PriceAnnotationData, PriceAnnotationView, PriceData,
+    AmountData, CostData, DirectiveData, DirectiveWrapper, PluginError, PluginInput, PluginOp,
+    PluginOutput, PriceAnnotationData, PriceAnnotationView, PriceData,
 };
 use rust_decimal::Decimal;
 use rustledger_core::extract_per_unit_price;
@@ -32,23 +32,26 @@ type LotKey = (String, String, Option<String>);
 /// phantom price emit this gate exists to prevent would slip back in.
 /// Caught by Copilot review on PR #1061.
 ///
-/// We canonicalize `number_per` from `number_total` (dividing by
-/// `|units|`) when only the total is set — keeps the key consistent
+/// We canonicalize per-unit from total (dividing by `|units|`) when
+/// only the raw `Total` form is set — keeps the key consistent
 /// regardless of which form the cost was originally written in. After
-/// booking has run the `number_per` field is normally populated
-/// anyway, but we don't assume that.
+/// booking has run, the post-booking `PerUnitFromTotal` variant
+/// carries per-unit already, but we don't assume that.
 fn cost_fingerprint(cost: &CostData, units_number: Decimal) -> Option<String> {
     let currency = cost.currency.as_deref()?;
-    let per_unit_decimal: Decimal = if let Some(per_str) = &cost.number_per {
+    // `per_unit()` covers both PerUnit and PerUnitFromTotal (both
+    // carry per-unit by host construction). Raw Total needs division
+    // here; bare-`{}` returns None.
+    let cn = cost.number.as_ref()?;
+    let per_unit_decimal: Decimal = if let Some(per_str) = cn.per_unit() {
         Decimal::from_str(per_str).ok()?
-    } else if let Some(total_str) = &cost.number_total {
+    } else {
+        let total_str = cn.total()?;
         let total = Decimal::from_str(total_str).ok()?;
         if units_number.is_zero() {
             return None;
         }
         total / units_number.abs()
-    } else {
-        return None;
     };
     let per_unit = per_unit_decimal.normalize().to_string();
     let date = cost.date.as_deref().unwrap_or("");
@@ -96,8 +99,8 @@ fn cost_fingerprint(cost: &CostData, units_number: Decimal) -> Option<String> {
 /// earlier in the pipeline, the gate would over-suppress on
 /// pre-split crossing postings.
 ///
-/// Lots with a cost spec that carries neither `number_per` nor
-/// `number_total` (e.g. bare `{2024-01-01}`) aren't tracked in the
+/// Lots with a cost spec that carries no `number` at all (e.g. bare
+/// `{2024-01-01}` — `CostNumber` is `None`) aren't tracked in the
 /// inventory — `cost_fingerprint` returns `None` and the posting
 /// passes through the cost-emit branch directly. Python's
 /// `Inventory.add_amount` would still track these, but since the
@@ -116,6 +119,7 @@ impl NativePlugin for ImplicitPricesPlugin {
 
     fn process(&self, input: PluginInput) -> PluginOutput {
         let mut generated_prices = Vec::new();
+        let mut errors: Vec<PluginError> = Vec::new();
 
         // Per-account lot quantities, keyed identically to Python's
         // `Inventory.add_amount`. Used solely to detect REDUCED for
@@ -176,23 +180,95 @@ impl NativePlugin for ImplicitPricesPlugin {
                     });
 
                 // Same shape for cost: only build the descriptor when
-                // a currency is present AND at least one of per/total
-                // parses.
-                let cost = posting.cost.as_ref().and_then(|c| {
+                // a currency is present AND the cost number parses.
+                // Translate from wire format (CostNumberData) to core
+                // CostNumber for the shared helper. Conversion failures
+                // (e.g. a plugin upstream emitted inconsistent
+                // `PerUnitFromTotal`) surface as plugin warnings rather
+                // than silent drops — a plugin author whose buggy
+                // emission produces zero implicit prices now gets a
+                // signal (review A-4.5). `units_number` is already
+                // parsed above (line 150); reuse it instead of
+                // re-parsing.
+                let cost_result = posting.cost.as_ref().and_then(|c| {
                     let currency = c.currency.clone()?;
-                    let per = c
-                        .number_per
-                        .as_ref()
-                        .and_then(|n| Decimal::from_str(n).ok());
-                    let total = c
-                        .number_total
-                        .as_ref()
-                        .and_then(|n| Decimal::from_str(n).ok());
-                    if per.is_none() && total.is_none() {
-                        return None;
-                    }
-                    Some((per, total, currency))
+                    let number = match &c.number {
+                        Some(rustledger_plugin_types::CostNumberData::PerUnit { value: n }) => {
+                            match Decimal::from_str(n) {
+                                Ok(d) => Some(rustledger_core::CostNumber::PerUnit { value: d }),
+                                Err(_) => {
+                                    return Some(Err(format!(
+                                        "implicit_prices: posting on account {:?} has cost \
+                                         per_unit {n:?} that doesn't parse as a decimal",
+                                        posting.account
+                                    )));
+                                }
+                            }
+                        }
+                        Some(rustledger_plugin_types::CostNumberData::Total { value: n }) => {
+                            match Decimal::from_str(n) {
+                                Ok(d) => Some(rustledger_core::CostNumber::Total { value: d }),
+                                Err(_) => {
+                                    return Some(Err(format!(
+                                        "implicit_prices: posting on account {:?} has cost \
+                                         total {n:?} that doesn't parse as a decimal",
+                                        posting.account
+                                    )));
+                                }
+                            }
+                        }
+                        Some(rustledger_plugin_types::CostNumberData::PerUnitFromTotal {
+                            per_unit,
+                            total,
+                        }) => {
+                            let per_unit_d = match Decimal::from_str(per_unit) {
+                                Ok(d) => d,
+                                Err(_) => {
+                                    return Some(Err(format!(
+                                        "implicit_prices: posting on account {:?} has \
+                                         PerUnitFromTotal per_unit {per_unit:?} that doesn't \
+                                         parse as a decimal",
+                                        posting.account
+                                    )));
+                                }
+                            };
+                            let total_d = match Decimal::from_str(total) {
+                                Ok(d) => d,
+                                Err(_) => {
+                                    return Some(Err(format!(
+                                        "implicit_prices: posting on account {:?} has \
+                                         PerUnitFromTotal total {total:?} that doesn't parse \
+                                         as a decimal",
+                                        posting.account
+                                    )));
+                                }
+                            };
+                            match rustledger_core::BookedCost::try_new(
+                                per_unit_d,
+                                total_d,
+                                units_number,
+                            ) {
+                                Ok(b) => Some(rustledger_core::CostNumber::PerUnitFromTotal(b)),
+                                Err(e) => {
+                                    return Some(Err(format!(
+                                        "implicit_prices: posting on account {:?}: {e}",
+                                        posting.account
+                                    )));
+                                }
+                            }
+                        }
+                        None => return None,
+                    };
+                    Some(Ok((number, currency)))
                 });
+                let cost = match cost_result {
+                    Some(Ok(c)) => Some(c),
+                    Some(Err(msg)) => {
+                        errors.push(PluginError::warning(msg));
+                        None
+                    }
+                    None => None,
+                };
 
                 // Update the per-account lot tracker BEFORE deciding
                 // whether to emit. The pre-update quantity is what
@@ -218,8 +294,11 @@ impl NativePlugin for ImplicitPricesPlugin {
                 // cost path when the posting is augmenting (or a
                 // first-time CREATED). Calling the helper twice is
                 // cheap and avoids duplicating its priority logic.
-                let from_annotation =
-                    extract_per_unit_price(units_number, annotation, None::<(_, _, String)>);
+                let from_annotation = extract_per_unit_price(
+                    units_number,
+                    annotation,
+                    None::<(Option<rustledger_core::CostNumber>, String)>,
+                );
                 let chosen = match (from_annotation, reduced) {
                     (Some(p), _) => Some(p),
                     (None, false) => extract_per_unit_price(units_number, None, cost),
@@ -275,9 +354,6 @@ impl NativePlugin for ImplicitPricesPlugin {
             ops.push(PluginOp::Insert(w));
         }
 
-        PluginOutput {
-            ops,
-            errors: Vec::new(),
-        }
+        PluginOutput { ops, errors }
     }
 }

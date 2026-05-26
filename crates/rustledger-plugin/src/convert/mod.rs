@@ -25,12 +25,42 @@ pub enum ConversionError {
     /// Invalid date format.
     #[error("invalid date format: {0}")]
     InvalidDate(String),
-    /// Invalid number format.
+    /// Invalid number format. Use for parse failures only — for a pair
+    /// of valid numbers that fail a cross-field invariant, see
+    /// [`Self::BookedCostInvariantViolated`].
     #[error("invalid number format: {0}")]
     InvalidNumber(String),
     /// Invalid flag format.
     #[error("invalid flag: {0}")]
     InvalidFlag(String),
+    /// A `PerUnitFromTotal` cost spec carries a (`per_unit`, `total`)
+    /// pair that doesn't agree with the posting's units. Returned by
+    /// the plugin egress and FFI input bridges when a plugin author
+    /// or JSON client supplies the post-booking shape with
+    /// inconsistent values — e.g. mutates `per_unit` without updating
+    /// `total`. The inner [`rustledger_core::BookedCostInvariantError`]
+    /// carries the supplied values, the derived total, and the
+    /// tolerance for plugin-author diagnostics.
+    #[error("cost spec invariant violated: {0}")]
+    BookedCostInvariantViolated(#[from] rustledger_core::BookedCostInvariantError),
+    /// A plugin emitted a `PerUnitFromTotal` cost spec without
+    /// supplying the posting's units. The post-booking shape is
+    /// undefined without units (`per_unit = total / |units|` requires
+    /// them) — a plugin emitting it untouched should keep the units
+    /// the host gave it; a plugin emitting a fresh post-booking spec
+    /// must include matching units. Distinct from
+    /// [`Self::BookedCostInvariantViolated`] because "missing" is a
+    /// different category from "inconsistent" — plugin authors fix
+    /// each with different actions (forgot vs miscalculated).
+    #[error(
+        "PerUnitFromTotal cost spec requires units on the posting (got per_unit {per_unit}, total {total}, no units)"
+    )]
+    PerUnitFromTotalMissingUnits {
+        /// The per-unit value the plugin supplied.
+        per_unit: rustledger_core::Decimal,
+        /// The total value the plugin supplied.
+        total: rustledger_core::Decimal,
+    },
     /// A `SourceSpan` byte offset from the plugin wire format does not
     /// fit in `usize` on the host. This is effectively impossible in
     /// practice — `SourceSpan` is `u64` and the host is 64-bit on every

@@ -157,16 +157,35 @@ pub fn directive_to_json(directive: &Directive, line: u32, filename: &str) -> Di
                             })
                         });
 
-                        // Extract cost
-                        let cost = p.cost.as_ref().map(|c| PostingCost {
-                            number: c.number_per.as_ref().map(std::string::ToString::to_string),
-                            number_total: c
-                                .number_total
-                                .as_ref()
-                                .map(std::string::ToString::to_string),
-                            currency: c.currency.as_ref().map(std::string::ToString::to_string),
-                            date: c.date.map(|d| d.to_string()),
-                            label: c.label.clone(),
+                        // Extract cost. The wire `CostNumber` is a
+                        // tagged enum that mirrors the host shape — JSON
+                        // consumers branch on `kind` exactly like Rust
+                        // pattern matching, with no risk of constructing
+                        // the both-set invalid state.
+                        let cost = p.cost.as_ref().map(|c| {
+                            use crate::types::output::CostNumber as WireCN;
+                            let number = c.number.map(|n| match n {
+                                rustledger_core::CostNumber::PerUnit { value: d } => {
+                                    WireCN::PerUnit {
+                                        value: d.to_string(),
+                                    }
+                                }
+                                rustledger_core::CostNumber::Total { value: d } => WireCN::Total {
+                                    value: d.to_string(),
+                                },
+                                rustledger_core::CostNumber::PerUnitFromTotal(b) => {
+                                    WireCN::PerUnitFromTotal {
+                                        per_unit: b.per_unit.to_string(),
+                                        total: b.total.to_string(),
+                                    }
+                                }
+                            });
+                            PostingCost {
+                                number,
+                                currency: c.currency.as_ref().map(std::string::ToString::to_string),
+                                date: c.date.map(|d| d.to_string()),
+                                label: c.label.clone(),
+                            }
                         });
 
                         // Extract price from PriceAnnotation

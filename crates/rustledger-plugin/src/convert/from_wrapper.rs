@@ -62,7 +62,16 @@ pub(super) fn data_to_posting(data: &PostingData) -> Result<Posting, ConversionE
         .as_ref()
         .map(data_to_incomplete_amount)
         .transpose()?;
-    let cost = data.cost.as_ref().map(data_to_cost).transpose()?;
+    // Thread the parsed units into the cost bridge so PerUnitFromTotal
+    // can validate the per_unit/total/units consistency invariant. A
+    // plugin that mutates one half without the other gets caught at
+    // the boundary instead of silently corrupting inventory state.
+    let units_number = units.as_ref().and_then(IncompleteAmount::number);
+    let cost = data
+        .cost
+        .as_ref()
+        .map(|c| data_to_cost(c, units_number))
+        .transpose()?;
     let price = data
         .price
         .as_ref()
@@ -143,22 +152,43 @@ pub(super) fn data_to_amount(data: &AmountData) -> Result<Amount, ConversionErro
     Ok(Amount::new(number, &data.currency))
 }
 
-pub(super) fn data_to_cost(data: &CostData) -> Result<CostSpec, ConversionError> {
-    let number_per = data
-        .number_per
-        .as_ref()
-        .map(|s| Decimal::from_str_exact(s))
-        .transpose()
-        .map_err(|_| ConversionError::InvalidNumber(data.number_per.clone().unwrap_or_default()))?;
-
-    let number_total = data
-        .number_total
-        .as_ref()
-        .map(|s| Decimal::from_str_exact(s))
-        .transpose()
-        .map_err(|_| {
-            ConversionError::InvalidNumber(data.number_total.clone().unwrap_or_default())
-        })?;
+pub(super) fn data_to_cost(
+    data: &CostData,
+    units_number: Option<Decimal>,
+) -> Result<CostSpec, ConversionError> {
+    use crate::types::CostNumberData;
+    let parse = |s: &String| {
+        Decimal::from_str_exact(s).map_err(|_| ConversionError::InvalidNumber(s.clone()))
+    };
+    let number = match &data.number {
+        Some(CostNumberData::PerUnit { value: s }) => {
+            Some(rustledger_core::CostNumber::PerUnit { value: parse(s)? })
+        }
+        Some(CostNumberData::Total { value: s }) => {
+            Some(rustledger_core::CostNumber::Total { value: parse(s)? })
+        }
+        Some(CostNumberData::PerUnitFromTotal { per_unit, total }) => {
+            let per_unit_d = parse(per_unit)?;
+            let total_d = parse(total)?;
+            // `PerUnitFromTotal` is the post-booking shape by
+            // definition — a posting with it must already have units
+            // (the booker put them there). A plugin that emits this
+            // variant without units is malformed; reject with a typed
+            // error that distinguishes "missing" from "inconsistent"
+            // so plugin authors get an actionable diagnostic. The
+            // booker does NOT re-validate plugin-supplied
+            // `PerUnitFromTotal` later — pattern matches read
+            // `b.per_unit` / `b.total` without checking consistency
+            // (review B-3.2 / B-4.2).
+            let units = units_number.ok_or(ConversionError::PerUnitFromTotalMissingUnits {
+                per_unit: per_unit_d,
+                total: total_d,
+            })?;
+            let booked = rustledger_core::BookedCost::try_new(per_unit_d, total_d, units)?;
+            Some(rustledger_core::CostNumber::PerUnitFromTotal(booked))
+        }
+        None => None,
+    };
 
     let date = data
         .date
@@ -168,8 +198,7 @@ pub(super) fn data_to_cost(data: &CostData) -> Result<CostSpec, ConversionError>
         .map_err(|_| ConversionError::InvalidDate(data.date.clone().unwrap_or_default()))?;
 
     Ok(CostSpec {
-        number_per,
-        number_total,
+        number,
         currency: data.currency.as_ref().map(|c| c.clone().into()),
         date,
         label: data.label.clone(),

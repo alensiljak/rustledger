@@ -38,11 +38,15 @@ impl NativePlugin for SellGainsPlugin {
                             continue;
                         }
 
-                        // Get cost basis
+                        // Get cost basis — sell_gains operates on
+                        // post-booking transactions where the cost
+                        // carries a per-unit value (PerUnit or
+                        // PerUnitFromTotal, both expose per_unit()).
                         let cost_per = cost
-                            .number_per
+                            .number
                             .as_ref()
-                            .and_then(|s| Decimal::from_str(s).ok())
+                            .and_then(|cn| cn.per_unit())
+                            .map(|s| Decimal::from_str(s).unwrap_or_default())
                             .unwrap_or_default();
 
                         // Get sale price

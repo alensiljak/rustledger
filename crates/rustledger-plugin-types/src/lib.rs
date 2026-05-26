@@ -491,15 +491,90 @@ pub struct AmountData {
     pub currency: String,
 }
 
+/// The numeric component of a [`CostData`].
+///
+/// Mirrors the host's `rustledger_core::CostNumber` on the wire. The
+/// per-unit vs total axes are mutually exclusive by construction —
+/// pre-#1164 they were split into independent `number_per` /
+/// `number_total` Option fields on `CostData`, which allowed the
+/// invalid both-set state on the wire and forced every plugin to write
+/// "what if both?" defensive branches. Numbers are stringly-typed for
+/// arbitrary precision across the WASM boundary.
+///
+/// `PerUnitFromTotal` is the post-booking shape that plugins see after
+/// the booker has derived a per-unit value from a `{{ total }}` spec.
+/// It carries BOTH the derived per-unit AND the original total so
+/// plugins that care about precision (e.g. `currency_accounts`, which
+/// matches Python's `beancount.core.convert.get_cost`) can use the
+/// original total rather than redividing.
+///
+/// Serializes as `{"kind": "per_unit", "value": "100"}` /
+/// `{"kind": "total", "value": "1500"}` / `{"kind":
+/// "per_unit_from_total", "per_unit": "150", "total": "300"}` — the
+/// `kind`-tagged shape is shared with FFI-WASI, WASM, and Python so
+/// every client language sees one wire contract.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CostNumberData {
+    /// Per-unit cost: `{150.00 USD}`.
+    PerUnit {
+        /// Per-unit value.
+        value: String,
+    },
+    /// Total cost for the posting's units: `{{ 1500.00 USD }}`.
+    Total {
+        /// Total value.
+        value: String,
+    },
+    /// Post-booking derived per-unit with the original total preserved.
+    /// `per_unit == total / |units|` by host construction; preferring
+    /// `total` for cost-basis-style reads avoids the
+    /// division-then-multiplication precision loss that hits the
+    /// `rust_decimal` 28-digit ceiling on long ledgers.
+    PerUnitFromTotal {
+        /// Derived per-unit value.
+        per_unit: String,
+        /// Original `{{ total }}` as written.
+        total: String,
+    },
+}
+
+impl CostNumberData {
+    /// Per-unit value if the variant carries one ([`Self::PerUnit`] or
+    /// [`Self::PerUnitFromTotal`]); `None` for raw [`Self::Total`].
+    #[must_use]
+    pub fn per_unit(&self) -> Option<&str> {
+        match self {
+            Self::PerUnit { value }
+            | Self::PerUnitFromTotal {
+                per_unit: value, ..
+            } => Some(value),
+            Self::Total { .. } => None,
+        }
+    }
+
+    /// Total value if the variant carries one ([`Self::Total`] or
+    /// [`Self::PerUnitFromTotal`]); `None` for raw [`Self::PerUnit`].
+    #[must_use]
+    pub fn total(&self) -> Option<&str> {
+        match self {
+            Self::Total { value } | Self::PerUnitFromTotal { total: value, .. } => Some(value),
+            Self::PerUnit { .. } => None,
+        }
+    }
+}
+
 /// Cost data for serialization.
 ///
 /// Represents cost specifications like `{100 USD}` or `{100 USD, 2024-01-01, "lot1"}`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CostData {
-    /// Per-unit cost number.
-    pub number_per: Option<String>,
-    /// Total cost number.
-    pub number_total: Option<String>,
+    /// The numeric component: per-unit, total, or absent (e.g. `{}`).
+    ///
+    /// Pre-#1164 this was a pair of `Option<String>` fields
+    /// (`number_per` and `number_total`); see [`CostNumberData`] for
+    /// the rationale behind the consolidation.
+    pub number: Option<CostNumberData>,
     /// Cost currency.
     pub currency: Option<String>,
     /// Acquisition date.

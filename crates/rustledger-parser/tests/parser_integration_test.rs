@@ -323,7 +323,10 @@ fn test_parse_transaction_with_cost() {
         let posting = &txn.postings[0];
         assert!(posting.cost.is_some());
         let cost = posting.cost.as_ref().unwrap();
-        assert_eq!(cost.number_per.unwrap().to_string(), "185.50");
+        assert_eq!(
+            cost.number.unwrap().per_unit().unwrap().to_string(),
+            "185.50"
+        );
         assert_eq!(cost.currency.as_deref(), Some("USD"));
     } else {
         panic!("expected transaction");
@@ -973,6 +976,55 @@ fn test_reject_incomplete_final_directive_at_eof() {
             .iter()
             .map(ParseError::message)
             .collect::<Vec<_>>()
+    );
+}
+
+/// Regression: `{ N # T USD }` source carries both a per-unit and a
+/// total. The booker derives per-unit as `T / |units|`, so the
+/// user-written `N` is informationally redundant — Python beancount
+/// treats this form as semantically equivalent to `{{ T USD }}` and
+/// we follow suit. Pin the precedence so a future refactor can't
+/// silently flip it (e.g. by keeping `N` instead and dropping `T`,
+/// which would invert the post-booking value of every cost-basis
+/// read of this spec form).
+#[test]
+fn test_cost_spec_n_hash_t_uses_total() {
+    use rust_decimal_macros::dec;
+    use rustledger_core::CostNumber;
+
+    let source = "
+2024-01-01 open Assets:Stock
+2024-01-01 open Assets:Cash USD
+
+2024-01-15 *
+  Assets:Stock  10 STK {50 # 1500 USD}
+  Assets:Cash  -1500.00 USD
+";
+    let result = parse_ok(source);
+    let txn = result
+        .directives
+        .iter()
+        .find_map(|d| match &d.value {
+            Directive::Transaction(t) => Some(t),
+            _ => None,
+        })
+        .expect("transaction present");
+    let cost = txn.postings[0]
+        .value
+        .cost
+        .as_ref()
+        .expect("cost spec present");
+    assert_eq!(
+        cost.number,
+        Some(CostNumber::Total { value: dec!(1500) }),
+        "the `#` form must store the post-`#` total, not the pre-`#` per-unit"
+    );
+    assert_eq!(
+        cost.currency
+            .as_ref()
+            .map(rustledger_core::Currency::as_str),
+        Some("USD"),
+        "currency must still be captured after the `# T` clause"
     );
 }
 
