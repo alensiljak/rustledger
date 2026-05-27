@@ -32,10 +32,19 @@
 pub mod cache;
 mod dedup;
 mod options;
+mod phase;
 #[cfg(any(feature = "booking", feature = "plugins", feature = "validation"))]
 mod process;
 mod source_map;
 mod vfs;
+
+pub use phase::{
+    Booked, Directives, EarlyValidated, Finalized, LateValidated, Phase, Raw,
+    RegularPluginsApplied, Sorted, Synthed,
+};
+// Note: `FailedBookings` is NOT re-exported. It's internal to the
+// pipeline (flowing from `book` to `finalize`) and accessed via the
+// `crate::phase::FailedBookings` path within the crate.
 
 #[cfg(feature = "cache")]
 pub use cache::{
