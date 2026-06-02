@@ -3,9 +3,25 @@
 //! This module provides a fast tokenizer for Beancount syntax using the Logos crate,
 //! which generates a DFA-based lexer with SIMD optimizations where available.
 
-use logos::Logos;
+use logos::{Filter, Lexer, Logos};
 use std::fmt;
 use std::ops::Range;
+
+/// Callback for the UTF-8 BOM (`\u{FEFF}`) token.
+///
+/// A leading BOM (Windows/Excel exports) is consumed as whitespace —
+/// the parser never sees it, and `format_source` re-prepends it on
+/// output to preserve byte fidelity. A BOM anywhere else is emitted as
+/// a real token; the parser then surfaces it as an `Invalid token`
+/// error so concatenated-file mistakes (`cat windows-a.bean
+/// windows-b.bean`) and embedded-BOM payloads don't pass silently.
+fn bom_filter<'src>(lex: &Lexer<'src, Token<'src>>) -> Filter<()> {
+    if lex.span().start == 0 {
+        Filter::Skip
+    } else {
+        Filter::Emit(())
+    }
+}
 
 /// A span in the source code (byte offsets).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,8 +49,22 @@ impl From<Span> for Range<usize> {
 
 /// Token types produced by the Logos lexer.
 #[derive(Logos, Debug, Clone, PartialEq, Eq)]
-#[logos(skip r"[ \t]+")] // Skip horizontal whitespace (spaces and tabs)
+// Skip horizontal whitespace (spaces and tabs).
+#[logos(skip r"[ \t]+")]
 pub enum Token<'src> {
+    /// UTF-8 byte-order mark (`EF BB BF` / `\u{FEFF}`).
+    ///
+    /// A `bom_filter` callback (in this module) skips this token when
+    /// it appears at byte 0 (a leading BOM from a Windows/Excel
+    /// export) — the parser never sees it and downstream
+    /// `format_source` re-prepends it on output to preserve byte
+    /// fidelity. A BOM at any other byte position is emitted as a real
+    /// token; the parser's error classifier turns it into an `Invalid
+    /// token: UTF-8 BOM` error so concatenated-file mistakes don't
+    /// pass silently.
+    #[regex(r"\u{FEFF}", bom_filter)]
+    Bom,
+
     // ===== Literals =====
     /// A date in YYYY-MM-DD, YYYY-M-D, YYYY/MM/DD, or YYYY/M/D format.
     /// Single-digit month and day are accepted (e.g., 2024-1-5).
@@ -379,6 +409,12 @@ impl fmt::Display for Token<'_> {
             Self::Indent(n) => write!(f, "<indent:{n}>"),
             Self::DeepIndent(n) => write!(f, "<deep-indent:{n}>"),
             Self::Error(s) => write!(f, "{s}"),
+            // Use a visible placeholder rather than the literal U+FEFF byte
+            // sequence so any error or diagnostic that interpolates this
+            // token via Display stays human-readable (LSP problem panels,
+            // CLI stderr, GitHub-rendered bug reports all silently drop or
+            // strip a literal BOM otherwise).
+            Self::Bom => write!(f, "<BOM>"),
         }
     }
 }
@@ -403,6 +439,16 @@ pub fn tokenize(source: &str) -> Vec<(Token<'_>, Span)> {
                 tokens.push((Token::Newline, span.clone().into()));
                 at_line_start = true;
                 last_newline_end = span.end;
+            }
+            // A mid-file BOM is invisible to layout: don't reset
+            // at_line_start, don't move last_newline_end. The parser's
+            // error classifier separately picks up the Token::Bom span
+            // and surfaces a dedicated "UTF-8 BOM mid-file" diagnostic.
+            // Treating BOM as a layout-affecting token would swallow the
+            // indent of legitimate content on the same line (e.g., the
+            // metadata-indent of a concatenated second file).
+            Ok(Token::Bom) => {
+                tokens.push((Token::Bom, span.into()));
             }
             Ok(Token::Hash) if at_line_start && span.start == last_newline_end => {
                 // Hash at very start of line (no indentation) is a comment

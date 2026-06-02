@@ -18,12 +18,12 @@ use rustledger_parser::ParseResult;
 ///
 /// When the LSP server gains real config plumbing (server-wide
 /// settings via initializationOptions, or per-document settings via
-/// `workspace/configuration`), update this one function: derive
-/// `amount_column` / `indent` from the client `tab_size`,
-/// `insert_spaces`, and any `properties.amount_column` extension; for
-/// the executeCommand path (`opts == None`), fall back to the
-/// server-wide configured value rather than `FormatConfig::default()`.
-/// Both call sites then benefit automatically.
+/// `workspace/configuration`), update this one function: derive the
+/// [`rustledger_core::Alignment`] / `indent` from the client `tab_size`,
+/// `insert_spaces`, and any alignment-column extension; for the
+/// executeCommand path (`opts == None`), fall back to the server-wide
+/// configured value rather than `FormatConfig::default()`. Both call
+/// sites then benefit automatically.
 #[must_use]
 pub fn document_format_config(_opts: Option<&FormattingOptions>) -> FormatConfig {
     // Intentionally ignores the supplied options for now: the LSP
@@ -173,6 +173,81 @@ pub fn char_offset_to_byte(line: &str, utf16_offset: usize) -> usize {
         utf16_count += ch.len_utf16();
     }
     line.len()
+}
+
+/// Convert a byte offset in `source` to an LSP [`Position`]
+/// (`character` is UTF-16 code units per LSP 3.17 default encoding).
+///
+/// Convenience wrapper that builds a [`ropey::Rope`] for the conversion;
+/// callers doing multiple conversions on the same string should use
+/// [`rope_byte_to_lsp_position`] instead and share the rope.
+#[must_use]
+pub fn byte_to_lsp_position(source: &str, byte: usize) -> Position {
+    let rope = ropey::Rope::from_str(source);
+    rope_byte_to_lsp_position(&rope, byte)
+}
+
+/// Convert a byte offset to an LSP [`Position`] using a pre-built
+/// [`ropey::Rope`]. The hot-path variant for handlers that do many
+/// conversions per request (formatting, range formatting).
+#[must_use]
+pub fn rope_byte_to_lsp_position(rope: &ropey::Rope, byte: usize) -> Position {
+    let byte = byte.min(rope.len_bytes());
+    let line = rope.byte_to_line(byte);
+    let line_start_byte = rope.line_to_byte(line);
+    let char_at = rope.byte_to_char(byte);
+    let line_start_char = rope.byte_to_char(line_start_byte);
+    let character = rope.char_to_utf16_cu(char_at) - rope.char_to_utf16_cu(line_start_char);
+    Position::new(line as u32, character as u32)
+}
+
+/// Convert an LSP [`Position`] (line, UTF-16 character) to a byte offset
+/// in `source`. Inverse of [`byte_to_lsp_position`].
+///
+/// Convenience wrapper that builds a [`ropey::Rope`]. Callers doing
+/// multiple conversions should use [`rope_lsp_position_to_byte`].
+#[must_use]
+pub fn lsp_position_to_byte(source: &str, pos: Position) -> usize {
+    let rope = ropey::Rope::from_str(source);
+    rope_lsp_position_to_byte(&rope, pos)
+}
+
+/// Convert an LSP [`Position`] to a byte offset using a pre-built
+/// [`ropey::Rope`].
+///
+/// Per the LSP spec a position past the last line (line == line_count,
+/// character == 0) is the end-of-document position; this function
+/// returns `rope.len_bytes()` in that case. Within-document positions
+/// clamp the character field to the end of the addressed line so we
+/// never cross a `\n`.
+#[must_use]
+pub fn rope_lsp_position_to_byte(rope: &ropey::Rope, pos: Position) -> usize {
+    let line_count = rope.len_lines();
+    if line_count == 0 {
+        return 0;
+    }
+    let pos_line = pos.line as usize;
+    // EOF position: line == line_count, character == 0 means
+    // "end of document" per LSP spec; clamp to len_bytes.
+    if pos_line >= line_count {
+        return rope.len_bytes();
+    }
+    let line_start_byte = rope.line_to_byte(pos_line);
+    let line_start_char = rope.byte_to_char(line_start_byte);
+    let line_start_utf16 = rope.char_to_utf16_cu(line_start_char);
+
+    let line_end_byte = if pos_line + 1 < line_count {
+        rope.line_to_byte(pos_line + 1).saturating_sub(1)
+    } else {
+        rope.len_bytes()
+    };
+    let line_end_char = rope.byte_to_char(line_end_byte);
+    let line_end_utf16 = rope.char_to_utf16_cu(line_end_char);
+
+    let target_utf16 = line_start_utf16 + pos.character as usize;
+    let clamped_utf16 = target_utf16.min(line_end_utf16);
+    let char_idx = rope.utf16_cu_to_char(clamped_utf16);
+    rope.char_to_byte(char_idx)
 }
 
 /// Get the word at a given column position in a line.

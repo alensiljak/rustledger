@@ -1919,13 +1919,23 @@ pub fn parse(source: &str) -> ParseResult {
             if let Some(err) = stream.deferred_error.take() {
                 errors.push(err);
             } else {
-                // Produce specific error messages for known patterns
+                // Produce specific error messages for known patterns.
+                // A leading BOM is consumed by the lexer's
+                // `bom_filter` callback at byte 0 (and is preserved on
+                // output by `format_source`). A BOM at ANY other byte
+                // position — at the start of an entry from a
+                // concatenation accident, or mid-line from an embedded
+                // BOM byte — falls through to this error branch. We
+                // scan the entire failed-entry slice for U+FEFF
+                // (`contains`, not `starts_with`) so we catch both
+                // shapes; the previous `starts_with` only fired when
+                // the BOM was at byte 0 of the recovered span.
                 let error_text = &source[span.start..span.end.min(source.len())];
-                let kind = if error_text.starts_with('\u{FEFF}') {
-                    // UTF-8 BOM (byte order mark)
-                    ParseErrorKind::SyntaxError("Invalid token: UTF-8 BOM detected; remove the BOM from the beginning of the file".to_string())
+                let kind = if error_text.contains('\u{FEFF}') {
+                    ParseErrorKind::SyntaxError(
+                        "Invalid token: UTF-8 BOM detected in directive body (only a leading BOM is permitted); did you concatenate two BOM-prefixed files or paste content with an embedded BOM?".to_string()
+                    )
                 } else if let Some(account) = find_unicode_account(error_text) {
-                    // Non-ASCII characters in what looks like an account name
                     ParseErrorKind::InvalidAccount(account.to_string())
                 } else {
                     ParseErrorKind::SyntaxError("unexpected input".to_string())
@@ -2262,7 +2272,7 @@ mod tests {
     // a parse -> format -> re-parse roundtrip.
     #[test]
     fn test_issue_364_comment_preservation_roundtrip() {
-        use rustledger_core::format::{FormatConfig, format_directive};
+        use rustledger_core::format::{FormatConfig, format_directives};
 
         let source = r#"2024-01-15 * "Groceries"
   ; Pre-comment 1 for first posting
@@ -2318,7 +2328,7 @@ mod tests {
 
         // Format back to string
         let config = FormatConfig::default();
-        let formatted = format_directive(&result1.directives[0].value, &config);
+        let formatted = format_directives([&result1.directives[0].value], &config);
 
         // Re-parse the formatted output
         let result2 = parse(&formatted);
@@ -2384,19 +2394,61 @@ mod tests {
         }
     }
 
+    /// A leading UTF-8 BOM (`\u{FEFF}` / EF BB BF) is now skipped
+    /// transparently by the lexer — editors on Windows and various
+    /// spreadsheet exports prepend one. The previous behavior (a parse
+    /// error on the first byte) made every BOM'd file unreadable by
+    /// every CLI / FFI / LSP / doctor consumer. Now the parser
+    /// completes cleanly and downstream tools format the file the same
+    /// way they would without the BOM.
     #[test]
-    fn test_bom_produces_invalid_token_error() {
+    fn test_bom_is_skipped_transparently() {
         let source = "\u{FEFF}2024-01-01 open Assets:Bank USD\n";
         let result = parse(source);
         assert!(
+            result.errors.is_empty(),
+            "BOM should be skipped, got errors: {:?}",
+            result.errors
+        );
+        assert_eq!(result.directives.len(), 1, "expected 1 directive");
+    }
+
+    /// A BOM at a non-zero byte offset (e.g., concatenated files like
+    /// `cat windows-a.bean windows-b.bean > merged.bean`) is NOT
+    /// silently consumed — the parser surfaces a clear "UTF-8 BOM
+    /// detected mid-file" diagnostic so the user can fix the
+    /// concatenation mistake.
+    #[test]
+    fn test_mid_file_bom_produces_error() {
+        let source = "2024-01-01 open Assets:Bank USD\n\u{FEFF}2024-01-02 open Assets:Cash USD\n";
+        let result = parse(source);
+        assert!(
             !result.errors.is_empty(),
-            "BOM should produce a parse error"
+            "mid-file BOM should produce a parse error"
         );
         let msg = result.errors[0].message();
         assert!(
-            msg.contains("Invalid token"),
-            "BOM error should contain 'Invalid token', got: {msg}"
+            msg.contains("BOM") && msg.contains("directive body"),
+            "expected BOM-in-directive error, got: {msg}"
         );
+    }
+
+    /// A BOM embedded mid-line (not at the start of a fresh directive)
+    /// also surfaces as the dedicated BOM diagnostic. The previous
+    /// `starts_with` classifier missed this case because the error
+    /// span covers the WHOLE failed directive — which starts with the
+    /// date, not the BOM.
+    #[test]
+    fn test_mid_line_bom_produces_error() {
+        // BOM after the account name, before the currency.
+        let source = "2024-01-01 open Assets:Bank \u{FEFF}USD\n";
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "mid-line BOM should produce a parse error"
+        );
+        let msg = result.errors[0].message();
+        assert!(msg.contains("BOM"), "expected BOM diagnostic, got: {msg}");
     }
 
     #[test]
