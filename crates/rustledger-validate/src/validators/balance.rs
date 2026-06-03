@@ -1,7 +1,7 @@
 //! Balance and pad validation.
 
 use rust_decimal::{Decimal, MathematicalOps};
-use rustledger_core::{Amount, Balance, Pad, Position};
+use rustledger_core::{Amount, Balance, Pad, Position, is_subaccount_or_equal};
 
 use crate::error::{ErrorCode, ValidationError};
 use crate::{LedgerState, PendingPad};
@@ -13,11 +13,48 @@ use rustledger_core::Inventory;
 /// Balance assertions use 2x the `tolerance_multiplier` option.
 const BALANCE_TOLERANCE_MULTIPLIER: Decimal = Decimal::TWO;
 
+/// Compute the tolerance to apply when comparing a balance assertion's
+/// expected amount against the booked actual.
+///
+/// - `expected`: the asserted amount from the balance directive.
+/// - `explicit`: the `~ tolerance` from the directive, if any (always
+///   wins).
+/// - `tolerance_multiplier`: the active `inferred_tolerance_multiplier`
+///   option (default 0.5; overridable via `option
+///   "inferred_tolerance_multiplier" "..."`).
+///
+/// Mirrors the inline logic in `validate_balance_late` (private) so
+/// out-of-pipeline consumers (currently the LSP code-lens path)
+/// produce the same verdict as the validator without re-deriving the
+/// rule from the Beancount spec.
+///
+/// Matches Python beancount:
+/// <https://github.com/beancount/beancount/blob/master/beancount/ops/balance.py>
+#[must_use]
+pub fn balance_tolerance(
+    expected: Decimal,
+    explicit: Option<Decimal>,
+    tolerance_multiplier: Decimal,
+) -> Decimal {
+    if let Some(t) = explicit {
+        return t;
+    }
+    let scale = expected.scale();
+    if scale > 0 {
+        let quantum = DECIMAL_TEN.powi(-i64::from(scale));
+        tolerance_multiplier * BALANCE_TOLERANCE_MULTIPLIER * quantum
+    } else {
+        Decimal::ZERO
+    }
+}
+
 /// Sum the units of a given currency across an account and all its sub-accounts.
 ///
 /// In beancount, `balance Assets:Bank` includes `Assets:Bank:Checking`,
-/// `Assets:Bank:Savings`, etc. This function checks for exact match or
-/// sub-account prefix (account followed by `:`) without allocating.
+/// `Assets:Bank:Savings`, etc. Account membership is delegated to
+/// [`is_subaccount_or_equal`] so the segment-boundary rule
+/// (`Assets:BankAlias` does NOT match `Assets:Bank`) lives in one
+/// definition shared with the LSP code-lens path.
 fn sum_account_and_subaccounts(
     inventories: &FxHashMap<rustledger_core::Account, Inventory>,
     account: &rustledger_core::Account,
@@ -26,10 +63,7 @@ fn sum_account_and_subaccounts(
     let account_str = account.as_str();
     let mut total = Decimal::ZERO;
     for (inv_account, inv) in inventories {
-        if inv_account == account
-            || (inv_account.starts_with(account_str)
-                && inv_account.as_bytes().get(account_str.len()) == Some(&b':'))
-        {
+        if is_subaccount_or_equal(inv_account.as_str(), account_str) {
             total += inv.units(currency);
         }
     }
@@ -221,28 +255,10 @@ pub fn validate_balance_late(
     let expected = bal.amount.number;
     let difference = (actual - expected).abs();
 
-    // Determine tolerance. Use explicit tolerance if specified, otherwise derive
-    // from the balance assertion amount's decimal precision (Python beancount behavior).
-    // See: https://github.com/beancount/beancount/blob/master/beancount/ops/balance.py
-    let (tolerance, is_explicit) = if let Some(t) = bal.tolerance {
-        (t, true)
-    } else {
-        // Python beancount derives tolerance from the balance amount's decimal places:
-        //   expo = balance_entry.amount.number.as_tuple().exponent
-        //   tolerance = tolerance_multiplier * 2 * 10^expo
-        // In rust_decimal, scale() gives number of decimal places (positive), so we negate it.
-        let scale = expected.scale();
-        if scale > 0 {
-            let quantum = DECIMAL_TEN.powi(-i64::from(scale));
-            (
-                state.options.tolerance_multiplier * BALANCE_TOLERANCE_MULTIPLIER * quantum,
-                false,
-            )
-        } else {
-            // Integer amount: exact match required
-            (Decimal::ZERO, false)
-        }
-    };
+    // Determine tolerance via the shared helper so out-of-pipeline
+    // consumers (LSP code lens) and the validator stay in lockstep.
+    let is_explicit = bal.tolerance.is_some();
+    let tolerance = balance_tolerance(expected, bal.tolerance, state.options.tolerance_multiplier);
 
     if difference > tolerance {
         // Use E2002 for explicit tolerance, E2001 for inferred
@@ -273,6 +289,96 @@ pub fn validate_balance_late(
         errors.push(
             ValidationError::new(error_code, message, bal.date)
                 .with_context(format!("difference: {difference}, tolerance: {tolerance}")),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tolerance_tests {
+    use super::*;
+    use rust_decimal_macros::dec;
+
+    /// Default `tolerance_multiplier` from `ValidationOptions::default()`
+    /// (also the loader's default via `Options::new()`).
+    fn default_mul() -> Decimal {
+        dec!(0.5)
+    }
+
+    #[test]
+    fn explicit_tolerance_always_wins() {
+        // Even an absurdly-small / absurdly-large explicit tolerance
+        // overrides the scale-derived default. This is the
+        // contract `~ tolerance` on a Balance directive provides.
+        assert_eq!(
+            balance_tolerance(dec!(100.00), Some(dec!(0.001)), default_mul()),
+            dec!(0.001)
+        );
+        assert_eq!(
+            balance_tolerance(dec!(100.00), Some(dec!(50)), default_mul()),
+            dec!(50)
+        );
+    }
+
+    #[test]
+    fn integer_amount_requires_exact_match() {
+        // scale == 0 means the asserted amount has no decimal places.
+        // Python beancount requires an exact match in that case; the
+        // helper returns ZERO to make `difference > 0` strict.
+        assert_eq!(
+            balance_tolerance(dec!(100), None, default_mul()),
+            Decimal::ZERO
+        );
+    }
+
+    #[test]
+    fn two_decimal_amount_uses_default_quantum() {
+        // For `100.00 USD` with the default multiplier 0.5:
+        //   tolerance = 0.5 * 2 * 0.01 = 0.01
+        // This is the Beancount-spec rule the LSP and the validator
+        // both depend on; if this changes, every balance assertion
+        // shifts pass/fail.
+        assert_eq!(
+            balance_tolerance(dec!(100.00), None, default_mul()),
+            dec!(0.01)
+        );
+    }
+
+    #[test]
+    fn higher_precision_scales_down() {
+        // 4 decimal places: tolerance = 0.5 * 2 * 0.0001 = 0.0001
+        assert_eq!(
+            balance_tolerance(dec!(100.0000), None, default_mul()),
+            dec!(0.0001)
+        );
+    }
+
+    #[test]
+    fn multiplier_one_doubles_default() {
+        // File overrides `option "inferred_tolerance_multiplier" "1.0"`:
+        //   tolerance = 1.0 * 2 * 0.01 = 0.02
+        assert_eq!(balance_tolerance(dec!(100.00), None, dec!(1.0)), dec!(0.02));
+    }
+
+    #[test]
+    fn multiplier_zero_forces_strict_match() {
+        // `option "inferred_tolerance_multiplier" "0.0"` is the
+        // canonical way to force strict equality on a decimal
+        // amount. The helper must yield zero so the validator emits
+        // a diagnostic on any rounding drift.
+        assert_eq!(
+            balance_tolerance(dec!(100.00), None, dec!(0.0)),
+            Decimal::ZERO
+        );
+    }
+
+    #[test]
+    fn negative_amount_uses_same_scale_logic() {
+        // Tolerance is sign-independent (the validator applies it
+        // against `(actual - expected).abs()`), but the helper does
+        // not flip sign on negative expected — scale() is unsigned.
+        assert_eq!(
+            balance_tolerance(dec!(-100.00), None, default_mul()),
+            dec!(0.01)
         );
     }
 }

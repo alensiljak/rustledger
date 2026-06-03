@@ -39,7 +39,6 @@ use crate::handlers::type_hierarchy::{
 };
 use crate::handlers::workspace_symbols::handle_workspace_symbols;
 use crate::ledger_state::{SharedLedgerState, new_shared_ledger_state};
-use crate::snapshot::bump_revision;
 use crate::uri_to_path;
 use crate::vfs::Vfs;
 use crossbeam_channel::{Receiver, Sender};
@@ -189,6 +188,28 @@ pub struct MainLoopState {
     pub task_receiver: Receiver<TaskResult>,
     /// Channel for submitting jobs to the background worker thread.
     pub job_sender: Sender<BackgroundJob>,
+    /// Per-instance revision counter for stale-result detection in
+    /// `dispatch_async`. Pre-PR #1261 this was a process-wide static
+    /// in `snapshot.rs`, which broke when multiple `MainLoopState`s
+    /// shared a process: the integration test harness spawns many
+    /// in-process LSP servers in parallel, and a `didChange` in test
+    /// A would bump the revision such that test B's pending async
+    /// result was silently discarded as stale even though B's world
+    /// hadn't changed. Tests would then time out waiting for the
+    /// dropped response. An `Arc<AtomicU64>` keeps clone-and-share
+    /// cheap so worker closures can capture without borrowing
+    /// `MainLoopState`.
+    revision: Arc<std::sync::atomic::AtomicU64>,
+    /// Action invoked when the `exit` notification arrives. Production
+    /// wires this to [`std::process::exit`]; tests pass a no-op so the
+    /// notification breaks the loop cleanly without terminating the
+    /// cargo-test process. `FnOnce` because `exit` is the terminal
+    /// notification of an LSP session.
+    ///
+    /// Defaults to `process::exit` so existing constructions continue
+    /// to behave identically; override via [`Self::with_exit_action`]
+    /// or [`run_main_loop_with_exit_action`].
+    exit_action: Option<Box<dyn FnOnce(i32) + Send>>,
 }
 
 /// Default empty parse result for missing documents.
@@ -240,7 +261,31 @@ impl MainLoopState {
             task_sender,
             task_receiver,
             job_sender,
+            revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            exit_action: Some(Box::new(|code| std::process::exit(code))),
         }
+    }
+
+    /// Bump the per-instance revision counter. Called whenever the
+    /// world state changes (didChange, didClose) so in-flight async
+    /// handlers can detect they should drop their results.
+    fn bump_revision(&self) -> u64 {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1
+    }
+
+    /// Replace the exit action. Returns `self` for chaining. The
+    /// default action is [`std::process::exit`]; tests pass a no-op
+    /// (or a flag-set closure) to avoid terminating the test process
+    /// when the `exit` notification arrives.
+    #[must_use]
+    pub fn with_exit_action<F>(mut self, action: F) -> Self
+    where
+        F: FnOnce(i32) + Send + 'static,
+    {
+        self.exit_action = Some(Box::new(action));
+        self
     }
 
     /// Reload the journal file (e.g., after a file change).
@@ -296,15 +341,60 @@ impl MainLoopState {
         request_id: lsp_server::RequestId,
         handler: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
     ) {
+        self.dispatch_async_inner(request_id, handler, true);
+    }
+
+    /// Same as [`Self::dispatch_async`] but skips the stale-result
+    /// check. Use for handlers whose output does not depend on any
+    /// world state (so "stale" and "fresh" produce the same answer).
+    ///
+    /// The staleness check exists to drop results computed against
+    /// outdated parse / ledger snapshots; for a stateless handler
+    /// (today: [`handle_code_lens_resolve`]'s defensive fallback,
+    /// which does nothing more than fill `command` on a `None` lens)
+    /// the check is pure overhead AND, critically, a correctness
+    /// hazard when multiple `MainLoopState`s share a process — the
+    /// revision counter is a process-wide `AtomicU64`, so parallel
+    /// instances (e.g., the integration test harness) clobber each
+    /// other's dispatch revisions and lose stateless results that
+    /// have nothing to do with the world state.
+    fn dispatch_async_unconditional(
+        &self,
+        request_id: lsp_server::RequestId,
+        handler: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
+    ) {
+        self.dispatch_async_inner(request_id, handler, false);
+    }
+
+    fn dispatch_async_inner(
+        &self,
+        request_id: lsp_server::RequestId,
+        handler: impl FnOnce() -> Result<serde_json::Value, String> + Send + 'static,
+        check_staleness: bool,
+    ) {
         let task_sender = self.task_sender.clone();
-        let dispatch_revision = crate::snapshot::current_revision();
+        // Capture the per-instance revision counter via Arc clone so
+        // the worker can compare without borrowing `MainLoopState`.
+        // Using the per-instance counter (not the global one in
+        // `snapshot.rs`) is required for correctness when multiple
+        // MainLoopStates share a process — see the `revision` field
+        // rustdoc.
+        let revision_arc = self.revision.clone();
+        let dispatch_revision = if check_staleness {
+            Some(revision_arc.load(std::sync::atomic::Ordering::SeqCst))
+        } else {
+            None
+        };
 
         let _ = self.job_sender.send(Box::new(move || {
             let result = handler();
 
             // Drop stale results — if the world changed since dispatch,
             // the client will have sent a new request for fresh data.
-            if crate::snapshot::current_revision() != dispatch_revision {
+            // Skipped for unconditional dispatch (stateless handlers).
+            if let Some(rev) = dispatch_revision
+                && revision_arc.load(std::sync::atomic::Ordering::SeqCst) != rev
+            {
                 tracing::debug!(
                     "Dropping stale result for request {:?} (revision changed)",
                     request_id
@@ -328,39 +418,31 @@ impl MainLoopState {
     /// are called from both sync and async paths.
     fn try_dispatch_async(&self, req: &lsp_server::Request) -> bool {
         match req.method.as_str() {
-            // codeLens/resolve runs full balance calculations — the most
-            // expensive operation in the LSP.
+            // codeLens/resolve is now a no-op for every lens kind
+            // emitted by `handle_code_lens` (since #1253, balance
+            // lenses ship fully-resolved on the initial response).
+            // The defensive fallback only fills in `command` when a
+            // lens arrives with `command: None`, which no current
+            // path produces. We keep the async dispatch wiring so a
+            // future resolve-using lens kind that needs heavy work
+            // can re-enable it cheaply, but we no longer snapshot
+            // `parse_result` or clone the full ledger directives:
+            // the fallback needs neither. Pre-#1253 those snapshots
+            // each cost an O(N) deep clone on every resolve request.
             CodeLensResolve::METHOD => {
                 let id = req.id.clone();
                 let lens: CodeLens = match serde_json::from_value(req.params.clone()) {
                     Ok(l) => l,
                     Err(e) => {
-                        self.dispatch_async(id, move || Err(e.to_string()));
+                        // Use unconditional dispatch (stateless
+                        // handler — see dispatch_async_unconditional).
+                        self.dispatch_async_unconditional(id, move || Err(e.to_string()));
                         return true;
                     }
                 };
 
-                // Snapshot data eagerly on the main thread
-                let uri: Option<Uri> = lens
-                    .data
-                    .as_ref()
-                    .and_then(|d| d.get("uri"))
-                    .and_then(|u| u.as_str())
-                    .and_then(|s| s.parse().ok());
-                let (_text, parse_result) = if let Some(ref uri) = uri {
-                    self.get_document_data(uri)
-                } else {
-                    (String::new(), empty_parse_result())
-                };
-                let ledger_directives = {
-                    let guard = self.ledger_state.read();
-                    guard.directives().map(|d| d.to_vec())
-                };
-
-                // Dispatch the expensive balance calculation to the worker
-                self.dispatch_async(id, move || {
-                    let resolved =
-                        handle_code_lens_resolve(lens, &parse_result, ledger_directives.as_deref());
+                self.dispatch_async_unconditional(id, move || {
+                    let resolved = handle_code_lens_resolve(lens);
                     serde_json::to_value(resolved).map_err(|e| e.to_string())
                 });
                 true
@@ -990,7 +1072,64 @@ impl MainLoopState {
         let uri = &params.text_document.uri;
         let (text, parse_result) = self.get_document_data(uri);
 
-        let response = handle_code_lens(&params, &text, &parse_result, self.position_encoding);
+        // Snapshot the multi-file ledger directives ONLY when the
+        // current file has at least one balance assertion. The eager
+        // balance check inside `handle_code_lens` (#1253) is the only
+        // consumer of the snapshot; open/transaction lenses don't
+        // read it. Files with zero balance directives — the vast
+        // majority — would otherwise pay an O(N) deep clone of the
+        // full ledger under a read lock on every codeLens request.
+        // Editors fire codeLens frequently (post-edit, post-scroll),
+        // so the snapshot was the dominant cost on the hot path.
+        let has_balance = parse_result
+            .directives
+            .iter()
+            .any(|s| matches!(s.value, Directive::Balance(_)));
+        // Snapshot the ledger ONLY when (a) the file has balance
+        // directives that need cross-file lookup AND (b) the current
+        // file is actually part of the loaded journal. Without the
+        // contains_file check, opening an unrelated scratch
+        // .beancount file while a journal is loaded would feed the
+        // scratch lens the WRONG ledger's bookkeeping, producing
+        // nonsense ⚠ markers for assertions that are valid in the
+        // file the user is editing.
+        //
+        // Known limitation (Q3 from the architecture review): when
+        // the current file IS in the journal but has unsaved
+        // changes, the snapshot reflects the on-disk state, not the
+        // buffer. didChange doesn't trigger a journal reload (full
+        // pipeline is too expensive per keystroke). Result: balance
+        // lenses on the current file can be stale relative to the
+        // user's edits until they save. The validator's overlay
+        // path (see `validate_phase` around line 1499) does compute
+        // a buffer-overlaid view; lifting that into codeLens is a
+        // follow-up. The validator is the source of truth in the
+        // meantime, and the diagnostic (which DOES use the overlay)
+        // surfaces the real verdict.
+        // One read-lock acquisition guards both the contains_file
+        // check and the directives snapshot. Splitting them across
+        // two `.read()` calls left a window where a journal reload
+        // could remove the file between the membership check and
+        // the snapshot read, producing a wrong-ledger lens for a
+        // file no longer in the journal.
+        let ledger_directives = if has_balance {
+            let path = uri_to_path(uri);
+            let guard = self.ledger_state.read();
+            match path {
+                Some(p) if guard.contains_file(&p) => guard.directives().map(|d| d.to_vec()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        let response = handle_code_lens(
+            &params,
+            &text,
+            &parse_result,
+            ledger_directives.as_deref(),
+            self.position_encoding,
+        );
 
         serde_json::to_value(response).map_err(|e| e.to_string())
     }
@@ -1247,7 +1386,15 @@ impl MainLoopState {
             }
             "exit" => {
                 tracing::info!("Exit notification received");
-                std::process::exit(if self.shutdown_requested { 0 } else { 1 });
+                let code = if self.shutdown_requested { 0 } else { 1 };
+                // Pull the configured exit action; production wires
+                // this to `process::exit` (terminates immediately),
+                // tests pass a no-op. If the action returns (test
+                // path), the main loop continues running until the
+                // channel closes — which is what the harness wants.
+                if let Some(action) = self.exit_action.take() {
+                    action(code);
+                }
             }
             _ => {
                 tracing::debug!("Unhandled notification: {}", notif.method);
@@ -1269,7 +1416,7 @@ impl MainLoopState {
         }
 
         // Bump revision (invalidates any in-flight requests)
-        bump_revision();
+        self.bump_revision();
 
         // Compute and publish diagnostics
         self.publish_diagnostics(&uri, &text);
@@ -1292,7 +1439,7 @@ impl MainLoopState {
             }
 
             // Bump revision
-            bump_revision();
+            self.bump_revision();
 
             // Recompute diagnostics
             self.publish_diagnostics(&uri, &text);
@@ -1570,7 +1717,52 @@ pub fn run_main_loop(
     journal_file: Option<PathBuf>,
     position_encoding: crate::handlers::utils::PositionEncoding,
 ) {
-    let mut state = MainLoopState::new(sender, journal_file);
+    run_main_loop_with_exit_action(receiver, sender, journal_file, position_encoding, |code| {
+        std::process::exit(code)
+    });
+}
+
+/// Same as [`run_main_loop`] but with a caller-supplied `exit_action`
+/// invoked when the `exit` notification arrives.
+///
+/// Production calls [`run_main_loop`] which wires the action to
+/// [`std::process::exit`]. The in-process integration test harness
+/// calls this entry point with a no-op so receipt of `exit` does NOT
+/// terminate the cargo-test process. After the no-op returns, the
+/// main loop continues running until the connection is closed; the
+/// harness completes shutdown by dropping the client side of the
+/// `Connection::memory()` pair, which closes the channel and makes
+/// the inner `select!` return `Err`, breaking the loop cleanly.
+///
+/// # Example
+///
+/// ```ignore
+/// use lsp_server::Connection;
+/// use rustledger_lsp::{handlers::utils::PositionEncoding, run_main_loop_with_exit_action};
+///
+/// let (server, client) = Connection::memory();
+/// std::thread::spawn(move || {
+///     run_main_loop_with_exit_action(
+///         server.receiver,
+///         server.sender,
+///         None,
+///         PositionEncoding::Utf8,
+///         |_code| {}, // test harness: don't terminate the process
+///     );
+/// });
+/// // ... drive `client` with LSP messages ...
+/// drop(client); // closes the channel; the server thread exits.
+/// ```
+pub fn run_main_loop_with_exit_action<F>(
+    receiver: Receiver<lsp_server::Message>,
+    sender: Sender<lsp_server::Message>,
+    journal_file: Option<PathBuf>,
+    position_encoding: crate::handlers::utils::PositionEncoding,
+    exit_action: F,
+) where
+    F: FnOnce(i32) + Send + 'static,
+{
+    let mut state = MainLoopState::new(sender, journal_file).with_exit_action(exit_action);
     state.position_encoding = position_encoding;
     let task_receiver = state.task_receiver.clone();
 
