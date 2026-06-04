@@ -3964,6 +3964,7 @@ dependencies = [
 name = "rustledger-parser"
 version = "0.15.0"
 dependencies = [
+ "blake3",
  "criterion",
  "insta",
  "logos",
@@ -3973,6 +3974,7 @@ dependencies = [
  "rust_decimal_macros",
  "rustledger-core",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

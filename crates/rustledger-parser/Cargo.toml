@@ -25,6 +25,13 @@ rustledger-core.workspace = true
 logos.workspace = true
 rust_decimal.workspace = true
 serde.workspace = true
+# Used by the doc-hidden `__baseline_canonical_payload` helper that
+# the corpus baseline test consumes. The helper canonicalizes
+# directives via `serde_json::to_value` (BTreeMap-backed Object),
+# which sorts the metadata FxHashMap deterministically regardless
+# of hashbrown iteration order. Cannot live behind cfg(test): the
+# integration test compiles against the non-test build of this crate.
+serde_json.workspace = true
 rkyv = { workspace = true, optional = true }
 
 [dev-dependencies]
@@ -32,6 +39,9 @@ rust_decimal_macros = "1.40"
 insta.workspace = true
 criterion.workspace = true
 proptest.workspace = true
+# Used by tests/corpus_baseline.rs to hash parser output across the
+# compat corpus for drift detection (#1262 phase 0).
+blake3.workspace = true
 
 [[bench]]
 name = "parser_bench"
