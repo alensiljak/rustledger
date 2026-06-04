@@ -3,122 +3,91 @@
 //! Provides code lenses above:
 //! - Account open directives (showing transaction count)
 //! - Transactions (showing posting count and currencies)
-//! - Balance assertions (with verification status)
+//! - Balance assertions (with verification status, sourced from the
+//!   validator's already-computed diagnostic for the same file).
 //!
-//! # Eager resolution
+//! # Verdict source: the validator's diagnostic cache
 //!
-//! Balance lenses are computed eagerly inside [`handle_code_lens`].
-//! Pre-#1253, balance lenses shipped with `command: None` plus a `data`
-//! payload that [`handle_code_lens_resolve`] consulted on a subsequent
-//! `codeLens/resolve` round-trip. That deferred-resolve pattern was
-//! standard LSP, but it exposed the lens to a known race in nvim's
-//! built-in LSP client: when the resolve response races with a
-//! cancellation (visible in the user's LSP log as
-//! `"Cannot find request with id N whilst attempting to cancel"`),
-//! the response is silently discarded and the lens stays on whatever
-//! placeholder shipped with the initial response. #1245 surfaced this
-//! as `"Unresolved lens"`; #1249 mitigated by introducing a
-//! `"Balance: X USD (checking…)"` placeholder, but the stuck-checking
-//! symptom (#1253) showed the race was still observable. The right
-//! fix is to skip the resolve round-trip entirely: ship the final
-//! `✓` or `⚠` title on the initial response.
+//! Pre-#1264 the balance lens ran its own evaluator —
+//! `parse → sort → book` over the parse result, without applying
+//! plugins. That second pipeline silently disagreed with `rledger check`
+//! on every ledger that relied on plugin output (`effective_date`,
+//! `lazy_balance`, any user plugin that rewrites postings post-booking).
+//! The dead-link UX was the symptom: `⚠ ... (see diagnostic)` while no
+//! diagnostic existed because the validator (running the full pipeline)
+//! agreed the assertion held.
 //!
-//! Cost: one booking pass per `textDocument/codeLens` request. M
-//! balance assertions cost O(N + M) total (book once, iterate M
-//! times) instead of the previous O(M × N) (book per resolve).
-//! [`handle_code_lens_resolve`] is kept as a defensive fallback for
-//! any future lens kind that genuinely needs deferred resolution.
+//! The fix is structural: stop having a second pipeline. The lens reads
+//! `MainLoopState::diagnostics[uri]`, which `publish_diagnostics`
+//! populates by running the validator over the same full pipeline
+//! `rledger check` uses (synth-plugins → Early → book → regular-plugins
+//! → Late). If the validator emitted an error at a balance directive's
+//! line, the lens shows `⚠`; otherwise `✓`. When the cache hasn't been
+//! populated yet (cold start before the first `publish_diagnostics`),
+//! the lens shows a neutral `Balance: X USD` rather than lying.
+//!
+//! # Eager resolution (preserved from #1253)
+//!
+//! Lenses still ship with `command: Some(...)` and `data: None` on the
+//! initial `textDocument/codeLens` response. No `codeLens/resolve`
+//! round-trip, so no exposure to nvim's resolve-cancellation race
+//! (#1245 / #1253). [`handle_code_lens_resolve`] remains as a defensive
+//! fallback for any future lens kind that genuinely needs deferred
+//! resolution.
 
-use lsp_types::{CodeLens, CodeLensParams, Command, Position, Range};
-use rustledger_booking::BookingEngine;
-use rustledger_core::{BookingMethod, Decimal, Directive, NaiveDate, is_subaccount_or_equal};
-use rustledger_loader::Options as LoaderOptions;
-use rustledger_parser::{ParseResult, Spanned};
-use rustledger_validate::balance_tolerance;
+use lsp_types::{
+    CodeLens, CodeLensParams, Command, Diagnostic, DiagnosticSeverity, NumberOrString, Position,
+    Range,
+};
+use rustledger_core::Directive;
+use rustledger_parser::ParseResult;
+use rustledger_validate::ErrorCode;
 use std::collections::HashMap;
 
+use super::diagnostics::validation_would_run;
 use super::utils::{LineIndex, PositionEncoding};
 
 /// Handle a code lens request.
 ///
-/// `ledger_directives` is the full multi-file ledger snapshot (taken
-/// on the main loop while locks are cheap). When provided, balance
-/// assertions are validated against the full ledger; when `None`, the
-/// validator falls back to the current file's parse result. This is
-/// the same multi-file behavior the pre-#1253 resolve path supported
-/// (issue #470).
+/// `cached_diagnostics` is the validator's last-computed diagnostic
+/// vector for this URI (held in `MainLoopState::diagnostics`). It
+/// reflects the full-pipeline verdict the user would see from
+/// `rledger check`. The lens consults it instead of running a parallel
+/// evaluator.
+///
+/// `None` means the validator hasn't run for this file yet (cold start
+/// between server initialization and the first `publish_diagnostics`
+/// call). The balance lens then renders neutrally — never claiming a
+/// verdict the lens cannot back up.
+///
+/// The balance lens ALSO renders neutrally when validation would have
+/// been skipped for this buffer (parse errors elsewhere in the file,
+/// or `source.len() > MAX_VALIDATION_FILE_SIZE`). Without this, the
+/// diagnostic cache reads `Some(&[])` and the lens would render `✓`
+/// for assertions the validator never evaluated — the inverse-symmetric
+/// failure of #1264.
 pub fn handle_code_lens(
     params: &CodeLensParams,
     source: &str,
     parse_result: &ParseResult,
-    ledger_directives: Option<&[Spanned<Directive>]>,
+    cached_diagnostics: Option<&[Diagnostic]>,
     encoding: PositionEncoding,
 ) -> Option<Vec<CodeLens>> {
     let line_index = LineIndex::new(source, encoding);
     let mut lenses = Vec::new();
     let uri = params.text_document.uri.as_str();
+    // Even with a populated cache, the validator may have declined to
+    // run (large file, or parse errors elsewhere). Treat that as cold-
+    // start for the lens: the cache is `Some(&[])` not because the
+    // assertion holds but because no balance verdict was computed.
+    let verdict_diagnostics = if validation_would_run(source, parse_result) {
+        cached_diagnostics
+    } else {
+        None
+    };
 
     // Collect account usage statistics
     let account_stats = collect_account_stats(parse_result);
-
-    // Book the directives ONCE. The booked result feeds every balance
-    // lens lookup in this request (booking is O(N), each lookup is
-    // O(N), total O(N + M*N) for M assertions; pre-#1253 each resolve
-    // re-booked, so the same total but per-lens latency dropped).
-    // `None` ledger_directives falls back to the current file's
-    // parse_result, matching the resolve path's behavior in
-    // single-file mode.
-    //
-    // Fast path: skip booking entirely when the file has no balance
-    // directives. Open/transaction lenses don't read `booked_directives`,
-    // so for the common-case file (zero balance assertions) we save
-    // an O(N) booking pass on every codeLens request. The caller in
-    // `main_loop.rs` does the same pre-scan to skip cloning the full
-    // ledger directives vector under the read lock.
-    let has_balance = parse_result
-        .directives
-        .iter()
-        .any(|s| matches!(s.value, Directive::Balance(_)));
-
-    // Build an `Options` from the file's raw `option` directives so
-    // we read `booking_method`, `tolerance_multiplier`, and
-    // `inferred_tolerance_multiplier` via the same parser the loader
-    // uses. Without this the lens hard-codes the workspace defaults
-    // and disagrees with the validator on any file that overrides
-    // them. We don't run the full loader pipeline here (no plugins,
-    // no validation), only its option-string-to-typed-field parse.
-    let loader_options = build_loader_options(parse_result);
-    let booking_method = loader_options
-        .booking_method
-        .parse()
-        .unwrap_or(BookingMethod::Strict);
-    let tolerance_multiplier = loader_options.inferred_tolerance_multiplier;
-
-    // In multi-file mode (`ledger_directives` is Some), the snapshot
-    // already went through the loader's full pipeline (synth-plugins,
-    // booking, regular plugins) — see `LedgerState::load`. Re-booking
-    // it would be wasted work at best, and could disagree with the
-    // loader on edge cases (a different default booking method, a
-    // plugin that ran after booking). Use the snapshot as-is.
-    //
-    // In single-file mode the lens approximates: parse → sort → book
-    // with the file's `option "booking_method"`. We deliberately do
-    // NOT run synth-plugins (auto_accounts, document_discovery,
-    // user plugins) here because they require a `SourceMap` +
-    // `LoadOptions` we don't have, AND because running them on every
-    // keystroke would dominate codeLens latency. Consequence: in
-    // single-file mode the lens can disagree with `rledger check`
-    // on ledgers that rely on plugin-synthesized directives. The
-    // validator remains the source of truth; the lens is a fast
-    // local approximation. This limitation is documented in
-    // `docs/development/lsp-support.md`.
-    let booked_directives: Vec<Spanned<Directive>> = if !has_balance {
-        Vec::new()
-    } else if let Some(snapshot) = ledger_directives {
-        snapshot.to_vec()
-    } else {
-        book_directives_once(&parse_result.directives, booking_method)
-    };
 
     for spanned in &parse_result.directives {
         let (line, _) = line_index.offset_to_position(spanned.span.start);
@@ -191,63 +160,28 @@ pub fn handle_code_lens(
                 });
             }
             Directive::Balance(bal) => {
-                // Eagerly verify the assertion against the booked
-                // directives. No data payload + no resolve round-trip
-                // means no exposure to nvim's resolve-cancellation
-                // race (issues #1245 / #1253); the user sees the
-                // final ✓ or ⚠ title on the initial response.
-                let actual_amount =
-                    balance_at_date_from_booked(&booked_directives, &bal.account, Some(bal.date))
-                        .get(bal.amount.currency.as_ref())
-                        .copied()
-                        .unwrap_or_default();
-
-                // Match the validator's tolerance comparison
-                // (validators/balance.rs:222-247). Strict equality
-                // here would emit a ⚠ for an amount the validator
-                // accepts (e.g. 99.999 vs 100.00 USD at the default
-                // ±0.005 tolerance), which would point the user at a
-                // diagnostic that doesn't exist — the same dead-link
-                // UX #1253 set out to prevent.
-                let tolerance =
-                    balance_tolerance(bal.amount.number, bal.tolerance, tolerance_multiplier);
-                let difference = (actual_amount - bal.amount.number).abs();
-
-                let command = if difference <= tolerance {
-                    // Passing assertion: informational title, no
-                    // click action. Uses `rledger.noop` (matching the
-                    // failing branch below and the pre-eager path) so
-                    // strict clients that filter on advertised
-                    // commands don't dead-link the lens. A future
-                    // "show balance details" command can be added
-                    // here once its handler is registered in
-                    // `execute_command::COMMANDS`.
-                    Command {
-                        title: format!("✓ Balance: {} {}", bal.amount.number, bal.amount.currency),
-                        command: "rledger.noop".to_string(),
-                        arguments: None,
-                    }
-                } else {
-                    // Failing assertions: the real error is surfaced
-                    // via diagnostics (issue #491). The lens title
-                    // points the user at the diagnostic rather than
-                    // duplicating its content.
-                    Command {
-                        title: format!(
-                            "⚠ Balance: {} {} (see diagnostic)",
-                            bal.amount.number, bal.amount.currency
-                        ),
-                        command: "rledger.noop".to_string(),
-                        arguments: None,
-                    }
-                };
-
+                // Consult the validator's cached verdict; never re-derive.
+                // See module rustdoc.
+                let title = balance_lens_title(
+                    bal.amount.number,
+                    bal.amount.currency.as_ref(),
+                    line,
+                    verdict_diagnostics,
+                );
                 lenses.push(CodeLens {
                     range: Range {
                         start: Position::new(line, 0),
                         end: Position::new(line, 0),
                     },
-                    command: Some(command),
+                    command: Some(Command {
+                        title,
+                        command: "rledger.noop".to_string(),
+                        arguments: None,
+                    }),
+                    // No data payload: the lens ships fully-resolved on
+                    // the initial response. Preserves the #1253 invariant
+                    // that there is no resolve round-trip nvim could
+                    // race against cancellation.
                     data: None,
                 });
             }
@@ -266,6 +200,187 @@ pub fn handle_code_lens(
         None
     } else {
         Some(lenses)
+    }
+}
+
+/// Error codes the lens treats as a balance-arithmetic failure on a
+/// balance directive's line.
+///
+/// Pulled from [`ErrorCode`] (`pub const fn code() -> &'static str`)
+/// instead of hardcoding the strings, so:
+///
+/// - **Renaming a variant** (e.g., `BalanceAssertionFailed` →
+///   `BalanceMismatch`) breaks the lens build — the const-fn call
+///   resolves a symbol that no longer exists.
+/// - **Renumbering the string returned by `code()`** (e.g., `"E2001"`
+///   → `"E2099"`) is detected and propagated automatically — the
+///   lens build still passes and `BALANCE_ERROR_CODES` picks up the
+///   new string, so the runtime match against the validator's
+///   emitted code stays in sync without any manual update.
+///
+/// Hardcoding `&["E2001", "E2002", "E2004"]` would have given the
+/// opposite property: renaming would have compiled silently, and only
+/// renumbering at the validator side (without a corresponding lens
+/// update) would have produced runtime drift. The const-fn bridge
+/// trades the cheaper failure mode for the more expensive one.
+///
+/// The codes themselves:
+///
+/// - `E2001` ([`ErrorCode::BalanceAssertionFailed`]): asserted amount
+///   != actual.
+/// - `E2002` ([`ErrorCode::BalanceToleranceExceeded`]): difference is
+///   beyond the explicit `~` tolerance.
+/// - `E2004` ([`ErrorCode::MultiplePadForBalance`]): two effective
+///   pads before the assertion. The validator's lib.rs:548-562 patches
+///   the balance directive's span onto this error (it's constructed
+///   with `bal.date` and no span of its own), so the diagnostic anchors
+///   on the balance line — same as E2001/E2002. The user-facing failure
+///   IS that the asserted balance can't be unambiguously verified.
+///
+/// Codes that may land at the balance line but describe a different
+/// problem (`E1001 AccountNotOpen`, parse errors, plugin errors
+/// patched onto the span) are deliberately excluded. Showing
+/// `⚠ Balance: X USD (see diagnostic)` for those misattributes the
+/// failure category: the user clicks the lens expecting a balance
+/// arithmetic explanation and finds something unrelated. The lens
+/// renders neutrally for those, letting the diagnostic itself speak.
+///
+/// `E2003 PadWithoutBalance` anchors on the pad directive, not the
+/// balance directive, so it's not relevant to this list.
+const BALANCE_ERROR_CODES: &[&str] = &[
+    ErrorCode::BalanceAssertionFailed.code(),
+    ErrorCode::BalanceToleranceExceeded.code(),
+    ErrorCode::MultiplePadForBalance.code(),
+];
+
+/// Render the balance lens title for a balance directive on `line`.
+///
+/// `cached_diagnostics` is the validator's last-computed verdict for
+/// this URI (after [`validation_would_run`] confirmed the validator
+/// actually ran):
+///
+/// - `None`: the validator hasn't run yet for this file (cold start)
+///   OR validation was skipped (parse errors, file too large). Render
+///   neutrally — `Balance: X USD` with no ✓/⚠ symbol. Never claim a
+///   verdict we can't back up.
+/// - `Some(diags)` with a `BALANCE_ERROR_CODES` entry at `line`: the
+///   validator emitted a real balance-arithmetic failure. Render
+///   `⚠ Balance: X USD (see diagnostic)` — "see diagnostic" is a true
+///   link by construction.
+/// - `Some(diags)` with some OTHER non-HINT diagnostic at `line`
+///   (e.g., `E1001` AccountNotOpen ERROR, `FutureDate` WARNING,
+///   `DateOutOfOrder` INFORMATION) but NO `BALANCE_ERROR_CODES`:
+///   the validator has something to say about this directive but
+///   it isn't a balance-arithmetic failure. Render neutrally; don't
+///   misattribute it as a balance failure AND don't claim ✓ on a
+///   directive the validator is actively flagging.
+/// - `Some(diags)` with no relevant diagnostic at `line`: the
+///   validator says the assertion holds. Render `✓ Balance: X USD`.
+fn balance_lens_title(
+    amount: rustledger_core::Decimal,
+    currency: &str,
+    line: u32,
+    cached_diagnostics: Option<&[Diagnostic]>,
+) -> String {
+    let amount_str = format!("Balance: {amount} {currency}");
+    let Some(diags) = cached_diagnostics else {
+        return amount_str;
+    };
+    if has_balance_error_at_line(diags, line) {
+        format!("⚠ {amount_str} (see diagnostic)")
+    } else if has_non_balance_error_at_line(diags, line) {
+        // A diagnostic at this line is about something else; let it
+        // surface independently. Don't claim ✓ (the assertion's
+        // verdict is uncertain in the presence of an account/parse
+        // error here) and don't claim ⚠ (the asserted arithmetic
+        // isn't what failed).
+        amount_str
+    } else {
+        format!("✓ {amount_str}")
+    }
+}
+
+/// Does the diagnostic slice contain an ERROR with one of the
+/// balance-arithmetic error codes anchored at `line.start`?
+fn has_balance_error_at_line(diagnostics: &[Diagnostic], line: u32) -> bool {
+    diagnostics.iter().any(|d| {
+        d.range.start.line == line
+            && d.severity == Some(DiagnosticSeverity::ERROR)
+            && is_balance_error_code(d.code.as_ref())
+    })
+}
+
+/// Does the diagnostic slice contain ANY non-balance diagnostic
+/// (ERROR, WARNING, or INFORMATION severity) anchored at `line.start`?
+///
+/// Severity matters: a balance directive can carry a WARNING-severity
+/// diagnostic (`FutureDate` E10002, `DateOutOfOrder` E10001, etc.) that
+/// gets the balance directive's span patched onto it via
+/// `validate/lib.rs:548-562`. If we filtered on ERROR only, the lens
+/// would render `✓ Balance: X USD` for a directive the validator is
+/// actively warning about — the same false-confidence pattern #1264
+/// closed for plugins, just transposed to severity-filtering. Any
+/// non-balance diagnostic at the line tells us "the validator has
+/// something to say about this directive" and disqualifies the ✓.
+///
+/// HINT severity is excluded because hints are routinely produced as
+/// code-action suggestions; treating them as "something is wrong"
+/// would surface ✓-disqualifying noise on every code-action-eligible
+/// line.
+///
+/// Diagnostics with a zero-width range anchored at `(0, 0)..(0, 0)`
+/// are ALSO excluded: that's the sentinel for "I have no source span"
+/// used by the plugin-error emitter at
+/// `handlers/diagnostics.rs:325-329` (and any future spanless
+/// diagnostic source). Treating them as anchored on line 0 would make
+/// every balance directive on line 0 — common in scratch buffers and
+/// include-only files — render neutral whenever a plugin happens to
+/// fail. Keep the lens focused on directive-anchored diagnostics; the
+/// global ones surface independently in the problems panel.
+fn has_non_balance_error_at_line(diagnostics: &[Diagnostic], line: u32) -> bool {
+    diagnostics.iter().any(|d| {
+        d.range.start.line == line
+            && !is_global_sentinel_range(&d.range)
+            && matches!(
+                d.severity,
+                Some(DiagnosticSeverity::ERROR)
+                    | Some(DiagnosticSeverity::WARNING)
+                    | Some(DiagnosticSeverity::INFORMATION)
+            )
+            && !is_balance_error_code(d.code.as_ref())
+    })
+}
+
+/// Returns true for the `(0, 0)..(0, 0)` sentinel that spanless
+/// diagnostic emitters (plugin errors today) use when they have no
+/// source location to attach. A diagnostic with this exact range is
+/// "global to the file," not anchored on line 0.
+fn is_global_sentinel_range(range: &Range) -> bool {
+    range.start.line == 0
+        && range.start.character == 0
+        && range.end.line == 0
+        && range.end.character == 0
+}
+
+fn is_balance_error_code(code: Option<&NumberOrString>) -> bool {
+    match code {
+        Some(NumberOrString::String(s)) => BALANCE_ERROR_CODES.contains(&s.as_str()),
+        Some(NumberOrString::Number(n)) => {
+            // Today every validator-emitted diagnostic code is a
+            // String (see `validation_error_to_diagnostic` at
+            // diagnostics.rs:~420). If a future contributor adds a
+            // Number-coded path, this branch fires — debug builds get
+            // a loud signal so the lens's filter can be updated;
+            // release builds default to "not a balance code" to avoid
+            // a spurious ⚠ on an unknown numeric code.
+            debug_assert!(
+                false,
+                "lens received an unexpected numeric diagnostic code: {n}; \
+                 update `is_balance_error_code` or normalize at the emitter",
+            );
+            false
+        }
+        None => false,
     }
 }
 
@@ -294,142 +409,6 @@ pub fn handle_code_lens_resolve(lens: CodeLens) -> CodeLens {
     resolved
 }
 
-/// Sort + book a directive list once, returning the full directive
-/// list in chronological order with each transaction booked and
-/// interpolated in place.
-///
-/// Non-transaction directives pass through unchanged. The returned
-/// vector is suitable for any number of subsequent
-/// [`balance_at_date_from_booked`] lookups, which is how
-/// [`handle_code_lens`] amortizes booking cost across all balance
-/// lenses in a file (O(N) booking + O(M) lookups, vs O(M*N) for the
-/// pre-#1253 per-resolve approach).
-///
-/// Booking matches the validator's behavior; without it, auto-filled
-/// postings (Income:Salary with no explicit amount, etc.) wouldn't
-/// be counted toward the asserted account's balance.
-///
-/// `default_method` is the workspace default (driven by
-/// `option "booking_method" "..."` if set, else
-/// `BookingMethod::Strict`). Per-account methods declared on `Open`
-/// directives are layered on top by `register_account_methods`, so
-/// the only thing this argument controls is what FIFO/LIFO/AVERAGE
-/// accounts WITHOUT an explicit per-account method use.
-fn book_directives_once(
-    directives_in: &[Spanned<Directive>],
-    default_method: BookingMethod,
-) -> Vec<Spanned<Directive>> {
-    let mut directives: Vec<Spanned<Directive>> = directives_in.to_vec();
-    directives.sort_by_cached_key(|d| {
-        (
-            d.value.date(),
-            d.value.priority(),
-            d.value.has_cost_reduction(),
-        )
-    });
-
-    let mut booking_engine = BookingEngine::with_method(default_method);
-    booking_engine.register_account_methods(directives.iter().map(|s| &s.value));
-    for spanned in &mut directives {
-        if let Directive::Transaction(txn) = &mut spanned.value
-            && let Ok(result) = booking_engine.book_and_interpolate(txn)
-        {
-            booking_engine.apply(&result.transaction);
-            *txn = result.transaction;
-        }
-    }
-
-    directives
-}
-
-/// Options keys the codeLens path needs from
-/// [`LoaderOptions`]. Filtered tightly because:
-/// - `Options::set("documents", v)` calls `Path::new(v).exists()` —
-///   a filesystem syscall on every codeLens request. NFS-mounted
-///   document roots make this user-visible latency.
-/// - Other options (operating_currency, account_*, plugin_*) parse
-///   into FxHashMap inserts the lens never reads.
-///
-/// Only `booking_method`, `tolerance_multiplier`, and the deprecated
-/// alias `inferred_tolerance_multiplier` flow into the lens verdict.
-/// Adding to this list is the deliberate gate when the lens grows a
-/// new option-dependent decision.
-const LENS_OPTION_KEYS: &[&str] = &[
-    "booking_method",
-    "tolerance_multiplier",
-    "inferred_tolerance_multiplier",
-];
-
-/// Build a [`LoaderOptions`] populated only with the keys the lens
-/// needs. The parser exposes `option` entries as raw `(key, value,
-/// span)` tuples; for each entry whose key is in [`LENS_OPTION_KEYS`]
-/// we call [`LoaderOptions::set`], which handles the deprecated
-/// alias mapping and value validation identically to the loader's
-/// own option-parse pass.
-///
-/// The narrow filter prevents `Options::set` side effects we don't
-/// want on the hot path: `path.exists()` for `documents`, deprecation
-/// warnings into `self.warnings`, FxHashMap inserts for unrelated
-/// per-key state. A malformed lens-relevant value still produces a
-/// diagnostic via the regular validation pass; we don't double-report
-/// here.
-fn build_loader_options(parse_result: &ParseResult) -> LoaderOptions {
-    let mut options = LoaderOptions::new();
-    for (key, value, _span) in &parse_result.options {
-        if LENS_OPTION_KEYS.contains(&key.as_str()) {
-            options.set(key, value);
-        }
-    }
-    options
-}
-
-/// Sum postings to `account` from `booked` whose transaction date is
-/// strictly before `date` (the Beancount semantic for balance
-/// assertions: the asserted value is checked at the START of the
-/// asserted day).
-///
-/// Caller is responsible for passing already-[`book_directives_once`]
-/// output. Returns a per-currency map so a multi-currency account can
-/// be validated against the asserted currency without losing the
-/// others.
-fn balance_at_date_from_booked(
-    booked: &[Spanned<Directive>],
-    account: &str,
-    date: Option<NaiveDate>,
-) -> HashMap<String, Decimal> {
-    let mut balances: HashMap<String, Decimal> = HashMap::new();
-    for spanned in booked {
-        if let Directive::Transaction(txn) = &spanned.value {
-            if let Some(d) = date
-                && txn.date >= d
-            {
-                continue;
-            }
-            for posting in &txn.postings {
-                // Beancount semantic: `balance Assets:Bank` includes
-                // postings to `Assets:Bank` AND any sub-account
-                // (`Assets:Bank:Checking`, `Assets:Bank:Savings`, ...).
-                // The validator at
-                // `rustledger-validate::validators::balance::sum_account_and_subaccounts`
-                // does the same prefix-match; the lens used to do
-                // exact-account-match, which silently diverged from the
-                // validator on every ledger with sub-accounts.
-                let posting_account = posting.account.as_ref();
-                if !is_subaccount_or_equal(posting_account, account) {
-                    continue;
-                }
-                if let Some(units) = &posting.units
-                    && let Some(number) = units.number()
-                {
-                    let currency = units.currency().unwrap_or("???").to_string();
-                    *balances.entry(currency).or_default() += number;
-                }
-            }
-        }
-    }
-    balances
-}
-
 /// Statistics for an account.
 #[derive(Default)]
 struct AccountStats {
@@ -455,490 +434,8 @@ fn collect_account_stats(parse_result: &ParseResult) -> HashMap<String, AccountS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lsp_types::{DiagnosticSeverity, NumberOrString};
     use rustledger_parser::parse;
-
-    /// Drift guard for [`LENS_OPTION_KEYS`]: every key the lens reads
-    /// from the resulting `LoaderOptions` must be in the allowlist,
-    /// and exercising each key end-to-end must produce a field
-    /// change the lens actually consumes. If a future contributor
-    /// adds a lens-relevant option to `LoaderOptions` without
-    /// updating `LENS_OPTION_KEYS`, this test fails: their option
-    /// won't appear in the filter list AND the build_loader_options
-    /// output won't carry the value through.
-    ///
-    /// The verification approach: for each documented key, build a
-    /// source string that sets the option, parse it, and verify the
-    /// helper produces the expected typed value. New lens-relevant
-    /// options must be added here AND to `LENS_OPTION_KEYS`.
-    #[test]
-    fn lens_option_keys_are_threaded_end_to_end() {
-        // booking_method: file-level override flows through.
-        let result = parse("option \"booking_method\" \"AVERAGE\"\n");
-        let opts = build_loader_options(&result);
-        assert_eq!(
-            opts.booking_method, "AVERAGE",
-            "booking_method must thread through; key missing from \
-             LENS_OPTION_KEYS or LoaderOptions::set wiring drifted"
-        );
-
-        // tolerance_multiplier (canonical name): overrides default.
-        let result = parse("option \"tolerance_multiplier\" \"1.0\"\n");
-        let opts = build_loader_options(&result);
-        assert_eq!(
-            opts.inferred_tolerance_multiplier,
-            Decimal::new(10, 1), // 1.0
-            "tolerance_multiplier must override the 0.5 default"
-        );
-
-        // inferred_tolerance_multiplier (deprecated alias): same field.
-        let result = parse("option \"inferred_tolerance_multiplier\" \"2.0\"\n");
-        let opts = build_loader_options(&result);
-        assert_eq!(
-            opts.inferred_tolerance_multiplier,
-            Decimal::new(20, 1), // 2.0
-            "deprecated alias inferred_tolerance_multiplier must \
-             map to the same field as tolerance_multiplier"
-        );
-
-        // Default (no options): values are what ValidationOptions
-        // sees in the validator path, so the lens and validator
-        // agree on a file with no `option` directives.
-        let result = parse("2024-01-01 open Assets:Bank USD\n");
-        let opts = build_loader_options(&result);
-        assert_eq!(opts.booking_method, "STRICT");
-        assert_eq!(opts.inferred_tolerance_multiplier, Decimal::new(5, 1)); // 0.5
-
-        // Sanity: an unrelated option (e.g., "title") does NOT
-        // flow through. If this assertion ever fails, the filter
-        // has been broken; the lens would start paying for
-        // Options::set's path.exists() on documents, etc.
-        let result = parse("option \"title\" \"My Ledger\"\n");
-        let opts = build_loader_options(&result);
-        assert_eq!(
-            opts.title, None,
-            "title option must NOT be set via build_loader_options; \
-             the filter has drifted and unrelated options are now \
-             on the codeLens hot path"
-        );
-    }
-
-    #[test]
-    fn test_code_lens_accounts() {
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-15 * "Coffee"
-  Assets:Bank  -5.00 USD
-  Expenses:Food
-2024-01-16 * "Lunch"
-  Assets:Bank  -10.00 USD
-  Expenses:Food
-"#;
-        let result = parse(source);
-        let params = CodeLensParams {
-            text_document: lsp_types::TextDocumentIdentifier {
-                uri: "file:///test.beancount".parse().unwrap(),
-            },
-            work_done_progress_params: Default::default(),
-            partial_result_params: Default::default(),
-        };
-
-        let lenses = handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16);
-        assert!(lenses.is_some());
-
-        let lenses = lenses.unwrap();
-        // Should have: 1 open + 2 transactions = 3 lenses
-        assert_eq!(lenses.len(), 3);
-
-        // First lens is for the open directive
-        assert!(
-            lenses[0]
-                .command
-                .as_ref()
-                .unwrap()
-                .title
-                .contains("2 transactions")
-        );
-    }
-
-    #[test]
-    fn test_code_lens_balance_match_ships_resolved() {
-        // Passing assertion: lens ships with `✓ Balance: ... USD` on
-        // the initial textDocument/codeLens response. No data payload,
-        // no resolve round-trip (issue #1253).
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-01 open Income:Salary
-2024-01-15 * "Deposit"
-  Assets:Bank  100.00 USD
-  Income:Salary
-2024-01-31 balance Assets:Bank 100.00 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved (issue #1253)");
-        assert!(
-            cmd.title.contains('✓'),
-            "passing assertion should ship with ✓; got {:?}",
-            cmd.title
-        );
-        assert!(cmd.title.contains("100"));
-        assert!(
-            balance_lens.data.is_none(),
-            "eager-resolved balance lens carries no resolve-data payload; \
-             pre-#1253 the data payload triggered a codeLens/resolve \
-             round-trip that nvim's client could race against \
-             cancellation. got data = {:?}",
-            balance_lens.data
-        );
-    }
-
-    #[test]
-    fn test_code_lens_balance_mismatch_ships_resolved() {
-        // Failing assertion: lens ships with the `⚠ ... (see diagnostic)`
-        // callout on the initial response. The actual error lives in
-        // the diagnostic (#491); the lens points at it without
-        // duplicating its content.
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-01 open Income:Salary
-2024-01-15 * "Deposit"
-  Assets:Bank  50.00 USD
-  Income:Salary
-2024-01-31 balance Assets:Bank 100 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains("see diagnostic"),
-            "failing assertion should ship with `(see diagnostic)`; got {:?}",
-            cmd.title
-        );
-        assert_eq!(cmd.command, "rledger.noop");
-    }
-
-    #[test]
-    fn test_code_lens_balance_with_auto_filled_posting() {
-        // Booking runs as part of the eager balance computation, so a
-        // posting elided to be auto-filled (Income:Salary with no
-        // explicit amount) still gets counted. Pre-eager-resolve this
-        // lived in handle_code_lens_resolve; same coverage, new path.
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-01 open Income:Salary USD
-2024-01-15 * "Deposit"
-  Assets:Bank  100.00 USD
-  Income:Salary
-2024-01-31 balance Assets:Bank 100 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains('✓'),
-            "auto-filled posting should book to 100 USD, passing the assertion; got {:?}",
-            cmd.title
-        );
-    }
-
-    /// Regression for the post-#1253 follow-up review: the eager
-    /// balance check must mirror the validator's tolerance logic.
-    /// Pre-fix this used strict `==`; the validator at
-    /// `rustledger-validate/src/validators/balance.rs:222-247` accepts
-    /// `(actual - expected).abs() <= tolerance`. For a 2-decimal
-    /// amount like `100.00 USD`, default tolerance is
-    /// `0.5 * 2 * 0.01 = 0.01`. An actual of `99.999 USD` (off by
-    /// 0.001) is well within tolerance.
-    ///
-    /// If the lens reverted to strict equality, this test would fail:
-    /// the balance would render `⚠ (see diagnostic)` while the
-    /// validator passes silently, reintroducing the dead-link UX
-    /// #1253 originally set out to prevent.
-    #[test]
-    fn balance_lens_honors_validator_tolerance() {
-        // Choose actual amounts that round to slightly off the
-        // asserted value. Three penny-fractional postings of
-        // 33.333 USD sum to 99.999 USD; the assertion expects
-        // 100.00 USD. The validator accepts (under tolerance);
-        // the lens must too.
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-01 open Income:Misc
-2024-01-02 * "A"
-  Assets:Bank  33.333 USD
-  Income:Misc
-2024-01-02 * "B"
-  Assets:Bank  33.333 USD
-  Income:Misc
-2024-01-02 * "C"
-  Assets:Bank  33.333 USD
-  Income:Misc
-2024-01-31 balance Assets:Bank 100.00 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains('✓'),
-            "actual 99.999 USD is within the default ±0.01 tolerance \
-             of asserted 100.00 USD; lens must show ✓ to match the \
-             validator. got {:?}",
-            cmd.title
-        );
-    }
-
-    /// Beancount semantic: `balance Assets:Bank` includes postings
-    /// to sub-accounts (`Assets:Bank:Checking`, etc.). The validator
-    /// at `sum_account_and_subaccounts` does this prefix match;
-    /// pre-fix the lens did exact-account-match only, silently
-    /// diverging on every ledger with sub-accounts.
-    #[test]
-    fn balance_lens_includes_subaccount_postings() {
-        let source = r#"2024-01-01 open Assets:Bank:Checking USD
-2024-01-01 open Income:Misc
-2024-01-15 * "Salary"
-  Assets:Bank:Checking  1000 USD
-  Income:Misc
-2024-01-31 balance Assets:Bank 1000 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains('✓'),
-            "asserted Assets:Bank must sum sub-account postings to \
-             Assets:Bank:Checking, matching the validator. got {:?}",
-            cmd.title
-        );
-    }
-
-    /// Companion to [`balance_lens_includes_subaccount_postings`]:
-    /// a non-prefix account that happens to start with the parent's
-    /// name must NOT be summed. `Assets:Bank` does not include
-    /// `Assets:BankAlias`; the segment boundary requires a `:`.
-    #[test]
-    fn balance_lens_does_not_match_non_subaccount_prefix() {
-        let source = r#"2024-01-01 open Assets:Bank USD
-2024-01-01 open Assets:BankAlias USD
-2024-01-01 open Income:Misc
-2024-01-15 * "Bank deposit"
-  Assets:Bank  1000 USD
-  Income:Misc
-2024-01-16 * "Alias deposit (should not count toward Assets:Bank)"
-  Assets:BankAlias  500 USD
-  Income:Misc
-2024-01-31 balance Assets:Bank 1000 USD
-"#;
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains('✓'),
-            "asserted Assets:Bank should equal only its own postings; \
-             Assets:BankAlias must NOT be summed. got {:?}",
-            cmd.title
-        );
-    }
-
-    #[test]
-    fn test_code_lens_balance_uses_full_ledger_in_multi_file_mode() {
-        // Issue #470 coverage: when ledger_directives carries the
-        // full multi-file view, balance assertions whose offsetting
-        // transaction lives in a different file resolve correctly.
-        // Pre-#1253 this was tested through handle_code_lens_resolve;
-        // post-#1253 the eager path in handle_code_lens consumes the
-        // same multi-file snapshot.
-        let bank_source = r#"2024-01-01 open Assets:Bank:Checking USD
-2024-01-01 open Income:Salary
-2024-01-01 open Liabilities:Credit-Card
-2024-01-15 * "Paycheck"
-  Assets:Bank:Checking  5000 USD
-  Income:Salary
-2024-01-21 balance Assets:Bank:Checking 4950 USD
-"#;
-        let bank_result = parse(bank_source);
-        let credit_card_source = r#"2024-01-20 * "Pay off credit card"
-  Assets:Bank:Checking  -50 USD
-  Liabilities:Credit-Card
-"#;
-        let credit_card_result = parse(credit_card_source);
-        let mut full_directives = bank_result.directives.clone();
-        full_directives.extend(credit_card_result.directives.clone());
-
-        let params = code_lens_params();
-
-        // Single-file view: the -50 offset isn't visible, balance
-        // appears to mismatch.
-        let single_lens = find_balance_lens(
-            handle_code_lens(
-                &params,
-                bank_source,
-                &bank_result,
-                None,
-                PositionEncoding::Utf16,
-            )
-            .expect("lenses emitted"),
-        );
-        let single_cmd = single_lens.command.as_ref().expect("ships resolved");
-        assert!(
-            single_cmd.title.contains("see diagnostic"),
-            "single-file mismatch should point at the diagnostic; got {:?}",
-            single_cmd.title
-        );
-
-        // Multi-file view: the -50 offset is visible, balance matches.
-        let multi_lens = find_balance_lens(
-            handle_code_lens(
-                &params,
-                bank_source,
-                &bank_result,
-                Some(&full_directives),
-                PositionEncoding::Utf16,
-            )
-            .expect("lenses emitted"),
-        );
-        let multi_cmd = multi_lens.command.as_ref().expect("ships resolved");
-        assert!(
-            multi_cmd.title.contains('✓') && multi_cmd.title.contains("4950"),
-            "multi-file match should ship `✓ Balance: 4950 USD`; got {:?}",
-            multi_cmd.title
-        );
-    }
-
-    #[test]
-    fn test_code_lens_resolve_fallback_for_command_none_lens() {
-        // Defensive fallback inside handle_code_lens_resolve: even
-        // though no lens kind emitted by handle_code_lens ships with
-        // command:None today (eager resolution since #1253), if a
-        // future contributor adds a resolve-using lens kind and forgets
-        // to handle it, the fallback guarantees the client renders a
-        // sensible string instead of nvim's literal "Unresolved lens".
-        let lens = CodeLens {
-            range: Range {
-                start: Position::new(0, 0),
-                end: Position::new(0, 0),
-            },
-            command: None,
-            data: None,
-        };
-        let resolved = handle_code_lens_resolve(lens);
-        let cmd = resolved
-            .command
-            .as_ref()
-            .expect("fallback must populate command");
-        assert_eq!(cmd.command, "rledger.noop");
-    }
-
-    /// Regression for issue #1253 / #1245: balance lenses must ship
-    /// FULLY-RESOLVED on the initial `textDocument/codeLens` response
-    /// (no `data` payload, no placeholder, no resolve round-trip).
-    ///
-    /// Pre-#1253 the lens shipped with a `(checking…)` placeholder
-    /// command and a `data: { kind: "balance", ... }` payload; the
-    /// real `✓` / `⚠` title was filled in by `codeLens/resolve`.
-    /// Under nvim's resolve-cancellation race (visible in #1253's
-    /// LSP log as `"Cannot find request with id N whilst attempting
-    /// to cancel"`) the resolve response was silently discarded and
-    /// the lens stayed on the placeholder forever. Eager resolution
-    /// removes the round-trip and makes the race unreachable.
-    ///
-    /// This test pins both invariants: the final title shows the
-    /// real status (no `(checking…)`), and there is no `data` field
-    /// asking the client to re-resolve.
-    #[test]
-    fn issue_1253_balance_lens_ships_eagerly_resolved() {
-        // The user's reproduction from #1253: salary posts 1000 USD
-        // on 02-01, balance assertion on 02-02 expects 1000 USD.
-        let source = "\
-2012-01-01 open Assets:Bank
-2012-01-01 open Income:Employment
-
-2012-02-01 * \"Salary\"
-  Assets:Bank                   1000 USD
-  Income:Employment
-
-2012-02-02 balance Assets:Bank  1000 USD
-";
-        let result = parse(source);
-        let params = code_lens_params();
-
-        let balance_lens = find_balance_lens(
-            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
-                .expect("lenses emitted"),
-        );
-
-        // 1. The final ✓ title is set on the initial response.
-        let cmd = balance_lens
-            .command
-            .as_ref()
-            .expect("balance lens ships fully-resolved");
-        assert!(
-            cmd.title.contains('✓'),
-            "issue #1253: passing assertion must ship with the real ✓ \
-             title on the initial response, not a `(checking…)` \
-             placeholder that nvim could leave stuck. got {:?}",
-            cmd.title
-        );
-        assert!(
-            !cmd.title.contains("checking"),
-            "issue #1253: title must not contain the `(checking…)` \
-             placeholder; that's the stuck-state symptom. got {:?}",
-            cmd.title
-        );
-
-        // 2. No `data` payload means no codeLens/resolve round-trip,
-        //    which means no race window for nvim to cancel.
-        assert!(
-            balance_lens.data.is_none(),
-            "issue #1253: balance lens must not carry a resolve-data \
-             payload; the resolve round-trip is what nvim could race \
-             against cancellation. got data = {:?}",
-            balance_lens.data
-        );
-    }
 
     fn code_lens_params() -> CodeLensParams {
         CodeLensParams {
@@ -959,5 +456,575 @@ mod tests {
                     .is_some_and(|c| c.title.contains("Balance:"))
             })
             .expect("balance lens emitted")
+    }
+
+    /// Synthetic diagnostic at the given zero-based line with the given
+    /// LSP error code and severity. Source string matches what the
+    /// validator emits in production (`"rustledger"`, see
+    /// `diagnostics.rs:145`) so any future filter on `source` would
+    /// behave the same in tests and production.
+    fn diagnostic_with_code_severity_at_line(
+        code: &str,
+        severity: DiagnosticSeverity,
+        line: u32,
+    ) -> Diagnostic {
+        Diagnostic {
+            range: Range {
+                start: Position::new(line, 0),
+                end: Position::new(line, 80),
+            },
+            severity: Some(severity),
+            code: Some(NumberOrString::String(code.into())),
+            code_description: None,
+            source: Some("rustledger".into()),
+            message: format!("{code} test diagnostic"),
+            related_information: None,
+            tags: None,
+            data: None,
+        }
+    }
+
+    /// Default-case: a balance-assertion-failed (E2001) ERROR
+    /// diagnostic at `line`. The most common test fixture; non-default
+    /// shapes go through `diagnostic_with_code_severity_at_line`
+    /// directly so the chosen severity is visible at the call site.
+    fn error_at_line(line: u32) -> Diagnostic {
+        diagnostic_with_code_severity_at_line("E2001", DiagnosticSeverity::ERROR, line)
+    }
+
+    #[test]
+    fn test_code_lens_accounts() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-15 * "Coffee"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+2024-01-16 * "Lunch"
+  Assets:Bank  -10.00 USD
+  Expenses:Food
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let lenses = handle_code_lens(&params, source, &result, Some(&[]), PositionEncoding::Utf16);
+        let lenses = lenses.expect("lenses emitted");
+        // Should have: 1 open + 2 transactions = 3 lenses
+        assert_eq!(lenses.len(), 3);
+
+        // First lens is for the open directive
+        assert!(
+            lenses[0]
+                .command
+                .as_ref()
+                .unwrap()
+                .title
+                .contains("2 transactions")
+        );
+    }
+
+    /// Cold-start case: no diagnostics have been computed yet for this
+    /// URI. The lens MUST render the balance amount without a verdict
+    /// symbol. Pre-#1264 the lens computed its own verdict locally and
+    /// would emit ✓ or ⚠ based on its (plugin-less) approximation;
+    /// post-#1264 it never claims a verdict it didn't get from the
+    /// validator.
+    #[test]
+    fn balance_lens_neutral_when_diagnostics_not_yet_computed() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 open Income:Salary
+2024-01-15 * "Deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary
+2024-01-31 balance Assets:Bank 100.00 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let balance_lens = find_balance_lens(
+            handle_code_lens(&params, source, &result, None, PositionEncoding::Utf16)
+                .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            !cmd.title.contains('✓') && !cmd.title.contains('⚠'),
+            "cold start: lens must not claim a verdict before the \
+             validator has run. got {:?}",
+            cmd.title
+        );
+        assert!(cmd.title.starts_with("Balance:"));
+        assert!(cmd.title.contains("100"));
+    }
+
+    /// Validator says PASS (empty diagnostics): lens shows ✓.
+    #[test]
+    fn balance_lens_shows_check_when_validator_passes() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-31 balance Assets:Bank 100.00 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let balance_lens = find_balance_lens(
+            handle_code_lens(&params, source, &result, Some(&[]), PositionEncoding::Utf16)
+                .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(cmd.title.contains('✓'), "got {:?}", cmd.title);
+        assert!(cmd.title.contains("100"));
+        assert!(
+            balance_lens.data.is_none(),
+            "eager-resolved balance lens carries no resolve-data payload; \
+             pre-#1253 the data payload triggered a codeLens/resolve \
+             round-trip that nvim's client could race against \
+             cancellation. got data = {:?}",
+            balance_lens.data
+        );
+    }
+
+    /// Validator emitted an ERROR at the balance line: lens shows ⚠.
+    /// The "see diagnostic" link is now true by construction — the
+    /// diagnostic exists because we read it from the cache.
+    #[test]
+    fn balance_lens_shows_warning_when_validator_fails() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-31 balance Assets:Bank 100 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        // `2024-01-31 balance ...` is on line index 1 (zero-based) of
+        // the source above.
+        let diags = vec![error_at_line(1)];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            cmd.title.contains('⚠') && cmd.title.contains("see diagnostic"),
+            "got {:?}",
+            cmd.title
+        );
+        assert_eq!(cmd.command, "rledger.noop");
+    }
+
+    /// The lens MUST follow the diagnostic cache, not the parse result.
+    /// Pre-#1264 a passing parse + missing-plugin pipeline could
+    /// disagree with the validator (the bug in #1264). The new code path
+    /// is verdict-from-cache; we pin that by feeding a parse whose
+    /// "naive" answer would be ✓ together with an error diagnostic and
+    /// asserting the lens shows ⚠ regardless.
+    #[test]
+    fn balance_lens_follows_diagnostic_cache_not_local_eval() {
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 open Income:Salary
+2024-01-15 * "Deposit"
+  Assets:Bank  100.00 USD
+  Income:Salary
+2024-01-31 balance Assets:Bank 100.00 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        // Locally this balance assertion would pass (deposit = 100,
+        // assertion = 100). Feed an error diagnostic anyway and verify
+        // the lens follows the diagnostic, not the parse.
+        let diags = vec![error_at_line(5)];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            cmd.title.contains('⚠'),
+            "lens must follow validator's verdict, not re-derive from \
+             parse_result. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// Inverse of the previous test: a parse whose naive evaluation
+    /// would say ⚠ (mismatched amounts), but no diagnostic in the
+    /// cache, must render ✓. This is the #1264 repro reduced to a unit
+    /// test: the lens's old evaluator would have ⚠'d here, but the
+    /// validator (running plugins) is right and the lens follows it.
+    #[test]
+    fn balance_lens_shows_check_when_parse_disagrees_but_validator_passes() {
+        // Parse-time arithmetic says 1000 - 100 = 900, assertion claims
+        // 1000. The OLD evaluator would emit ⚠. The new lens consults
+        // the diagnostic cache; empty diagnostics mean validator passed.
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-01 open Income:Salary
+2024-01-01 open Expenses:Food
+2024-02-01 * "Salary"
+  Assets:Bank  1000 USD
+  Income:Salary
+2024-02-03 * "Food"
+  Assets:Bank  -100 USD
+  Expenses:Food
+2024-02-04 balance Assets:Bank 1000 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let balance_lens = find_balance_lens(
+            handle_code_lens(&params, source, &result, Some(&[]), PositionEncoding::Utf16)
+                .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            cmd.title.contains('✓'),
+            "lens must trust the validator (empty diagnostics) even \
+             when a naive parse-only reading would disagree. This is \
+             the structural property that fixes #1264's effective_date \
+             false positive: the validator runs plugins, the lens \
+             trusts the validator. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// When the buffer has parse errors elsewhere, `all_diagnostics`
+    /// (diagnostics.rs:554) skips validation entirely; the cache for
+    /// the URI then contains only parse-error diagnostics — none of
+    /// which sit at the balance line. The lens MUST render neutrally
+    /// in this case, not ✓: the validator did not evaluate the
+    /// assertion. This is the inverse-symmetric failure of the #1264
+    /// dead-link UX (silent ✓ instead of silent ⚠) — both come from
+    /// the lens asserting verdicts it cannot back up.
+    #[test]
+    fn balance_lens_neutral_when_parse_errors_skip_validation() {
+        // Open + balance directives come first (cleanly parsed, so the
+        // balance lens is always emitted regardless of how the parser
+        // recovers from the trailing garbage). The malformed line at
+        // the END forces `parse_result.errors` to be non-empty without
+        // making the test depend on parser-recovery behavior at the
+        // top of the file.
+        let source = r#"2024-01-01 open Assets:Bank USD
+2024-01-31 balance Assets:Bank 100.00 USD
+!!! syntax garbage on a trailing line
+"#;
+        let result = parse(source);
+        assert!(
+            !result.errors.is_empty(),
+            "test setup: source must produce a parse error to exercise \
+             the validation-skip branch. got errors = {:?}",
+            result.errors,
+        );
+        let params = code_lens_params();
+
+        // Diagnostic cache populated and contains nothing at the
+        // balance line. Pre-fix the lens would have read this as
+        // "validator approved" and rendered ✓.
+        let balance_lens = find_balance_lens(
+            handle_code_lens(&params, source, &result, Some(&[]), PositionEncoding::Utf16)
+                .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            !cmd.title.contains('✓') && !cmd.title.contains('⚠'),
+            "parse-error skip path: lens must not claim a verdict the \
+             validator never computed. got {:?}",
+            cmd.title
+        );
+        assert!(cmd.title.starts_with("Balance:"));
+    }
+
+    /// A non-balance ERROR diagnostic at the balance directive's line
+    /// (e.g., `E1001 AccountNotOpen`) must NOT render as
+    /// `⚠ Balance: X USD (see diagnostic)`. The user clicking that
+    /// lens would expect a balance-arithmetic explanation and instead
+    /// see something unrelated. The lens renders neutrally; the
+    /// non-balance diagnostic surfaces independently with its own
+    /// (correct) message.
+    #[test]
+    fn balance_lens_neutral_on_non_balance_error_at_line() {
+        let source = r#"2024-01-31 balance Assets:NeverOpened 0 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        // E1001 (account never opened) at the balance directive's line.
+        let diags = vec![diagnostic_with_code_severity_at_line(
+            "E1001",
+            DiagnosticSeverity::ERROR,
+            0,
+        )];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            !cmd.title.contains('⚠') && !cmd.title.contains("see diagnostic"),
+            "non-balance error (E1001) at the balance line must not \
+             render as a balance arithmetic failure. got {:?}",
+            cmd.title
+        );
+        assert!(
+            !cmd.title.contains('✓'),
+            "lens must not claim ✓ when an unrelated error blankets \
+             the assertion's line — the assertion's status is uncertain. \
+             got {:?}",
+            cmd.title
+        );
+    }
+
+    /// WARNING-severity diagnostics that anchor on the balance line —
+    /// `FutureDate`, `DateOutOfOrder`, `AccountCloseNotEmpty` —
+    /// disqualify ✓. Without this, the lens claims the assertion holds
+    /// while the validator is actively flagging the directive's date or
+    /// account state, which is the same false-confidence pattern #1264
+    /// closed for plugins, just transposed to severity filtering.
+    #[test]
+    fn balance_lens_neutral_on_non_balance_warning_at_line() {
+        let source = r#"2099-01-31 balance Assets:Bank 100 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        // E10002 (FutureDate) at WARNING severity — what the
+        // validator actually emits for a balance directive dated
+        // after `today`.
+        let diags = vec![diagnostic_with_code_severity_at_line(
+            "E10002",
+            DiagnosticSeverity::WARNING,
+            0,
+        )];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            !cmd.title.contains('✓') && !cmd.title.contains('⚠'),
+            "warning at the balance line must disqualify ✓; lens must \
+             not claim a verdict while the validator is flagging the \
+             directive. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// INFORMATION-severity diagnostics at the balance line also
+    /// disqualify ✓ — same rationale as WARNING, applied to
+    /// `DateOutOfOrder` and similar advisory-level findings the
+    /// validator anchors via the span-patch path.
+    #[test]
+    fn balance_lens_neutral_on_information_severity_at_line() {
+        let source = r#"2024-01-31 balance Assets:Bank 100 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let diags = vec![diagnostic_with_code_severity_at_line(
+            "E10001",
+            DiagnosticSeverity::INFORMATION,
+            0,
+        )];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            !cmd.title.contains('✓') && !cmd.title.contains('⚠'),
+            "information-severity diagnostic at the balance line must \
+             disqualify ✓. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// HINT-severity diagnostics are excluded from the ✓-disqualifying
+    /// set — code-action hints routinely anchor on directives, and
+    /// treating them as "validator flagged this" would produce neutral
+    /// titles on every code-action-eligible balance line.
+    #[test]
+    fn balance_lens_keeps_check_when_only_hint_at_line() {
+        let source = r#"2024-01-31 balance Assets:Bank 100 USD
+"#;
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let diags = vec![diagnostic_with_code_severity_at_line(
+            "H1001",
+            DiagnosticSeverity::HINT,
+            0,
+        )];
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&diags),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            cmd.title.contains('✓'),
+            "HINT-severity must not disqualify ✓ — code-action hints \
+             routinely anchor on directives. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// Plugin errors (and any future spanless diagnostic) are emitted
+    /// with the global sentinel range `(0,0)..(0,0)` per
+    /// `handlers/diagnostics.rs:325-329`. A balance directive that
+    /// happens to land on line 0 must NOT be marked neutral just
+    /// because a plugin failed elsewhere in the file. The sentinel
+    /// range exclusion keeps the lens focused on directive-anchored
+    /// diagnostics; the global plugin error surfaces independently in
+    /// the problems panel.
+    #[test]
+    fn balance_lens_ignores_global_sentinel_range_diagnostic() {
+        // Balance directive IS on line 0 — the case where a naive
+        // line-only filter would conflate the global plugin error with
+        // a directive-anchored one.
+        let source = "2024-01-31 balance Assets:Bank 100 USD\n";
+        let result = parse(source);
+        let params = code_lens_params();
+
+        // Plugin-shaped diagnostic: ERROR severity, range (0,0)..(0,0),
+        // non-balance code. Mirrors what diagnostics.rs:325-329 emits.
+        let plugin_error = Diagnostic {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+            severity: Some(DiagnosticSeverity::ERROR),
+            code: Some(NumberOrString::String("PluginLoadFailed".into())),
+            code_description: None,
+            source: Some("rustledger".into()),
+            message: "plugin failed to load".into(),
+            related_information: None,
+            tags: None,
+            data: None,
+        };
+        let balance_lens = find_balance_lens(
+            handle_code_lens(
+                &params,
+                source,
+                &result,
+                Some(&[plugin_error]),
+                PositionEncoding::Utf16,
+            )
+            .expect("lenses emitted"),
+        );
+        let cmd = balance_lens.command.as_ref().expect("ships resolved");
+        assert!(
+            cmd.title.contains('✓'),
+            "global-sentinel-range diagnostic (plugin error with no \
+             source span) must not disqualify ✓ on a line-0 balance \
+             directive; the sentinel range means 'global', not \
+             'anchored on line 0'. got {:?}",
+            cmd.title
+        );
+    }
+
+    /// Defensive fallback inside handle_code_lens_resolve: even
+    /// though no lens kind emitted by handle_code_lens ships with
+    /// command:None today (eager resolution since #1253), if a
+    /// future contributor adds a resolve-using lens kind and forgets
+    /// to handle it, the fallback guarantees the client renders a
+    /// sensible string instead of nvim's literal "Unresolved lens".
+    #[test]
+    fn test_code_lens_resolve_fallback_for_command_none_lens() {
+        let lens = CodeLens {
+            range: Range {
+                start: Position::new(0, 0),
+                end: Position::new(0, 0),
+            },
+            command: None,
+            data: None,
+        };
+        let resolved = handle_code_lens_resolve(lens);
+        let cmd = resolved
+            .command
+            .as_ref()
+            .expect("fallback must populate command");
+        assert_eq!(cmd.command, "rledger.noop");
+    }
+
+    /// Regression for issue #1253 / #1245: balance lenses must ship
+    /// FULLY-RESOLVED on the initial `textDocument/codeLens` response
+    /// (no `data` payload, no placeholder, no resolve round-trip).
+    /// The #1264 refactor changed WHAT data the eager response carries
+    /// (validator's verdict instead of a local re-derivation) but kept
+    /// the eager-ship invariant.
+    #[test]
+    fn issue_1253_balance_lens_ships_eagerly_resolved() {
+        let source = "\
+2012-01-01 open Assets:Bank
+2012-01-01 open Income:Employment
+
+2012-02-01 * \"Salary\"
+  Assets:Bank                   1000 USD
+  Income:Employment
+
+2012-02-02 balance Assets:Bank  1000 USD
+";
+        let result = parse(source);
+        let params = code_lens_params();
+
+        let balance_lens = find_balance_lens(
+            handle_code_lens(&params, source, &result, Some(&[]), PositionEncoding::Utf16)
+                .expect("lenses emitted"),
+        );
+
+        let cmd = balance_lens
+            .command
+            .as_ref()
+            .expect("balance lens ships fully-resolved");
+        assert!(
+            cmd.title.contains('✓'),
+            "issue #1253: passing assertion must ship with the real ✓ \
+             title on the initial response, not a `(checking…)` \
+             placeholder that nvim could leave stuck. got {:?}",
+            cmd.title
+        );
+        assert!(
+            !cmd.title.contains("checking"),
+            "issue #1253: title must not contain the `(checking…)` \
+             placeholder; that's the stuck-state symptom. got {:?}",
+            cmd.title
+        );
+
+        assert!(
+            balance_lens.data.is_none(),
+            "issue #1253: balance lens must not carry a resolve-data \
+             payload; the resolve round-trip is what nvim could race \
+             against cancellation. got data = {:?}",
+            balance_lens.data
+        );
     }
 }

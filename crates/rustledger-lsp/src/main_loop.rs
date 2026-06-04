@@ -174,6 +174,20 @@ pub struct MainLoopState {
     pub diagnostics: HashMap<Uri, Vec<lsp_types::Diagnostic>>,
     /// Whether shutdown was requested.
     pub shutdown_requested: bool,
+    /// Set by the `exit` notification handler. The main loop checks
+    /// this after each event and breaks when it's `Some(_)`, returning
+    /// the code from `run_main_loop_with_exit_action` so the caller
+    /// (`server.rs::start_stdio` in production) can drain the writer
+    /// thread via `io_threads.join()` BEFORE `process::exit`. Without
+    /// this, the production exit_action was `process::exit(code)`
+    /// directly — which terminates the process before the writer
+    /// thread flushes the shutdown response queued in its channel.
+    /// On a slow CI runner the writer can't keep up, the test
+    /// observes only the initialize response on stdout, and
+    /// `stdio_smoke` fails. See the `handle_notification` "exit"
+    /// arm and `run_main_loop_with_exit_action`'s return-value
+    /// documentation.
+    pub pending_exit_code: Option<i32>,
     /// LSP position encoding negotiated at initialization (UTF-8 or
     /// UTF-16). Handler code emitting `Position`s must consult this
     /// so positions align with what the client expects.
@@ -251,6 +265,7 @@ impl MainLoopState {
             sender,
             diagnostics: HashMap::new(),
             shutdown_requested: false,
+            pending_exit_code: None,
             // Conservative default: UTF-16 (the LSP spec default).
             // `server.rs::run` overrides this with the negotiated
             // encoding after `initialize`. Construction without
@@ -262,7 +277,15 @@ impl MainLoopState {
             task_receiver,
             job_sender,
             revision: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            exit_action: Some(Box::new(|code| std::process::exit(code))),
+            // Production used to wire this to `process::exit(code)`,
+            // which terminated before `io_threads.join()` could drain
+            // the writer — losing the shutdown response on slow runners
+            // (the stdio_smoke flake). The exit notification now
+            // signals via `pending_exit_code` instead, and the loop
+            // breaks normally; the caller then joins io_threads and
+            // exits with the propagated code. `exit_action` is kept
+            // for side effects (test harnesses use a no-op).
+            exit_action: Some(Box::new(|_code| {})),
         }
     }
 
@@ -1072,62 +1095,23 @@ impl MainLoopState {
         let uri = &params.text_document.uri;
         let (text, parse_result) = self.get_document_data(uri);
 
-        // Snapshot the multi-file ledger directives ONLY when the
-        // current file has at least one balance assertion. The eager
-        // balance check inside `handle_code_lens` (#1253) is the only
-        // consumer of the snapshot; open/transaction lenses don't
-        // read it. Files with zero balance directives — the vast
-        // majority — would otherwise pay an O(N) deep clone of the
-        // full ledger under a read lock on every codeLens request.
-        // Editors fire codeLens frequently (post-edit, post-scroll),
-        // so the snapshot was the dominant cost on the hot path.
-        let has_balance = parse_result
-            .directives
-            .iter()
-            .any(|s| matches!(s.value, Directive::Balance(_)));
-        // Snapshot the ledger ONLY when (a) the file has balance
-        // directives that need cross-file lookup AND (b) the current
-        // file is actually part of the loaded journal. Without the
-        // contains_file check, opening an unrelated scratch
-        // .beancount file while a journal is loaded would feed the
-        // scratch lens the WRONG ledger's bookkeeping, producing
-        // nonsense ⚠ markers for assertions that are valid in the
-        // file the user is editing.
-        //
-        // Known limitation (Q3 from the architecture review): when
-        // the current file IS in the journal but has unsaved
-        // changes, the snapshot reflects the on-disk state, not the
-        // buffer. didChange doesn't trigger a journal reload (full
-        // pipeline is too expensive per keystroke). Result: balance
-        // lenses on the current file can be stale relative to the
-        // user's edits until they save. The validator's overlay
-        // path (see `validate_phase` around line 1499) does compute
-        // a buffer-overlaid view; lifting that into codeLens is a
-        // follow-up. The validator is the source of truth in the
-        // meantime, and the diagnostic (which DOES use the overlay)
-        // surfaces the real verdict.
-        // One read-lock acquisition guards both the contains_file
-        // check and the directives snapshot. Splitting them across
-        // two `.read()` calls left a window where a journal reload
-        // could remove the file between the membership check and
-        // the snapshot read, producing a wrong-ledger lens for a
-        // file no longer in the journal.
-        let ledger_directives = if has_balance {
-            let path = uri_to_path(uri);
-            let guard = self.ledger_state.read();
-            match path {
-                Some(p) if guard.contains_file(&p) => guard.directives().map(|d| d.to_vec()),
-                _ => None,
-            }
-        } else {
-            None
-        };
+        // The balance lens reads the validator's last-computed verdict
+        // for this URI from `self.diagnostics` (#1264). Pre-#1264 we
+        // snapshotted `ledger_state` so the lens could run its own
+        // evaluator; that evaluator dropped plugins (effective_date,
+        // lazy_balance, ...) and silently disagreed with `rledger check`
+        // on every ledger that used them. The new lens consults the
+        // diagnostic cache instead — diagnostics ARE the validator's
+        // verdict after the full pipeline. None means cold start
+        // (no `publish_diagnostics` for this URI yet); the lens renders
+        // a neutral title and never claims a verdict it can't back up.
+        let cached_diagnostics = self.diagnostics.get(uri).map(Vec::as_slice);
 
         let response = handle_code_lens(
             &params,
             &text,
             &parse_result,
-            ledger_directives.as_deref(),
+            cached_diagnostics,
             self.position_encoding,
         );
 
@@ -1387,11 +1371,14 @@ impl MainLoopState {
             "exit" => {
                 tracing::info!("Exit notification received");
                 let code = if self.shutdown_requested { 0 } else { 1 };
-                // Pull the configured exit action; production wires
-                // this to `process::exit` (terminates immediately),
-                // tests pass a no-op. If the action returns (test
-                // path), the main loop continues running until the
-                // channel closes — which is what the harness wants.
+                // Signal the main loop to break with this code; the
+                // caller will drain the writer thread before exiting.
+                // See `pending_exit_code` field rustdoc.
+                self.pending_exit_code = Some(code);
+                // Invoke any caller-supplied side effect (test harnesses
+                // pass a no-op; production passes a no-op too post-fix
+                // because the actual process::exit is now done by the
+                // outer caller AFTER io_threads.join()).
                 if let Some(action) = self.exit_action.take() {
                     action(code);
                 }
@@ -1708,18 +1695,39 @@ impl MainLoopState {
 /// loop responsive while expensive requests run in parallel.
 ///
 /// # Arguments
+///
 /// * `receiver` - Channel to receive LSP messages from the client
 /// * `sender` - Channel to send LSP messages to the client
 /// * `journal_file` - Optional path to the root journal file for multi-file support
+///
+/// # Returns
+///
+/// The exit code from the `exit` notification (after the loop breaks
+/// cleanly), or `0` if the channel was closed before an `exit`
+/// notification arrived. The caller is expected to drain any IO
+/// threads (e.g., `lsp_server::Connection::stdio()`'s
+/// `io_threads.join()`) AFTER this returns and BEFORE terminating the
+/// process — otherwise the shutdown response queued in the writer
+/// thread's channel never reaches the client, which is the bug behind
+/// the `stdio_smoke` CI flake.
+#[must_use]
 pub fn run_main_loop(
     receiver: Receiver<lsp_server::Message>,
     sender: Sender<lsp_server::Message>,
     journal_file: Option<PathBuf>,
     position_encoding: crate::handlers::utils::PositionEncoding,
-) {
-    run_main_loop_with_exit_action(receiver, sender, journal_file, position_encoding, |code| {
-        std::process::exit(code)
-    });
+) -> i32 {
+    // No-op exit_action: the actual process termination (if any) is
+    // the caller's responsibility, performed AFTER io_threads.join()
+    // has drained the writer. The returned code is the source of
+    // truth.
+    run_main_loop_with_exit_action(
+        receiver,
+        sender,
+        journal_file,
+        position_encoding,
+        |_code| {},
+    )
 }
 
 /// Same as [`run_main_loop`] but with a caller-supplied `exit_action`
@@ -1753,13 +1761,15 @@ pub fn run_main_loop(
 /// // ... drive `client` with LSP messages ...
 /// drop(client); // closes the channel; the server thread exits.
 /// ```
+#[must_use]
 pub fn run_main_loop_with_exit_action<F>(
     receiver: Receiver<lsp_server::Message>,
     sender: Sender<lsp_server::Message>,
     journal_file: Option<PathBuf>,
     position_encoding: crate::handlers::utils::PositionEncoding,
     exit_action: F,
-) where
+) -> i32
+where
     F: FnOnce(i32) + Send + 'static,
 {
     let mut state = MainLoopState::new(sender, journal_file).with_exit_action(exit_action);
@@ -1768,12 +1778,12 @@ pub fn run_main_loop_with_exit_action<F>(
 
     tracing::info!("Main loop started");
 
-    loop {
+    let exit_code = loop {
         crossbeam_channel::select! {
             recv(receiver) -> msg => {
                 let msg = match msg {
                     Ok(msg) => msg,
-                    Err(_) => break, // Channel closed
+                    Err(_) => break 0, // Channel closed without an `exit` notification.
                 };
                 let event = match msg {
                     lsp_server::Message::Request(req) => Event::Message(Message::Request(req)),
@@ -1790,9 +1800,19 @@ pub fn run_main_loop_with_exit_action<F>(
                 }
             }
         }
-    }
+        // The `exit` notification handler signals via `pending_exit_code`
+        // instead of calling `process::exit` directly. Break here so
+        // the caller can drain the writer thread before terminating
+        // the process; otherwise the queued shutdown response can be
+        // lost on slow IO. See the field's rustdoc and the
+        // `stdio_smoke` flake discussion.
+        if let Some(code) = state.pending_exit_code {
+            break code;
+        }
+    };
 
-    tracing::info!("Main loop ended");
+    tracing::info!("Main loop ended (exit code {exit_code})");
+    exit_code
 }
 
 #[cfg(test)]

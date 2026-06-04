@@ -9,44 +9,57 @@ balance-lens regressions caused by client/server protocol-interaction
 bugs that handler-level tests structurally could not catch). The
 layered testing approach below closes that gap.
 
-## Known limitations
+## Lens verdict source
 
-Two cases where the lens verdict can differ from the validator:
+The balance code lens does not compute its own verdict. It reads
+`MainLoopState::diagnostics[uri]` — the validator's last-computed
+diagnostic vector for the file — and renders one of:
 
-1. **Single-file mode skips synthesizer plugins.** Files outside the
-   journal (scratch buffers, files not yet `include`d) parse without
-   running `auto_accounts` / `document_discovery` / user plugins.
-   Ledgers that rely on plugin-synthesized directives see lens
-   verdicts that disagree with `rledger check`.
+- `✓ Balance: X USD` when the validator ran AND no ERROR diagnostic
+  anchors on the balance directive's line.
+- `⚠ Balance: X USD (see diagnostic)` when an ERROR diagnostic with a
+  balance-arithmetic error code (`E2001` BalanceAssertionFailed,
+  `E2002` BalanceToleranceExceeded, `E2004` MultiplePadForBalance)
+  anchors on the line. "see diagnostic" is a true link by construction:
+  the diagnostic the lens points at is the diagnostic the lens
+  consulted. See `BALANCE_ERROR_CODES` in `handlers/code_lens.rs` for
+  the full list and the rationale for excluded codes (E1001, parse
+  errors, plugin errors at the line — those describe a different
+  failure and surface independently).
+- `Balance: X USD` (neutral, no symbol) in any of three user-facing
+  conditions:
+  - Cold start, before the first `publish_diagnostics` for the file.
+  - Validation was skipped this turn (file > 500 KB or buffer has
+    parse errors elsewhere — see `validation_would_run`).
+  - A non-balance non-HINT diagnostic (e.g., `E1001 AccountNotOpen`
+    ERROR, `FutureDate` WARNING, `DateOutOfOrder` INFORMATION) anchors
+    on the balance directive's line — the diagnostic explains a
+    different problem; claiming `⚠ Balance` would misattribute the
+    failure and claiming `✓` would dismiss a real concern.
+  In every neutral case the lens declines to claim a verdict it
+  cannot back up.
 
-2. **Multi-file mode uses the on-disk snapshot.** When the journal
-   is loaded, the lens reads the post-pipeline directives from
-   `LedgerState`. `didChange` does NOT trigger a journal reload (the
-   full pipeline is too expensive per keystroke), so balance lenses
-   on a file with unsaved edits reflect the last-saved state, not
-   the current buffer. Save the file to refresh.
+  Internally, the first two conditions are folded into
+  `verdict_diagnostics = None` by `handle_code_lens` before
+  `balance_lens_title` sees them — the title function itself only
+  distinguishes `None` (neutral) from `Some(diags)` with the three
+  diag-content branches (balance code → ⚠, non-balance/non-HINT → 
+  neutral, nothing → ✓). HINT-severity diagnostics are intentionally
+  ignored: code-action hints routinely anchor on directives and would
+  otherwise produce neutral noise on every code-action-eligible line.
 
-In both cases the diagnostic is authoritative; the lens is a fast
-local approximation. A follow-up that splices the buffer into the
-multi-file snapshot (like the diagnostic overlay does) would close
-limitation 2.
+The validator runs the full pipeline (synth-plugins → Early → book →
+regular-plugins → Late) on every `didOpen` / `didChange` / `didSave`,
+producing the same verdict `rledger check` does. The lens follows
+that verdict.
 
-## Validator vs lens divergence (single-file mode)
-
-The balance code lens computes ✓ / ⚠ by booking the current file
-locally. It deliberately does NOT run synthesizer plugins
-(`auto_accounts`, `document_discovery`, user plugins) on every
-codeLens request: running them per keystroke would dominate lens
-latency. Consequence: in **single-file mode**, the lens can disagree
-with `rledger check` on ledgers that rely on plugin-synthesized
-directives.
-
-In **multi-file mode** the lens uses the snapshot the LSP loaded via
-`LedgerState::load`, which DID run the full pipeline. Multi-file lens
-verdicts match the validator exactly (modulo bugs in either path).
-
-When the lens diverges from the diagnostic, the diagnostic is the
-source of truth. The lens is a fast local approximation.
+Pre-#1264 the lens ran a separate `parse → sort → book` evaluator
+that silently dropped plugins. The classic symptom was a `⚠ ...
+(see diagnostic)` lens on a file `rledger check` accepted — the
+"see diagnostic" link pointed nowhere because the validator (running
+plugins) had not emitted one. That entire failure mode is structurally
+unreachable now: the lens and the diagnostic come from the same
+computation.
 
 ## Supported clients
 
