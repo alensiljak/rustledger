@@ -16,28 +16,42 @@
 //! - [`parse_flat`]: produce a flat `SOURCE_FILE` tree that round-trips
 //!   byte-identically against the source.
 //!
-//! # Deferred design: trivia attachment policy (phase 2)
+//! # Trivia attachment policy (phase 2.0)
 //!
-//! Phase 1 emits a flat tree, so every token (content AND trivia) is
-//! a direct child of `SOURCE_FILE`. When phase 2 introduces structural
-//! nodes (`DIRECTIVE`, `POSTING`, ...) the question becomes: does the
-//! newline between two directives attach to the preceding directive,
-//! to the next one, or stay a `SOURCE_FILE`-level child?
+//! Phase 1 emits a flat tree, where trivia attachment is a non-
+//! question. Phase 2.1+ introduces structural nodes (`DIRECTIVE`,
+//! then `POSTING` / `AMOUNT` / `COST_SPEC` / `META_ENTRY` / ...)
+//! that wrap token runs. Phase 2.0 pins **the
+//! Directive-Terminator Rule**: every directive owns its content
+//! tokens PLUS its terminating `NEWLINE`.
 //!
-//! Phase 2's first PR must pick a policy and pin it with a regression
-//! test. The default recommendation (matching rust-analyzer's
-//! convention) is: leading trivia attaches to the FOLLOWING non-trivia
-//! node; trailing trivia attaches to the PRECEDING node only on the
-//! last item before EOF, where there is nothing following. That makes
-//! "node enter" the natural visiting point for any consumer that wants
-//! to skip trivia (the typed AST surface, validators, the formatter's
-//! header walk) while keeping the formatter's full-tree walk lossless.
+//! Short version:
 //!
-//! No policy is enforced in phase 1 — the flat tree is policy-neutral.
+//! - **Same-line trailing** trivia (whitespace + EOL comment
+//!   before the terminator) lives INSIDE the directive.
+//! - **Inter-directive leading** trivia (blank lines, mid-file
+//!   comment blocks) lives INSIDE the NEXT directive.
+//! - **File-leading** trivia (before the first content token) is
+//!   a direct child of `SOURCE_FILE`.
+//! - **File-trailing** trivia (after the file-final directive's
+//!   terminator) is also a direct child of `SOURCE_FILE`.
+//!
+//! Fully symmetric: every directive has the same children shape
+//! (optional leading + content + optional same-line trailing +
+//! terminator `NEWLINE`). No EOF special case.
+//!
+//! Phase 2.0 ships NO production helper — the policy is enforced
+//! via tree-shape regression tests in `cst::trivia` (private
+//! submodule). Phase 2.1's structured parser writes its own
+//! streaming, state-aware predicate that produces trees matching
+//! those shapes. If the parser drifts, the regression tests fire.
+//! See the `trivia` module rustdoc for the full spec, rationale,
+//! and recursive-application notes for phase 2.1's grammar.
 
 mod lossless_tokens;
 mod parser;
 mod syntax_kind;
+mod trivia;
 
 pub use lossless_tokens::lossless_kind_tokens;
 pub use parser::parse_flat;

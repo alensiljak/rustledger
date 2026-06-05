@@ -1,18 +1,34 @@
 //! `SyntaxKind`: every kind of token or node that can appear in the
 //! Beancount CST.
 //!
-//! Design notes (from the round-1 architecture review of the
-//! parallel-crate attempt that preceded this in-place migration):
+//! Design notes:
 //!
-//! - **No discriminant stability commitment.** Phase 2+ may reorder,
-//!   group, or rename freely. There are no committed serialized forms
-//!   to keep stable. Reservations are antipatterns.
+//! - **No cross-version stability commitment.** Phase 2+ may add new
+//!   variants. No serialized form persists `SyntaxKind` values across
+//!   binary versions (rowan green trees aren't designed as on-disk
+//!   format).
+//! - **APPEND-ONLY in practice.** The corpus baseline at
+//!   `tests/baselines/cst-corpus.manifest` hashes
+//!   `(SyntaxKind as u16, len)` per token for every file in the 714-
+//!   file compatibility corpus, AND a separate per-file node-shape
+//!   hash. Reordering variants invalidates every committed manifest
+//!   entry simultaneously, producing an unreviewable 700-line diff.
+//!   The rule for routine work: APPEND new variants at the relevant
+//!   section's end. If you genuinely must reorder, do it in a
+//!   SEPARATE commit from any parser change so reviewers can verify
+//!   the regen is mechanical.
 //! - **Safe u16 conversion via `num_enum::TryFromPrimitive`** instead
 //!   of a hand-rolled match table. Adding a new variant is a single
 //!   line; the derive enforces parity.
 //! - **`is_token` via `matches!` over the actual token variants**, not
 //!   a boundary trick on discriminants. A future variant inserted
 //!   anywhere is classified correctly.
+//! - **`kind_from_raw` falls back to `ERROR_NODE` on unknown
+//!   discriminants** in release builds (`debug_assert!` panics in
+//!   debug/test). Defends against version-skewed green-node bytes
+//!   reaching the parser via LSP cache, sidecar tooling, or
+//!   incremental persistence without crashing production. Surfaces
+//!   the skew loudly in dev/test where it's actionable.
 
 use num_enum::TryFromPrimitive;
 
@@ -127,12 +143,19 @@ pub enum SyntaxKind {
 
     // ---- Node kinds ------------------------------------------------------
     //
-    // Phase 1 emits a flat tree, so the only node kind actually used
-    // is `SOURCE_FILE`. Structural node kinds (DIRECTIVE / POSTING /
-    // AMOUNT / COST_SPEC / PRICE_ANNOTATION / META_ENTRY / ...) are
-    // NOT pre-declared — phase 2 PRs add them at the moment they're
-    // needed. `#[non_exhaustive]` + `num_enum`'s derive make new
-    // variants safe to add without ABI concerns.
+    // Structural node kinds are added at the moment they're first
+    // needed. Phase 1 emitted only `SOURCE_FILE` (plus `ERROR_NODE`
+    // reserved for phase 2's structured recovery). Phase 2.0 adds
+    // `DIRECTIVE` because the trivia-policy regression tests need a
+    // wrapper to demonstrate which directive owns which trivia.
+    // Phase 2.1 will introduce specific directive kinds
+    // (`TRANSACTION`, `OPEN_DIRECTIVE`, ...) alongside `DIRECTIVE`,
+    // which remains as the umbrella kind for error-recovery
+    // wrappers and any structural test reusable across kinds.
+    // `#[non_exhaustive]` + `num_enum`'s derive make new variants
+    // safe to add without ABI concerns. (Append-only discipline
+    // and discriminant stability notes live in the module
+    // rustdoc.)
     /// Root node — every byte of the file is reachable under this node.
     SOURCE_FILE,
 
@@ -143,6 +166,19 @@ pub enum SyntaxKind {
     /// PR adding it — error recovery is in scope for any parser that
     /// promises to keep going past bad input.
     ERROR_NODE,
+
+    /// Generic structural-directive wrapper. Phase 2.0 introduces it
+    /// solely as a regression-test target for the trivia attachment
+    /// policy (see `cst::trivia`). Phase 2.1 adds specific kinds
+    /// alongside (`TRANSACTION`, `OPEN_DIRECTIVE`, `CLOSE_DIRECTIVE`,
+    /// `BALANCE_DIRECTIVE`, ...) when the structured parser starts
+    /// emitting them; `DIRECTIVE` remains as (a) the umbrella kind
+    /// for error-recovery wrappers around partial-directive
+    /// fragments, and (b) the test target for any structural
+    /// regression that's the same shape across all directive kinds.
+    /// The trivia policy applies UNIFORMLY to every specific kind,
+    /// so phase 2.1's tests can use any of them interchangeably.
+    DIRECTIVE,
 }
 
 impl SyntaxKind {
@@ -249,8 +285,26 @@ impl rowan::Language for BeancountLanguage {
     type Kind = SyntaxKind;
 
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
-        SyntaxKind::try_from(raw.0)
-            .unwrap_or_else(|_| panic!("invalid SyntaxKind discriminant: {}", raw.0))
+        // Dev/test: panic loudly so version-skewed green-node bytes
+        // surface during development, when they're actionable. Prod:
+        // fall back to ERROR_NODE so an unrecoverable panic deep in
+        // rowan's tree walk (rowan calls kind_from_raw inside every
+        // tree traversal) can't take down a long-running LSP from a
+        // single stale cache file.
+        //
+        // The asymmetry with `SyntaxKind::try_from` is deliberate:
+        // try_from is for explicit roundtrip validation (e.g.,
+        // serializing a kind and reading it back, where Err is the
+        // useful signal); kind_from_raw is for tree-walk hot paths
+        // (where panic in prod is worse than a downgraded kind).
+        debug_assert!(
+            SyntaxKind::try_from(raw.0).is_ok(),
+            "unknown SyntaxKind discriminant {} — cross-version GreenNode \
+             skew, manifest reorder corruption, or a missing num_enum \
+             derive update. In release builds this becomes ERROR_NODE.",
+            raw.0,
+        );
+        SyntaxKind::try_from(raw.0).unwrap_or(SyntaxKind::ERROR_NODE)
     }
 
     fn kind_to_raw(kind: Self::Kind) -> rowan::SyntaxKind {
@@ -275,11 +329,78 @@ mod tests {
     /// fail this property.
     #[test]
     fn nodes_are_not_tokens() {
-        let node_kinds = [SyntaxKind::SOURCE_FILE, SyntaxKind::ERROR_NODE];
+        let node_kinds = [
+            SyntaxKind::SOURCE_FILE,
+            SyntaxKind::ERROR_NODE,
+            SyntaxKind::DIRECTIVE,
+        ];
         for kind in node_kinds {
             assert!(
                 !kind.is_token(),
                 "{kind:?} is a node but is_token() returns true",
+            );
+        }
+    }
+
+    /// Closed-form exhaustiveness check that catches the failure
+    /// mode the two hand-maintained lists (`nodes_are_not_tokens`
+    /// and `tokens_are_tokens`) miss in isolation: a future variant
+    /// added to the enum but forgotten in `is_token`'s `matches!` arm
+    /// AND in both hand-maintained test lists.
+    ///
+    /// We enumerate every valid discriminant via the `num_enum`
+    /// `try_from` derive — the same surface `kind_from_raw` uses —
+    /// then count how many fall into each category, and compare to
+    /// the documented node list. If the counts disagree, a variant
+    /// was added without updating the test scaffolding.
+    #[test]
+    fn every_kind_partitions_token_xor_node() {
+        // FULL `u16::MAX` sweep, not a sampling. SyntaxKind is
+        // #[repr(u16)] so any discriminant in [0, u16::MAX] is
+        // legally constructible by a future PR. ~65K try_from
+        // calls is sub-millisecond and catches a future PR that
+        // pushes new variants past any arbitrary upper bound.
+        let all_kinds: Vec<SyntaxKind> = (0u16..=u16::MAX)
+            .filter_map(|d| SyntaxKind::try_from(d).ok())
+            .collect();
+
+        // Sanity: we found something (catches a bug where
+        // try_from is broken for ALL discriminants).
+        assert!(
+            !all_kinds.is_empty(),
+            "SyntaxKind::try_from rejected every discriminant 0..256",
+        );
+
+        // The documented node kinds — must be kept in sync with
+        // the `// ---- Node kinds ----` section of the enum above.
+        // The exhaustive iteration catches any drift.
+        let documented_nodes = [
+            SyntaxKind::SOURCE_FILE,
+            SyntaxKind::ERROR_NODE,
+            SyntaxKind::DIRECTIVE,
+        ];
+        let observed_nodes: Vec<SyntaxKind> = all_kinds
+            .iter()
+            .copied()
+            .filter(|k| !k.is_token())
+            .collect();
+
+        assert_eq!(
+            observed_nodes.len(),
+            documented_nodes.len(),
+            "is_token() says there are {} node kinds but the \
+             documented list has {}: observed={observed_nodes:?}, \
+             documented={documented_nodes:?}. A new SyntaxKind \
+             variant was added without updating is_token's matches! \
+             arm AND the documented_nodes list in this test.",
+            observed_nodes.len(),
+            documented_nodes.len(),
+        );
+        for kind in documented_nodes {
+            assert!(
+                observed_nodes.contains(&kind),
+                "{kind:?} is documented as a node but is_token() \
+                 returns true for it",
             );
         }
     }
