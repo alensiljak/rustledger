@@ -691,7 +691,7 @@ fn transaction_blank_line_inside_body_terminates_and_orphans_subsequent_postings
     // Pins the documented blank-line termination behavior (matches
     // Python beancount). The second posting after the blank line
     // ends up flat under SOURCE_FILE, not inside the TRANSACTION.
-    // PR 2.2's POSTING-wrapping work must NOT accidentally widen
+    // PR 2.2b's POSTING-wrapping work must NOT accidentally widen
     // the body scope across blank lines; this test guards that.
     let source = "2024-01-15 * \"x\"\n\
                   \x20\x20Assets:Cash 100 USD\n\
@@ -707,8 +707,10 @@ fn transaction_blank_line_inside_body_terminates_and_orphans_subsequent_postings
     assert_eq!(ds.len(), 1);
     assert_eq!(ds[0].kind(), TRANSACTION);
 
-    // The TRANSACTION owns only header + first posting line.
-    let tx_kinds: Vec<SyntaxKind> = elements_of(&ds[0])
+    // The TRANSACTION header tokens (DATE, STAR) are direct flat
+    // children. The first posting line is wrapped in a POSTING
+    // node; the second posting (post-blank) is NOT.
+    let header_kinds: Vec<SyntaxKind> = elements_of(&ds[0])
         .iter()
         .filter_map(|e| match e {
             Element::Tok(k) => Some(*k),
@@ -716,15 +718,23 @@ fn transaction_blank_line_inside_body_terminates_and_orphans_subsequent_postings
         })
         .collect();
     assert!(
-        tx_kinds.contains(&DATE) && tx_kinds.contains(&STAR),
+        header_kinds.contains(&DATE) && header_kinds.contains(&STAR),
         "tx contains header",
     );
-    // The second ACCOUNT (Liab:Card) is NOT inside the transaction.
-    let accounts_inside_tx = tx_kinds.iter().filter(|k| **k == ACCOUNT).count();
+    // Exactly one POSTING is wrapped inside the TRANSACTION; the
+    // post-blank posting is orphaned under SOURCE_FILE.
+    let postings_inside_tx = ds[0].children().filter(|n| n.kind() == POSTING).count();
     assert_eq!(
-        accounts_inside_tx, 1,
-        "only the FIRST posting's ACCOUNT is inside the tx; the second is orphaned",
+        postings_inside_tx, 1,
+        "only the FIRST posting is wrapped inside the tx; the second is orphaned",
     );
+    // ACCOUNT count across the whole tree: 2 (one in the wrapped
+    // POSTING, one orphaned flat under SOURCE_FILE).
+    let total_accounts = tree
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == ACCOUNT)
+        .count();
+    assert_eq!(total_accounts, 2);
 }
 
 #[test]
@@ -871,8 +881,11 @@ fn meta_entry_inside_transaction_body() {
         tok_seq(&[WHITESPACE, META_KEY, WHITESPACE, STRING, NEWLINE]),
     );
 
-    // The posting line (WS ACCOUNT WS ...) stays flat under
-    // TRANSACTION — PR 2.2b will wrap it in POSTING.
+    // The `note:` line is at the same indent as the posting (2
+    // spaces) and appears BEFORE the posting, so it's
+    // TRANSACTION-level metadata: META_ENTRY is a direct child of
+    // TRANSACTION. The posting line is now wrapped in POSTING
+    // (PR 2.2b).
     let txs: Vec<SyntaxNode> = tree
         .children()
         .filter(|c| c.kind() == TRANSACTION)
@@ -880,6 +893,8 @@ fn meta_entry_inside_transaction_body() {
     assert_eq!(txs.len(), 1);
     let n_meta_entries_in_tx = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
     assert_eq!(n_meta_entries_in_tx, 1);
+    let n_postings_in_tx = txs[0].children().filter(|n| n.kind() == POSTING).count();
+    assert_eq!(n_postings_in_tx, 1);
 }
 
 #[test]
@@ -922,6 +937,866 @@ fn meta_entry_with_value_kinds_other_than_string() {
     // Spot-check the second (DATE-valued) entry's value-token kind.
     let date_me_kinds = elements_of(&mes[1]);
     assert!(date_me_kinds.contains(&Element::Tok(DATE)));
+}
+
+// ---------- Phase 2.2b: POSTING structural wrapping ----------
+
+/// Walk all `POSTING` descendants of a node, in source order.
+fn postings(node: &SyntaxNode) -> Vec<SyntaxNode> {
+    node.descendants()
+        .filter(|n| n.kind() == SyntaxKind::POSTING)
+        .collect()
+}
+
+#[test]
+fn posting_wraps_account_only_line() {
+    use SyntaxKind::*;
+    // The simplest posting: indent + ACCOUNT (no amount). Beancount
+    // calls this an "auto" posting — booking infers the amount from
+    // the others. Round-trip + a single POSTING wrapper around the
+    // sub-line.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    assert_eq!(
+        elements_of(&ps[0]),
+        tok_seq(&[WHITESPACE, ACCOUNT, NEWLINE]),
+    );
+}
+
+#[test]
+fn posting_wraps_account_with_amount_and_currency() {
+    use SyntaxKind::*;
+    // A normal posting with amount + currency. POSTING contains the
+    // indent WHITESPACE, ACCOUNT, inter-token WHITESPACE, NUMBER,
+    // WHITESPACE, CURRENCY, NEWLINE. AMOUNT sub-node wrapping is
+    // PR 2.2c — for now, amount tokens are flat children of POSTING.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    assert_eq!(
+        elements_of(&ps[0]),
+        tok_seq(&[
+            WHITESPACE, ACCOUNT, WHITESPACE, MINUS, NUMBER, WHITESPACE, CURRENCY, NEWLINE
+        ]),
+    );
+}
+
+#[test]
+fn posting_wraps_each_of_multiple_postings_in_a_transaction() {
+    use SyntaxKind::*;
+    // Two postings → two POSTING nodes; each contains exactly its
+    // own sub-line.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 2);
+    for p in &ps {
+        let kinds: Vec<SyntaxKind> = elements_of(p)
+            .iter()
+            .filter_map(|e| match e {
+                Element::Tok(k) => Some(*k),
+                Element::Node(_) => None,
+            })
+            .collect();
+        assert!(kinds.contains(&ACCOUNT) && kinds.contains(&NUMBER) && kinds.contains(&CURRENCY));
+    }
+}
+
+#[test]
+fn posting_with_pending_flag_wraps_flag_inside_node() {
+    use SyntaxKind::*;
+    // Beancount accepts `! Account ...` and `* Account ...` for
+    // posting-level flags. The PENDING_KW / STAR / single-char FLAG
+    // sits between the indent and the ACCOUNT inside the POSTING.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20! Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            WHITESPACE, PENDING_KW, WHITESPACE, ACCOUNT, WHITESPACE, MINUS, NUMBER, WHITESPACE,
+            CURRENCY, NEWLINE
+        ],
+    );
+}
+
+#[test]
+fn posting_attached_meta_entry_lives_inside_posting() {
+    use SyntaxKind::*;
+    // The key PR 2.2b semantic: a META_ENTRY sub-line at STRICTLY
+    // GREATER indent than the preceding POSTING attaches to that
+    // POSTING (not to the TRANSACTION). Mirrors the legacy AST
+    // parser's `parse_posting_metadata` (DeepIndent loop), which
+    // accumulates metadata into `posting.meta`.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20note: \"posting-attached\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    assert_eq!(txs.len(), 1);
+    // TRANSACTION direct children: ONE POSTING, ZERO META_ENTRY
+    // (the deeper-indented META_ENTRY belongs to the POSTING, not
+    // to TRANSACTION).
+    let tx_posting_count = txs[0].children().filter(|n| n.kind() == POSTING).count();
+    let tx_meta_count = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(tx_posting_count, 1);
+    assert_eq!(tx_meta_count, 0);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    // POSTING's children include the META_ENTRY as a structural
+    // child (alongside the posting's flat tokens).
+    let posting_meta_count = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(posting_meta_count, 1);
+}
+
+#[test]
+fn posting_attached_meta_entry_at_same_indent_stays_at_transaction_level() {
+    use SyntaxKind::*;
+    // The complementary case: a META_ENTRY at the SAME indent as
+    // the preceding POSTING is NOT posting-attached. It terminates
+    // the POSTING and becomes a direct TRANSACTION-level child
+    // (Beancount treats this as transaction-level metadata
+    // interspersed between postings).
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20note: \"transaction-level\"\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    assert_eq!(txs.len(), 1);
+    // TRANSACTION direct children: TWO POSTINGs (interspersed) +
+    // ONE META_ENTRY at the SAME indent depth.
+    let tx_posting_count = txs[0].children().filter(|n| n.kind() == POSTING).count();
+    let tx_meta_count = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(tx_posting_count, 2);
+    assert_eq!(tx_meta_count, 1);
+    // Neither POSTING has a META_ENTRY child.
+    for p in postings(&tree) {
+        let inner_meta = p.children().filter(|n| n.kind() == META_ENTRY).count();
+        assert_eq!(inner_meta, 0);
+    }
+}
+
+#[test]
+fn posting_attached_multiple_meta_entries_all_inside_posting() {
+    use SyntaxKind::*;
+    // Multiple deeper-indented metadata lines following the same
+    // POSTING all attach to it.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20key1: \"v1\"\n\
+                  \x20\x20\x20\x20key2: \"v2\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let posting_meta_count = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(posting_meta_count, 2);
+}
+
+#[test]
+fn posting_attached_meta_entry_terminates_at_next_posting() {
+    use SyntaxKind::*;
+    // After posting-attached metadata, a NEW POSTING line at the
+    // standard indent closes the current POSTING and opens a new
+    // one. The new POSTING starts empty (no inherited metadata).
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20note: \"on cash\"\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 2);
+    // First POSTING owns the META_ENTRY; second is clean.
+    let first_meta = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    let second_meta = ps[1].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(first_meta, 1);
+    assert_eq!(second_meta, 0);
+}
+
+#[test]
+fn postings_at_increasing_indents_produce_siblings_and_meta_attributes_to_latest() {
+    use SyntaxKind::*;
+    // Defensive shape: Beancount normally uses uniform posting
+    // indentation. But the state machine doesn't enforce
+    // monotonic indent — two posting lines at different indents
+    // produce sibling POSTING nodes, and a subsequent META_ENTRY
+    // attributes against the MOST-RECENTLY-OPENED POSTING's
+    // indent. Pins this behavior so any future "monotonic indent"
+    // refactor is a visible, intentional break.
+    //
+    // Source:
+    //   posting at 2 spaces
+    //   posting at 4 spaces  (DEEPER than the first)
+    //   meta at 2 spaces     (NOT strictly deeper than 4)
+    //
+    // Expected: two POSTING siblings; the meta closes the second
+    // (its indent is shallower) and lands at TRANSACTION level.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:A\n\
+                  \x20\x20\x20\x20Assets:B  10 USD\n\
+                  \x20\x20note: \"transaction-level\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 2, "two POSTING siblings at different indents");
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    assert_eq!(txs.len(), 1);
+    let tx_meta = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(
+        tx_meta, 1,
+        "meta at shallower indent than the open POSTING lands at TRANSACTION level",
+    );
+    // Neither POSTING owns the META_ENTRY.
+    for p in &ps {
+        let inner_meta = p.children().filter(|n| n.kind() == META_ENTRY).count();
+        assert_eq!(inner_meta, 0);
+    }
+}
+
+#[test]
+fn meta_entry_before_first_posting_stays_at_transaction_level() {
+    use SyntaxKind::*;
+    // A META_ENTRY that appears BEFORE any POSTING (regardless of
+    // indent depth, since there's no preceding POSTING to attach
+    // to) is always TRANSACTION-level.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20\x20\x20note: \"before posting\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    assert_eq!(txs.len(), 1);
+    let tx_meta = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    let tx_posting = txs[0].children().filter(|n| n.kind() == POSTING).count();
+    assert_eq!(tx_meta, 1);
+    assert_eq!(tx_posting, 1);
+    // The POSTING itself has no META_ENTRY child.
+    let ps = postings(&tree);
+    assert_eq!(
+        ps[0].children().filter(|n| n.kind() == META_ENTRY).count(),
+        0
+    );
+}
+
+#[test]
+fn deeper_indented_comment_stays_inside_posting_with_following_meta() {
+    use SyntaxKind::*;
+    // Doc-comment-for-following-posting-metadata idiom: an indented
+    // `;` comment at indent STRICTLY GREATER than the open POSTING
+    // (and at the same depth as the subsequent posting-attached
+    // META_ENTRY) belongs to the POSTING. Both the comment AND the
+    // META_ENTRY land inside the POSTING node.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20; comment about note\n\
+                  \x20\x20\x20\x20note: \"deeper\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+
+    // The deeper-indented META_ENTRY is attached to the POSTING.
+    let posting_meta_count = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(posting_meta_count, 1);
+
+    // The deeper-indented COMMENT token is also inside POSTING.
+    let posting_comment_count = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    assert_eq!(
+        posting_comment_count, 1,
+        "deeper-indented `;` comment stays inside POSTING with following meta",
+    );
+
+    // TRANSACTION's direct children have ZERO orphaned META_ENTRY
+    // or COMMENT.
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    let tx_meta = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    let tx_comment = txs[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    assert_eq!(tx_meta, 0);
+    assert_eq!(tx_comment, 0);
+}
+
+#[test]
+fn deeper_indented_comment_stays_inside_posting_even_without_following_meta() {
+    use SyntaxKind::*;
+    // Rule is purely indent-based: a deeper-indented comment
+    // belongs to the open POSTING regardless of whether a
+    // META_ENTRY follows. Pins the rule's edge so the predicate
+    // can't drift to "only attach when followed by meta".
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20; trailing posting doc\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 2);
+    let first_comment_count = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    let second_comment_count = ps[1]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    assert_eq!(first_comment_count, 1);
+    assert_eq!(second_comment_count, 0);
+}
+
+#[test]
+fn posting_with_indented_comment_between_postings_terminates_posting() {
+    use SyntaxKind::*;
+    // An indented `;`-comment between two posting lines is
+    // TRANSACTION-level inter-posting trivia: it closes the
+    // current POSTING. The comment ends up as flat tokens between
+    // the two POSTING nodes (matches the existing
+    // `transaction_with_indented_comment_between_postings`
+    // structural intent).
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20; doc comment\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 2);
+    // The COMMENT token lives between the two POSTING nodes as a
+    // flat child of TRANSACTION, NOT inside either POSTING.
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    let tx_kids = elements_of(&txs[0]);
+    let first_posting_idx = tx_kids
+        .iter()
+        .position(|e| matches!(e, Element::Node(POSTING)))
+        .unwrap();
+    let comment_idx = tx_kids
+        .iter()
+        .position(|e| matches!(e, Element::Tok(COMMENT)))
+        .expect("indented comment is a flat TRANSACTION child");
+    assert!(
+        comment_idx > first_posting_idx,
+        "comment follows first POSTING"
+    );
+}
+
+#[test]
+fn posting_at_eof_without_trailing_newline_still_wrapped() {
+    use SyntaxKind::*;
+    // Per rule 5 of `cst::trivia` (unterminated final directive),
+    // a POSTING that reaches EOF mid-content without a final
+    // NEWLINE still gets wrapped — the POSTING simply has no
+    // NEWLINE child.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            WHITESPACE, ACCOUNT, WHITESPACE, MINUS, NUMBER, WHITESPACE, CURRENCY
+        ],
+    );
+}
+
+#[test]
+fn star_flagged_posting_wraps_flag_inside_node() {
+    use SyntaxKind::*;
+    // `* Account ...` (STAR-flagged posting) is also a valid
+    // beancount posting shape. The STAR sits between the indent
+    // and the ACCOUNT inside POSTING.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20* Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(kinds.starts_with(&[WHITESPACE, STAR, WHITESPACE, ACCOUNT]));
+}
+
+#[test]
+fn flagged_posting_with_question_mark_wraps_flag_inside_node() {
+    use SyntaxKind::*;
+    // `? Account ...` — the `?` flag emits a FLAG token (the
+    // single-letter alphabetic flags P/S/T/C/U/R/M are tokenized
+    // as CURRENCY by lexer priority 3 — covered by
+    // `single_char_currency_flagged_posting_wraps_currency_as_flag`).
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20? Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(kinds.starts_with(&[WHITESPACE, FLAG, WHITESPACE, ACCOUNT]));
+}
+
+#[test]
+fn hash_flagged_posting_wraps_hash_inside_node() {
+    use SyntaxKind::*;
+    // `# Account ...` is a valid Beancount posting flag (legacy
+    // `parse_flag` accepts `Token::Hash`; `identify_directive`
+    // accepts HASH as a transaction trigger). Pin that
+    // `starts_posting_sub_line` recognizes it so the line is
+    // wrapped in POSTING rather than falling through as flat
+    // tokens.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20# Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(kinds.starts_with(&[WHITESPACE, HASH, WHITESPACE, ACCOUNT]));
+}
+
+#[test]
+fn hash_flagged_posting_attached_meta_entry_lives_inside_posting() {
+    use SyntaxKind::*;
+    // Combines HASH flag with posting-attached META_ENTRY (the
+    // shape the bare hash_flagged_posting_wraps_hash_inside_node
+    // test alone couldn't catch a regression on). If a future
+    // change drops HASH from `starts_posting_sub_line`, this test
+    // fails because the line would no longer open a POSTING and
+    // the deeper-indented META_ENTRY would orphan to TRANSACTION.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20# Assets:Cash  -5.00 USD\n\
+                  \x20\x20\x20\x20note: \"hash-flagged\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let posting_meta_count = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(posting_meta_count, 1);
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    let tx_meta = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(tx_meta, 0);
+}
+
+#[test]
+fn deeper_indented_trailing_comment_at_eof_stays_inside_posting() {
+    use SyntaxKind::*;
+    // Doc-comment-attribution rule extended to the EOF case: a
+    // deeper-indented `;` comment that is the LAST sub-line of the
+    // file (no final NEWLINE) still attaches to the open POSTING.
+    // Per rule 5 of `cst::trivia` (recursive application: an
+    // unterminated POSTING ends at its last content token without a
+    // NEWLINE child of its own).
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  \x20\x20\x20\x20; deep trailing";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let posting_comment_count = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    assert_eq!(
+        posting_comment_count, 1,
+        "EOF-trailing deep `;` comment is a child of POSTING",
+    );
+
+    // No COMMENT orphaned to TRANSACTION level.
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    let tx_comment = txs[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == COMMENT)
+        .count();
+    assert_eq!(tx_comment, 0);
+}
+
+#[test]
+fn deeper_indented_emacs_directive_attaches_to_open_posting() {
+    use SyntaxKind::*;
+    // `is_comment_token` includes EMACS_DIRECTIVE (`#+`). The
+    // indented-comment branch in `emit_transaction_body` routes it
+    // through the same indent-attribution rule as COMMENT: deeper-
+    // indented than the open POSTING = stays INSIDE POSTING.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  \x20\x20\x20\x20#+STARTUP: overview\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let emacs_inside_posting = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    assert_eq!(
+        emacs_inside_posting, 1,
+        "EMACS_DIRECTIVE recognized as comment-class trivia, attaches by indent",
+    );
+}
+
+#[test]
+fn deeper_indented_shebang_attaches_to_open_posting() {
+    use SyntaxKind::*;
+    // Companion to the EMACS_DIRECTIVE test: pin that SHEBANG
+    // (`#!`) is also recognized as comment-class trivia via
+    // `is_comment_token` and follows the same indent-attribution
+    // rule. Catches a regression that drops SHEBANG from the
+    // helper while leaving EMACS_DIRECTIVE in place.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  \x20\x20\x20\x20#!/usr/bin/env something\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let shebang_inside_posting = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == SHEBANG)
+        .count();
+    assert_eq!(
+        shebang_inside_posting, 1,
+        "SHEBANG recognized as comment-class trivia, attaches by indent",
+    );
+}
+
+#[test]
+fn deeper_indented_percent_comment_attaches_to_open_posting() {
+    use SyntaxKind::*;
+    // PERCENT_COMMENT (`%`) is included in `is_comment_token` but
+    // every other comment-attribution test uses `;`. Pin the `%`
+    // path so a regression that demotes PERCENT_COMMENT (e.g., via
+    // a typo or split refactor) fails here.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  \x20\x20\x20\x20% percent-style doc\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let pct_inside_posting = ps[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == PERCENT_COMMENT)
+        .count();
+    assert_eq!(
+        pct_inside_posting, 1,
+        "PERCENT_COMMENT recognized as comment-class trivia, attaches by indent",
+    );
+}
+
+#[test]
+fn directive_body_absorbs_indented_emacs_directive_when_block_has_meta() {
+    use SyntaxKind::*;
+    // The `is_comment_token` widening also affects
+    // `upcoming_indented_block_has_meta` and
+    // `is_indented_directive_continuation` for NON-transaction
+    // directives. Pin that an indented `#+STARTUP` line inside an
+    // OPEN_DIRECTIVE that ALSO contains a meta line is absorbed as
+    // a continuation (rather than orphaning to SOURCE_FILE).
+    // Mirrors the existing `indented_comment_before_first_metadata`
+    // / `indented_comment_between_metadata_lines` tests, which use
+    // `;` only; this pins the SHEBANG/EMACS_DIRECTIVE branch.
+    let source = "2024-01-01 open Assets:Cash\n\
+                  \x20\x20#+STARTUP: overview\n\
+                  \x20\x20key: \"v\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), OPEN_DIRECTIVE);
+
+    // The EMACS_DIRECTIVE token lives inside the OPEN_DIRECTIVE,
+    // not orphaned anywhere else in the tree. Use `descendants`
+    // symmetrically on both sides so a future refactor that wraps
+    // SOURCE_FILE trivia in any nested node doesn't make the
+    // orphan check vacuously pass.
+    let emacs_total = tree
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    let emacs_in_directive = ds[0]
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    assert_eq!(emacs_total, 1, "exactly one EMACS_DIRECTIVE in the tree");
+    assert_eq!(
+        emacs_in_directive, 1,
+        "EMACS_DIRECTIVE absorbed by OPEN_DIRECTIVE"
+    );
+
+    // The block_has_meta look-ahead is what kept the EMACS line
+    // inside the directive: the subsequent `key: "v"` becomes a
+    // META_ENTRY child of OPEN_DIRECTIVE. Assert that META_ENTRY
+    // actually appears so a regression that breaks the META_KEY
+    // arm (closing the directive AFTER the EMACS line but BEFORE
+    // the meta) fails here, not silently.
+    let meta_entries_in_directive = ds[0]
+        .descendants()
+        .filter(|n| n.kind() == META_ENTRY)
+        .count();
+    assert_eq!(meta_entries_in_directive, 1, "META_ENTRY also absorbed");
+}
+
+#[test]
+fn directive_body_does_not_absorb_indented_emacs_directive_when_no_meta() {
+    use SyntaxKind::*;
+    // Complementary case: when an OPEN_DIRECTIVE has NO meta block,
+    // an indented EMACS_DIRECTIVE / SHEBANG / `;`-comment that
+    // follows the header is NOT a continuation (per the
+    // block_has_meta gate). Pins that the widening did not
+    // accidentally make these tokens unconditional continuations.
+    let source = "2024-01-01 open Assets:Cash\n\
+                  \x20\x20#+STARTUP: trailing only\n\
+                  2024-01-02 open Assets:Bank\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(
+        ds.len(),
+        2,
+        "two OPEN_DIRECTIVES, separated by EMACS_DIRECTIVE rule-2 trivia"
+    );
+    assert_eq!(ds[0].kind(), OPEN_DIRECTIVE);
+    assert_eq!(ds[1].kind(), OPEN_DIRECTIVE);
+
+    // The EMACS_DIRECTIVE is rule-2 inter-directive trivia: it
+    // attaches as LEADING trivia of the SECOND directive (per
+    // `cst::trivia`), NOT as a continuation of the first.
+    // Symmetric `descendants` walks on both sides and a total-
+    // count sanity check guard against future structural changes
+    // that wrap trivia in a nested node.
+    let emacs_total = tree
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    let emacs_in_first = ds[0]
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    let emacs_in_second = ds[1]
+        .descendants_with_tokens()
+        .filter(|e| e.kind() == EMACS_DIRECTIVE)
+        .count();
+    assert_eq!(emacs_total, 1, "exactly one EMACS_DIRECTIVE in the tree");
+    assert_eq!(
+        emacs_in_first, 0,
+        "EMACS_DIRECTIVE is NOT absorbed by header-only directive"
+    );
+    assert_eq!(
+        emacs_in_second, 1,
+        "EMACS_DIRECTIVE leads the next directive as rule-2 trivia"
+    );
+}
+
+#[test]
+fn catch_all_indented_unknown_content_closes_posting_and_emits_flat() {
+    use SyntaxKind::*;
+    // Catch-all `else` branch of emit_transaction_body: an indented
+    // sub-line that is neither posting, meta, nor comment closes
+    // any open POSTING and emits flat at TRANSACTION level.
+    // Examples: a stray bare STRING on its own indented line. Pin
+    // the behavior so PR 2.2c (AMOUNT continuations etc.) doesn't
+    // silently shift attribution without an explicit test update.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  \x20\x20\"stray string on own line\"\n\
+                  \x20\x20Expenses:Food 1 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(
+        ps.len(),
+        2,
+        "stray indented STRING closes POSTING; next POSTING opens fresh"
+    );
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    // The stray STRING token is a flat child of TRANSACTION (not
+    // inside either POSTING). TRANSACTION's direct STRING tokens
+    // include the header narration "x" PLUS the stray, for a total
+    // of 2.
+    let tx_strings: usize = txs[0]
+        .children_with_tokens()
+        .filter(|e| e.kind() == STRING)
+        .count();
+    assert_eq!(tx_strings, 2);
+    for p in &ps {
+        let inside_string = p
+            .children_with_tokens()
+            .filter(|e| e.kind() == STRING)
+            .count();
+        assert_eq!(inside_string, 0);
+    }
+}
+
+#[test]
+fn same_indent_comment_between_posting_and_deeper_meta_orphans_meta() {
+    use SyntaxKind::*;
+    // The same-indent `;` comment between a posting and a deeper-
+    // indented META_KEY closes the POSTING (per the
+    // indent-attribution rule: comment indent is not strictly
+    // greater than posting indent). The subsequent deeper-indented
+    // META_KEY then has no open POSTING and lands at TRANSACTION
+    // level. Matches the legacy AST parser's
+    // `parse_posting_metadata` loop, which terminates posting-
+    // attached metadata at any indented sub-line that is not a
+    // DeepIndent META_KEY (a same-indent COMMENT being one such
+    // terminator). Python beancount parity is NOT verified here —
+    // a future compat audit may find Python attaches the deeper
+    // META to the still-open posting, in which case this test is
+    // the touch-point. Pinned so a future refactor can't silently
+    // flip the attribution without a test update.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash -5 USD\n\
+                  \x20\x20; explicit break at posting indent\n\
+                  \x20\x20\x20\x20key: \"orphaned\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let posting_meta_count = ps[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(
+        posting_meta_count, 0,
+        "same-indent comment ends posting-attached meta block; deeper meta orphans to TRANSACTION",
+    );
+
+    let txs: Vec<SyntaxNode> = tree
+        .children()
+        .filter(|c| c.kind() == TRANSACTION)
+        .collect();
+    let tx_meta = txs[0].children().filter(|n| n.kind() == META_ENTRY).count();
+    assert_eq!(tx_meta, 1);
+}
+
+#[test]
+fn single_char_currency_flagged_posting_wraps_currency_as_flag() {
+    use SyntaxKind::*;
+    // `P Account ...` — `P` tokenizes as CURRENCY (lexer priority
+    // 3) but functions as a posting flag, mirroring the transaction
+    // header's same Currency-vs-Flag tie-break. POSTING still wraps
+    // the line.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20P Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ps = postings(&tree);
+    assert_eq!(ps.len(), 1);
+    let kinds: Vec<SyntaxKind> = elements_of(&ps[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(kinds.starts_with(&[WHITESPACE, CURRENCY, WHITESPACE, ACCOUNT]));
 }
 
 #[test]

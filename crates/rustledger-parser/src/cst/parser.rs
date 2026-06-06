@@ -27,11 +27,19 @@
 //! Phase 2.2a adds `META_ENTRY` sub-node structure around indented
 //! `WS META_KEY ... (NEWLINE | EOF)` sub-lines inside any directive
 //! or transaction (per rule 5 of `cst::trivia`, an unterminated
-//! final sub-line at EOF still gets wrapped). Phase 2.2b/c add
-//! `POSTING` / `AMOUNT` /
-//! `COST_SPEC` / `PRICE_ANNOTATION` inside TRANSACTION. Phase 5
-//! deletes `parse_flat` once `parse_structured` covers every byte
-//! in every corpus file.
+//! final sub-line at EOF still gets wrapped). Phase 2.2b adds
+//! `POSTING` sub-node structure around each `WS [(FLAG | STAR |
+//! PENDING_KW | HASH | single-char CURRENCY) WS] ACCOUNT ...`
+//! posting line inside `TRANSACTION` (the flag arm mirrors
+//! `parse_flag` in the legacy AST parser and `identify_directive`'s
+//! transaction-trigger arm; single-char `CURRENCY` covers letters
+//! like `T`/`V`/`F`/`X` that win the lexer's priority-3 Currency-
+//! vs-Flag tie-break). Posting-attached metadata (strictly deeper-
+//! indented `META_ENTRY` sub-lines following the posting) becomes a
+//! child of that `POSTING`. Phase 2.2c adds `AMOUNT` / `COST_SPEC` /
+//! `PRICE_ANNOTATION` inside `POSTING`. Phase 5 deletes
+//! `parse_flat` once `parse_structured` covers every byte in
+//! every corpus file.
 
 use std::ops::Range;
 
@@ -111,10 +119,10 @@ pub fn parse_structured(source: &str) -> SyntaxNode {
             // single-line-directive path consumes only `WS META_KEY`
             // (and gated indented comments). TRANSACTION consumes
             // ANY indented sub-line (postings, metadata, comments)
-            // until a blank line, non-indented content, or EOF —
-            // its body shape is much looser, and PR 2.2 will
-            // introduce POSTING / AMOUNT / COST_SPEC / META_ENTRY
-            // structure INSIDE the TRANSACTION node.
+            // until a blank line, non-indented content, or EOF.
+            // PR 2.2a/b wrap META_ENTRY and POSTING inside
+            // TRANSACTION; PR 2.2c will wrap AMOUNT / COST_SPEC /
+            // PRICE_ANNOTATION inside POSTING.
             i = if directive_kind == SyntaxKind::TRANSACTION {
                 emit_transaction_body(&mut builder, source, &tokens, i)
             } else {
@@ -184,8 +192,9 @@ fn emit_through_terminator(
 /// with no `NEWLINE` child. Token kinds inside the `META_ENTRY`
 /// stay flat — phase 3's typed-AST surface will expose `key()` and
 /// `value()` accessors that walk these children. Indented
-/// `;`-comments and POSTING lines (PR 2.2b) flow through as flat
-/// children of the parent directive, NOT wrapped in `META_ENTRY`.
+/// `;`-comments flow through as flat children, NOT wrapped in
+/// `META_ENTRY`. POSTING lines are recognized earlier in
+/// `emit_transaction_body` and never reach this helper.
 fn emit_body_sub_line(
     builder: &mut GreenNodeBuilder<'_>,
     source: &str,
@@ -236,10 +245,11 @@ fn starts_meta_sub_line(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> bool
 /// A continuation sub-line is recognized as `WHITESPACE` (the
 /// indent) followed by either:
 /// - `META_KEY` — the standard metadata sub-line, or
-/// - `COMMENT` / `PERCENT_COMMENT` — an indented documentation
-///   comment between metadata entries (a common Beancount idiom;
-///   keeping it inside the directive prevents subsequent metadata
-///   from getting orphaned to `SOURCE_FILE`).
+/// - any comment-class trivia token (per [`is_comment_token`]: `;`,
+///   `%`, `#!`, `#+`) — an indented documentation comment between
+///   metadata entries (a common Beancount idiom; keeping it inside
+///   the directive prevents subsequent metadata from getting
+///   orphaned to `SOURCE_FILE`).
 ///
 /// Anything else — a blank line, a non-indented top-level token,
 /// EOF — terminates the directive. Blank-line separated metadata
@@ -277,33 +287,77 @@ fn emit_directive_body(
 /// indented comments — any line starting with `WHITESPACE`
 /// followed by a non-`NEWLINE` token).
 ///
-/// **Phase 2.2a doesn't attribute metadata by indent depth.**
-/// Beancount distinguishes TRANSACTION-level metadata (at the
-/// transaction's standard indent, typically two spaces, before
-/// any posting OR interspersed between postings at that same
-/// indent) from POSTING-attached metadata (at a DEEPER indent
-/// following a posting line). PR 2.2a wraps both as `META_ENTRY`
-/// children of `TRANSACTION`. **PR 2.2b** must inspect the
-/// following sub-line's indent depth and move the deeper-indented
-/// `META_ENTRY` nodes from `TRANSACTION`'s direct children to the
-/// preceding `POSTING`'s children. The transaction-level case
-/// stays put; only the posting-attached case relocates. No
-/// existing PR 2.2a test pins a posting-attached `META_ENTRY` (the
-/// shape PR 2.2b will need to relocate); PR 2.2b should ADD such
-/// tests alongside the relocation logic.
+/// **Phase 2.2b attributes metadata by indent depth.** Beancount
+/// distinguishes TRANSACTION-level metadata (at the transaction's
+/// standard indent, typically two spaces, before any posting OR
+/// interspersed between postings at that same indent) from
+/// POSTING-attached metadata (at a DEEPER indent following a
+/// posting line). The transaction-level case stays a direct child
+/// of `TRANSACTION`; the posting-attached case becomes a child of
+/// the preceding `POSTING` node.
+///
+/// State machine: walk the body lines while tracking the indent
+/// width of the most-recently-opened `POSTING` (if any). For each
+/// sub-line:
+///
+/// - **Posting line** (`WS [(FLAG | STAR | PENDING_KW | HASH |
+///   single-char CURRENCY) WS] ACCOUNT ...`, full flag set per
+///   [`starts_posting_sub_line`]):
+///   close the open POSTING if any, then open a new POSTING and
+///   consume the line. **Sibling POSTING indents are not required
+///   to be uniform**: a transaction with postings at different
+///   indent depths produces sibling POSTING nodes whose
+///   `open_posting_indent` reflects each one's own header indent.
+///   Subsequent metadata then attributes against the
+///   most-recently-opened POSTING's indent, which means
+///   metadata can attribute differently depending on which
+///   posting precedes it. Beancount's grammar uses uniform
+///   indentation by convention, so this is a defensive (not
+///   primary) shape; pinned by
+///   `postings_at_increasing_indents_produce_siblings_and_meta_attributes_to_latest`.
+/// - **Metadata sub-line** (`WS META_KEY ...`): if a POSTING is
+///   open AND this line's indent is strictly greater than the
+///   POSTING's indent, emit the `META_ENTRY` INSIDE the POSTING.
+///   Otherwise (no open POSTING, or shallower/equal indent), close
+///   any open POSTING and emit the `META_ENTRY` at TRANSACTION level.
+/// - **Indented comment line** (`WS COMMENT` / `WS PERCENT_COMMENT`):
+///   apply the same indent-attribution rule as metadata. If the
+///   comment is strictly more indented than the open POSTING, it
+///   stays INSIDE the POSTING (preserving the doc-comment-for-
+///   following-posting-metadata idiom — a deeper-indented `; doc`
+///   followed by deeper-indented `key: value` should both belong
+///   to the same posting). Otherwise close any open POSTING and
+///   emit the comment flat at TRANSACTION level (matches the
+///   `posting_with_indented_comment_between_postings_terminates_posting`
+///   test, where the comment is at the SAME indent as the postings
+///   and is therefore transaction-level inter-posting trivia).
+/// - **Any other indented content** (`WS STRING`, `WS NUMBER`,
+///   unrecognized shape): close any open POSTING and emit the line
+///   flat at TRANSACTION level. We don't know what to do with it
+///   structurally; flat-passthrough preserves bytes.
+///
+/// Indent width is measured as the BYTE LENGTH of the leading
+/// `WHITESPACE` token — sufficient when the source uses uniform
+/// spaces (the standard Beancount convention). **Known divergence
+/// from the legacy AST parser**: the legacy lexer's `Indent(N)` /
+/// `DeepIndent(N)` variants (`logos_lexer.rs:615-616`) count tabs
+/// as 4 spaces, so a tab-indented posting followed by space-
+/// indented metadata is compared by VISUAL columns there but by
+/// BYTE COUNT here. The two paths can disagree on mixed-indent
+/// files. No test corpus file currently triggers the divergence in
+/// posting-attached-metadata position; if one shows up, switching
+/// `indent_width` to a column-aware count is the fix.
 ///
 /// Compared with `emit_directive_body` (which only continues on
 /// `WS META_KEY` and gated `WS COMMENT`), transactions have a
-/// looser body shape: posting lines start with `WS ACCOUNT`,
-/// metadata sub-lines with `WS META_KEY`, indented comments with
-/// `WS COMMENT`, etc. All belong inside `TRANSACTION` per the
-/// multi-line clause of the Directive-Terminator Rule. PR 2.2
-/// will introduce `POSTING` / `AMOUNT` / `COST_SPEC` /
-/// `META_ENTRY` sub-nodes inside the TRANSACTION wrapper; for
-/// now those tokens are flat children.
+/// looser body shape. PR 2.2c will introduce `AMOUNT` /
+/// `COST_SPEC` / `PRICE_ANNOTATION` sub-nodes INSIDE `POSTING`;
+/// for now the POSTING's content tokens (account, amount,
+/// currency, etc.) stay flat children of POSTING.
 ///
 /// Termination: a blank line (NEWLINE alone, or WHITESPACE then
-/// NEWLINE), any non-indented top-level token, or EOF.
+/// NEWLINE), any non-indented top-level token, or EOF. Any open
+/// POSTING is closed before returning.
 fn emit_transaction_body(
     builder: &mut GreenNodeBuilder<'_>,
     source: &str,
@@ -311,10 +365,190 @@ fn emit_transaction_body(
     mut i: usize,
 ) -> usize {
     i = emit_through_terminator(builder, source, tokens, i);
+
+    let mut open_posting_indent: Option<usize> = None;
+
     while is_indented_transaction_body_line(tokens, i) {
-        i = emit_body_sub_line(builder, source, tokens, i);
+        let sub_line_indent = indent_width(tokens, i);
+
+        if starts_posting_sub_line(tokens, i) {
+            if open_posting_indent.is_some() {
+                builder.finish_node();
+            }
+            builder.start_node(SyntaxKind::POSTING.into());
+            open_posting_indent = Some(sub_line_indent);
+            i = emit_through_terminator(builder, source, tokens, i);
+        } else if starts_meta_sub_line(tokens, i) {
+            close_open_posting_unless_attached(builder, &mut open_posting_indent, sub_line_indent);
+            i = emit_body_sub_line(builder, source, tokens, i);
+        } else if starts_indented_comment(tokens, i) {
+            // Same indent-attribution rule as META_ENTRY: deeper-
+            // indented comments stay INSIDE the open POSTING; same-
+            // or-shallower-indented comments close the POSTING and
+            // emit flat at TRANSACTION level. Preserves the doc-
+            // comment-for-following-posting-metadata idiom.
+            close_open_posting_unless_attached(builder, &mut open_posting_indent, sub_line_indent);
+            i = emit_through_terminator(builder, source, tokens, i);
+        } else {
+            // Catch-all: any other indented content (e.g., `WS
+            // STRING`, `WS NUMBER`, or unrecognized shapes that
+            // future error-recovery work might surface). Close any
+            // open POSTING and emit flat at TRANSACTION level. PR
+            // 2.2c (AMOUNT / COST_SPEC / PRICE_ANNOTATION) lives
+            // INSIDE a `POSTING` and reaches the parser through
+            // `starts_posting_sub_line`, never this branch — but
+            // if a future continuation form (e.g., multi-line
+            // postings) gets added, this branch is where it would
+            // need to be teased apart from genuine other content.
+            if open_posting_indent.is_some() {
+                builder.finish_node();
+                open_posting_indent = None;
+            }
+            i = emit_through_terminator(builder, source, tokens, i);
+        }
     }
+
+    if open_posting_indent.is_some() {
+        builder.finish_node();
+    }
+
     i
+}
+
+/// Close any currently-open POSTING node IF the next sub-line at
+/// `sub_line_indent` should NOT be attached to it (i.e., the next
+/// sub-line is not strictly more indented than the POSTING). Shared
+/// between the `META_ENTRY` and indented-comment branches of
+/// `emit_transaction_body` so the two indent-attribution rules
+/// cannot drift.
+///
+/// "Attached" means strictly more indented than the open POSTING.
+/// A same-indent or shallower sub-line closes the POSTING; a
+/// deeper-indented sub-line leaves it open. Called with
+/// `open_posting_indent = None` is a no-op (no POSTING to close).
+fn close_open_posting_unless_attached(
+    builder: &mut GreenNodeBuilder<'_>,
+    open_posting_indent: &mut Option<usize>,
+    sub_line_indent: usize,
+) {
+    let attach = open_posting_indent.is_some_and(|p_indent| sub_line_indent > p_indent);
+    if !attach && open_posting_indent.is_some() {
+        builder.finish_node();
+        *open_posting_indent = None;
+    }
+}
+
+/// Returns true iff `tokens[i..]` starts a posting sub-line:
+/// `WHITESPACE` (the indent) followed by `ACCOUNT`, or by an
+/// optional flag (`FLAG` / `STAR` / `PENDING_KW` / `HASH` /
+/// single-char `CURRENCY`) plus another `WHITESPACE` then
+/// `ACCOUNT`. Mirrors the legacy AST parser's `parse_posting` shape
+/// (`parser.rs:866-880`): indent, optional flag, then a required
+/// account. The flag set MUST stay in sync with `parse_flag` in the
+/// legacy parser (`Token::Star | Pending | Flag(_) | Hash` plus
+/// single-char `Currency`) and with `identify_directive`'s
+/// transaction-trigger arm above; drift would silently leave
+/// HASH-flagged or single-char-CURRENCY-flagged posting lines flat
+/// under `TRANSACTION` instead of wrapped in `POSTING`. The single-
+/// char `CURRENCY`-as-flag arm exists because the lexer's priority-3
+/// Currency-vs-Flag tie-break makes letters like `T`/`V`/`F`/`X`
+/// tokenize as `CURRENCY`, but they still function as posting flags
+/// by Beancount convention.
+fn starts_posting_sub_line(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> bool {
+    if !matches!(tokens.get(i), Some((SyntaxKind::WHITESPACE, _))) {
+        return false;
+    }
+    if matches!(tokens.get(i + 1), Some((SyntaxKind::ACCOUNT, _))) {
+        return true;
+    }
+    let has_flag = match tokens.get(i + 1) {
+        Some((
+            SyntaxKind::FLAG | SyntaxKind::STAR | SyntaxKind::PENDING_KW | SyntaxKind::HASH,
+            _,
+        )) => true,
+        Some((SyntaxKind::CURRENCY, range)) => range.len() == 1,
+        _ => false,
+    };
+    if !has_flag {
+        return false;
+    }
+    matches!(tokens.get(i + 2), Some((SyntaxKind::WHITESPACE, _)))
+        && matches!(tokens.get(i + 3), Some((SyntaxKind::ACCOUNT, _)))
+}
+
+/// Byte length of the leading `WHITESPACE` token at `tokens[i]`,
+/// or 0 if there is no leading whitespace. Used by
+/// `emit_transaction_body` to decide whether a metadata or
+/// comment sub-line's indent is strictly deeper than the
+/// surrounding POSTING's indent (the posting-attached-metadata /
+/// posting-attached-comment rule).
+///
+/// **Known divergence from the legacy AST parser**: the legacy
+/// lexer's `Indent(N)` / `DeepIndent(N)` variants
+/// (`logos_lexer.rs:615-616`) count tabs as 4 spaces, but this
+/// helper returns raw bytes. Mixed tab+space indentation can
+/// therefore produce different attribution between the two paths.
+/// Acceptable for now because (a) Beancount idiom is uniform
+/// spaces, (b) no corpus file currently triggers the divergence in
+/// posting-attached-metadata position, and (c) the CST round-trip
+/// is byte-identical regardless of how `indent_width` classifies.
+/// If a file shows up, switch to a column-aware count.
+fn indent_width(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> usize {
+    match tokens.get(i) {
+        Some((SyntaxKind::WHITESPACE, range)) => range.len(),
+        _ => 0,
+    }
+}
+
+/// Returns true iff `kind` is one of the four comment-class trivia
+/// token kinds: `COMMENT` (`;`), `PERCENT_COMMENT` (`%`), `SHEBANG`
+/// (`#!`), or `EMACS_DIRECTIVE` (`#+`). Mirrors the comment subset
+/// of `SyntaxKind::is_trivia()` and is the single source of truth
+/// for the three call sites that need to decide whether a token
+/// "is a comment" for body-continuation / indent-attribution
+/// purposes (`starts_indented_comment`,
+/// `upcoming_indented_block_has_meta`,
+/// `is_indented_directive_continuation`). A new comment-class
+/// token would otherwise require three coordinated edits;
+/// `is_comment_token_covers_all_comment_class_trivia` in this
+/// module's tests asserts membership stays in sync with `is_trivia`.
+///
+/// **Known CST/AST divergence**: The legacy AST parser's
+/// `parse_posting_metadata` / `parse_transaction_directive` paths
+/// in `crates/rustledger-parser/src/parser.rs` only treat
+/// `Token::Comment` and `Token::PercentComment` as in-body trivia
+/// for transaction / directive bodies. `Token::Shebang` and
+/// `Token::EmacsDirective` are processed only at top level
+/// (`parse_directive` dispatch). So a deeper-indented `#+STARTUP:
+/// overview` between two postings is INSIDE the POSTING for the
+/// CST but TERMINATES the transaction for the AST. Phase-isolated
+/// in practice: the loader, LSP, validator, query, booking, and
+/// CLI all run through the AST path; the only current
+/// `parse_structured` consumers are this crate's corpus baseline
+/// test and `examples/dump_top_level_directives.rs`. Phase 5
+/// deletes `parse_flat` and the AST; that reconciliation should
+/// adopt the CST behavior (consistent with `is_trivia()`'s
+/// classification of all four comment-class tokens) rather than
+/// the AST behavior (an indented comment-class line silently
+/// terminating the directive is the surprising outcome).
+const fn is_comment_token(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::COMMENT
+            | SyntaxKind::PERCENT_COMMENT
+            | SyntaxKind::SHEBANG
+            | SyntaxKind::EMACS_DIRECTIVE,
+    )
+}
+
+/// Returns true iff `tokens[i..]` starts an indented comment line:
+/// `WHITESPACE` (the indent) followed by a comment-class token (per
+/// [`is_comment_token`]). Used by `emit_transaction_body` to apply
+/// the same indent-attribution rule to comments that it applies to
+/// metadata.
+fn starts_indented_comment(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> bool {
+    matches!(tokens.get(i), Some((SyntaxKind::WHITESPACE, _)))
+        && matches!(tokens.get(i + 1), Some((k, _)) if is_comment_token(*k))
 }
 
 /// Returns true iff `tokens[i..]` starts an indented line with
@@ -337,11 +571,11 @@ fn is_indented_transaction_body_line(tokens: &[(SyntaxKind, Range<usize>)], i: u
     !matches!(tokens.get(i + 1), Some((SyntaxKind::NEWLINE, _)) | None)
 }
 
-/// Scan forward through any indented `WS META_KEY` / `WS COMMENT`
-/// / `WS PERCENT_COMMENT` sub-lines starting at `tokens[i..]`,
-/// returning `true` iff at least one of them is a metadata
-/// (`WS META_KEY`) sub-line. Stops at the first line that is
-/// neither metadata nor an indented comment (blank line,
+/// Scan forward through any indented `WS META_KEY` sub-lines or
+/// `WS <comment>` sub-lines (per [`is_comment_token`]) starting at
+/// `tokens[i..]`, returning `true` iff at least one of them is a
+/// metadata (`WS META_KEY`) sub-line. Stops at the first line that
+/// is neither metadata nor an indented comment (blank line,
 /// non-indented top-level content, EOF).
 fn upcoming_indented_block_has_meta(tokens: &[(SyntaxKind, Range<usize>)], mut i: usize) -> bool {
     loop {
@@ -349,10 +583,7 @@ fn upcoming_indented_block_has_meta(tokens: &[(SyntaxKind, Range<usize>)], mut i
         let next = tokens.get(i + 1).map(|(k, _)| *k);
         match (head, next) {
             (Some(SyntaxKind::WHITESPACE), Some(SyntaxKind::META_KEY)) => return true,
-            (
-                Some(SyntaxKind::WHITESPACE),
-                Some(SyntaxKind::COMMENT | SyntaxKind::PERCENT_COMMENT),
-            ) => {
+            (Some(SyntaxKind::WHITESPACE), Some(k)) if is_comment_token(k) => {
                 // Skip past this indented-comment line.
                 while i < tokens.len() && tokens[i].0 != SyntaxKind::NEWLINE {
                     i += 1;
@@ -374,8 +605,8 @@ fn upcoming_indented_block_has_meta(tokens: &[(SyntaxKind, Range<usize>)], mut i
 ///
 /// Recognizes:
 /// - `WS META_KEY` — always a continuation regardless of context.
-/// - `WS COMMENT` / `WS PERCENT_COMMENT` — a continuation iff the
-///   surrounding indented block contains ANY `WS META_KEY` (the
+/// - `WS <comment>` (per [`is_comment_token`]) — a continuation iff
+///   the surrounding indented block contains ANY `WS META_KEY` (the
 ///   `block_has_meta` argument). This prevents absorbing indented
 ///   comments that follow a header-only directive (rule 2 / rule
 ///   4 cases) while still keeping documentation comments BEFORE
@@ -398,7 +629,7 @@ fn is_indented_directive_continuation(
         return false;
     }
     match tokens.get(i + 1) {
-        Some((SyntaxKind::COMMENT | SyntaxKind::PERCENT_COMMENT, _)) => block_has_meta,
+        Some((k, _)) if is_comment_token(*k) => block_has_meta,
         _ => false,
     }
 }
@@ -504,6 +735,69 @@ mod tests {
         assert_eq!(tree.text().to_string(), source);
         let structured = parse_structured(source);
         assert_eq!(structured.text().to_string(), source);
+    }
+
+    /// Drift guard: `is_comment_token` and `is_trivia` must agree on
+    /// what counts as comment-class trivia. Enforces two invariants:
+    ///
+    /// 1. `is_trivia() ⊆ is_comment_token ∪ non_comment_trivia`:
+    ///    every trivia kind is either a comment or in the explicit
+    ///    whitespace-class allow-list. Catches a new lexer-level
+    ///    addition to `is_trivia()` that's silently forgotten in
+    ///    `is_comment_token`.
+    /// 2. `is_comment_token ⊆ is_trivia()`: every kind
+    ///    `is_comment_token` says yes to is actually trivia. Catches
+    ///    a future edit to `is_comment_token`'s match arm that
+    ///    accidentally pulls in a non-trivia content token,
+    ///    silently extending indent-attribution to real content
+    ///    inside POSTING / directive bodies.
+    ///
+    /// On failure (1), if the new trivia kind is neither comment-
+    /// class nor whitespace-class (e.g., some future
+    /// `SECTION_HEADER` that should NOT be absorbed as a
+    /// continuation), don't reflexively add it to either set —
+    /// revisit whether the body-continuation predicates need a
+    /// different abstraction (`is_body_continuation_trivia` or
+    /// similar) and propagate the choice to the three call sites.
+    #[test]
+    fn is_comment_token_covers_all_comment_class_trivia() {
+        let non_comment_trivia = [SyntaxKind::BOM, SyntaxKind::WHITESPACE, SyntaxKind::NEWLINE];
+
+        let mut trivia_missed_from_comment: Vec<SyntaxKind> = Vec::new();
+        let mut comment_not_trivia: Vec<SyntaxKind> = Vec::new();
+        for d in 0u16..=u16::MAX {
+            let Ok(kind) = SyntaxKind::try_from(d) else {
+                continue;
+            };
+            // Invariant 1: trivia (minus whitespace allow-list) ⊆ comment.
+            if kind.is_trivia() && !non_comment_trivia.contains(&kind) && !is_comment_token(kind) {
+                trivia_missed_from_comment.push(kind);
+            }
+            // Invariant 2: comment ⊆ trivia.
+            if is_comment_token(kind) && !kind.is_trivia() {
+                comment_not_trivia.push(kind);
+            }
+        }
+        assert!(
+            trivia_missed_from_comment.is_empty(),
+            "trivia kinds present in is_trivia() but missing from \
+             is_comment_token: {trivia_missed_from_comment:?}. Three \
+             options: (a) add them to is_comment_token if they are \
+             comment-class; (b) extend the non_comment_trivia allow- \
+             list in this test if they are whitespace-class; (c) if \
+             they are neither, revisit whether the body-continuation \
+             predicates need a different abstraction and propagate \
+             the decision to the three call sites.",
+        );
+        assert!(
+            comment_not_trivia.is_empty(),
+            "is_comment_token claims these kinds are comments but \
+             is_trivia() disagrees: {comment_not_trivia:?}. Either \
+             add them to is_trivia() (if they really are trivia) or \
+             remove them from is_comment_token (if they are content \
+             tokens that should not be absorbed as comment \
+             continuations).",
+        );
     }
 
     #[test]
