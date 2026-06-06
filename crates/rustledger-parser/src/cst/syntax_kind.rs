@@ -180,10 +180,9 @@ pub enum SyntaxKind {
     // directives. The trivia attachment policy (see `cst::trivia`)
     // applies UNIFORMLY to each. Each wraps its content tokens +
     // same-line trailing trivia + terminator NEWLINE per the
-    // Directive-Terminator Rule. TRANSACTION is deliberately
-    // ABSENT — it lands in phase 2.1b paired with PR 2.2's body
-    // parsing. OPTION/INCLUDE/PLUGIN/CUSTOM are edge directives
-    // (PR 2.3); also absent here.
+    // Directive-Terminator Rule.
+    // OPTION/INCLUDE/PLUGIN/CUSTOM are edge directives (PR 2.3);
+    // absent here.
     OPEN_DIRECTIVE,
     CLOSE_DIRECTIVE,
     BALANCE_DIRECTIVE,
@@ -198,6 +197,17 @@ pub enum SyntaxKind {
     POPTAG_DIRECTIVE,
     PUSHMETA_DIRECTIVE,
     POPMETA_DIRECTIVE,
+
+    // Phase 2.1b: TRANSACTION wrapper. Trigger is DATE followed by
+    // one of: STAR (`*`) / PENDING_KW (`!`) / FLAG (P/S/T/C/U/R/M/?/&)
+    // / HASH (`#` promoted to flag) / TXN_KW (`txn`) / STRING
+    // (implied-txn shorthand `2024-01-15 "Coffee"`) / single-char
+    // CURRENCY (ticker letters T/V/F/X/...). Mirrors the legacy
+    // AST parser at parser.rs:1707-1715. Body spans header +
+    // indented posting and metadata sub-lines until next top-
+    // level construct or EOF. POSTING / AMOUNT / COST_SPEC
+    // STRUCTURE inside is PR 2.2.
+    TRANSACTION,
 }
 
 impl SyntaxKind {
@@ -366,6 +376,7 @@ mod tests {
             SyntaxKind::POPTAG_DIRECTIVE,
             SyntaxKind::PUSHMETA_DIRECTIVE,
             SyntaxKind::POPMETA_DIRECTIVE,
+            SyntaxKind::TRANSACTION,
         ];
         for kind in node_kinds {
             assert!(
@@ -425,6 +436,7 @@ mod tests {
             SyntaxKind::POPTAG_DIRECTIVE,
             SyntaxKind::PUSHMETA_DIRECTIVE,
             SyntaxKind::POPMETA_DIRECTIVE,
+            SyntaxKind::TRANSACTION,
         ];
         let observed_nodes: Vec<SyntaxKind> = all_kinds
             .iter()

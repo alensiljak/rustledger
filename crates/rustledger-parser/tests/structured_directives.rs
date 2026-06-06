@@ -60,6 +60,7 @@ fn directives(root: &SyntaxNode) -> Vec<SyntaxNode> {
                     | SyntaxKind::POPTAG_DIRECTIVE
                     | SyntaxKind::PUSHMETA_DIRECTIVE
                     | SyntaxKind::POPMETA_DIRECTIVE
+                    | SyntaxKind::TRANSACTION
             )
         })
         .collect()
@@ -446,22 +447,328 @@ fn mixed_directive_kinds_each_get_their_own_node() {
     assert_eq!(ds[3].kind(), POPTAG_DIRECTIVE);
 }
 
-// ---------- Pass-through for unrecognized content ----------
+// ---------- Phase 2.1b: TRANSACTION header recognition ----------
 
 #[test]
-fn transaction_passes_through_flat() {
-    // TRANSACTION lands in PR 2.1b. Until then, transaction lines
-    // flow through as flat SOURCE_FILE children — no DIRECTIVE
-    // node wrapping. Bytes preserved.
+fn transaction_with_star_flag_header_only() {
+    use SyntaxKind::*;
+    // `*` indicates a completed transaction. Header-only (no
+    // postings yet — that's the simplest TRANSACTION shape).
     let source = "2024-01-15 * \"Coffee\"\n";
     let tree = parse_structured(source);
     assert_round_trip(source, &tree);
 
-    // No specific directive kind was emitted — all tokens are flat
-    // under SOURCE_FILE.
     let ds = directives(&tree);
-    assert!(ds.is_empty());
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[DATE, WHITESPACE, STAR, WHITESPACE, STRING, NEWLINE]),
+    );
 }
+
+#[test]
+fn transaction_with_pending_kw_flag() {
+    use SyntaxKind::*;
+    // `!` lexes as PENDING_KW (`Token::Pending` →
+    // `SyntaxKind::PENDING_KW`), NOT as `FLAG`. It signals an
+    // incomplete/warning transaction in Beancount syntax.
+    let source = "2024-01-15 ! \"WIP\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    // Pin the exact token sequence so a regression that
+    // mistokenizes `!` or fails to wrap the full header fires.
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[DATE, WHITESPACE, PENDING_KW, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn transaction_with_txn_keyword() {
+    use SyntaxKind::*;
+    // Explicit `txn` keyword form.
+    let source = "2024-01-15 txn \"explicit\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+}
+
+#[test]
+fn transaction_with_postings_wraps_full_multi_line_body() {
+    use SyntaxKind::*;
+    // Per cst::trivia's multi-line clause, TRANSACTION owns its
+    // header AND every indented sub-line until non-indented
+    // content (or EOF). Postings here are flat tokens inside
+    // TRANSACTION; PR 2.2 will introduce POSTING / AMOUNT / etc.
+    // sub-nodes.
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    // SOURCE_FILE owns ONLY the TRANSACTION node — no orphaned
+    // posting tokens.
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_with_metadata_and_postings() {
+    use SyntaxKind::*;
+    // Transactions can carry intra-transaction metadata AND
+    // postings. All sub-lines inside TRANSACTION.
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20note: \"morning\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_with_payee_and_narration() {
+    use SyntaxKind::*;
+    // Full transaction header with payee + narration + tag + link.
+    let source = "2024-01-15 * \"Coffee Shop\" \"Morning coffee\" #daily ^trip1\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+}
+
+#[test]
+fn transaction_terminates_at_next_top_level_directive() {
+    use SyntaxKind::*;
+    // After a transaction's postings, a non-indented DATE starts
+    // a NEW directive. TRANSACTION must close cleanly; the next
+    // OPEN_DIRECTIVE must not be absorbed.
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  2024-01-16 open Assets:Bank\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 2);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    assert_eq!(ds[1].kind(), OPEN_DIRECTIVE);
+}
+
+#[test]
+fn transaction_terminates_at_blank_line_before_next_directive() {
+    use SyntaxKind::*;
+    // A blank line after a transaction's last posting ends it.
+    // The blank-line NEWLINE becomes inter-directive trivia
+    // leading the next directive (rule 2).
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \n\
+                  2024-01-16 open Assets:Bank\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 2);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    assert_eq!(ds[1].kind(), OPEN_DIRECTIVE);
+    // The blank-line NEWLINE leads OPEN per rule 2.
+    let d2_first = elements_of(&ds[1]).first().copied();
+    assert_eq!(d2_first, Some(Element::Tok(NEWLINE)));
+}
+
+#[test]
+fn transaction_with_indented_comment_between_postings() {
+    use SyntaxKind::*;
+    // Comments interleaved with postings stay inside TRANSACTION.
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD\n\
+                  \x20\x20; documentation comment\n\
+                  \x20\x20Expenses:Food  5.00 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_with_implied_flag_via_bare_string() {
+    use SyntaxKind::*;
+    // Beancount accepts the implied-transaction shorthand:
+    // `DATE WS STRING ...` with no explicit flag. The legacy
+    // AST parser at parser.rs:1713 dispatches `Token::String(_)`
+    // to parse_transaction_directive with an implied `*`. Common
+    // in real ledgers as a convenient shorthand.
+    let source = "2024-01-15 \"Coffee\"\n\
+                  \x20\x20Assets:Cash 100 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    // SOURCE_FILE owns only the TRANSACTION — no orphaned posting.
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_with_hash_flag() {
+    use SyntaxKind::*;
+    // `#` is promoted to a transaction flag when it appears in
+    // the post-DATE flag slot. The lexer's `Token::is_txn_flag`
+    // includes Hash and the AST parser's `parse_flag` accepts it;
+    // the CST mirrors that contract.
+    let source = "2024-01-15 # \"pending hash\"\n\
+                  \x20\x20Assets:Cash 100 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    // SOURCE_FILE owns only the TRANSACTION — no orphaned posting.
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_with_single_char_currency_as_flag() {
+    use SyntaxKind::*;
+    // NYSE/NASDAQ-style single-letter tickers (T, V, F, X, ...)
+    // tokenize as CURRENCY (priority 3 over FLAG in the lexer)
+    // but are accepted as transaction flags. The AST parser's
+    // `parse_flag` arm `Token::Currency(s) if s.len() == 1` does
+    // this; the CST mirrors it.
+    let source = "2024-01-15 T \"AT&T dividend\"\n\
+                  \x20\x20Assets:Brokerage 10 T\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_multi_char_currency_after_date_is_not_a_flag() {
+    // Guard against the reverse: `USD` (a real currency, length 3)
+    // must NOT be treated as a transaction flag. The CURRENCY arm
+    // gates on length == 1.
+    let source = "2024-01-15 USD \"garbled\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    // No directive recognized — falls into the passthrough branch.
+    let ds = directives(&tree);
+    assert!(
+        ds.is_empty(),
+        "multi-char CURRENCY after DATE must not be a transaction flag",
+    );
+}
+
+#[test]
+fn transaction_blank_line_inside_body_terminates_and_orphans_subsequent_postings() {
+    use SyntaxKind::*;
+    // Pins the documented blank-line termination behavior (matches
+    // Python beancount). The second posting after the blank line
+    // ends up flat under SOURCE_FILE, not inside the TRANSACTION.
+    // PR 2.2's POSTING-wrapping work must NOT accidentally widen
+    // the body scope across blank lines; this test guards that.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 100 USD\n\
+                  \n\
+                  \x20\x20Liab:Card -100 USD\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    // Exactly ONE recognized directive (the transaction). The
+    // post-blank posting is flat passthrough, not a second
+    // structural node.
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+
+    // The TRANSACTION owns only header + first posting line.
+    let tx_kinds: Vec<SyntaxKind> = elements_of(&ds[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(
+        tx_kinds.contains(&DATE) && tx_kinds.contains(&STAR),
+        "tx contains header",
+    );
+    // The second ACCOUNT (Liab:Card) is NOT inside the transaction.
+    let accounts_inside_tx = tx_kinds.iter().filter(|k| **k == ACCOUNT).count();
+    assert_eq!(
+        accounts_inside_tx, 1,
+        "only the FIRST posting's ACCOUNT is inside the tx; the second is orphaned",
+    );
+}
+
+#[test]
+fn transaction_trailing_indented_comment_at_eof_stays_inside() {
+    use SyntaxKind::*;
+    // TRANSACTION deliberately diverges from rule 4 (which puts
+    // indented trailing comments under SOURCE_FILE for the 14
+    // single-line directive kinds). The transaction body
+    // predicate accepts any indented non-blank line, so a
+    // trailing indented comment after the last posting stays
+    // inside the TRANSACTION. Compare with
+    // `indented_comment_at_eof_after_no_metadata_directive_is_file_trailing`
+    // earlier in this file for the OPEN_DIRECTIVE policy.
+    let source = "2024-01-15 * \"x\"\n\
+                  \x20\x20Assets:Cash 100 USD\n\
+                  \x20\x20Liab:Card -100 USD\n\
+                  \x20\x20; closing note for this transaction\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+    // SOURCE_FILE owns ONLY the TRANSACTION — comment is inside.
+    assert_eq!(elements_of(&tree), vec![Element::Node(TRANSACTION)]);
+}
+
+#[test]
+fn transaction_unterminated_at_eof_with_postings() {
+    use SyntaxKind::*;
+    // No final NEWLINE on the last posting line. Per rule 5,
+    // TRANSACTION wraps content up to EOF without fabricating
+    // a terminator.
+    let source = "2024-01-15 * \"Coffee\"\n\
+                  \x20\x20Assets:Cash  -5.00 USD";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), TRANSACTION);
+}
+
+// ---------- Pass-through for still-unrecognized content ----------
 
 #[test]
 fn commodity_with_metadata_wraps_full_multi_line_directive() {
@@ -741,6 +1048,8 @@ fn option_directive_passes_through_flat() {
 #[test]
 fn recognized_and_passthrough_can_coexist() {
     use SyntaxKind::*;
+    // OPTION is still pass-through (PR 2.3). The other three are
+    // recognized: OPEN, TRANSACTION (PR 2.1b), CLOSE.
     let source = "option \"title\" \"My Ledger\"\n\
                   2024-01-01 open Assets:Cash\n\
                   2024-01-15 * \"Coffee\"\n\
@@ -748,12 +1057,11 @@ fn recognized_and_passthrough_can_coexist() {
     let tree = parse_structured(source);
     assert_round_trip(source, &tree);
 
-    // Two recognized directives (open, close); two pass-through
-    // lines (option, transaction).
     let ds = directives(&tree);
-    assert_eq!(ds.len(), 2);
+    assert_eq!(ds.len(), 3);
     assert_eq!(ds[0].kind(), OPEN_DIRECTIVE);
-    assert_eq!(ds[1].kind(), CLOSE_DIRECTIVE);
+    assert_eq!(ds[1].kind(), TRANSACTION);
+    assert_eq!(ds[2].kind(), CLOSE_DIRECTIVE);
 }
 
 // ---------- Edge cases ----------

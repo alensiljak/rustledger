@@ -1,4 +1,4 @@
-//! CST builders: phase 1 flat ([`parse_flat`]) + phase 2.1a
+//! CST builders: phase 1 flat ([`parse_flat`]) + phase 2.1a/2.1b
 //! structured ([`parse_structured`]).
 //!
 //! Both walk the lossless token stream and emit a `GreenNode` whose
@@ -8,17 +8,25 @@
 //! - [`parse_flat`] (phase 1) puts every token as a direct child of
 //!   a single `SOURCE_FILE` node. Useful for round-trip-only tests
 //!   and the kind-sequence corpus baseline.
-//! - [`parse_structured`] (phase 2.1a) recognizes 14 single-line
-//!   directive shapes (OPEN/CLOSE/BALANCE/PAD/EVENT/QUERY/NOTE/
-//!   DOCUMENT/PRICE/COMMODITY + PUSHTAG/POPTAG/PUSHMETA/POPMETA)
-//!   and wraps each in its specific node kind per the
-//!   Directive-Terminator Rule (see [`crate::cst::trivia`]).
-//!   Unrecognized lines (TRANSACTION — PR 2.1b; OPTION/INCLUDE/
-//!   PLUGIN/CUSTOM — PR 2.3; error-recovery lines) flow through
-//!   as flat `SOURCE_FILE` children for now.
+//! - [`parse_structured`] recognizes:
+//!   - **Phase 2.1a**: 14 single-line directive shapes —
+//!     `OPEN`/`CLOSE`/`BALANCE`/`PAD`/`EVENT`/`QUERY`/`NOTE`/
+//!     `DOCUMENT`/`PRICE`/`COMMODITY` (dated) +
+//!     `PUSHTAG`/`POPTAG`/`PUSHMETA`/`POPMETA` (top-level keyword).
+//!   - **Phase 2.1b**: `TRANSACTION` — DATE + `STAR` / `PENDING_KW`
+//!     (`!`) / `FLAG` / `TXN_KW`, multi-line scope through the last
+//!     indented sub-line (postings, metadata, indented comments).
 //!
-//! Phase 2.1b adds TRANSACTION header; phase 2.2 adds posting body
-//! structure; phase 5 deletes `parse_flat` once `parse_structured`
+//!   Each wraps in its specific node kind per the Directive-
+//!   Terminator Rule (see [`crate::cst::trivia`]).
+//!
+//!   Unrecognized lines (`OPTION`/`INCLUDE`/`PLUGIN`/`CUSTOM` — PR
+//!   2.3; error-recovery lines) flow through as flat `SOURCE_FILE`
+//!   children for now.
+//!
+//! Phase 2.2 adds `POSTING` / `AMOUNT` / `COST_SPEC` / `META_ENTRY`
+//! sub-node structure INSIDE the TRANSACTION + dated directive
+//! wrappers; phase 5 deletes `parse_flat` once `parse_structured`
 //! covers every byte in every corpus file.
 
 use std::ops::Range;
@@ -44,17 +52,18 @@ pub fn parse_flat(source: &str) -> SyntaxNode {
     SyntaxNode::new_root(builder.finish())
 }
 
-/// Parse `source` to a structured lossless CST. Recognizes the 14
-/// single-line directive shapes and wraps each in its specific
-/// `*_DIRECTIVE` node kind. Trivia attaches per the
-/// Directive-Terminator Rule.
+/// Parse `source` to a structured lossless CST.
 ///
-/// Unrecognized content (TRANSACTION header, edge directives like
+/// Recognizes the 14 single-line directive shapes (PR 2.1a) plus
+/// `TRANSACTION` (PR 2.1b) and wraps each in its specific node
+/// kind. Trivia attaches per the Directive-Terminator Rule.
+///
+/// Still-unrecognized content (edge directives like
 /// `option`/`include`/`plugin`/`custom`, error-recovery lines)
-/// passes through as a flat token run under `SOURCE_FILE` — phase
-/// 2.1b and PR 2.3 extend this. Round-trip byte-identical for
-/// every UTF-8 input; the unrecognized-content path preserves
-/// bytes via flat-token emission, just without structural wrapping.
+/// passes through as a flat token run under `SOURCE_FILE` — PR
+/// 2.3 extends this. Round-trip byte-identical for every UTF-8
+/// input; the unrecognized-content path preserves bytes via
+/// flat-token emission, just without structural wrapping.
 #[must_use]
 pub fn parse_structured(source: &str) -> SyntaxNode {
     let tokens: Vec<(SyntaxKind, Range<usize>)> = lossless_kind_tokens(source);
@@ -75,7 +84,7 @@ pub fn parse_structured(source: &str) -> SyntaxNode {
 
         // Non-trivia at the top level. Identify what kind of line
         // starts here.
-        if let Some(directive_kind) = identify_single_line_directive(&tokens, i) {
+        if let Some(directive_kind) = identify_directive(&tokens, i) {
             // Per the Directive-Terminator Rule, pending trivia is
             // FILE-LEADING (SOURCE_FILE direct child) only when NO
             // non-trivia content has appeared yet anywhere in the
@@ -94,12 +103,19 @@ pub fn parse_structured(source: &str) -> SyntaxNode {
             }
             seen_first_content = true;
 
-            // Consume the directive's full multi-line body: header
-            // through its terminator NEWLINE (rule 1) PLUS any
-            // indented metadata sub-lines that follow (per the
-            // multi-line clause of the Directive-Terminator Rule;
-            // see cst::trivia rustdoc).
-            i = emit_directive_body(&mut builder, source, &tokens, i);
+            // Consume the directive's full multi-line body. The
+            // single-line-directive path consumes only `WS META_KEY`
+            // (and gated indented comments). TRANSACTION consumes
+            // ANY indented sub-line (postings, metadata, comments)
+            // until a blank line, non-indented content, or EOF —
+            // its body shape is much looser, and PR 2.2 will
+            // introduce POSTING / AMOUNT / COST_SPEC / META_ENTRY
+            // structure INSIDE the TRANSACTION node.
+            i = if directive_kind == SyntaxKind::TRANSACTION {
+                emit_transaction_body(&mut builder, source, &tokens, i)
+            } else {
+                emit_directive_body(&mut builder, source, &tokens, i)
+            };
             builder.finish_node();
         } else {
             // Unrecognized line. Drain pending trivia + this entire
@@ -203,6 +219,56 @@ fn emit_directive_body(
     i
 }
 
+/// Consume the transaction header through its terminator NEWLINE,
+/// then keep consuming ANY indented sub-line (postings, metadata,
+/// indented comments — any line starting with `WHITESPACE`
+/// followed by a non-`NEWLINE` token).
+///
+/// Compared with `emit_directive_body` (which only continues on
+/// `WS META_KEY` and gated `WS COMMENT`), transactions have a
+/// looser body shape: posting lines start with `WS ACCOUNT`,
+/// metadata sub-lines with `WS META_KEY`, indented comments with
+/// `WS COMMENT`, etc. All belong inside `TRANSACTION` per the
+/// multi-line clause of the Directive-Terminator Rule. PR 2.2
+/// will introduce `POSTING` / `AMOUNT` / `COST_SPEC` /
+/// `META_ENTRY` sub-nodes inside the TRANSACTION wrapper; for
+/// now those tokens are flat children.
+///
+/// Termination: a blank line (NEWLINE alone, or WHITESPACE then
+/// NEWLINE), any non-indented top-level token, or EOF.
+fn emit_transaction_body(
+    builder: &mut GreenNodeBuilder<'_>,
+    source: &str,
+    tokens: &[(SyntaxKind, Range<usize>)],
+    mut i: usize,
+) -> usize {
+    i = emit_through_terminator(builder, source, tokens, i);
+    while is_indented_transaction_body_line(tokens, i) {
+        i = emit_through_terminator(builder, source, tokens, i);
+    }
+    i
+}
+
+/// Returns true iff `tokens[i..]` starts an indented line with
+/// actual content: `WHITESPACE` followed by ANY non-`NEWLINE`
+/// token. A blank line (`NEWLINE` alone, or `WHITESPACE NEWLINE`)
+/// or EOF terminates the transaction body.
+///
+/// **Deliberate divergence from rule 4 of `cst::trivia`:** unlike
+/// the single-line-directive body, a TRANSACTION body absorbs an
+/// indented trailing `;`-comment AT EOF (file-trailing-ish) into
+/// the directive. Rationale: documentation comments interleaved
+/// with postings are a Beancount idiom, and forcing the body to
+/// "back-track" the last comment if it's trailing would require
+/// look-ahead the per-line predicate can't do without extra state.
+/// Pinned by `transaction_trailing_indented_comment_at_eof_stays_inside`.
+fn is_indented_transaction_body_line(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> bool {
+    if !matches!(tokens.get(i), Some((SyntaxKind::WHITESPACE, _))) {
+        return false;
+    }
+    !matches!(tokens.get(i + 1), Some((SyntaxKind::NEWLINE, _)) | None)
+}
+
 /// Scan forward through any indented `WS META_KEY` / `WS COMMENT`
 /// / `WS PERCENT_COMMENT` sub-lines starting at `tokens[i..]`,
 /// returning `true` iff at least one of them is a metadata
@@ -265,21 +331,26 @@ fn is_indented_directive_continuation(
 }
 
 /// Given the token slice and the index of a non-trivia token,
-/// decide whether it starts one of the 14 single-line directives
-/// PR 2.1a handles. Returns the directive `SyntaxKind` if yes,
-/// `None` otherwise (TRANSACTION, OPTION, INCLUDE, PLUGIN, CUSTOM,
-/// or random content that doesn't fit a known shape).
+/// decide whether it starts a recognized top-level directive of
+/// any kind. Returns the directive `SyntaxKind` if yes, `None`
+/// otherwise (OPTION / INCLUDE / PLUGIN / CUSTOM remain
+/// unrecognized — PR 2.3 — as does random content that doesn't
+/// fit a known shape).
 ///
 /// Beancount directive line shapes recognized here:
 ///
 /// - `DATE WHITESPACE <KEYWORD> ...`: OPEN / CLOSE / BALANCE / PAD
-///   / EVENT / QUERY / NOTE / DOCUMENT / PRICE / COMMODITY
+///   / EVENT / QUERY / NOTE / DOCUMENT / PRICE / COMMODITY (PR
+///   2.1a)
+/// - `DATE WHITESPACE <txn-trigger> ...`: TRANSACTION (PR 2.1b),
+///   where `<txn-trigger>` is one of `STAR` / `PENDING_KW` (`!`)
+///   / `FLAG` / `HASH` / `TXN_KW` / `STRING` ("implied" txn form
+///   with no explicit flag) / single-char `CURRENCY` (ticker
+///   letters). Mirrors `parse_dated_directive` in the legacy AST
+///   parser at parser.rs:1707-1715.
 /// - `<KEYWORD> ...` (no leading date): PUSHTAG / POPTAG /
-///   PUSHMETA / POPMETA
-fn identify_single_line_directive(
-    tokens: &[(SyntaxKind, Range<usize>)],
-    i: usize,
-) -> Option<SyntaxKind> {
+///   PUSHMETA / POPMETA (PR 2.1a)
+fn identify_directive(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> Option<SyntaxKind> {
     let (head, _) = tokens.get(i)?;
     match *head {
         // Top-level keyword directives — no leading date.
@@ -313,7 +384,36 @@ fn identify_single_line_directive(
                 SyntaxKind::DOCUMENT_KW => Some(SyntaxKind::DOCUMENT_DIRECTIVE),
                 SyntaxKind::PRICE_KW => Some(SyntaxKind::PRICE_DIRECTIVE),
                 SyntaxKind::COMMODITY_KW => Some(SyntaxKind::COMMODITY_DIRECTIVE),
-                // FLAG / TXN_KW → TRANSACTION (PR 2.1b)
+                // Transaction triggers after the DATE. Beancount
+                // accepts:
+                // - `*` (STAR) for completed transactions
+                // - `!` (PENDING_KW) for incomplete/warning
+                // - letter flags P/S/T/C/U/R/M/?/& (FLAG)
+                // - `#` (HASH) promoted to a flag in this position
+                //   (cf. `Token::is_txn_flag` and the AST parser's
+                //   `parse_flag` accepting Hash)
+                // - the explicit `txn` keyword (TXN_KW)
+                // - a bare STRING ("implied transaction": the AST
+                //   parser at parser.rs:1713 dispatches
+                //   `Token::String(_)` to `parse_transaction_directive`
+                //   with an implied `*` flag; common shorthand
+                //   form in real ledgers like
+                //   `2024-01-15 "Coffee"`)
+                SyntaxKind::STAR
+                | SyntaxKind::PENDING_KW
+                | SyntaxKind::FLAG
+                | SyntaxKind::HASH
+                | SyntaxKind::TXN_KW
+                | SyntaxKind::STRING => Some(SyntaxKind::TRANSACTION),
+                // Single-character CURRENCY: NYSE/NASDAQ-style
+                // ticker letters (T, V, F, X, ...) double as
+                // transaction flags. The lexer prioritizes
+                // CURRENCY over FLAG for single uppercase letters
+                // (logos_lexer Currency priority 3); the AST parser
+                // (`parse_flag` arm `Token::Currency(s) if s.len() == 1`)
+                // mirrors this. We do the same to stay consistent
+                // with the established lexer/parser contract.
+                SyntaxKind::CURRENCY if tokens[j].1.len() == 1 => Some(SyntaxKind::TRANSACTION),
                 // Anything else: unknown shape.
                 _ => None,
             }
