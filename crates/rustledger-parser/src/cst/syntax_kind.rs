@@ -236,8 +236,48 @@ pub enum SyntaxKind {
     // becomes a child of the POSTING; a META_ENTRY at the same
     // indent terminates the POSTING and stays at TRANSACTION
     // level. AMOUNT / COST_SPEC / PRICE_ANNOTATION sub-nodes
-    // inside POSTING are PR 2.2c.
+    // inside POSTING are PR 2.2c (below).
     POSTING,
+
+    // Phase 2.2c: AMOUNT wraps the units-amount portion of a
+    // posting line, i.e. `[(MINUS | PLUS)] NUMBER [WS CURRENCY]`,
+    // a bare `NUMBER` (incomplete amount with no currency), or a
+    // bare `CURRENCY` (currency-only amount). Appears after the
+    // ACCOUNT and before any COST_SPEC / PRICE_ANNOTATION. Mirrors
+    // the legacy AST `parse_incomplete_amount` shape: NUMBER plus
+    // optional CURRENCY, or CURRENCY alone.
+    //
+    // **Scoped to postings only**: directive-header amounts
+    // (`balance Assets:Cash 100 USD`, `price USD 1.10 EUR`) are
+    // emitted FLAT by `emit_directive_body`'s
+    // `emit_through_terminator`, NOT wrapped in AMOUNT. PAD has
+    // no inline amount and is unaffected. Phase 3 typed-AST
+    // accessors for `Balance::amount()` / `Price::amount()` will
+    // need a different walking strategy (scan flat tokens after
+    // the keyword) than `Posting::amount()` (find the AMOUNT
+    // child). Pinned by
+    // `balance_and_price_directive_header_amounts_stay_flat_not_wrapped`.
+    AMOUNT,
+
+    // Phase 2.2c: COST_SPEC wraps a bracketed cost annotation
+    // inside a posting line, i.e. `L_BRACE ... R_BRACE`,
+    // `L_BRACE_HASH ... R_BRACE` (per-unit + total), or
+    // `L_DOUBLE_BRACE ... R_DOUBLE_BRACE` (total-only). Contents
+    // stay flat children of COST_SPEC for now (phase 3 typed-AST
+    // will surface accessors); an unclosed brace at EOF still
+    // gets wrapped (the COST_SPEC simply has no matching closing
+    // brace child) per rule 5.
+    COST_SPEC,
+
+    // Phase 2.2c: PRICE_ANNOTATION wraps a price clause inside a
+    // posting line, i.e. `(AT | AT_AT) [WS AMOUNT]`. Beancount
+    // uses `@` for per-unit price and `@@` for total price. The
+    // trailing amount IS recursively wrapped in an AMOUNT
+    // sub-node mirroring the units-amount case; the typed-AST
+    // decodes per-unit-vs-total by inspecting the opener token
+    // kind (`AT` vs `AT_AT`) and walks the `AMOUNT` child for the
+    // number and currency.
+    PRICE_ANNOTATION,
 }
 
 impl SyntaxKind {
@@ -409,6 +449,9 @@ mod tests {
             SyntaxKind::TRANSACTION,
             SyntaxKind::META_ENTRY,
             SyntaxKind::POSTING,
+            SyntaxKind::AMOUNT,
+            SyntaxKind::COST_SPEC,
+            SyntaxKind::PRICE_ANNOTATION,
         ];
         for kind in node_kinds {
             assert!(
@@ -471,6 +514,9 @@ mod tests {
             SyntaxKind::TRANSACTION,
             SyntaxKind::META_ENTRY,
             SyntaxKind::POSTING,
+            SyntaxKind::AMOUNT,
+            SyntaxKind::COST_SPEC,
+            SyntaxKind::PRICE_ANNOTATION,
         ];
         let observed_nodes: Vec<SyntaxKind> = all_kinds
             .iter()
