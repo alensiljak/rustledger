@@ -24,10 +24,14 @@
 //!   2.3; error-recovery lines) flow through as flat `SOURCE_FILE`
 //!   children for now.
 //!
-//! Phase 2.2 adds `POSTING` / `AMOUNT` / `COST_SPEC` / `META_ENTRY`
-//! sub-node structure INSIDE the TRANSACTION + dated directive
-//! wrappers; phase 5 deletes `parse_flat` once `parse_structured`
-//! covers every byte in every corpus file.
+//! Phase 2.2a adds `META_ENTRY` sub-node structure around indented
+//! `WS META_KEY ... (NEWLINE | EOF)` sub-lines inside any directive
+//! or transaction (per rule 5 of `cst::trivia`, an unterminated
+//! final sub-line at EOF still gets wrapped). Phase 2.2b/c add
+//! `POSTING` / `AMOUNT` /
+//! `COST_SPEC` / `PRICE_ANNOTATION` inside TRANSACTION. Phase 5
+//! deletes `parse_flat` once `parse_structured` covers every byte
+//! in every corpus file.
 
 use std::ops::Range;
 
@@ -167,6 +171,55 @@ fn emit_through_terminator(
     i
 }
 
+/// Consume one indented sub-line of a directive or transaction
+/// body, wrapping it in a `META_ENTRY` node iff it's metadata
+/// (i.e., starts `WS META_KEY ...`).
+///
+/// Phase 2.2a structural wrapping: each metadata sub-line becomes
+/// its own `META_ENTRY` node containing the indent `WHITESPACE`,
+/// the `META_KEY`, the rest of the line's content tokens, and —
+/// when present — the terminator `NEWLINE`. An UNTERMINATED final
+/// metadata sub-line at EOF (per rule 5 of `cst::trivia`) is still
+/// wrapped: its `META_ENTRY` simply ends at the last content token
+/// with no `NEWLINE` child. Token kinds inside the `META_ENTRY`
+/// stay flat — phase 3's typed-AST surface will expose `key()` and
+/// `value()` accessors that walk these children. Indented
+/// `;`-comments and POSTING lines (PR 2.2b) flow through as flat
+/// children of the parent directive, NOT wrapped in `META_ENTRY`.
+fn emit_body_sub_line(
+    builder: &mut GreenNodeBuilder<'_>,
+    source: &str,
+    tokens: &[(SyntaxKind, Range<usize>)],
+    i: usize,
+) -> usize {
+    if starts_meta_sub_line(tokens, i) {
+        builder.start_node(SyntaxKind::META_ENTRY.into());
+        let next = emit_through_terminator(builder, source, tokens, i);
+        builder.finish_node();
+        next
+    } else {
+        emit_through_terminator(builder, source, tokens, i)
+    }
+}
+
+/// Returns true iff `tokens[i..]` starts an indented `WS META_KEY ...`
+/// metadata sub-line.
+///
+/// **Single source of truth** for the `WS + META_KEY` recognition
+/// pattern. Used by both `emit_body_sub_line` (decides whether to
+/// open a `META_ENTRY` node around the sub-line) and
+/// `is_indented_directive_continuation`'s `META_KEY` arm (decides
+/// whether the directive body should keep consuming). Routing both
+/// call sites through one helper prevents the predicate-pair drift
+/// hazard where one widens (e.g. admits a different indent token)
+/// without the other and the parser starts consuming sub-lines
+/// without wrapping them, or wrapping sub-lines that the body loop
+/// never reaches.
+fn starts_meta_sub_line(tokens: &[(SyntaxKind, Range<usize>)], i: usize) -> bool {
+    matches!(tokens.get(i), Some((SyntaxKind::WHITESPACE, _)))
+        && matches!(tokens.get(i + 1), Some((SyntaxKind::META_KEY, _)))
+}
+
 /// Consume the header line through its terminator NEWLINE, then
 /// keep consuming any indented metadata sub-lines OR indented
 /// `;`/`%` comment lines that follow at the same logical block.
@@ -214,7 +267,7 @@ fn emit_directive_body(
     // the directive and orphaned the metadata.
     let block_has_meta = upcoming_indented_block_has_meta(tokens, i);
     while is_indented_directive_continuation(tokens, i, block_has_meta) {
-        i = emit_through_terminator(builder, source, tokens, i);
+        i = emit_body_sub_line(builder, source, tokens, i);
     }
     i
 }
@@ -223,6 +276,21 @@ fn emit_directive_body(
 /// then keep consuming ANY indented sub-line (postings, metadata,
 /// indented comments — any line starting with `WHITESPACE`
 /// followed by a non-`NEWLINE` token).
+///
+/// **Phase 2.2a doesn't attribute metadata by indent depth.**
+/// Beancount distinguishes TRANSACTION-level metadata (at the
+/// transaction's standard indent, typically two spaces, before
+/// any posting OR interspersed between postings at that same
+/// indent) from POSTING-attached metadata (at a DEEPER indent
+/// following a posting line). PR 2.2a wraps both as `META_ENTRY`
+/// children of `TRANSACTION`. **PR 2.2b** must inspect the
+/// following sub-line's indent depth and move the deeper-indented
+/// `META_ENTRY` nodes from `TRANSACTION`'s direct children to the
+/// preceding `POSTING`'s children. The transaction-level case
+/// stays put; only the posting-attached case relocates. No
+/// existing PR 2.2a test pins a posting-attached `META_ENTRY` (the
+/// shape PR 2.2b will need to relocate); PR 2.2b should ADD such
+/// tests alongside the relocation logic.
 ///
 /// Compared with `emit_directive_body` (which only continues on
 /// `WS META_KEY` and gated `WS COMMENT`), transactions have a
@@ -244,7 +312,7 @@ fn emit_transaction_body(
 ) -> usize {
     i = emit_through_terminator(builder, source, tokens, i);
     while is_indented_transaction_body_line(tokens, i) {
-        i = emit_through_terminator(builder, source, tokens, i);
+        i = emit_body_sub_line(builder, source, tokens, i);
     }
     i
 }
@@ -320,11 +388,16 @@ fn is_indented_directive_continuation(
     i: usize,
     block_has_meta: bool,
 ) -> bool {
+    // The META_KEY arm routes through `starts_meta_sub_line` so the
+    // continuation predicate and the wrapping predicate
+    // (`emit_body_sub_line`) cannot drift.
+    if starts_meta_sub_line(tokens, i) {
+        return true;
+    }
     if !matches!(tokens.get(i), Some((SyntaxKind::WHITESPACE, _))) {
         return false;
     }
     match tokens.get(i + 1) {
-        Some((SyntaxKind::META_KEY, _)) => true,
         Some((SyntaxKind::COMMENT | SyntaxKind::PERCENT_COMMENT, _)) => block_has_meta,
         _ => false,
     }
