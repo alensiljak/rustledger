@@ -795,16 +795,40 @@ impl CustomDirective {
 // ---- TRANSACTION + body sub-nodes ------------------------------
 
 impl Transaction {
-    /// Direct-child tokens of TRANSACTION up to (but not
-    /// including) the first NEWLINE — i.e., the header region.
-    /// Body content (`POSTING` / `META_ENTRY` nodes; flat tokens
-    /// emitted by `emit_transaction_body`'s catch-all for
-    /// malformed indented lines) is excluded, so accessors using
-    /// this helper can't mistake body content for header content.
+    /// Direct-child tokens of TRANSACTION in the header region
+    /// only: leading trivia (whitespace, newlines, comments
+    /// attached as inter-directive leading trivia per the
+    /// Directive-Terminator Rule) is skipped, then tokens are
+    /// collected until the first NEWLINE that terminates the
+    /// header line. Body content (`POSTING` / `META_ENTRY` nodes;
+    /// flat tokens emitted by `emit_transaction_body`'s catch-all
+    /// for malformed indented lines) is excluded.
     fn header_tokens(&self) -> impl Iterator<Item = SyntaxToken> + '_ {
         self.syntax()
             .children_with_tokens()
             .filter_map(rowan::NodeOrToken::into_token)
+            // Skip leading trivia (blank-line newlines, top-of-
+            // directive whitespace, leading comments). The first
+            // non-trivia token marks the start of the header.
+            //
+            // Comment-trivia covers all four comment kinds — ledger-
+            // style `%` comments and org-mode `#!`/`#+` lines are
+            // attached as leading trivia by the Directive-Terminator
+            // Rule the same way `;` comments are, so a transaction
+            // preceded by any of them must skip them too. BOM stays
+            // OUT of the skip set: a mid-file BOM in a transaction
+            // header is a corruption to surface, not trivia.
+            .skip_while(|t| {
+                matches!(
+                    t.kind(),
+                    SyntaxKind::WHITESPACE
+                        | SyntaxKind::NEWLINE
+                        | SyntaxKind::COMMENT
+                        | SyntaxKind::PERCENT_COMMENT
+                        | SyntaxKind::SHEBANG
+                        | SyntaxKind::EMACS_DIRECTIVE
+                )
+            })
             .take_while(|t| t.kind() != SyntaxKind::NEWLINE)
     }
 
