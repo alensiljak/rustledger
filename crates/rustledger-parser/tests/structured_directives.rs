@@ -1,4 +1,4 @@
-//! Source-driven tests for `parse_structured` (phase 2.1-2.2c).
+//! Source-driven tests for `parse_structured` (phase 2.1-2.3).
 //!
 //! Each test feeds real Beancount source through the structured
 //! parser and asserts the resulting tree shape against the
@@ -60,6 +60,10 @@ fn directives(root: &SyntaxNode) -> Vec<SyntaxNode> {
                     | SyntaxKind::POPTAG_DIRECTIVE
                     | SyntaxKind::PUSHMETA_DIRECTIVE
                     | SyntaxKind::POPMETA_DIRECTIVE
+                    | SyntaxKind::OPTION_DIRECTIVE
+                    | SyntaxKind::INCLUDE_DIRECTIVE
+                    | SyntaxKind::PLUGIN_DIRECTIVE
+                    | SyntaxKind::CUSTOM_DIRECTIVE
                     | SyntaxKind::TRANSACTION
             )
         })
@@ -2783,21 +2787,11 @@ fn malformed_date_then_keyword_on_next_line_is_not_a_directive() {
 }
 
 #[test]
-fn option_directive_passes_through_flat() {
-    // PR 2.3 handles `option`. Until then: flat passthrough.
-    let source = "option \"title\" \"My Ledger\"\n";
-    let tree = parse_structured(source);
-    assert_round_trip(source, &tree);
-
-    let ds = directives(&tree);
-    assert!(ds.is_empty());
-}
-
-#[test]
 fn recognized_and_passthrough_can_coexist() {
     use SyntaxKind::*;
-    // OPTION is still pass-through (PR 2.3). The other three are
-    // recognized: OPEN, TRANSACTION (PR 2.1b), CLOSE.
+    // All four directive shapes recognized: OPTION (PR 2.3),
+    // OPEN, TRANSACTION (PR 2.1b), CLOSE. Pure-passthrough lines
+    // (error-recovery shapes) are now exceptional.
     let source = "option \"title\" \"My Ledger\"\n\
                   2024-01-01 open Assets:Cash\n\
                   2024-01-15 * \"Coffee\"\n\
@@ -2806,10 +2800,367 @@ fn recognized_and_passthrough_can_coexist() {
     assert_round_trip(source, &tree);
 
     let ds = directives(&tree);
+    assert_eq!(ds.len(), 4);
+    assert_eq!(ds[0].kind(), OPTION_DIRECTIVE);
+    assert_eq!(ds[1].kind(), OPEN_DIRECTIVE);
+    assert_eq!(ds[2].kind(), TRANSACTION);
+    assert_eq!(ds[3].kind(), CLOSE_DIRECTIVE);
+}
+
+// ---------- Phase 2.3: edge directives (OPTION / INCLUDE / PLUGIN / CUSTOM) ----------
+
+#[test]
+fn option_directive() {
+    use SyntaxKind::*;
+    let source = "option \"title\" \"My Ledger\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), OPTION_DIRECTIVE);
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[OPTION_KW, WHITESPACE, STRING, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn include_directive() {
+    use SyntaxKind::*;
+    let source = "include \"shared/2024.beancount\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), INCLUDE_DIRECTIVE);
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[INCLUDE_KW, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn plugin_directive_without_config() {
+    use SyntaxKind::*;
+    // Plugin without config string: just `plugin "module"`.
+    let source = "plugin \"beancount.plugins.implicit_prices\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), PLUGIN_DIRECTIVE);
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[PLUGIN_KW, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn plugin_directive_with_config_string() {
+    use SyntaxKind::*;
+    // Plugin with optional config string: `plugin "module" "config"`.
+    let source = "plugin \"my.plugin\" \"{\\\"key\\\": 42}\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), PLUGIN_DIRECTIVE);
+    assert_eq!(
+        elements_of(&ds[0]),
+        tok_seq(&[PLUGIN_KW, WHITESPACE, STRING, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn custom_directive_with_string_values() {
+    use SyntaxKind::*;
+    // CUSTOM with a type name string + arbitrary string values.
+    let source = "2024-01-01 custom \"budget\" \"Food\" \"500 USD\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), CUSTOM_DIRECTIVE);
+    // Header tokens: DATE WS CUSTOM_KW WS STRING WS STRING WS STRING NEWLINE.
+    let kinds: Vec<SyntaxKind> = elements_of(&ds[0])
+        .iter()
+        .filter_map(|e| match e {
+            Element::Tok(k) => Some(*k),
+            Element::Node(_) => None,
+        })
+        .collect();
+    assert!(kinds.contains(&DATE));
+    assert!(kinds.contains(&CUSTOM_KW));
+    assert_eq!(kinds.iter().filter(|&&k| k == STRING).count(), 3);
+}
+
+#[test]
+fn custom_directive_with_mixed_value_types() {
+    use SyntaxKind::*;
+    // CUSTOM accepts a heterogeneous trailing value list: STRING,
+    // ACCOUNT, NUMBER + CURRENCY (amount), DATE, BOOL_TRUE /
+    // BOOL_FALSE. All stay flat inside CUSTOM_DIRECTIVE (no AMOUNT
+    // wrapper at the directive-header level per phase 2.2c scope).
+    let source = "2024-01-01 custom \"limits\" \"cap\" Assets:Cash 500 USD 2024-12-31 TRUE\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), CUSTOM_DIRECTIVE);
+    // No AMOUNT wrapper inside CUSTOM_DIRECTIVE (directive headers
+    // emit flat — same as BALANCE / PRICE per
+    // `balance_and_price_directive_header_amounts_stay_flat_not_wrapped`).
+    let amount_count = ds[0].descendants().filter(|n| n.kind() == AMOUNT).count();
+    assert_eq!(amount_count, 0);
+}
+
+#[test]
+fn option_directive_with_metadata_wraps_multi_line() {
+    use SyntaxKind::*;
+    // Per the Directive-Terminator Rule (and PR 2.1a's body
+    // shape), an OPTION_DIRECTIVE with trailing indented META_KEY
+    // sub-lines spans multiple lines. The META_ENTRY wrapping
+    // from PR 2.2a applies.
+    let source = "option \"title\" \"My Ledger\"\n\
+                  \x20\x20doc: \"primary file\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), OPTION_DIRECTIVE);
+    let metas = ds[0]
+        .descendants()
+        .filter(|n| n.kind() == META_ENTRY)
+        .count();
+    assert_eq!(metas, 1);
+}
+
+#[test]
+fn plugin_directive_terminates_at_next_top_level() {
+    use SyntaxKind::*;
+    // Adjacent top-level directives don't merge.
+    let source = "plugin \"a\"\n\
+                  include \"b.bean\"\n\
+                  option \"c\" \"d\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
     assert_eq!(ds.len(), 3);
-    assert_eq!(ds[0].kind(), OPEN_DIRECTIVE);
-    assert_eq!(ds[1].kind(), TRANSACTION);
-    assert_eq!(ds[2].kind(), CLOSE_DIRECTIVE);
+    assert_eq!(ds[0].kind(), PLUGIN_DIRECTIVE);
+    assert_eq!(ds[1].kind(), INCLUDE_DIRECTIVE);
+    assert_eq!(ds[2].kind(), OPTION_DIRECTIVE);
+}
+
+#[test]
+fn custom_directive_unterminated_at_eof_still_wraps_per_rule_5() {
+    use SyntaxKind::*;
+    // Rule 5: an unterminated CUSTOM directive at EOF (no final
+    // newline) still gets wrapped — the directive simply has no
+    // NEWLINE child.
+    let source = "2024-01-01 custom \"type\" \"value\"";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), CUSTOM_DIRECTIVE);
+    let has_trailing_newline = elements_of(&ds[0])
+        .iter()
+        .any(|e| matches!(e, Element::Tok(NEWLINE)));
+    assert!(!has_trailing_newline);
+}
+
+#[test]
+fn include_directive_with_metadata_wraps_multi_line() {
+    use SyntaxKind::*;
+    // The body / metadata code path is shared across all edge
+    // directives; pinning INCLUDE-with-meta complements the
+    // OPTION-with-meta test and guards against a future refactor
+    // that special-cases dated vs keyword directives.
+    let source = "include \"shared/2024.beancount\"\n\
+                  \x20\x20note: \"shared accounts\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), INCLUDE_DIRECTIVE);
+    let mes: Vec<SyntaxNode> = ds[0]
+        .descendants()
+        .filter(|n| n.kind() == META_ENTRY)
+        .collect();
+    assert_eq!(mes.len(), 1);
+    // Pin full META_ENTRY shape so a regression that produces a
+    // structurally-wrong META_ENTRY but the same count still fails.
+    assert_eq!(
+        elements_of(&mes[0]),
+        tok_seq(&[WHITESPACE, META_KEY, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn plugin_directive_with_metadata_wraps_multi_line() {
+    use SyntaxKind::*;
+    let source = "plugin \"my.plugin\" \"cfg\"\n\
+                  \x20\x20tolerance: \"0.01\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), PLUGIN_DIRECTIVE);
+    let mes: Vec<SyntaxNode> = ds[0]
+        .descendants()
+        .filter(|n| n.kind() == META_ENTRY)
+        .collect();
+    assert_eq!(mes.len(), 1);
+    assert_eq!(
+        elements_of(&mes[0]),
+        tok_seq(&[WHITESPACE, META_KEY, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+#[test]
+fn custom_directive_with_metadata_wraps_multi_line() {
+    use SyntaxKind::*;
+    let source = "2024-01-01 custom \"budget\" \"food\"\n\
+                  \x20\x20source: \"manual\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), CUSTOM_DIRECTIVE);
+    let mes: Vec<SyntaxNode> = ds[0]
+        .descendants()
+        .filter(|n| n.kind() == META_ENTRY)
+        .collect();
+    assert_eq!(mes.len(), 1);
+    assert_eq!(
+        elements_of(&mes[0]),
+        tok_seq(&[WHITESPACE, META_KEY, WHITESPACE, STRING, NEWLINE]),
+    );
+}
+
+/// For trailing-inline-comment tests: assert that a directive
+/// contains exactly one COMMENT child AND that COMMENT appears
+/// BEFORE the directive's NEWLINE terminator. Catches a
+/// regression that reorders trailing tokens (e.g., closes the
+/// directive before consuming the same-line comment, putting the
+/// COMMENT logically after the terminator).
+fn assert_directive_has_trailing_comment_before_newline(directive: &SyntaxNode) {
+    use SyntaxKind::*;
+    let kids = elements_of(directive);
+    let comment_idx = kids
+        .iter()
+        .position(|e| matches!(e, Element::Tok(COMMENT)))
+        .expect("directive must contain a COMMENT child");
+    let newline_idx = kids
+        .iter()
+        .position(|e| matches!(e, Element::Tok(NEWLINE)))
+        .expect("directive must contain its NEWLINE terminator");
+    assert!(
+        comment_idx < newline_idx,
+        "trailing same-line COMMENT must precede the NEWLINE inside the directive",
+    );
+    let comment_count = kids
+        .iter()
+        .filter(|e| matches!(e, Element::Tok(COMMENT)))
+        .count();
+    assert_eq!(comment_count, 1);
+}
+
+#[test]
+fn option_directive_with_trailing_inline_comment_attaches_inside() {
+    use SyntaxKind::*;
+    // Rule 1 of `cst::trivia`: a same-line trailing `;` comment
+    // attaches INSIDE the directive. The body code path
+    // (`emit_through_terminator`) handles this uniformly for all
+    // directive shapes; pinning the four new kinds protects
+    // against a regression that splits the path.
+    let source = "option \"title\" \"My Ledger\" ; an explanation\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), OPTION_DIRECTIVE);
+    assert_directive_has_trailing_comment_before_newline(&ds[0]);
+}
+
+#[test]
+fn include_directive_with_trailing_inline_comment_attaches_inside() {
+    use SyntaxKind::*;
+    let source = "include \"shared.beancount\" ; main shared file\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), INCLUDE_DIRECTIVE);
+    assert_directive_has_trailing_comment_before_newline(&ds[0]);
+}
+
+#[test]
+fn plugin_directive_with_trailing_inline_comment_attaches_inside() {
+    use SyntaxKind::*;
+    let source = "plugin \"my.plugin\" ; description\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), PLUGIN_DIRECTIVE);
+    assert_directive_has_trailing_comment_before_newline(&ds[0]);
+}
+
+#[test]
+fn custom_directive_with_trailing_inline_comment_attaches_inside() {
+    use SyntaxKind::*;
+    let source = "2024-01-01 custom \"budget\" \"food\" ; monthly cap\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 1);
+    assert_eq!(ds[0].kind(), CUSTOM_DIRECTIVE);
+    assert_directive_has_trailing_comment_before_newline(&ds[0]);
+}
+
+#[test]
+fn all_four_edge_directives_mixed_with_dated_directives() {
+    use SyntaxKind::*;
+    // Smoke test: all 4 new edge directives plus an OPEN and a
+    // TRANSACTION in one source. Pins that CUSTOM (the only dated
+    // edge directive — dispatched via the DATE-peek arm of
+    // identify_directive) coexists cleanly with both keyword-head
+    // edge directives and the legacy dated/standalone ones.
+    let source = "option \"title\" \"X\"\n\
+                  include \"shared.bean\"\n\
+                  plugin \"my.plugin\"\n\
+                  2024-01-01 open Assets:Cash\n\
+                  2024-01-15 * \"tx\"\n\
+                  \x20\x20Assets:Cash 1 USD\n\
+                  2024-01-20 custom \"note\" \"end of test\"\n";
+    let tree = parse_structured(source);
+    assert_round_trip(source, &tree);
+
+    let ds = directives(&tree);
+    assert_eq!(ds.len(), 6);
+    assert_eq!(ds[0].kind(), OPTION_DIRECTIVE);
+    assert_eq!(ds[1].kind(), INCLUDE_DIRECTIVE);
+    assert_eq!(ds[2].kind(), PLUGIN_DIRECTIVE);
+    assert_eq!(ds[3].kind(), OPEN_DIRECTIVE);
+    assert_eq!(ds[4].kind(), TRANSACTION);
+    assert_eq!(ds[5].kind(), CUSTOM_DIRECTIVE);
 }
 
 // ---------- Edge cases ----------
