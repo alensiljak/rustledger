@@ -1,21 +1,20 @@
-//! Shared implementation for bean-format and rledger format commands.
+//! `rledger format` — opinionated whole-file formatter.
 //!
-//! This formatter preserves comments, blank lines, and original file structure.
-//! It uses the parser directly (not the Loader) to capture all elements with their
-//! source spans, then outputs them in order, only reformatting directive content
-//! while preserving comments and other non-directive content.
+//! Routes every input file through the canonical CST-backed formatter
+//! ([`rustledger_parser::format::format_source`]). One canonical form per AST
+//! shape, no knobs: see the canonical-form spec in the formatter's
+//! rustdoc and in the PR-4 decision comment on #1262.
 
 use crate::cmd::completions::ShellType;
-use crate::format::{Alignment, FormatConfig};
 use anyhow::{Context, Result};
 use clap::Parser;
-use rustledger_parser::{format_source, parse};
+use rustledger_parser::format::{cr_outside_strings_present, try_format_source};
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// Format beancount files.
+/// Format beancount files in the canonical opinionated form.
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
@@ -42,23 +41,6 @@ pub struct Args {
     /// Show diff when using --check
     #[arg(long, requires = "check")]
     pub diff: bool,
-
-    /// Align currencies to this fixed column (bean-format -c). When
-    /// omitted, widths are chosen automatically from the file contents.
-    #[arg(short = 'c', long = "currency-column", value_name = "COL")]
-    pub column: Option<usize>,
-
-    /// Force fixed prefix width (account name column width)
-    #[arg(short = 'w', long)]
-    pub prefix_width: Option<usize>,
-
-    /// Force fixed numbers width
-    #[arg(short = 'W', long)]
-    pub num_width: Option<usize>,
-
-    /// Number of spaces for posting indentation (default: 2)
-    #[arg(long)]
-    pub indent: Option<usize>,
 
     /// Show verbose output
     #[arg(short, long)]
@@ -105,33 +87,24 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
     let original_content =
         fs::read_to_string(file).with_context(|| format!("failed to read {}", file.display()))?;
 
-    let parse_result = parse(&original_content);
-
-    if !parse_result.errors.is_empty() {
-        for err in &parse_result.errors {
-            eprintln!("error: {err}");
+    let formatted = match try_format_source(&original_content) {
+        Ok(out) => out,
+        Err(errors) => {
+            for err in &errors {
+                eprintln!("error: {err}");
+            }
+            anyhow::bail!("file has parse errors, cannot format");
         }
-        anyhow::bail!("file has parse errors, cannot format");
-    }
-
-    // Resolve the alignment mode: an explicit currency column wins (and
-    // ignores -w/-W, matching bean-format); otherwise auto-size widths
-    // from the file, honoring any -w/-W overrides.
-    let config = FormatConfig {
-        alignment: match args.column {
-            Some(col) => Alignment::CurrencyColumn(col),
-            None => Alignment::Auto {
-                prefix_width: args.prefix_width,
-                num_width: args.num_width,
-            },
-        },
-        indent: " ".repeat(args.indent.unwrap_or(2)),
     };
 
-    let formatted = format_source(&original_content, &parse_result, &config);
-
     if args.check {
-        if formatted.trim() == original_content.trim() {
+        // Byte-exact comparison: --check must report the same diff
+        // --in-place would actually write. A trim-based comparison
+        // masks trailing-blank-line / leading-blank-line differences
+        // that the canonical form rewrites — exactly the kind of
+        // change the new formatter introduces (one trailing newline,
+        // exactly one blank between directives).
+        if formatted == original_content {
             if args.verbose {
                 eprintln!("File is already formatted: {}", file.display());
             }
@@ -141,29 +114,7 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
                 eprintln!("File needs formatting: {}", file.display());
             }
             if args.diff {
-                eprintln!("--- {}", file.display());
-                eprintln!("+++ {} (formatted)", file.display());
-                for (i, (orig, fmt)) in original_content.lines().zip(formatted.lines()).enumerate()
-                {
-                    if orig != fmt {
-                        eprintln!("@@ line {} @@", i + 1);
-                        eprintln!("-{orig}");
-                        eprintln!("+{fmt}");
-                    }
-                }
-                let orig_lines: Vec<_> = original_content.lines().collect();
-                let fmt_lines: Vec<_> = formatted.lines().collect();
-                if orig_lines.len() != fmt_lines.len() {
-                    let min_len = orig_lines.len().min(fmt_lines.len());
-                    for (i, line) in orig_lines.iter().skip(min_len).enumerate() {
-                        eprintln!("@@ line {} (removed) @@", min_len + i + 1);
-                        eprintln!("-{line}");
-                    }
-                    for (i, line) in fmt_lines.iter().skip(min_len).enumerate() {
-                        eprintln!("@@ line {} (added) @@", min_len + i + 1);
-                        eprintln!("+{line}");
-                    }
-                }
+                emit_diff(file, &original_content, &formatted);
             }
             Ok(ExitCode::from(1))
         }
@@ -187,5 +138,100 @@ fn format_file(file: &PathBuf, args: &Args) -> Result<ExitCode> {
             .write_all(formatted.as_bytes())
             .context("failed to write to stdout")?;
         Ok(ExitCode::SUCCESS)
+    }
+}
+
+/// Render a `--diff` block for a non-canonical file.
+///
+/// Handles four cases beyond the obvious per-line replacement:
+///
+/// - **Whitespace-only normalization.** The canonical form strips
+///   the leading BOM, folds CR-bearing line endings to LF outside
+///   strings, and emits exactly one trailing LF. If the file's
+///   delta is fully explained by one or more of those passes, we
+///   surface the cause explicitly instead of producing a per-line
+///   diff that just shows BOMs and `\r`s.
+/// - **Line-by-line replacements.** Otherwise emit `@@ line N @@`
+///   per-line diff hunks.
+fn emit_diff(file: &PathBuf, original: &str, formatted: &str) {
+    eprintln!("--- {}", file.display());
+    eprintln!("+++ {} (formatted)", file.display());
+
+    // Compute the canonical-noise-stripped view of the original:
+    // drop the BOM, normalize CR-bearing line endings to LF outside
+    // strings, then trim_end_matches('\n'). The formatted side
+    // gets the same trim. If the bodies match, the file's delta is
+    // entirely explainable by canonical normalization; surface the
+    // specific cause so the user knows what to expect from
+    // `--in-place`.
+    let original_no_bom = original.strip_prefix('\u{FEFF}').unwrap_or(original);
+    let had_bom = original_no_bom.len() < original.len();
+    let folded_cr = cr_outside_strings_present(original_no_bom);
+    let lf_only: std::borrow::Cow<'_, str> = if folded_cr {
+        rustledger_parser::format::crlf_to_lf_outside_strings(original_no_bom)
+    } else {
+        std::borrow::Cow::Borrowed(original_no_bom)
+    };
+
+    let orig_body = lf_only.trim_end_matches('\n');
+    let fmt_body = formatted.trim_end_matches('\n');
+    if orig_body == fmt_body {
+        let mut causes: Vec<&'static str> = Vec::new();
+        if had_bom {
+            causes.push("leading BOM (dropped)");
+        }
+        // `folded_cr` comes from the explicit
+        // `cr_outside_strings_present` predicate: a file whose
+        // only `\r` is inside a string literal returns false (the
+        // formatter doesn't fold those), so we don't surface a
+        // misleading "CR folded" cause for an in-string `\r`.
+        if folded_cr {
+            causes.push("CR-bearing line endings (folded to LF)");
+        }
+        let orig_trailing = lf_only.len() - orig_body.len();
+        let fmt_trailing = formatted.len() - fmt_body.len();
+        match orig_trailing.cmp(&fmt_trailing) {
+            std::cmp::Ordering::Less => causes.push("missing final newline (added)"),
+            std::cmp::Ordering::Greater => causes.push("extra trailing newlines (collapsed)"),
+            std::cmp::Ordering::Equal => {}
+        }
+        if causes.is_empty() {
+            // Bodies equal AND no whitespace-noise cause — this
+            // can only happen on byte-identical input, which the
+            // caller already gates against. Defensive message in
+            // case a future caller invokes emit_diff regardless.
+            eprintln!(
+                "  (no per-line content change; the difference is in \
+                 leading/trailing whitespace that `.lines()` strips)"
+            );
+        } else {
+            eprintln!(
+                "  (no per-line content change; canonical normalization: {} — \
+                 run `rledger format -i` to rewrite)",
+                causes.join(", "),
+            );
+        }
+        return;
+    }
+
+    let orig_lines: Vec<&str> = original.lines().collect();
+    let fmt_lines: Vec<&str> = formatted.lines().collect();
+    for (i, (orig, fmt)) in orig_lines.iter().zip(fmt_lines.iter()).enumerate() {
+        if orig != fmt {
+            eprintln!("@@ line {} @@", i + 1);
+            eprintln!("-{orig}");
+            eprintln!("+{fmt}");
+        }
+    }
+    if orig_lines.len() != fmt_lines.len() {
+        let min_len = orig_lines.len().min(fmt_lines.len());
+        for (i, line) in orig_lines.iter().skip(min_len).enumerate() {
+            eprintln!("@@ line {} (removed) @@", min_len + i + 1);
+            eprintln!("-{line}");
+        }
+        for (i, line) in fmt_lines.iter().skip(min_len).enumerate() {
+            eprintln!("@@ line {} (added) @@", min_len + i + 1);
+            eprintln!("+{line}");
+        }
     }
 }

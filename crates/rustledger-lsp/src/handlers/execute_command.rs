@@ -13,7 +13,7 @@ use rustledger_parser::ParseResult;
 use std::collections::HashMap;
 
 use super::formatting::format_document;
-use super::utils::{LineIndex, PositionEncoding, document_format_config};
+use super::utils::{LineIndex, PositionEncoding};
 
 /// Argument key clients can pass to suppress informational no-op
 /// notifications (the "already sorted" / "no transactions to sort"
@@ -248,9 +248,10 @@ fn handle_sort_transactions(
 }
 
 /// Align amounts in the document by delegating to the *canonical*
-/// document formatter ([`format_document`]).
+/// document formatter ([`format_document`]) and then keeping only
+/// the edits that actually touch a posting line.
 ///
-/// `format_document` runs the same `rustledger_parser::format_source`
+/// `format_document` runs the same `rustledger_parser::format::format_source`
 /// pipeline as `rledger format`, so the column widths this command
 /// resolves agree with the on-disk output. The previous bespoke logic
 /// here ran a regex-style line scanner with a "max-existing-column"
@@ -258,27 +259,28 @@ fn handle_sort_transactions(
 /// formatting` request nor the CLI — the duplicate-code-path class
 /// issue #1142 warned about.
 ///
+/// **Filter rationale.** The command name promises *alignment*. A
+/// canonical-format edit list also includes blank-line collapse,
+/// comment normalization, and trailing-whitespace strip — applying
+/// those under an "Align Amounts" command label silently mutates the
+/// buffer in ways the user did not invoke this command for. We
+/// classify each edit by whether the source line at the edit's start
+/// is a posting line (indented, beginning with an optional posting
+/// flag and then an account name); only those survive. If nothing
+/// survives, the user gets a clear "No amounts to align" message
+/// instead of a misleading canonical-reformat WorkspaceEdit.
+///
 /// **Parse-error semantics.** On a file with parse errors,
 /// `format_document` returns `None` and this command surfaces a
 /// dedicated "cannot align" message rather than running the surface-
-/// cleanup fallback that `handle_formatting` uses. The command's name
-/// promises alignment; emitting whitespace-only edits under it would
-/// silently mutate the buffer in ways the user did not request.
+/// cleanup fallback that `handle_formatting` uses.
 fn handle_align_amounts(
     source: &str,
     parse_result: &ParseResult,
     uri: &Uri,
     encoding: PositionEncoding,
 ) -> ExecuteCommandResponse {
-    // `workspace/executeCommand` does NOT carry the client's
-    // formatting preferences — those only travel with
-    // `textDocument/formatting`. Express that explicitly by passing
-    // `None` to `document_format_config`: when that helper grows
-    // real options handling, the executeCommand path will fall back
-    // to server defaults rather than silently mirroring an absent
-    // client value.
-    let config = document_format_config(None);
-    let Some(edits) = format_document(source, parse_result, &config, encoding) else {
+    let Some(edits) = format_document(source, parse_result, encoding) else {
         // Parse errors: surface via window/showMessage so the user
         // actually sees the failure. executeCommand responses are
         // discarded by VS Code etc.; showMessage is the spec-mandated
@@ -292,13 +294,17 @@ fn handle_align_amounts(
         return ExecuteCommandResponse::warn("No amounts to align");
     };
 
-    if edits.is_empty() {
+    let posting_edits: Vec<_> = edits
+        .into_iter()
+        .filter(|e| edit_touches_posting_line(source, e))
+        .collect();
+    if posting_edits.is_empty() {
         return ExecuteCommandResponse::warn("No amounts to align");
     }
 
     #[allow(clippy::mutable_key_type)]
     let mut changes = HashMap::new();
-    changes.insert(uri.clone(), edits);
+    changes.insert(uri.clone(), posting_edits);
 
     let workspace_edit = WorkspaceEdit {
         changes: Some(changes),
@@ -310,6 +316,54 @@ fn handle_align_amounts(
         Ok(v) => ExecuteCommandResponse::json(v),
         Err(_) => ExecuteCommandResponse::none(),
     }
+}
+
+/// Heuristic for whether a `TextEdit` modifies a posting line — i.e.,
+/// a line whose alignment the `rledger.alignAmounts` command is
+/// supposed to touch.
+///
+/// Rule: an indented line is a posting iff its first non-whitespace
+/// character is NOT
+///
+/// - `;` or `%` (comment),
+/// - a lowercase letter (Beancount metadata keys are lowercase
+///   identifiers).
+///
+/// That single test covers:
+///
+/// - ASCII postings (`Assets:Cash 100 USD`): first char `A` is
+///   not lowercase → posting.
+/// - Cyrillic / Greek postings: first char is `\p{Lu}` (uppercase),
+///   not lowercase → posting.
+/// - CJK / Hebrew / Arabic / Devanagari postings: first char is
+///   `\p{Lo}` (letter, other), neither uppercase nor lowercase →
+///   posting. The previous `char::is_uppercase` form rejected
+///   these because is_uppercase is `\p{Lu}` only; the lexer's
+///   ACCOUNT regex is the wider `[\p{Lu}\p{Lo}\p{Lt}]…`.
+/// - Posting flags (`!`, `*`, `#`, `?`, `&`, `PSTCURM`, and any
+///   single-uppercase-letter currency-as-flag): the flag is not
+///   lowercase either, so the line is accepted without having to
+///   hardcode the flag set.
+/// - Metadata sub-lines (`  key: value`): lowercase `k` → rejected.
+/// - Comments (`  ; comment`): `;` matched → rejected.
+/// - Top-level directives and blanks: rejected by the indent /
+///   emptiness checks above the discriminator.
+fn edit_touches_posting_line(source: &str, edit: &TextEdit) -> bool {
+    let line_idx = edit.range.start.line as usize;
+    let Some(line) = source.lines().nth(line_idx) else {
+        return false;
+    };
+    let trimmed = line.trim_start();
+    if trimmed.is_empty() || line.len() == trimmed.len() {
+        return false; // blank line or top-level directive
+    }
+    let Some(first) = trimmed.chars().next() else {
+        return false;
+    };
+    if first == ';' || first == '%' {
+        return false;
+    }
+    !first.is_lowercase()
 }
 
 /// Show account balance.

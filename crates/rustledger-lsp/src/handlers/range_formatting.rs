@@ -17,7 +17,7 @@ use lsp_types::{DocumentRangeFormattingParams, TextEdit};
 use rustledger_parser::ParseResult;
 
 use super::formatting::format_document;
-use super::utils::{LineIndex, PositionEncoding, document_format_config};
+use super::utils::{LineIndex, PositionEncoding};
 
 /// Handle a `textDocument/rangeFormatting` request.
 ///
@@ -34,8 +34,7 @@ pub fn handle_range_formatting(
     parse_result: &ParseResult,
     encoding: PositionEncoding,
 ) -> Option<Vec<TextEdit>> {
-    let config = document_format_config(Some(&params.options));
-    let all_edits = format_document(source, parse_result, &config, encoding)?;
+    let all_edits = format_document(source, parse_result, encoding)?;
 
     let line_index = LineIndex::new(source, encoding);
     // Both the request range AND the returned edit ranges are in the
@@ -281,10 +280,13 @@ mod tests {
         );
     }
 
-    /// CRLF EOL snap: Windows-authored files send Position(N, eol_char)
-    /// that maps to the '\r' byte (not '\n') on a CRLF line. The snap
-    /// must extend past both bytes so line-replace edits aren't
-    /// silently dropped on CRLF files.
+    /// CRLF EOL snap + format_document's CRLF preservation: Windows-
+    /// authored files send Position(N, eol_char) that maps to the
+    /// `\r` byte (not `\n`) on a CRLF line. The snap must extend
+    /// past both bytes, and format_document must NOT include
+    /// `\r`→`` edits in the per-line diff (otherwise every emitted
+    /// edit on a CRLF file would be multi-line and get filtered out
+    /// by the inside-range guard).
     #[test]
     fn crlf_end_of_line_selection_keeps_line_replace_edit() {
         // CRLF source with a misindented posting on line 1.
@@ -297,6 +299,22 @@ mod tests {
         });
         let edits = handle_range_formatting(&p, source, &result, PositionEncoding::Utf16)
             .expect("CRLF EOL selection should preserve the line-replace edit");
+        assert!(!edits.is_empty(), "got {edits:?}");
+    }
+
+    /// Whole-document selection on a CRLF file also produces edits
+    /// (the canonical reformat still fires; CRLF stays CRLF in the
+    /// emitted text per the LSP-side preservation).
+    #[test]
+    fn crlf_whole_document_selection_produces_edits() {
+        let source = "2024-01-15 * \"Coffee\"\r\n    Assets:Bank  -5.00 USD\r\n";
+        let result = parse(source);
+        let p = params(Range {
+            start: Position::new(0, 0),
+            end: Position::new(2, 0),
+        });
+        let edits = handle_range_formatting(&p, source, &result, PositionEncoding::Utf16)
+            .expect("whole-document CRLF selection should produce edits");
         assert!(!edits.is_empty(), "got {edits:?}");
     }
 

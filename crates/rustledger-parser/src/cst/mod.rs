@@ -50,12 +50,19 @@
 
 pub mod ast;
 mod convert;
+pub(crate) mod format;
 mod lossless_tokens;
 mod parser;
 mod syntax_kind;
 mod trivia;
 
 pub use convert::parse_via_cst;
+// Formatter exports do NOT re-export through `cst` — the sole
+// import path for the formatter is `rustledger_parser::format`
+// (the crate-root sub-module that re-exports the six symbols
+// directly from `crate::cst::format`). Round-6 sealed the
+// `cst::format` path so there is exactly one import shape per
+// formatter symbol from outside the crate.
 pub use lossless_tokens::lossless_kind_tokens;
 pub use parser::{parse_flat, parse_structured};
 pub use syntax_kind::{BeancountLanguage, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken};

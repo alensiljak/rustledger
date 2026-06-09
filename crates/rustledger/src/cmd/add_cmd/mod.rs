@@ -35,8 +35,9 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use parsing::{calculate_balance, parse_amount, parse_date};
 use rustledger_core::NaiveDate;
-use rustledger_core::format::{FormatConfig, format_directives};
+use rustledger_core::format::FormatConfig;
 use rustledger_core::{Amount, Directive, Posting, Transaction};
+use rustledger_parser::format::canonicalize_directives;
 use rustledger_parser::parse;
 use rustyline::completion::{Completer, Pair};
 use rustyline::error::ReadlineError;
@@ -185,6 +186,15 @@ impl Highlighter for AddHelper {
 
 impl Validator for AddHelper {}
 
+/// Thin wrapper around the parser's canonical-emit helper. Lives
+/// here only to keep call-site ergonomics tight; all the
+/// synth-then-canonicalize machinery is in
+/// [`rustledger_parser::format::canonicalize_directives`].
+fn canonical_format_directive(directive: &Directive, config: &FormatConfig) -> Result<String> {
+    canonicalize_directives(std::iter::once(directive), config)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
 /// Run the add command in quick mode.
 fn run_quick_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {
     let quick_args = args.quick.as_ref().expect("quick mode args");
@@ -278,10 +288,14 @@ fn run_quick_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<()> {
         txn = txn.with_synthesized_posting(posting);
     }
 
-    // Format and display
+    // Format and display. Two-pass: synthesize via the typed-
+    // directive emitter, then run it through the canonical CST
+    // formatter so the appended bytes match what `rledger format`
+    // would write on the same content (single canonical form
+    // across the toolchain).
     let config = FormatConfig::default();
     let directive = Directive::Transaction(txn);
-    let formatted = format_directives([&directive], &config);
+    let formatted = canonical_format_directive(&directive, &config)?;
 
     if args.dry_run {
         println!("{formatted}");
@@ -514,10 +528,11 @@ fn run_interactive_mode(args: &Args, file: &PathBuf, date: NaiveDate) -> Result<
         txn = txn.with_synthesized_posting(posting);
     }
 
-    // Format and display preview
+    // Format and display preview (see comment in add_cmd's
+    // synthesize/format pass for why this is two-pass).
     let config = FormatConfig::default();
     let directive = Directive::Transaction(txn);
-    let formatted = format_directives([&directive], &config);
+    let formatted = canonical_format_directive(&directive, &config)?;
 
     if args.dry_run {
         println!("\n{formatted}");

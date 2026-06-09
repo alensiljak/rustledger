@@ -66,9 +66,9 @@ use config::{
 };
 use duplicate::{is_duplicate, load_existing_transactions};
 use format_num_pattern::Locale;
-use rustledger_core::format::{FormatLine, format_directive_lines, render_lines};
 use rustledger_core::{Directive, FormatConfig};
 use rustledger_importer::{Importer, ImporterConfig, ImporterRegistry, csv_importer::CsvImporter};
+use rustledger_parser::format::canonicalize_directives;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -729,18 +729,16 @@ pub fn run(args: &Args, file: &Path) -> Result<()> {
         directives
     };
 
-    // Render every directive together so all amount-bearing lines align
-    // against shared, file-wide column widths, with a single blank line
-    // between directives.
+    // Render every directive in the canonical form `rledger format`
+    // would write. canonicalize_directives is the single source of
+    // truth for the synthesize-then-canonicalize pipeline (legacy
+    // typed-AST emitter → parse → opinionated formatter), with a
+    // built-in parse-error guard so a divergence between the two
+    // emitters surfaces as a hard error rather than silent data
+    // loss.
     let fmt_config = FormatConfig::default();
-    let mut lines: Vec<FormatLine> = Vec::new();
-    for (i, directive) in directives.iter().enumerate() {
-        if i > 0 {
-            lines.push(FormatLine::Plain(String::new()));
-        }
-        lines.extend(format_directive_lines(directive, &fmt_config));
-    }
-    let formatted = render_lines(&lines, &fmt_config.alignment);
+    let formatted = canonicalize_directives(directives.iter(), &fmt_config)
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
 
     if let Some(ref output_path) = args.output {
         let mut out_file = fs::File::create(output_path)

@@ -573,8 +573,7 @@ fn format_source_to_response(source: &str) -> Result<serde_json::Value, RpcError
         return Err(RpcError::beancount_parse_error(message).with_data(data));
     }
 
-    let config = rustledger_core::format::FormatConfig::default();
-    let formatted = rustledger_parser::format_source(source, &parse_result, &config);
+    let formatted = rustledger_parser::format::format_source(source);
 
     let result = FormatResult { formatted };
     serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
@@ -588,8 +587,9 @@ fn handle_format_entry(params: &serde_json::Value) -> Result<serde_json::Value, 
         .map_err(|e| RpcError::invalid_params(format!("Invalid entry: {e}")))?;
 
     let config = rustledger_core::format::FormatConfig::default();
-    let formatted = rustledger_core::format::format_directives([&directive], &config);
-
+    let formatted =
+        rustledger_parser::format::canonicalize_directives(std::iter::once(&directive), &config)
+            .map_err(|e| RpcError::internal_error(e.to_string()))?;
     let result = FormatResult { formatted };
     serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
 }
@@ -598,7 +598,6 @@ fn handle_format_entries(params: &serde_json::Value) -> Result<serde_json::Value
     let params: FormatEntriesParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("Invalid params: {e}")))?;
 
-    let config = rustledger_core::format::FormatConfig::default();
     let mut directives: Vec<rustledger_core::Directive> = Vec::with_capacity(params.entries.len());
     for (i, entry) in params.entries.iter().enumerate() {
         directives.push(
@@ -607,7 +606,9 @@ fn handle_format_entries(params: &serde_json::Value) -> Result<serde_json::Value
             })?,
         );
     }
-    let formatted = rustledger_core::format::format_directives(directives.iter(), &config);
+    let config = rustledger_core::format::FormatConfig::default();
+    let formatted = rustledger_parser::format::canonicalize_directives(directives.iter(), &config)
+        .map_err(|e| RpcError::internal_error(e.to_string()))?;
 
     let result = FormatResult { formatted };
     serde_json::to_value(result).map_err(|e| RpcError::internal_error(e.to_string()))
