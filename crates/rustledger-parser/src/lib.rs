@@ -40,7 +40,7 @@ pub mod logos_lexer;
 
 /// Opinionated CST-backed formatter entries.
 ///
-/// **Sole** import path for the formatter surface — `format_source`,
+/// **Sole** import path for the formatter surface - `format_source`,
 /// `try_format_source`, `format_node`, `canonicalize_directives`,
 /// `CanonicalizeError`, `lf_to_crlf_outside_strings`,
 /// `crlf_to_lf_outside_strings`, `cr_outside_strings_present`. The
@@ -116,8 +116,8 @@ pub struct ParseResult {
     ///
     /// Source-position-aware tooling (LSP rename / references /
     /// document-highlight) walks this list to produce edits, locations,
-    /// and highlights without resorting to string search of the source
-    /// — which produces false positives in comments, payee strings,
+    /// and highlights without resorting to string search of the source,
+    /// which produces false positives in comments, payee strings,
     /// account-name segments, etc. The order matches source order
     /// because the parser fills it as tokens are consumed (and the
     /// parser is strictly forward-advancing, including on error
@@ -130,7 +130,7 @@ pub struct ParseResult {
     /// valid, and tooling that wants to rename or highlight a
     /// currency the user typed should follow that classification.
     /// Do not "clean up" partially-consumed entries after a parse
-    /// failure — that would hide real currency identifiers from
+    /// failure - that would hide real currency identifiers from
     /// downstream tooling while the user is mid-edit.
     ///
     /// **`file_id` is always 0 in parser output.** The parser
@@ -141,6 +141,64 @@ pub struct ParseResult {
     /// (today: every LSP handler) can ignore `file_id`; future
     /// multi-file consumers must remember to thread it through.
     pub currency_occurrences: Vec<Spanned<rustledger_core::Currency>>,
+    /// Every `Account` token the parser consumed, paired with its
+    /// interned value and source-byte range.
+    ///
+    /// Mirrors [`Self::currency_occurrences`] for the account
+    /// shape. The CST conversion (`walk_descendants_once`) tracks
+    /// every `ACCOUNT` token whose ancestors do NOT include an
+    /// `ERROR_NODE`. The LSP rename handler (phase 5.4) walks
+    /// this list to emit exact-span edits without resorting to
+    /// per-directive substring search, which used to produce
+    /// false positives wherever an account-name fragment appeared
+    /// inside a payee string, a STRING-typed metadata value, or a
+    /// comment. ACCOUNT-typed metadata values (e.g.
+    /// `counterparty: Assets:Bank`) DO produce an `ACCOUNT` token
+    /// at the lexer level and ARE included in this list - so a
+    /// rename of `Assets:Bank` correctly rewrites that metadata
+    /// value too.
+    ///
+    /// **Migration status (#1262 phase 5.4).** Only the LSP
+    /// rename handler currently consumes this index. The sibling
+    /// handlers `references`, `document_highlight`, and
+    /// `linked_editing` still walk the typed AST with substring
+    /// search for accounts (see those modules' rustdoc); migrating
+    /// them to consume `account_occurrences` is tracked as a
+    /// phase 5.5+ follow-up.
+    ///
+    /// **Error-recovery contract.** Two notions of "failing
+    /// directive" need to be distinguished:
+    ///
+    /// - A directive that PARSES SYNTACTICALLY but whose
+    ///   typed-AST conversion errors (e.g.,
+    ///   [`crate::ParseErrorKind::InvalidBookingMethod`] on an
+    ///   `open Assets:Bank "GARBAGE"`). The ACCOUNT node is
+    ///   intact in the CST and NOT inside an `ERROR_NODE`. The
+    ///   token IS tracked - tooling can still rename it during
+    ///   the mid-edit state.
+    /// - A directive so garbled that the CST wraps the region
+    ///   in an `ERROR_NODE`. The ACCOUNT token is inside an
+    ///   `ERROR_NODE` and is NOT tracked. This is deliberate -
+    ///   the recovery boundary is fuzzy and including such
+    ///   tokens would surface as confusing rename hits inside
+    ///   garbage source.
+    ///
+    /// # Limitations
+    ///
+    /// The list is undifferentiated: declarations (from
+    /// open/close/balance/pad/note/document) and references
+    /// (from posting accounts and ACCOUNT-typed metadata) are
+    /// mixed together. There is no equivalent of the
+    /// `commodity_declaration_spans` helper used for currencies
+    /// (the account case has six declaration directive shapes vs.
+    /// the single `Commodity` shape, so no symmetric helper
+    /// exists yet). A future go-to-definition migration will need
+    /// either a re-walk over `directives` or an additional
+    /// `account_declarations: Vec<Span>` field.
+    ///
+    /// **`file_id` is always 0 in parser output** - same loader
+    /// contract as `currency_occurrences`.
+    pub account_occurrences: Vec<Spanned<rustledger_core::Account>>,
     /// `true` iff the parsed source began with a UTF-8 BOM (strict
     /// byte 0).
     ///
@@ -153,7 +211,7 @@ pub struct ParseResult {
     /// drift class of bug this field was introduced to eliminate.
     ///
     /// Span coordinates in this `ParseResult` are in the **original
-    /// source frame** — i.e., if `has_leading_bom` is true, spans
+    /// source frame** - i.e., if `has_leading_bom` is true, spans
     /// already include the 3-byte BOM offset and index directly into
     /// the caller's source.
     pub has_leading_bom: bool,
@@ -223,7 +281,7 @@ pub fn parse_directives(source: &str) -> (Vec<Spanned<Directive>>, Vec<ParseErro
 /// test). Performing the destructure here forces the compiler to
 /// flag any field added to `ParseResult` that the canonical
 /// serialization does not feed into its output. Without this, a new
-/// `ParseResult` field could silently exit the baseline fingerprint —
+/// `ParseResult` field could silently exit the baseline fingerprint -
 /// the BOM-flag-omission class of bug the round-3 review caught.
 ///
 /// **Add a new field?** Add a binding (NOT `_`) AND a hasher feed
@@ -248,6 +306,7 @@ pub fn __baseline_canonical_payload(result: &ParseResult) -> Vec<u8> {
         errors,
         warnings,
         currency_occurrences,
+        account_occurrences,
         has_leading_bom,
     } = result;
     let mut out: Vec<u8> = Vec::new();
@@ -269,6 +328,8 @@ pub fn __baseline_canonical_payload(result: &ParseResult) -> Vec<u8> {
     out.extend_from_slice(format!("{warnings:?}").as_bytes());
     out.extend_from_slice(b"\ncurrency_occurrences:");
     out.extend_from_slice(format!("{currency_occurrences:?}").as_bytes());
+    out.extend_from_slice(b"\naccount_occurrences:");
+    out.extend_from_slice(format!("{account_occurrences:?}").as_bytes());
     out.extend_from_slice(b"\nhas_leading_bom:");
     out.extend_from_slice(format!("{has_leading_bom:?}").as_bytes());
     out
@@ -283,7 +344,7 @@ mod canonical_payload_determinism {
     //! order. `__baseline_canonical_payload` relies on the sort-stable
     //! behavior to neutralize `FxHashMap` iteration order in directive
     //! metadata. A workspace crate flipping the feature on would make
-    //! canonical hashes vary with hashbrown state across machines —
+    //! canonical hashes vary with hashbrown state across machines -
     //! the very class of bug the canonicalization was added to
     //! prevent. This test fails fast and points at the cargo-feature
     //! cause instead of letting the corpus baseline mysteriously drift.
