@@ -72,14 +72,27 @@ use crate::cst::ast::{self, AstNode, AstToken, MetaEntry, SourceFile};
 /// - `number_col`   = INDENT + max(account width with optional `flag `) + 2
 /// - `number_width` = max rendered width of any posting's number /
 ///   arithmetic expression (sign included)
-#[derive(Debug, Clone, Copy, Default)]
-struct Alignment {
+///
+/// `PostingAlignment` is `Copy` and `Default` (the all-zero state);
+/// the default is the alignment used for files that contain no
+/// postings (no transactions, or transactions with no AMOUNT).
+/// Marked `#[non_exhaustive]` so that a future column-derivation
+/// rule can add fields without breaking downstream consumers.
+///
+/// **Name choice.** The type is qualified by its semantic purpose
+/// (posting layout column widths) so the public path
+/// `rustledger_parser::format::PostingAlignment` doesn't compete
+/// with future generic "alignment" types (text justification,
+/// memory layout, etc.).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PostingAlignment {
     /// 0-indexed column at which the right-justified number field
     /// starts.
-    number_col: usize,
+    pub number_col: usize,
     /// Width of the number field; shorter numbers are left-padded
     /// with spaces so the currency column stays uniform.
-    number_width: usize,
+    pub number_width: usize,
 }
 
 /// Two-space indent for directive bodies (postings, metadata).
@@ -107,6 +120,106 @@ pub fn format_source(source: &str) -> String {
     let normalized = crlf_to_lf_outside_strings(stripped);
     let parsed = SourceFile::parse(&normalized);
     format_node(parsed.syntax())
+}
+
+/// Like [`format_source`] but reuses the caller's
+/// [`crate::ParseResult`] instead of re-parsing `source`.
+///
+/// Skips both expensive pre-passes the bare `format_source` runs
+/// every call: the lex+parse from `SourceFile::parse(&normalized)`,
+/// and the `O(N_postings)` `compute_alignment` walk. Both pieces
+/// are already on `parse_result` (in `syntax_root` and
+/// `alignment` respectively, populated by `parse_via_cst`). For
+/// any consumer that already holds a `ParseResult` — the LSP
+/// `format_document` handler, the FFI `format.source` endpoint,
+/// the WASM `ParsedLedger::format` bridge — this entry skips two
+/// redundant traversals of the file.
+///
+/// **Output equivalence with `format_source`.** Pinned by
+/// `parse_result_alignment_cache::format_source_with_parsed_matches_format_source_under_fallback`
+/// (the fallback exercises broken sources) and
+/// `cst::format::tests::format_source_with_parsed_matches_format_source`
+/// (the cache path exercises clean sources) across LF / CRLF /
+/// BOM / parse-error / mixed-line-ending fixtures. The cache-
+/// path equivalence holds because the formatter rebuilds output
+/// from each directive's typed values rather than echoing
+/// trivia, so the CRLF-vs-LF difference in the underlying CST
+/// trivia never reaches the output. The fallback path is
+/// byte-trivially equivalent (it IS `format_source`).
+///
+/// **CRLF re-injection is still the caller's responsibility.**
+/// Same as `format_source`: this function always returns LF;
+/// LSP consumers that need to preserve CRLF for Windows-
+/// authored files call [`lf_to_crlf_outside_strings`] on the
+/// returned text.
+///
+/// **Parse-error fallback.** When `parse_result.errors` is
+/// non-empty, this function delegates to `format_source(source)`
+/// — losing the cache benefit but preserving byte-identity for
+/// inputs whose CST diverges from what `format_source`'s
+/// pre-parse normalization would produce. Concretely: bare-`\r`
+/// (classic Mac) line terminators are normalized to LF by
+/// `format_source` before parsing, but `parse_via_cst` does NOT
+/// normalize them — so the cached CST treats them as broken
+/// content and `parse_result.errors` is non-empty. The fallback
+/// path keeps the byte-identity claim total instead of
+/// "holds-only-when-clean".
+///
+/// **Stale `parse_result` is the caller's responsibility.** The
+/// producer-side cache invariant (see
+/// [`crate::ParseResult::alignment`] rustdoc) says
+/// `parse_result` must come from a fresh `parse(source)` with
+/// the same `source`. A `debug_assert_eq!` compares the CST's
+/// text length against `source.len() - bom_offset` to catch the
+/// most common mismatched-pair class (different documents have
+/// different lengths) in debug builds; release builds skip the
+/// check. Identical-length mismatches still pass silently —
+/// the rustdoc-level contract remains the source of truth.
+///
+/// # Panics
+///
+/// Panics if `parse_result.syntax_root` is not a `SOURCE_FILE`
+/// (always true for results produced by [`crate::parse`]).
+///
+/// In debug builds, panics on a `(parse_result, source)`
+/// length-mismatch via `debug_assert_eq!`. Release builds
+/// silently emit possibly-wrong output (the producer-only
+/// invariant is the caller's responsibility).
+#[must_use]
+pub fn format_source_with_parsed(parse_result: &crate::ParseResult, source: &str) -> String {
+    // Parse-error fallback. See the function rustdoc for the
+    // rationale: `parse_via_cst` does not run the same input
+    // normalization `format_source` does (no CRLF/bare-CR
+    // normalize), so for sources containing bare-`\r` line
+    // terminators the cached CST is wrong-shaped and the cache
+    // path would diverge from `format_source`. Delegating
+    // preserves byte-identity unconditionally.
+    if !parse_result.errors.is_empty() {
+        return format_source(source);
+    }
+    let node = parse_result.syntax_node();
+    // Defensive length check (debug-only). Catches the most
+    // common form of `(parse_result, source)` mismatched pair —
+    // different documents with different lengths. The CST's
+    // text range is BOM-stripped, so we add back the BOM bytes
+    // if the parser saw one.
+    //
+    // Computed outside the `debug_assert_eq!` to avoid clippy's
+    // `debug_assert_with_mut_call` (`syntax_node()` does an Arc
+    // bump, which clippy treats as state mutation in a debug
+    // context).
+    let cst_len =
+        usize::from(node.text_range().len()) + if parse_result.has_leading_bom { 3 } else { 0 };
+    debug_assert_eq!(
+        cst_len,
+        source.len(),
+        "format_source_with_parsed called with a `source` whose length doesn't \
+         match the CST stored in `parse_result`. The two arguments came from \
+         different documents — the cache path will emit text for the wrong \
+         buffer. See `ParseResult::alignment` rustdoc for the producer-only \
+         invariant.",
+    );
+    format_node_with_alignment(&node, parse_result.alignment)
 }
 
 /// Like [`format_source`], but returns the parse errors instead
@@ -137,7 +250,11 @@ pub fn try_format_source(source: &str) -> Result<String, Vec<crate::ParseError>>
     if !result.errors.is_empty() {
         return Err(result.errors);
     }
-    Ok(format_source(source))
+    // Reuse the parse + alignment we already produced for the
+    // error gate instead of letting `format_source` re-parse +
+    // re-walk every posting. Byte-identical output pinned by
+    // `format_source_with_parsed_matches_format_source`.
+    Ok(format_source_with_parsed(&result, source))
 }
 
 /// Convert every `\n` line terminator OUTSIDE string literals back
@@ -492,12 +609,62 @@ const fn advance_source_state(
 /// The bare-node entry for callers that already parsed the CST
 /// (typically LSP formatting providers). Output rules are the
 /// same as [`format_source`].
+///
+/// Internally runs [`compute_alignment`] on `node` to derive the
+/// file-wide column targets. Hot paths that hold a precomputed
+/// `PostingAlignment` (e.g., via [`crate::ParseResult::alignment`]) should
+/// call [`format_node_with_alignment`] instead to skip the
+/// per-call walk. Equivalence pinned by
+/// `format_node_equals_format_node_with_alignment` in this file's
+/// tests.
 #[must_use]
 pub fn format_node(node: &crate::SyntaxNode) -> String {
-    let mut out = String::new();
     let source_file =
         SourceFile::cast(node.clone()).expect("format_node called on non-SOURCE_FILE node");
     let alignment = compute_alignment(&source_file);
+    format_node_with_alignment(node, alignment)
+}
+
+/// Like [`format_node`] but skips the per-call
+/// [`compute_alignment`] walk by accepting a precomputed
+/// `PostingAlignment`.
+///
+/// The cache pattern: parse → take `ParseResult::alignment` (the
+/// pre-computed file-wide alignment, populated by `parse_via_cst`)
+/// → call this function. Subsequent formatting calls on the same
+/// `ParseResult` pay only the per-call emit cost, not the
+/// `O(N_postings)` pre-pass.
+///
+/// `alignment` MUST match what `compute_alignment(&SourceFile::cast(node).unwrap())` would
+/// return for the given `node` — passing a mismatched alignment
+/// is allowed but produces output with non-canonical column
+/// widths. Use `PostingAlignment::default()` for files known to have no
+/// postings (no transactions, or transactions with no AMOUNT).
+///
+/// # Panics
+///
+/// Panics if `node`'s kind is not `SOURCE_FILE`.
+#[must_use]
+pub fn format_node_with_alignment(node: &crate::SyntaxNode, alignment: PostingAlignment) -> String {
+    // Precondition check (debug-only). The bare `format_node`
+    // delegate already validated the kind via the
+    // `SourceFile::cast` it performs for `compute_alignment`, so
+    // for the most common call path (bare → with_alignment) the
+    // debug_assert is a redundant no-op in release. External
+    // direct callers of this entry point (FFI, future LSP
+    // handlers calling `format_node_with_alignment` with a
+    // `parse_result.alignment` cache) get the panic in debug
+    // builds; in release, a wrong-kind `node` produces empty or
+    // malformed output rather than panicking — acceptable for
+    // a precondition that's guaranteed by the call's typed
+    // contract.
+    debug_assert_eq!(
+        node.kind(),
+        crate::SyntaxKind::SOURCE_FILE,
+        "format_node_with_alignment called on non-SOURCE_FILE node (got {:?})",
+        node.kind(),
+    );
+    let mut out = String::new();
     // Walk every direct child in source order so file-level comments
     // (file-leading per phase-2.0 trivia attachment, plus file-
     // trailing) interleave correctly with directives. Inter-directive
@@ -512,7 +679,7 @@ pub fn format_node(node: &crate::SyntaxNode) -> String {
     // its visual grouping), and a comment group sitting against a
     // directive on either side stays flush.
     let mut prev_was_directive = false;
-    for el in source_file.syntax().children_with_tokens() {
+    for el in node.children_with_tokens() {
         match el {
             rowan::NodeOrToken::Node(n) => {
                 let Some(directive) = ast::Directive::cast(n) else {
@@ -599,7 +766,7 @@ pub fn format_node(node: &crate::SyntaxNode) -> String {
 ///   the standard "end-of-line cursor is start-of-next-line"
 ///   convention.
 ///
-/// **Alignment.** The pre-pass uses the FULL `SourceFile`, not
+/// **Posting alignment.** The pre-pass uses the FULL `SourceFile`, not
 /// the selected subset. A selection that formats one transaction
 /// in a file with many other transactions inherits the file's
 /// alignment columns, so the formatted output stays visually
@@ -626,8 +793,51 @@ pub fn format_node_range(
         SourceFile::cast(node.clone()).expect("format_node_range called on non-SOURCE_FILE node");
     // File-wide alignment pre-pass: see rustdoc above for the
     // rationale. The selected subset always uses the full file's
-    // alignment columns.
+    // alignment columns. Hot paths with a precomputed `PostingAlignment`
+    // should call `format_node_range_with_alignment` instead.
     let alignment = compute_alignment(&source_file);
+    format_node_range_with_alignment(node, range, alignment)
+}
+
+/// Like [`format_node_range`] but skips the per-call
+/// [`compute_alignment`] walk by accepting a precomputed
+/// `PostingAlignment`.
+///
+/// The cache pattern is identical to
+/// [`format_node_with_alignment`]: parse → take
+/// `ParseResult::alignment` → call this function. The hot path the
+/// cache addresses is the LSP `textDocument/rangeFormatting`
+/// fallback (CST-snap path that fires on parse-error files), which
+/// can be invoked per-keystroke through format-on-type clients.
+/// Without the cache the per-call cost is
+/// `O(N_postings_in_file)`; with the cache it's
+/// `O(N_cst_nodes covered by range)`.
+///
+/// `alignment` MUST match what `compute_alignment(&SourceFile::cast(node).unwrap())` would
+/// return for the given `node`; pinned by
+/// `format_node_range_matches_format_node_range_with_alignment`. Same
+/// `range` semantics, `ERROR_NODE` policy, snap rules, and
+/// `# Panics` precondition as [`format_node_range`].
+#[must_use]
+pub fn format_node_range_with_alignment(
+    node: &crate::SyntaxNode,
+    range: rowan::TextRange,
+    alignment: PostingAlignment,
+) -> Option<(rowan::TextRange, String)> {
+    // Precondition check (debug-only). Same rationale as
+    // `format_node_with_alignment`: the bare delegate already
+    // validated the kind, so the most common call path (bare →
+    // with_alignment) gets no release-build cost from this
+    // assert. External direct callers — the LSP range_formatting
+    // fallback, FFI, future format-on-type — get a debug-build
+    // panic; release-build wrong-kind input produces no output
+    // (rather than panicking).
+    debug_assert_eq!(
+        node.kind(),
+        crate::SyntaxKind::SOURCE_FILE,
+        "format_node_range_with_alignment called on non-SOURCE_FILE node (got {:?})",
+        node.kind(),
+    );
 
     // First pass: identify the included children and the snap range.
     // We pick:
@@ -764,10 +974,39 @@ fn range_intersects(child: rowan::TextRange, sel: rowan::TextRange) -> bool {
     }
 }
 
-/// Pre-pass: walk every posting in the file, take max LHS width
-/// (account + optional `flag `) and max number-text width, and
-/// derive the file-wide alignment columns from them.
-fn compute_alignment(sf: &SourceFile) -> Alignment {
+/// Compute the file-wide alignment columns for a parsed `SourceFile`.
+///
+/// Walks every Transaction's postings once, takes the max LHS
+/// width (account + optional `flag `) and max number-text width,
+/// and derives the column targets from them.
+///
+/// **`O(N_postings)`.** Public so consumers can pre-compute the
+/// alignment once (typically at parse time) and pass the cached
+/// `PostingAlignment` into [`format_node_with_alignment`] or
+/// [`format_node_range_with_alignment`] — eliminates the per-call
+/// walk in hot formatting paths (LSP format-on-type through a
+/// parse error, repeat-format scripts, etc.).
+///
+/// **Tree-shape precondition.** `sf` must be a `SourceFile` whose
+/// CST was produced by `parse_structured` (directly or transitively
+/// via `parse_via_cst` / `parse`). Hand-built partial trees (e.g.,
+/// a `GreenNodeBuilder` invocation for snippet formatting) silently
+/// return `PostingAlignment::default()` because their wrapping
+/// nodes fail the `ast::Directive::Transaction::cast` check.
+/// Likewise, transactions wrapped in `ERROR_NODE` by mid-edit
+/// error recovery are excluded — see
+/// `parse_result_alignment_cache::mid_transaction_error_node` for
+/// the pinned behavior. The function never panics on a partial
+/// tree; it just returns the all-zero alignment for the no-postings
+/// case.
+///
+/// **Pinning the contract.** `ParseResult::alignment` is populated
+/// by calling this function during `parse_via_cst`; the equivalence
+/// between the cached value and a fresh call is guaranteed by the
+/// `parse_result_alignment_cache::*` regression tests (7 fixtures) in
+/// this module.
+#[must_use]
+pub fn compute_alignment(sf: &SourceFile) -> PostingAlignment {
     let mut max_lhs: usize = 0;
     let mut max_num: usize = 0;
     let mut any_posting = false;
@@ -796,11 +1035,11 @@ fn compute_alignment(sf: &SourceFile) -> Alignment {
         }
     }
     if !any_posting {
-        return Alignment::default();
+        return PostingAlignment::default();
     }
     // 2 spaces between the longest account end and the number field,
     // matching the conventional Beancount layout.
-    Alignment {
+    PostingAlignment {
         number_col: INDENT.len() + max_lhs + 2,
         number_width: max_num,
     }
@@ -834,7 +1073,7 @@ fn amount_value_text(amt: &ast::Amount) -> String {
     buf
 }
 
-fn emit_directive(d: &ast::Directive, align: Alignment, out: &mut String) {
+fn emit_directive(d: &ast::Directive, align: PostingAlignment, out: &mut String) {
     // Leading inter-directive trivia: COMMENT tokens that sit
     // BEFORE the directive's first content token. Per phase-2.0
     // trivia attachment, these live inside the directive's syntax
@@ -1312,7 +1551,7 @@ fn emit_popmeta(d: &ast::PopmetaDirective, out: &mut String) {
 
 // ---- Transaction + Posting --------------------------------------
 
-fn emit_transaction(d: &ast::Transaction, align: Alignment, out: &mut String) {
+fn emit_transaction(d: &ast::Transaction, align: PostingAlignment, out: &mut String) {
     let date = d.date().map(|t| t.text().to_string()).unwrap_or_default();
     out.push_str(&date);
     out.push(' ');
@@ -1398,7 +1637,7 @@ fn transaction_flag_string(d: &ast::Transaction) -> String {
     }
 }
 
-fn emit_posting(p: &ast::Posting, align: Alignment, out: &mut String) {
+fn emit_posting(p: &ast::Posting, align: PostingAlignment, out: &mut String) {
     // Posting-trailing comment (same-line, before the posting-line
     // NEWLINE) — capture upfront so we can splice it back in just
     // before that NEWLINE, preserving the user's attachment intent.
@@ -3500,5 +3739,210 @@ mod tests {
         assert_eq!(snap.start(), ts(0));
         assert_eq!(snap.end(), ts(open_end));
         assert_eq!(formatted, "2024-01-01 open Assets:Bank USD\n");
+    }
+
+    /// `format_node_with_alignment(node, compute_alignment(sf))` is
+    /// byte-identical to `format_node(node)`. Pins the cache
+    /// contract: passing the correct alignment is a pure
+    /// optimization, NOT a behavior change.
+    #[test]
+    fn format_node_equals_format_node_with_alignment() {
+        let fixtures: &[(&str, &str)] = &[
+            ("empty", ""),
+            ("open only", "2024-01-01 open Assets:Bank USD\n"),
+            (
+                "single txn",
+                "\
+2024-01-15 * \"Coffee\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+",
+            ),
+            (
+                "multi txn varying widths",
+                "\
+2024-01-15 * \"A\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+2024-02-15 * \"B\"
+  Assets:Investment:Long:Path  -123456.78 USD
+  Expenses:Tax  100.00 USD
+",
+            ),
+        ];
+        for (label, source) in fixtures {
+            let (node, _src) = parse_for_range(source);
+            let source_file = SourceFile::cast(node.clone()).unwrap();
+            let alignment = compute_alignment(&source_file);
+            assert_eq!(
+                format_node(&node),
+                format_node_with_alignment(&node, alignment),
+                "format_node_with_alignment must match format_node for {label}",
+            );
+        }
+    }
+
+    /// `format_node_range_with_alignment(node, range, compute_alignment(sf))`
+    /// matches `format_node_range(node, range)` byte-identically.
+    /// Same shape as the previous test, for the range path.
+    #[test]
+    fn format_node_range_matches_format_node_range_with_alignment() {
+        let source = "\
+2024-01-15 * \"A\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+2024-02-15 * \"B\"
+  Assets:Investment:Long:Path  -123456.78 USD
+  Expenses:Tax  100.00 USD
+";
+        let (node, src) = parse_for_range(source);
+        let source_file = SourceFile::cast(node.clone()).unwrap();
+        let alignment = compute_alignment(&source_file);
+        // Pin the equivalence on three ranges: whole file,
+        // cursor inside the first transaction, cursor inside the
+        // second.
+        let sels = [
+            rowan::TextRange::new(ts(0), ts(src.len())),
+            rowan::TextRange::new(ts(0), ts(10)),
+            rowan::TextRange::new(ts(src.len() - 10), ts(src.len())),
+        ];
+        for sel in sels {
+            let uncached = format_node_range(&node, sel);
+            let cached = format_node_range_with_alignment(&node, sel, alignment);
+            assert_eq!(
+                uncached, cached,
+                "format_node_range_with_alignment must match \
+                 format_node_range for range {sel:?}",
+            );
+        }
+    }
+
+    /// The cached `ParseResult::alignment` value matches what
+    /// `format_node` would compute on the parsed tree. End-to-end
+    /// regression: an LSP caller passing `parse_result.alignment`
+    /// to `format_node_with_alignment` produces the same output
+    /// as the bare `format_node` (uncached path).
+    #[test]
+    fn parse_result_alignment_drives_identical_format_output() {
+        let source = "\
+2024-01-15 * \"Coffee\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+";
+        let parse_result = crate::parse(source);
+        let node = parse_result.syntax_node();
+        assert_eq!(
+            format_node(&node),
+            format_node_with_alignment(&node, parse_result.alignment),
+            "ParseResult::alignment must drive identical format output to format_node",
+        );
+    }
+
+    /// `format_source_with_parsed(parse(s), s) == format_source(s)`
+    /// byte-identical across a representative fixture set including
+    /// CRLF and BOM-prefixed sources. This is the load-bearing
+    /// equivalence for the LSP `format_document` / FFI
+    /// `format.source` / WASM `ParsedLedger::format` migrations:
+    /// they swap `format_source(source)` for
+    /// `format_source_with_parsed(parse_result, source)` on the
+    /// assumption that the two produce the same output. Without
+    /// this test, a future converter or formatter change that
+    /// silently diverged the two paths would break canonical-form
+    /// expectations in production.
+    #[test]
+    fn format_source_with_parsed_matches_format_source() {
+        let fixtures: &[(&str, &str)] = &[
+            ("empty", ""),
+            ("comment only", "; hello\n"),
+            (
+                "single transaction LF",
+                "\
+2024-01-15 * \"Coffee\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+",
+            ),
+            (
+                "multi transaction varying widths LF",
+                "\
+2024-01-15 * \"A\"
+  Assets:Bank  -5.00 USD
+  Expenses:Food
+2024-02-15 * \"B\"
+  Assets:Investment:Long:Path  -123456.78 USD
+  Expenses:Tax  100.00 USD
+",
+            ),
+            (
+                "arithmetic amounts LF",
+                "\
+2024-01-15 * \"Split\"
+  Assets:Bank  -10.00 + 5.00 USD
+  Expenses:Misc
+",
+            ),
+            (
+                "CRLF source",
+                "2024-01-15 * \"Coffee\"\r\n  Assets:Bank  -5.00 USD\r\n  Expenses:Food\r\n",
+            ),
+            ("BOM-prefixed", "\u{FEFF}2024-01-01 open Assets:Bank USD\n"),
+            // BOM + CRLF — Windows-authored ledger with a BOM
+            // prefix. `format_source` BOM-strips + CRLF→LF
+            // normalizes before parsing. The cache path consumes
+            // a CST that's BOM-stripped but NOT CRLF-normalized.
+            // Byte-identity holds because the formatter rebuilds
+            // canonical output from typed values (no trivia
+            // passthrough).
+            (
+                "BOM + CRLF combination",
+                "\u{FEFF}2024-01-15 * \"Coffee\"\r\n  Assets:Bank  -5.00 USD\r\n  Expenses:Food\r\n",
+            ),
+            // Parse-error file — exercises the fallback. Without
+            // the `errors.is_empty()` guard, the cache path would
+            // emit text for ERROR_NODE-wrapped content while
+            // `format_source` would drop those bytes; identity
+            // would fail. The fallback delegates to
+            // `format_source(source)` so identity holds.
+            (
+                "parse errors (exercises fallback)",
+                "2024-01-15 * \"x\"\n  Assets:Bank  -5.00 USD\n}}}garbage\n",
+            ),
+            // Bare-`\r` (classic Mac) line terminators. The
+            // `format_source` path normalizes bare-CR to LF via
+            // `crlf_to_lf_outside_strings`, then parses cleanly.
+            // `parse_via_cst` does NOT normalize bare-CR, so the
+            // CST sees broken syntax and `parse_result.errors`
+            // is non-empty — the fallback fires. Byte-identity
+            // holds via the same `format_source` delegation.
+            (
+                "bare CR line terminators (exercises fallback)",
+                "2024-01-01 open Assets:Bank USD\r2024-01-02 open Assets:Cash USD\r",
+            ),
+        ];
+        for (label, source) in fixtures {
+            let parse_result = crate::parse(source);
+            let baseline = format_source(source);
+            let cached = format_source_with_parsed(&parse_result, source);
+            assert_eq!(
+                cached, baseline,
+                "format_source_with_parsed must match format_source for {label}: \
+                 baseline {baseline:?}, cached {cached:?}",
+            );
+        }
+    }
+
+    /// Mismatched-pair safety: in debug builds, passing a
+    /// length-mismatched `(parse_result, source)` pair panics via
+    /// the `debug_assert_eq!`. Release builds silently emit text
+    /// for the wrong buffer (the producer-only invariant is the
+    /// caller's responsibility, documented in
+    /// `ParseResult::alignment`).
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "source` whose length doesn't match")]
+    fn format_source_with_parsed_panics_on_length_mismatch() {
+        let parse_result = crate::parse("2024-01-01 open Assets:Bank USD\n");
+        // Different length — debug_assert fires.
+        let _ = format_source_with_parsed(&parse_result, "different");
     }
 }
