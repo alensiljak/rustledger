@@ -186,7 +186,35 @@ pub fn run(
         eprintln!("{}: {}", err.code, err.message);
     }
 
-    // Extract directives (already booked and plugins applied)
+    // Two views of the directive stream, chosen per-report below:
+    //
+    // - `directives` (source-faithful): pads remain as `Pad`.
+    //   Used by reports that count or list source directive kinds:
+    //   stats, journal, accounts, commodities, prices.
+    // - `balance_view` (pad-expanded): pads merged with synthesized
+    //   P-flag transactions. Used by reports that maintain running
+    //   inventories and ask "what is the balance": balances,
+    //   balsheet, income, holdings, networth (#1288).
+    //
+    // The split mirrors the architectural rule documented on
+    // `rustledger_loader::Ledger.directives`. `balance_view` is
+    // expensive (an O(n) clone + `process_pads` walk), so compute
+    // it only when the chosen report actually needs it. Run the
+    // check BEFORE consuming `ledger.directives` so the borrow
+    // checker is happy.
+    let needs_balance_view = matches!(
+        report,
+        Report::Balances { .. }
+            | Report::Balsheet
+            | Report::Income
+            | Report::Holdings { .. }
+            | Report::Networth { .. }
+    );
+    let balance_view = if needs_balance_view {
+        Some(ledger.balance_view())
+    } else {
+        None
+    };
     let directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
 
     // Create pager AFTER loading (don't spawn pager if load fails)
@@ -204,22 +232,49 @@ pub fn run(
         crate::pager::PagerWriter::Stdout(io::stdout().lock())
     };
 
-    // Generate the requested report
+    // Generate the requested report. Balance-computing reports get
+    // `balance_view.as_ref().expect("balance_view computed above when report needs it")`; source-faithful reports get `&directives`.
     match report {
         Report::Balances { account } => {
-            balances::report_balances(&directives, account.as_deref(), format, &mut writer)?;
+            balances::report_balances(
+                balance_view
+                    .as_ref()
+                    .expect("balance_view computed above when report needs it"),
+                account.as_deref(),
+                format,
+                &mut writer,
+            )?;
         }
         Report::Balsheet => {
-            balsheet::report_balsheet(&directives, format, &mut writer)?;
+            balsheet::report_balsheet(
+                balance_view
+                    .as_ref()
+                    .expect("balance_view computed above when report needs it"),
+                format,
+                &mut writer,
+            )?;
         }
         Report::Income => {
-            income::report_income(&directives, format, &mut writer)?;
+            income::report_income(
+                balance_view
+                    .as_ref()
+                    .expect("balance_view computed above when report needs it"),
+                format,
+                &mut writer,
+            )?;
         }
         Report::Journal { account, limit } => {
             journal::report_journal(&directives, account.as_deref(), *limit, format, &mut writer)?;
         }
         Report::Holdings { account } => {
-            holdings::report_holdings(&directives, account.as_deref(), format, &mut writer)?;
+            holdings::report_holdings(
+                balance_view
+                    .as_ref()
+                    .expect("balance_view computed above when report needs it"),
+                account.as_deref(),
+                format,
+                &mut writer,
+            )?;
         }
         Report::Networth {
             period,
@@ -228,7 +283,9 @@ pub fn run(
             no_zero,
         } => {
             networth::report_networth(
-                &directives,
+                balance_view
+                    .as_ref()
+                    .expect("balance_view computed above when report needs it"),
                 period,
                 currency.as_deref(),
                 account.as_deref(),

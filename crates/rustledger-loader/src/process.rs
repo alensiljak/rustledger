@@ -109,7 +109,27 @@ pub enum ProcessError {
 /// equivalent to the tuple returned by Python's `loader.load_file()`.
 #[derive(Debug)]
 pub struct Ledger {
-    /// Processed directives (sorted, booked, plugins applied).
+    /// Processed directives in source-faithful form: sorted by date,
+    /// booked (cost specs resolved, interpolations applied), and
+    /// plugin-rewritten. **`Pad` directives remain as `Pad`**; they
+    /// are not pre-expanded into synthesized transactions.
+    ///
+    /// Consumers split into two groups:
+    ///
+    /// - **Source-faithful consumers** (stats, journal, formatter,
+    ///   LSP, BQL `FROM #entries WHERE type = 'pad'` audits,
+    ///   source-mapped diagnostics) iterate this field directly.
+    ///   Pads count as Pads.
+    /// - **Balance-computing consumers** (holdings, balances,
+    ///   balsheet, networth, income, FFI `query.execute`/`batch`,
+    ///   WASM `expandPads`/`query`) call [`Ledger::balance_view`]
+    ///   to get the directive stream MERGED with synthesized P-flag
+    ///   transactions for each pad-balance pair. This is the only
+    ///   way to get pad effects into per-account inventory math.
+    ///
+    /// The two views are derived from the same source; there is no
+    /// drift possible because [`Ledger::balance_view`] is a pure
+    /// function of `self.directives`.
     pub directives: Vec<Spanned<Directive>>,
     /// Options parsed from the file.
     pub options: Options,
@@ -121,6 +141,87 @@ pub struct Ledger {
     pub errors: Vec<LedgerError>,
     /// Display context for formatting numbers.
     pub display_context: DisplayContext,
+}
+
+impl Ledger {
+    /// Return the directive stream merged with synthesized
+    /// pad-equivalent transactions, suitable for inventory /
+    /// balance math.
+    ///
+    /// For each `Pad` directive followed (in date order) by a
+    /// `Balance` assertion on the same account, a `Transaction`
+    /// with `flag = 'P'` is added to the view carrying the
+    /// postings needed to make the balance match. A multi-currency
+    /// pad produces one synth transaction per currency.
+    ///
+    /// **Original `Pad` directives are preserved in the view.**
+    /// Synth transactions are added alongside, not in place of.
+    /// This matters for two reasons:
+    ///
+    /// 1. BQL queries against the `#entries` table
+    ///    (`SELECT * FROM #entries WHERE type = 'pad'`) can still
+    ///    enumerate the pad directives the user authored. A
+    ///    REPLACE-style expansion would silently zero those out.
+    ///    (BQL's default SELECT path operates on postings; pads
+    ///    have no postings, so a default SELECT never matches them
+    ///    regardless of this view shape.)
+    /// 2. Multi-pad cases (issue #1300) produce exactly one synth
+    ///    per pad-balance pair:
+    ///    `rustledger_booking::process_pads` (which
+    ///    `merge_with_padding` delegates to) only retains the most
+    ///    recent same-account pad in its pending-pads map, so
+    ///    earlier same-account pads are silently shadowed and
+    ///    their `source_account` does NOT contribute to the synth.
+    ///    The validator emits `E2003` for shadowed pads
+    ///    independently; this view reflects only the effective pad.
+    ///
+    /// Inventory-walking consumers iterate `Directive::Transaction`
+    /// and ignore `Pad` directives, so the preserved Pads are
+    /// invisible to them.
+    ///
+    /// **When to use this vs. [`Ledger.directives`](Self::directives):**
+    /// any consumer that maintains running per-account inventory
+    /// state and asks "what is the balance" needs this view. Any
+    /// consumer that asks "what did the user write" wants the raw
+    /// `directives` field.
+    ///
+    /// # Performance
+    ///
+    /// Each call clones every source directive once (`O(n)`).
+    /// Inlines the merge logic from
+    /// [`rustledger_booking::merge_with_padding`] so the already-
+    /// owned `booked` vector can be moved into the merged output
+    /// instead of cloned a second time. For short-lived CLI
+    /// invocations the single clone is negligible. Long-lived
+    /// processes (FFI servers, LSPs) that query the same ledger
+    /// repeatedly should hoist the result above their loop.
+    /// `TODO(perf):` memoize internally once a benchmark shows it
+    /// matters.
+    #[cfg(feature = "booking")]
+    #[must_use]
+    pub fn balance_view(&self) -> Vec<Directive> {
+        let mut booked: Vec<Directive> = self.directives.iter().map(|s| s.value.clone()).collect();
+
+        // Inlined from `rustledger_booking::merge_with_padding` so
+        // `booked` is moved (not re-cloned via `to_vec()`).
+        // Algorithmically identical: prepend synth transactions, then
+        // stable-sort by date. Same-date pad+balance pairs land as
+        // `[synth, pad, balance]` because synths sit at the front of
+        // their date-group pre-sort.
+        debug_assert!(
+            !booked.iter().any(|d| matches!(d, Directive::Transaction(t) if rustledger_booking::is_synthesized_pad(t))),
+            "balance_view called on a Ledger whose directives already contain synth pad transactions",
+        );
+        let pad_result = rustledger_booking::process_pads(&booked);
+        let mut merged: Vec<Directive> =
+            Vec::with_capacity(booked.len() + pad_result.padding_transactions.len());
+        for txn in pad_result.padding_transactions {
+            merged.push(Directive::Transaction(txn));
+        }
+        merged.append(&mut booked);
+        merged.sort_by_key(rustledger_core::Directive::date);
+        merged
+    }
 }
 
 /// Unified error type for ledger processing.

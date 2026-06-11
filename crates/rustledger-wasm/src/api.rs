@@ -114,6 +114,7 @@ pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
 /// Returns a `QueryResult` with columns, rows, and any errors.
 #[wasm_bindgen]
 pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
+    use rustledger_booking::merge_with_padding;
     use rustledger_query::{Executor, parse as parse_query};
 
     let load = load_and_book(source);
@@ -141,7 +142,13 @@ pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
         }
     };
 
-    let mut executor = Executor::new(&load.directives);
+    // Merge pad-synthesized transactions: query is a balance-
+    // computing consumer (#1288). `merge_with_padding` preserves
+    // Pad directives so `FROM #entries WHERE type = 'pad'` audits
+    // continue to enumerate them, and avoids the multi-pad bug
+    // `expand_pads` had (#1300).
+    let directives = merge_with_padding(&load.directives);
+    let mut executor = Executor::new(&directives);
     match executor.execute(&query) {
         Ok(result) => {
             let rows: Vec<Vec<_>> = result
@@ -611,7 +618,7 @@ pub fn query_multi_file(
     entry_point: &str,
     query_str: &str,
 ) -> Result<JsValue, JsError> {
-    use rustledger_booking::expand_pads;
+    use rustledger_booking::merge_with_padding;
     use rustledger_loader::{LoadOptions, Loader, VirtualFileSystem, process};
     use rustledger_query::{Executor, parse as parse_query};
 
@@ -691,9 +698,11 @@ pub fn query_multi_file(
         return to_js(&result);
     }
 
-    // Expand pads into synthetic transactions (matching CLI query pipeline)
+    // Merge pad-synthesized transactions into the directive stream
+    // (matching CLI query pipeline). See `wasm::query` above for
+    // why `merge_with_padding` over `expand_pads`.
     let booked_directives: Vec<_> = ledger.directives.into_iter().map(|s| s.value).collect();
-    let directives = expand_pads(&booked_directives);
+    let directives = merge_with_padding(&booked_directives);
 
     // Parse the query
     let query = match parse_query(query_str) {
