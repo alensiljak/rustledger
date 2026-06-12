@@ -5,59 +5,24 @@ use rustledger_parser::ParseResult;
 
 use crate::types::EditorRange;
 
-/// Standard Beancount account types.
-pub const ACCOUNT_TYPES: &[&str] = &["Assets", "Liabilities", "Equity", "Income", "Expenses"];
-
-/// Standard Beancount directives.
-pub const DIRECTIVES: &[(&str, &str)] = &[
-    ("open", "Open an account"),
-    ("close", "Close an account"),
-    ("commodity", "Define a commodity/currency"),
-    ("balance", "Assert account balance"),
-    ("pad", "Pad account to target"),
-    ("event", "Record an event"),
-    ("query", "Define a named query"),
-    ("note", "Add a note to an account"),
-    ("document", "Link a document"),
-    ("custom", "Custom directive"),
-    ("price", "Record a price"),
-    ("txn", "Transaction (complete)"),
-    ("*", "Transaction (complete)"),
-    ("!", "Transaction (incomplete)"),
-];
-
 /// Get a specific line from source.
 pub fn get_line(source: &str, line_num: usize) -> &str {
     source.lines().nth(line_num).unwrap_or("")
 }
 
-/// Check if a string looks like a date (YYYY-MM-DD).
-pub fn is_date_like(s: &str) -> bool {
-    if s.len() != 10 {
-        return false;
-    }
-    let chars: Vec<char> = s.chars().collect();
-    chars[4] == '-'
-        && chars[7] == '-'
-        && chars.iter().enumerate().all(|(i, c)| {
-            if i == 4 || i == 7 {
-                *c == '-'
-            } else {
-                c.is_ascii_digit()
-            }
-        })
-}
-
 /// Get the word at a given position in the source.
 pub fn get_word_at_position(source: &str, line: u32, character: u32) -> Option<String> {
     let line_text = source.lines().nth(line as usize)?;
+    let chars: Vec<char> = line_text.chars().collect();
     let col = character as usize;
 
-    if col > line_text.len() {
+    // `character` is a character offset and is used to index `chars`, so
+    // bound it by the character count, not the byte length (they differ
+    // on multi-byte lines). Bounding by `line_text.len()` (bytes) would
+    // accept an out-of-range char offset and then index incorrectly.
+    if col > chars.len() {
         return None;
     }
-
-    let chars: Vec<char> = line_text.chars().collect();
 
     // Find start of word
     let mut start = col;
@@ -112,6 +77,19 @@ pub fn extract_currencies(parse_result: &ParseResult) -> Vec<String> {
 /// Extract payees from parse result.
 pub fn extract_payees(parse_result: &ParseResult) -> Vec<String> {
     rustledger_core::extract_payees_iter(parse_result.directives.iter().map(|s| &s.value))
+}
+
+/// Extract tags from parse result. Tag text comes back without the
+/// leading `#`, the form completion inserts after the already-typed
+/// sigil.
+pub fn extract_tags(parse_result: &ParseResult) -> Vec<String> {
+    rustledger_core::extract_tags_iter(parse_result.directives.iter().map(|s| &s.value))
+}
+
+/// Extract links from parse result. Like tags, link text comes back
+/// without the leading `^`.
+pub fn extract_links(parse_result: &ParseResult) -> Vec<String> {
+    rustledger_core::extract_links_iter(parse_result.directives.iter().map(|s| &s.value))
 }
 
 /// Count how many times an account is used in postings.
@@ -242,13 +220,14 @@ mod tests {
     }
 
     #[test]
-    fn test_is_date_like() {
-        assert!(is_date_like("2024-01-15"));
-        assert!(is_date_like("1999-12-31"));
-        assert!(!is_date_like("2024-1-15")); // Wrong format (too short)
-        assert!(!is_date_like("not-a-date"));
-        // Note: is_date_like only checks format, not validity
-        assert!(is_date_like("2024-13-99")); // Pattern matches
+    fn test_get_word_at_position_multibyte() {
+        // `character` is a CHARACTER offset. "롯" is 3 bytes / 1 char.
+        // Account "Assets:롯데" is 9 characters; the cursor at char 8 is
+        // inside the word. Bounding by char count (not byte length) must
+        // accept this and return the full word.
+        let source = "  Assets:롯데  100 KRW";
+        let word = get_word_at_position(source, 0, 8);
+        assert_eq!(word, Some("Assets:롯데".to_string()));
     }
 
     #[test]
