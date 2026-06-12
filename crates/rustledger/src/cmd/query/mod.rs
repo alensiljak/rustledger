@@ -77,6 +77,10 @@ pub struct Args {
     /// Show verbose output
     #[arg(short, long)]
     verbose: bool,
+
+    /// Disable the on-disk parse cache (always re-parse)
+    #[arg(long = "no-cache")]
+    no_cache: bool,
 }
 
 /// Output format for query results.
@@ -127,9 +131,10 @@ pub fn run(args: &Args) -> Result<()> {
     // cached `LoadResult` is the parsed (pre-booking) stream with a
     // rebuilt display context (`CacheEntry::into_load_result`), so
     // booking and the display-context-dependent BQL output below are
-    // identical to the uncached path. Disable with
+    // identical to the uncached path. Disable with `--no-cache` or
     // `BEANCOUNT_DISABLE_LOAD_CACHE`.
-    let (raw, _from_cache) = crate::cmd::loadcache::load_result_cached(file, false, args.verbose)?;
+    let (raw, _from_cache) =
+        crate::cmd::loadcache::load_result_cached(file, args.no_cache, args.verbose)?;
     let ledger = rustledger_loader::process(raw, &options)
         .with_context(|| format!("failed to load {}", file.display()))?;
 
