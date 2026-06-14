@@ -155,16 +155,58 @@ pub fn handle_inlay_hints(
                 continue;
             };
 
-            // Position the hint at the end of the trimmed line
-            // content. We only reach this point for fully-missing
-            // source postings (the filter above), so a well-formed
-            // posting line is `[indent][flag ]account[trailing ws]`
-            // — `indent + trimmed.len()` lands right after the
-            // account (or `flag account` if a flag is present),
-            // which is where the inferred amount visually belongs.
+            // The hint anchors at the end of the account text. We need
+            // that column in TWO unit systems and must NOT mix them:
+            //   * char columns (`end_col_chars`) to match the
+            //     formatter's char-based `number_col`/`number_width`
+            //     when computing the visual gap, and
+            //   * a source byte offset (`end_col_bytes`) to convert into
+            //     an encoding-correct `Position` via `LineIndex` (LSP
+            //     `character` is UTF-16 by default; a raw byte count
+            //     would misplace the hint on any non-ASCII line).
+            // A well-formed fully-missing posting line is
+            // `[indent][flag ]account[trailing ws]`, so the end of the
+            // trimmed content lands right after the account.
             let trimmed = line.trim();
-            let indent = line.len() - line.trim_start().len();
-            let end_col = indent + trimmed.len();
+            let indent_bytes = line.len() - line.trim_start().len();
+            let end_col_bytes = indent_bytes + trimmed.len();
+            let indent_chars = line[..indent_bytes].chars().count();
+            let end_col_chars = indent_chars + trimmed.chars().count();
+
+            // Align the greyed-out amount with the column `rledger
+            // format` uses for explicit amounts (issue #1346), instead
+            // of a fixed 2-space gap. Mirror `emit_posting` EXACTLY: a
+            // field pad (account end → `number_col`, clamped to a 2-space
+            // minimum) PLUS a separate right-justify pad
+            // (`number_width − number_len`). Clamping the *combined* gap
+            // instead would shift the number one column left of the
+            // explicit amounts whenever a long elided account forces the
+            // field pad to its minimum while the justify pad is nonzero.
+            // `PostingAlignment::default()` (col 0, width 0) naturally
+            // yields the conventional 2-space gap.
+            //
+            // Caveat: `number_col`/`number_width` are the *canonical*
+            // formatter columns (2-space indent, single inner spaces),
+            // while `end_col_chars` is measured from the raw source line.
+            // So the hint aligns perfectly with explicit amounts only
+            // when the file is already formatted (the steady state). On
+            // a non-canonically-indented or unformatted line the hint
+            // sits where `rledger format` *would* put the amount, which
+            // may differ from where the current explicit amount renders.
+            let num_text = amount.number.to_string();
+            let align = parse_result.alignment;
+            let field_pad = align.number_col.saturating_sub(end_col_chars).max(2);
+            let justify_pad = align.number_width.saturating_sub(num_text.chars().count());
+            let gap = field_pad + justify_pad;
+            let label = format!("{}{} {}", " ".repeat(gap), num_text, amount.currency);
+
+            // Encoding-correct anchor: map the UTF-8 byte offset of the
+            // account end to a `Position` in the negotiated encoding.
+            let Some(line_start_byte) = line_index.position_to_offset(posting_line, 0) else {
+                continue;
+            };
+            let (hint_line, hint_char) =
+                line_index.offset_to_position(line_start_byte + end_col_bytes);
 
             // Store data for resolve - include account for rich tooltip
             let data = serde_json::json!({
@@ -175,12 +217,15 @@ pub fn handle_inlay_hints(
             });
 
             hints.push(InlayHint {
-                position: Position::new(posting_line, end_col as u32),
-                label: InlayHintLabel::String(format!("  {} {}", amount.number, amount.currency)),
+                position: Position::new(hint_line, hint_char),
+                label: InlayHintLabel::String(label),
                 kind: Some(InlayHintKind::TYPE),
                 text_edits: None,
                 tooltip: None, // Resolved lazily
-                padding_left: Some(true),
+                // The leading gap is baked into the label so the number
+                // lands exactly at the formatter's column; no extra
+                // client-side left padding (which would shift it by 1).
+                padding_left: Some(false),
                 padding_right: None,
                 data: Some(data),
             });
@@ -625,5 +670,308 @@ mod tests {
             hints.is_none() || hints.as_ref().unwrap().is_empty(),
             "no hint expected for CurrencyOnly source posting; got {hints:?}"
         );
+    }
+
+    fn hint_label(h: &InlayHint) -> String {
+        match &h.label {
+            InlayHintLabel::String(s) => s.clone(),
+            other => panic!("expected String label; got {other:?}"),
+        }
+    }
+
+    /// Compose what a monospace client would actually display: splice
+    /// each hint's label into its source line at the hint's character
+    /// position. Inlay hints are virtual text, so this reconstructs the
+    /// on-screen character grid — the alignment contract the formatter
+    /// targets and the thing the user eyeballs in the screenshots.
+    ///
+    /// (A real client may style inlay text with slightly different pixel
+    /// metrics, so this verifies character-grid alignment, not
+    /// pixel-exact rendering — but the character grid is the model both
+    /// `bean-format` and `rledger format` align to.)
+    ///
+    /// Test inputs are ASCII, so character index == byte index.
+    fn render_with_hints(source: &str, hints: &[InlayHint]) -> Vec<String> {
+        let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
+        let mut by_line: std::collections::BTreeMap<u32, Vec<&InlayHint>> =
+            std::collections::BTreeMap::new();
+        for h in hints {
+            by_line.entry(h.position.line).or_default().push(h);
+        }
+        for (line, mut hs) in by_line {
+            // Insert right-to-left so earlier splices don't shift the
+            // columns of later ones on the same line.
+            hs.sort_by_key(|h| std::cmp::Reverse(h.position.character));
+            let Some(text) = lines.get_mut(line as usize) else {
+                continue;
+            };
+            for h in hs {
+                let InlayHintLabel::String(label) = &h.label else {
+                    continue;
+                };
+                let col = h.position.character as usize;
+                let idx = text.char_indices().nth(col).map_or(text.len(), |(i, _)| i);
+                text.insert_str(idx, label);
+            }
+        }
+        lines
+    }
+
+    /// #1346, the actual visual check: render the hint into the line as a
+    /// client would and assert the inferred amount's currency lands in
+    /// the SAME column as the explicit amount above it.
+    #[test]
+    fn test_inlay_hint_renders_aligned_currency_column_1346() {
+        let source = "\
+2024-01-15 * \"Test\"
+  Expenses:Food:Restaurants  -50.00 USD
+  Assets:Cash
+";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "parse errors: {:?}",
+            result.errors
+        );
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            range: lsp_types::Range {
+                start: Position::new(0, 0),
+                end: Position::new(10, 0),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hints = handle_inlay_hints(&params, source, &result, PositionEncoding::Utf16)
+            .unwrap_or_default();
+
+        let rendered = render_with_hints(source, &hints);
+        let explicit = &rendered[1]; // `  Expenses:Food:Restaurants  -50.00 USD`
+        let hinted = &rendered[2]; // `  Assets:Cash` + hint
+
+        let usd_col = |s: &str| s.find("USD").expect("a USD currency on the line");
+        assert_eq!(
+            usd_col(explicit),
+            usd_col(hinted),
+            "currency columns must line up on screen:\n  explicit: {explicit:?}\n  hinted:   {hinted:?}"
+        );
+        // The right-justified number field also ends at the same column
+        // (currency start - 1 space), so the decimals line up too.
+        let dot_col = |s: &str| s.find(".00").expect("a .00 on the line");
+        assert_eq!(
+            dot_col(explicit),
+            dot_col(hinted),
+            "decimal points must align"
+        );
+    }
+
+    /// #1346: the inferred-amount hint must align with the column
+    /// `rledger format` uses for explicit amounts, not sit at a fixed
+    /// 2-space gap after the (short) elided account. Here the explicit
+    /// posting has the longer account, so it drives the number column;
+    /// the hint on the shorter elided account must be padded out to it.
+    #[test]
+    fn test_inlay_hint_aligns_with_formatter_amount_column_1346() {
+        let source = "\
+2024-01-15 * \"Test\"
+  Expenses:Food:Restaurants  -50.00 USD
+  Assets:Cash
+";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "parse errors: {:?}",
+            result.errors
+        );
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            range: lsp_types::Range {
+                start: Position::new(0, 0),
+                end: Position::new(10, 0),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hints = handle_inlay_hints(&params, source, &result, PositionEncoding::Utf16)
+            .unwrap_or_default();
+        assert_eq!(hints.len(), 1, "one inferred-amount hint expected");
+
+        let h = &hints[0];
+        // Elided `Assets:Cash` is on line 2 (0-indexed).
+        assert_eq!(h.position.line, 2);
+
+        let align = result.alignment;
+        assert!(align.number_col > 0, "file should have an alignment column");
+
+        // The number text must begin at the formatter's right-justified
+        // slot: number_col + (number_width - num_len) — so the number END
+        // (and the currency after it) lines up with the explicit amount
+        // above. Derive num_len from the hint itself rather than a magic
+        // literal, so the assertion survives changes to decimal rendering.
+        let label = hint_label(h);
+        let leading = label.len() - label.trim_start().len();
+        let num_text = label.trim_start().split(' ').next().unwrap();
+        let num_len = num_text.chars().count();
+        let num_start_col = h.position.character as usize + leading;
+        assert_eq!(
+            num_start_col,
+            align.number_col + align.number_width - num_len,
+            "hint number should be right-justified at the formatter column; label={label:?}"
+        );
+        assert_eq!(label.trim_start(), "50.00 USD");
+    }
+
+    /// #1346 regression for the byte-vs-encoding bugs the deep review
+    /// surfaced: with a multi-byte account name, (a) `position.character`
+    /// must be the UTF-16 column, not the byte length, and (b) the
+    /// visual gap must be computed in char columns so the currency still
+    /// lines up with the explicit amount above.
+    #[test]
+    fn test_inlay_hint_nonascii_account_position_and_alignment_1346() {
+        // `é` is one char / one UTF-16 unit but two UTF-8 bytes.
+        let source = "\
+2024-01-15 * \"Test\"
+  Expenses:Caféteria  -50.00 USD
+  Assets:Café
+";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "parse errors: {:?}",
+            result.errors
+        );
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            range: lsp_types::Range {
+                start: Position::new(0, 0),
+                end: Position::new(10, 0),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hints = handle_inlay_hints(&params, source, &result, PositionEncoding::Utf16)
+            .unwrap_or_default();
+        assert_eq!(hints.len(), 1);
+        let h = &hints[0];
+
+        // `  Assets:Café` is 13 chars / 13 UTF-16 units (14 UTF-8 bytes).
+        // The anchor must be reported as 13, not the byte length 14.
+        assert_eq!(
+            h.position.character, 13,
+            "position.character must be the UTF-16 column, not the byte length"
+        );
+
+        // Rendered on a char grid, the hint's currency must align with
+        // the explicit `-50.00 USD` above. (`é` is BMP, so char index ==
+        // UTF-16 unit and `render_with_hints` models it faithfully.)
+        let rendered = render_with_hints(source, &hints);
+        // Char column of `pat` (byte offset → char count; inputs are BMP
+        // so the char index is the on-screen grid column).
+        let col_of = |s: &str, pat: &str| {
+            s.find(pat)
+                .map(|b| s[..b].chars().count())
+                .expect("pattern present")
+        };
+        assert_eq!(
+            col_of(&rendered[1], "USD"),
+            col_of(&rendered[2], "USD"),
+            "currency must align on a char grid:\n  {:?}\n  {:?}",
+            rendered[1],
+            rendered[2]
+        );
+    }
+
+    /// #1346 Option-1 limitation: when the *elided* posting has the
+    /// longest account, the formatter excludes it from the number
+    /// column, so the hint can't be aligned — it falls back to the
+    /// conventional 2-space gap rather than overlapping the account.
+    #[test]
+    fn test_inlay_hint_long_elided_account_falls_back_to_min_gap_1346() {
+        let source = "\
+2024-01-15 * \"Opening\"
+  Assets:Checking  1000.00 USD
+  Equity:Opening-Balances
+";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "parse errors: {:?}",
+            result.errors
+        );
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            range: lsp_types::Range {
+                start: Position::new(0, 0),
+                end: Position::new(10, 0),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hints = handle_inlay_hints(&params, source, &result, PositionEncoding::Utf16)
+            .unwrap_or_default();
+        assert_eq!(hints.len(), 1);
+
+        // `Equity:Opening-Balances` ends past the number column, so the
+        // gap clamps to the 2-space minimum.
+        let label = hint_label(&hints[0]);
+        let leading = label.len() - label.trim_start().len();
+        assert_eq!(leading, 2, "expected min 2-space gap; label={label:?}");
+        assert_eq!(label.trim_start(), "-1000.00 USD");
+    }
+
+    /// #1346 Finding-1 regression (deep review): when a long elided
+    /// account forces the field pad to its 2-space minimum AND the
+    /// inferred number is narrower than the field, the justify pad must
+    /// still be added on top. Clamping the *combined* gap (the original
+    /// bug) put the number one column left of the explicit amounts.
+    #[test]
+    fn test_inlay_hint_field_and_justify_pad_combine_at_clamp_boundary_1346() {
+        // Number-bearing account is short (drives a small number_col);
+        // the elided account is long (forces field_pad to the minimum);
+        // inferred `100.00` (6) is narrower than width `-100.00` (7), so
+        // justify_pad = 1.
+        let source = "\
+2024-01-15 * \"T\"
+  Assets:Bank  -100.00 USD
+  Expenses:Groceries:Subcategory:Long
+";
+        let result = parse(source);
+        assert!(
+            result.errors.is_empty(),
+            "parse errors: {:?}",
+            result.errors
+        );
+
+        let params = InlayHintParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///test.beancount".parse().unwrap(),
+            },
+            range: lsp_types::Range {
+                start: Position::new(0, 0),
+                end: Position::new(10, 0),
+            },
+            work_done_progress_params: Default::default(),
+        };
+        let hints = handle_inlay_hints(&params, source, &result, PositionEncoding::Utf16)
+            .unwrap_or_default();
+        assert_eq!(hints.len(), 1);
+
+        // field_pad = max(2) (clamped) + justify_pad = 1 → 3 spaces.
+        // The buggy `gap.max(2)` would have yielded 2.
+        let label = hint_label(&hints[0]);
+        let leading = label.len() - label.trim_start().len();
+        assert_eq!(
+            leading, 3,
+            "field pad (min 2) + justify pad (1) must combine to 3; label={label:?}"
+        );
+        assert_eq!(label.trim_start(), "100.00 USD");
     }
 }
