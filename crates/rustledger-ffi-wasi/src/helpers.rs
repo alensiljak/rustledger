@@ -411,6 +411,13 @@ pub fn load_file(path: &std::path::Path, path_security: bool) -> Result<FileLoad
 /// Run the named regular (post-booking) plugins over loaded directives, shared
 /// by the JSON-RPC `ledger.loadFile` handler and the WIT component (#1384).
 ///
+/// These are *additional*, caller-requested plugins, run by name with no
+/// config. The ledger's own `plugin "name" "config"` directives have already
+/// run (with their config) inside the loader during `load_file`, so this is for
+/// plugins a host wants beyond the ones the ledger declares. A plugin that needs
+/// configuration must be declared in the ledger — the by-name request surface
+/// (the WIT `plugins: list<string>` / JSON-RPC `plugins`) cannot carry config.
+///
 /// Returns the (possibly rewritten) directives + their line numbers/files;
 /// plugin errors and unknown-plugin errors are pushed onto `errors`. No-ops if
 /// `plugin_names` is empty or `errors` is already non-empty (don't run plugins
@@ -474,6 +481,15 @@ pub fn apply_plugins(
             errors.push(Error::new(err.message));
         }
 
+        // Validate the op set against the shared contract (the same coverage
+        // check the loader pipeline runs). On violation, record it — naming the
+        // plugin, since this surface runs a caller-supplied list — and keep the
+        // directives as-is rather than materializing a malformed op set.
+        if let Err(msg) = rustledger_plugin::validate_op_coverage(directives.len(), &output.ops) {
+            errors.push(Error::new(format!("plugin '{plugin_name}': {msg}")));
+            continue;
+        }
+
         let mut new_directives = Vec::new();
         let mut new_lines = Vec::new();
         let mut new_files = Vec::new();
@@ -499,23 +515,8 @@ pub fn apply_plugins(
     (directives, directive_lines, directive_files)
 }
 
-/// The five account-type roots, in declaration order.
-///
-/// Single source of truth for `util.types`' `account_types` and
-/// `util.getAccountType`, shared by both the JSON-RPC and Component-Model (WIT)
-/// surfaces so they cannot drift.
-pub const ACCOUNT_TYPES: [&str; 5] = ["Assets", "Liabilities", "Equity", "Income", "Expenses"];
-
-/// The lowercased account-type root for `account` — the segment before the
-/// first `:` — or `"unknown"` if it is not one of [`ACCOUNT_TYPES`].
-#[must_use]
-pub fn account_type(account: &str) -> &'static str {
-    match account.split(':').next() {
-        Some("Assets") => "assets",
-        Some("Liabilities") => "liabilities",
-        Some("Equity") => "equity",
-        Some("Income") => "income",
-        Some("Expenses") => "expenses",
-        _ => "unknown",
-    }
-}
+// The account-type taxonomy lives in `rustledger-core` (the type-owning crate)
+// so every crate shares one source of truth. Re-exported here for the FFI
+// call sites (`util.types`, `util.getAccountType`) that already reference
+// `helpers::{ACCOUNT_TYPES, account_type}`.
+pub use rustledger_core::{ACCOUNT_TYPES, account_type};

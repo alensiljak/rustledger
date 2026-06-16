@@ -320,9 +320,52 @@ pub fn is_subaccount_or_equal(child: &str, parent: &str) -> bool {
     child.len() > parent_len && child.as_bytes()[parent_len] == b':' && child.starts_with(parent)
 }
 
+/// The five Beancount root account types, in declaration order.
+///
+/// The canonical root-type list for core consumers: the FFI surfaces
+/// (`util.types`, `util.getAccountType`), the query account-type sort order, and
+/// the LSP account-type check all reference this so they cannot drift.
+/// (`rustledger-completion` keeps its own copy — it is a minimal crate that does
+/// not depend on `rustledger-core`.)
+///
+/// These are the default English roots; the `name_*` loader options can rename
+/// them per-ledger, which this constant does not model — do not use it to
+/// classify accounts in a config-aware context.
+pub const ACCOUNT_TYPES: [&str; 5] = ["Assets", "Liabilities", "Equity", "Income", "Expenses"];
+
+/// The lowercased root account type for `account` — the segment before the
+/// first `:` — or `"unknown"` if it is not one of [`ACCOUNT_TYPES`].
+#[must_use]
+pub fn account_type(account: &str) -> &'static str {
+    match account.split(':').next() {
+        Some("Assets") => "assets",
+        Some("Liabilities") => "liabilities",
+        Some("Equity") => "equity",
+        Some("Income") => "income",
+        Some("Expenses") => "expenses",
+        _ => "unknown",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn account_type_classifies_roots_and_unknown() {
+        assert_eq!(account_type("Assets:Bank:Checking"), "assets");
+        assert_eq!(account_type("Liabilities:CC"), "liabilities");
+        assert_eq!(account_type("Equity:Opening"), "equity");
+        assert_eq!(account_type("Income:Salary"), "income");
+        assert_eq!(account_type("Expenses:Food"), "expenses");
+        // Bare root (no colon) still classifies.
+        assert_eq!(account_type("Assets"), "assets");
+        // Non-root / empty → unknown.
+        assert_eq!(account_type("Frobnicate:X"), "unknown");
+        assert_eq!(account_type(""), "unknown");
+        // Case-sensitive, like Beancount.
+        assert_eq!(account_type("assets:bank"), "unknown");
+    }
 
     #[test]
     fn test_construction_from_str() {
