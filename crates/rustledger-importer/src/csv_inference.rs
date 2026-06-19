@@ -15,7 +15,15 @@ use format_num_pattern::Locale;
 use crate::config::{ColumnSpec, CsvConfig};
 
 /// Result of CSV format inference.
+///
+/// Constructed only by [`infer_csv_config`]. Marked `#[non_exhaustive]` so that
+/// *future* inferred fields can be added without breaking downstream consumers
+/// of `rustledger-importer`. Adding the attribute is itself a one-time breaking
+/// change for any external code that built this struct with a literal or matched
+/// it exhaustively (there is none in this workspace — it is only constructed
+/// here and consumed by field access via [`Self::to_csv_config`]).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct InferredCsvConfig {
     /// Detected field delimiter.
     pub delimiter: char,
@@ -212,6 +220,14 @@ pub fn infer_csv_config(content: &str) -> Option<InferredCsvConfig> {
 /// followed by 1-2 digits, so a thousands group like `1,234` stays
 /// period-style while a decorated amount like `-54,23€` is still comma-decimal.
 /// Each sampled cell across the amount-bearing columns votes; the majority wins.
+///
+/// # Limitation
+///
+/// Inference needs a comma somewhere in the sample. A comma-decimal export
+/// whose sampled amounts are all period-grouped integers (`1.234` meaning 1234)
+/// carries no distinguishing signal from period-decimal `1.234` (= 1.234), so
+/// it returns `None` and the amounts are read as POSIX. There is no local way to
+/// disambiguate the two; pass `--amount-locale de_DE` for such files.
 fn infer_amount_locale(
     sample: &[&Vec<String>],
     cols: impl Iterator<Item = usize>,
