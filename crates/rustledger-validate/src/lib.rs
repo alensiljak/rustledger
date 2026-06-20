@@ -88,9 +88,9 @@ pub enum Phase {
 }
 
 use validators::{
-    validate_balance_early, validate_balance_late, validate_close, validate_close_late,
-    validate_document, validate_note, validate_open, validate_pad, validate_transaction_early,
-    validate_transaction_late,
+    register_open_late, validate_balance_early, validate_balance_late, validate_close,
+    validate_close_late, validate_document, validate_note, validate_open, validate_pad,
+    validate_transaction_early, validate_transaction_late,
 };
 
 use rayon::prelude::*;
@@ -320,6 +320,18 @@ pub struct LedgerState {
     /// reopen-after-close is ever supported, a legitimate later close on
     /// the same account still runs the inventory check.
     pub(crate) late_close_processed: FxHashSet<(rustledger_core::Account, NaiveDate)>,
+    /// Per-posting identities `(file_id, span)` for which the early phase already
+    /// emitted `AccountNotOpen` (E1001) on an *elided* posting to an unopened
+    /// account. Elided postings must be checked early — booking interpolates
+    /// them, so the account has to exist before booking (the Python
+    /// #877-equivalent case). Explicit postings are deferred to the late phase
+    /// so account-rewriting regular plugins (e.g. `rename_accounts`,
+    /// `split_expenses`), which run after early, aren't falsely flagged on their
+    /// pre-rewrite account name. The late phase consults this set to skip the
+    /// *same* posting (a booked-from-elided one still unopened after plugins),
+    /// keyed by source identity so a different posting that merely shares an
+    /// account/date is still reported.
+    pub(crate) account_not_open_early: FxHashSet<(u16, rustledger_core::Span)>,
 }
 
 impl LedgerState {
@@ -525,6 +537,12 @@ fn validate_phase_inner<D: ValidatableDirective>(
             // ── Early-only kinds (state setup, structural / presence checks) ──
             (Phase::Early, Directive::Open(open)) => {
                 validate_open(state, open, &mut errors);
+            }
+            // Late sees plugin-generated Opens (regular plugins run after early),
+            // so the deferred account-presence check on plugin-added postings
+            // recognizes them. No-op for originals already in state from early.
+            (Phase::Late, Directive::Open(open)) => {
+                register_open_late(state, open);
             }
             (Phase::Early, Directive::Close(close)) => {
                 validate_close(state, close, &mut errors);
@@ -2818,9 +2836,9 @@ mod tests {
         );
     }
 
-    /// `validate_late` must NOT re-emit account-presence errors that the
-    /// early phase already produced — otherwise the loader pipeline
-    /// would surface duplicate E1001 diagnostics per posting.
+    /// An *explicit* posting to an unopened account is reported in the LATE
+    /// phase (deferred from early so account-rewriting plugins run first) —
+    /// exactly once across phases, never duplicated.
     #[test]
     fn test_validate_late_does_not_duplicate_e1001() {
         let directives = vec![
@@ -2851,10 +2869,13 @@ mod tests {
             .filter(|e| e.code == ErrorCode::AccountNotOpen)
             .count();
 
-        assert_eq!(early_e1001, 1, "early phase should emit E1001 once");
         assert_eq!(
-            late_e1001, 0,
-            "late phase must not re-emit account-presence errors; got: {late:?}"
+            early_e1001, 0,
+            "explicit posting: early phase defers E1001 to late; got: {early:?}"
+        );
+        assert_eq!(
+            late_e1001, 1,
+            "explicit posting: late phase emits E1001 exactly once; got: {late:?}"
         );
     }
 

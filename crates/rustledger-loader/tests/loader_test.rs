@@ -2088,3 +2088,78 @@ fn test_booking_failure_partitioned_from_late_validation() {
         "all three transactions should appear in final Ledger output (including the failed one); got {txn_count}"
     );
 }
+
+/// Account-rewriting regular plugins (e.g. `rename_accounts`, `split_expenses`)
+/// run AFTER the early validation phase, so the open-existence check (E1001)
+/// for *explicit* postings must be deferred to the late phase — otherwise the
+/// pre-rewrite account name is falsely flagged "never opened". The genuine
+/// unopened case must still be caught.
+#[test]
+fn test_open_check_deferred_past_account_rewriting_plugins() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+
+    // rename_accounts: post to `Expenses:Old`, open only the target `Expenses:New`.
+    let rename = dir.path().join("rename.beancount");
+    std::fs::write(
+        &rename,
+        "plugin \"rename_accounts\" \"{'Expenses:Old': 'Expenses:New'}\"\n\
+         2020-01-01 open Assets:Cash\n\
+         2020-01-01 open Expenses:New\n\
+         2020-01-02 * \"x\"\n  Assets:Cash  -10.00 USD\n  Expenses:Old  10.00 USD\n",
+    )
+    .expect("write rename ledger");
+    let ledger = load(&rename, &LoadOptions::default()).expect("load rename ledger");
+    let e1001: Vec<_> = ledger.errors.iter().filter(|e| e.code == "E1001").collect();
+    assert!(
+        e1001.is_empty(),
+        "rename_accounts must not trip E1001 on the pre-rewrite account; got: {e1001:?}"
+    );
+
+    // Regression guard: a genuine explicit posting to an unopened account
+    // (no plugin) is still reported.
+    let unopened = dir.path().join("unopened.beancount");
+    std::fs::write(
+        &unopened,
+        "2020-01-01 open Assets:Cash\n\
+         2020-01-02 * \"x\"\n  Assets:Cash  -10.00 USD\n  Expenses:NeverOpened  10.00 USD\n",
+    )
+    .expect("write unopened ledger");
+    let ledger2 = load(&unopened, &LoadOptions::default()).expect("load unopened ledger");
+    assert!(
+        ledger2.errors.iter().any(|e| e.code == "E1001"),
+        "a genuine unopened account must still be flagged E1001; got: {:?}",
+        ledger2.errors
+    );
+}
+
+/// The deferred E1001 dedup is keyed per-posting (`file_id`, span), not per
+/// (account, date): two transactions on the SAME date posting to the SAME
+/// unopened account — one elided (reported early), one explicit (reported
+/// late) — must BOTH be flagged, not silently deduped to one.
+#[test]
+fn test_e1001_dedup_is_per_posting_not_account_date() {
+    use rustledger_loader::{LoadOptions, load};
+
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("samedate.beancount");
+    std::fs::write(
+        &path,
+        "2020-01-01 open Assets:Cash\n\
+         2020-01-01 * \"elided\"\n  Assets:Cash  -5.00 USD\n  Expenses:Same\n\
+         2020-01-01 * \"explicit\"\n  Assets:Cash  -7.00 USD\n  Expenses:Same  7.00 USD\n",
+    )
+    .expect("write ledger");
+    let ledger = load(&path, &LoadOptions::default()).expect("load ledger");
+    let same_acct_e1001 = ledger
+        .errors
+        .iter()
+        .filter(|e| e.code == "E1001" && e.message.contains("Expenses:Same"))
+        .count();
+    assert_eq!(
+        same_acct_e1001, 2,
+        "both same-date postings to the unopened account must be reported; got: {:?}",
+        ledger.errors
+    );
+}
