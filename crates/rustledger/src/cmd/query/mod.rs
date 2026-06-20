@@ -183,6 +183,23 @@ pub fn run_with_writer<W: io::Write>(args: &Args, out: &mut W) -> Result<()> {
         eprintln!("Loaded {} directives", directives.len());
     }
 
+    // The QUERY positional is `trailing_var_arg` (so an unquoted query works),
+    // which means a flag placed *after* the query is captured as a query token
+    // rather than parsed as a flag. Catch that early with an actionable error
+    // instead of a baffling "unexpected token"/"column not found" from the BQL
+    // parser. Only a long flag (`--format`) or a bare short flag (exactly `-`
+    // plus one letter, e.g. `-m`) is treated as misplaced; `-5` (a negative
+    // number) and `-number` (BQL unary negation of a column) are left alone.
+    if let Some(flag) = args.query.iter().find(|t| {
+        t.starts_with("--")
+            || (t.len() == 2 && t.starts_with('-') && t.as_bytes()[1].is_ascii_alphabetic())
+    }) {
+        anyhow::bail!(
+            "'{flag}' looks like a command-line flag but was parsed as part of the query.\n  \
+             Flags must come before the query, e.g. `rledger query <file> {flag} … \"<query>\"`."
+        );
+    }
+
     // Determine query source
     let query_str = if !args.query.is_empty() {
         args.query.join(" ")
