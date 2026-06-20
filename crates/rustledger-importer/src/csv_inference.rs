@@ -193,6 +193,7 @@ pub fn infer_csv_config(content: &str) -> Option<InferredCsvConfig> {
     let amount_locale = infer_amount_locale(
         &sample,
         [amount_col, debit_col, credit_col].into_iter().flatten(),
+        delimiter,
     );
 
     Some(InferredCsvConfig {
@@ -210,31 +211,44 @@ pub fn infer_csv_config(content: &str) -> Option<InferredCsvConfig> {
     })
 }
 
+/// Count the leading run of ASCII digits in `s` — i.e. the digits immediately
+/// after a separator, ignoring any trailing currency symbol/suffix
+/// (`looks_like_number` admits `$ € £ ¥` etc.), so `23€` counts as 2.
+fn leading_digit_run(s: &str) -> usize {
+    s.chars().take_while(char::is_ascii_digit).count()
+}
+
 /// Infer an amount [`Locale`] from the sampled values in the amount-bearing
 /// columns. Returns `Some(de_DE)` when the values look comma-decimal, else
 /// `None` (callers default to POSIX).
 ///
 /// When a value has both `.` and `,`, the rightmost is taken as the decimal
 /// separator (`2.500,00` -> comma-decimal, `1,234.56` -> period-decimal). A
-/// lone comma counts as a decimal separator only when it is immediately
-/// followed by 1-2 digits, so a thousands group like `1,234` stays
-/// period-style while a decorated amount like `-54,23€` is still comma-decimal.
+/// lone comma or period counts as a decimal separator only when immediately
+/// followed by 1-2 digits, so a thousands group like `1,234` / `1.234` stays
+/// ambiguous while a decorated amount like `-54,23€` is still comma-decimal.
 /// Each sampled cell across the amount-bearing columns votes; the majority wins.
 ///
 /// # Limitation
 ///
-/// Inference needs a comma somewhere in the sample. A comma-decimal export
-/// whose sampled amounts are all period-grouped integers (`1.234` meaning 1234)
-/// carries no distinguishing signal from period-decimal `1.234` (= 1.234), so
-/// it returns `None` and the amounts are read as POSIX. There is no local way to
-/// disambiguate the two; pass `--amount-locale de_DE` for such files.
+/// A period-grouped integer (`1.234` meaning 1234) carries no local signal
+/// distinguishing it from period-decimal `1.234` (= 1.234). When such ambiguous
+/// grouping is the *only* signal, the decision falls back to `delimiter`: a
+/// `;`-delimited export is read as comma-decimal (`de_DE`) — `;` is used
+/// precisely because `,` is the decimal separator — while any other delimiter
+/// returns `None` (POSIX). Pass `--amount-locale de_DE` to force the locale.
 fn infer_amount_locale(
     sample: &[&Vec<String>],
     cols: impl Iterator<Item = usize>,
+    delimiter: char,
 ) -> Option<Locale> {
     let cols: Vec<usize> = cols.collect();
     let mut comma_decimal = 0usize;
     let mut period_decimal = 0usize;
+    // Values like `1.250` carry no local decimal signal: they're either EU
+    // thousands-grouping (= 1250) or a US three-place decimal (= 1.25). Tracked
+    // separately so a `;`-delimited export can break the tie (see #1441).
+    let mut ambiguous_grouped = 0usize;
     for row in sample {
         for &col in &cols {
             let Some(cell) = row.get(col) else { continue };
@@ -251,25 +265,39 @@ fn infer_amount_locale(
                     }
                 }
                 (Some(comma), None) => {
-                    // Count the digits immediately after the comma, ignoring any
-                    // trailing currency symbol / suffix (looks_like_number admits
-                    // `$ € £ ¥` etc.), so `-54,23€` stays comma-decimal.
-                    let trailing_digits = v[comma + 1..]
-                        .chars()
-                        .take_while(char::is_ascii_digit)
-                        .count();
-                    if (1..=2).contains(&trailing_digits) {
+                    // 1-2 digits after a lone comma is a decimal (`-54,23`);
+                    // otherwise it's thousands-grouping (`1,234`).
+                    if (1..=2).contains(&leading_digit_run(&v[comma + 1..])) {
                         comma_decimal += 1;
                     } else {
                         period_decimal += 1;
                     }
                 }
-                (None, Some(_)) => period_decimal += 1,
+                (None, Some(dot)) => {
+                    // Symmetric to the comma case: a lone period with 1-2
+                    // trailing digits is a decimal point (`50.00`); a 3-digit
+                    // group (`1.250`) is ambiguous.
+                    if (1..=2).contains(&leading_digit_run(&v[dot + 1..])) {
+                        period_decimal += 1;
+                    } else {
+                        ambiguous_grouped += 1;
+                    }
+                }
                 (None, None) => {}
             }
         }
     }
-    (comma_decimal > period_decimal).then_some(Locale::de_DE)
+    if comma_decimal > period_decimal {
+        return Some(Locale::de_DE);
+    }
+    // Tie-breaker: a `;`-delimited export is almost always European — `;` is
+    // chosen precisely because `,` is the decimal separator — so when the only
+    // separator signal is ambiguous grouping (no firm period-decimal cell),
+    // read it as comma-decimal rather than silently parsing `1.250` as 1.25.
+    if period_decimal == 0 && ambiguous_grouped > 0 && delimiter == ';' {
+        return Some(Locale::de_DE);
+    }
+    None
 }
 
 // ============================================================================
@@ -638,19 +666,22 @@ fn looks_like_number(s: &str) -> bool {
     if cleaned.is_empty() {
         return false;
     }
-    // Check if it's a number with optional sign, commas, and one decimal point
+    // A numeric cell is digits plus grouping/decimal separators and an optional
+    // leading sign. Repeated separators are allowed: a period-grouped value like
+    // `1.234.567,00` carries several `.` yet is still a number — which separator
+    // is the decimal point is resolved later by `infer_amount_locale`, not here.
+    // Capping the dot count would drop the whole amount column for million-plus
+    // European exports (see #1442).
     let mut has_digit = false;
-    let mut dot_count = 0;
     for (i, c) in cleaned.chars().enumerate() {
         match c {
             '0'..='9' => has_digit = true,
-            '.' => dot_count += 1,
-            ',' => {}
+            '.' | ',' => {}
             '-' | '+' if i == 0 => {}
             _ => return false,
         }
     }
-    has_digit && dot_count <= 1
+    has_digit
 }
 
 #[cfg(test)]
@@ -718,6 +749,11 @@ mod tests {
         assert!(looks_like_number("1,234.56"));
         assert!(looks_like_number("$50.00"));
         assert!(looks_like_number("(50.00)"));
+        // Period-grouped values with two+ separators (#1442): a million-plus
+        // European amount must still register as numeric so its column is kept.
+        assert!(looks_like_number("1.234.567,00"));
+        assert!(looks_like_number("-2.000,00"));
+        assert!(looks_like_number("1,234,567.00"));
     }
 
     #[test]
@@ -843,6 +879,58 @@ Date,Description,Amount
 ";
         let config = infer_csv_config(csv).expect("should infer config");
         assert!(config.amount_locale.is_none());
+    }
+
+    #[test]
+    fn infer_semicolon_grouped_integers_break_to_european() {
+        // #1441: amounts that are period-grouped integers (1.250 = 1250) carry
+        // no local decimal signal, but a `;` delimiter strongly implies a
+        // European export, so the tie breaks to comma-decimal.
+        let csv = "\
+Date;Description;Amount
+2024-01-15;Rent;1.250
+2024-01-16;Salary;3.000
+";
+        let config = infer_csv_config(csv).expect("should infer config");
+        assert!(
+            config.amount_locale.is_some(),
+            "expected European tie-break for ;-delimited grouped integers, got {:?}",
+            config.amount_locale
+        );
+    }
+
+    #[test]
+    fn infer_comma_delimited_grouped_integers_stay_posix() {
+        // The same ambiguous grouping under a comma delimiter is a US export,
+        // so it must NOT break to European (1.250 stays 1.25).
+        let csv = "\
+Date,Description,Amount
+2024-01-15,Rent,1.250
+2024-01-16,Salary,3.000
+";
+        let config = infer_csv_config(csv).expect("should infer config");
+        assert!(
+            config.amount_locale.is_none(),
+            "comma-delimited grouped integers must stay POSIX, got {:?}",
+            config.amount_locale
+        );
+    }
+
+    #[test]
+    fn infer_semicolon_with_firm_period_decimal_stays_posix() {
+        // A `;`-delimited file that DOES have a firm period-decimal cell
+        // (50.00) is not overridden by the European tie-break.
+        let csv = "\
+Date;Description;Amount
+2024-01-15;Coffee;50.00
+2024-01-16;Big;1.250
+";
+        let config = infer_csv_config(csv).expect("should infer config");
+        assert!(
+            config.amount_locale.is_none(),
+            "a firm period-decimal cell must keep POSIX, got {:?}",
+            config.amount_locale
+        );
     }
 
     #[test]
