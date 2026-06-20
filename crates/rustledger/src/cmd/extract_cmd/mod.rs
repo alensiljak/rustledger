@@ -180,6 +180,13 @@ pub struct Args {
     #[arg(long)]
     pub no_header: bool,
 
+    /// Categorize transactions using the built-in merchant dictionary
+    /// (e.g. NETFLIX → Expenses:Subscriptions:Streaming) instead of leaving
+    /// unmatched rows at Expenses:Unknown. Can also be set per-importer in
+    /// importers.toml via `use_merchant_dict = true`.
+    #[arg(long)]
+    pub use_merchant_dict: bool,
+
     /// Write output to a file instead of stdout
     #[arg(short, long, value_name = "FILE")]
     pub output: Option<PathBuf>,
@@ -638,6 +645,9 @@ pub fn run_with_writer<W: Write>(args: &Args, file: &Path, out: &mut W) -> Resul
             if args.include_zero_amounts {
                 csv_config.skip_zero_amounts = false;
             }
+            if args.use_merchant_dict {
+                csv_config.use_merchant_dict = true;
+            }
             // An explicit --amount-locale / --amount-format overrides the
             // separator locale inferred from the data. Report the *effective*
             // locale (override if given, otherwise the inferred one) so the
@@ -667,7 +677,8 @@ pub fn run_with_writer<W: Write>(args: &Args, file: &Path, out: &mut W) -> Resul
                 .skip_rows(args.skip_rows)
                 .invert_sign(args.invert_sign)
                 .skip_zero_amounts(!args.include_zero_amounts)
-                .has_header(!args.no_header);
+                .has_header(!args.no_header)
+                .use_merchant_dict(args.use_merchant_dict);
 
             // Column flags accept either a header name or a 0-based index (see
             // `apply_column`), so headerless CSVs can be imported positionally.
@@ -1046,6 +1057,7 @@ narration_column = 1
             default_income: None,
             mappings: HashMap::new(),
             filename_pattern: None,
+            use_merchant_dict: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -1080,6 +1092,7 @@ narration_column = 1
             default_income: None,
             mappings,
             filename_pattern: None,
+            use_merchant_dict: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -1113,6 +1126,7 @@ narration_column = 1
             default_income: Some("Income:Other".to_string()),
             mappings: HashMap::new(),
             filename_pattern: None,
+            use_merchant_dict: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
@@ -1147,6 +1161,7 @@ narration_column = 1
             default_income: None,
             mappings: HashMap::new(),
             filename_pattern: None,
+            use_merchant_dict: None,
         };
 
         let config = build_config_from_entry(&entry).unwrap();
