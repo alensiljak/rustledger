@@ -11,7 +11,7 @@ use rustledger_loader::{FileSystem, LoadError, LoadResult};
 use rustledger_parser::parse as parse_beancount;
 
 use crate::convert::{directive_to_json, value_to_cell};
-use crate::helpers::{extract_options, load_and_book, run_validation, to_js};
+use crate::helpers::{extract_options, has_fatal, load_and_book, run_validation, to_js};
 #[cfg(feature = "completions")]
 use crate::types::{CompletionJson, CompletionResultJson};
 use crate::types::{
@@ -102,7 +102,9 @@ pub fn validate_source(source: &str) -> Result<JsValue, JsError> {
     errors.extend(validation_errors);
 
     let result = ValidationResult {
-        valid: errors.is_empty(),
+        // Warnings do not invalidate a ledger (matching `rledger check`, which
+        // exits 0 on warning-only input); only actual errors do.
+        valid: !has_fatal(&errors),
         errors,
     };
     to_js(&result)
@@ -119,8 +121,9 @@ pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
 
     let load = load_and_book(source);
 
-    // Return early if there were parse/interpolation errors
-    if !load.errors.is_empty() {
+    // Return early only on actual errors (parse/booking); warnings must not
+    // abort processing.
+    if has_fatal(&load.errors) {
         let result = QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
@@ -129,14 +132,20 @@ pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
         return to_js(&result);
     }
 
+    // Carry any non-fatal load warnings through every result path so callers
+    // still see them alongside (or instead of) query output.
+    let warnings = load.errors;
+
     // Parse the query
     let query = match parse_query(query_str) {
         Ok(q) => q,
         Err(e) => {
+            let mut errors = warnings;
+            errors.push(Error::new(e.to_string()));
             let result = QueryResult {
                 columns: Vec::new(),
                 rows: Vec::new(),
-                errors: vec![Error::new(e.to_string())],
+                errors,
             };
             return to_js(&result);
         }
@@ -160,15 +169,17 @@ pub fn query(source: &str, query_str: &str) -> Result<JsValue, JsError> {
             let query_result = QueryResult {
                 columns: result.columns,
                 rows,
-                errors: Vec::new(),
+                errors: warnings,
             };
             to_js(&query_result)
         }
         Err(e) => {
+            let mut errors = warnings;
+            errors.push(Error::new(format!("Query execution error: {e}")));
             let result = QueryResult {
                 columns: Vec::new(),
                 rows: Vec::new(),
-                errors: vec![Error::new(format!("Query execution error: {e}"))],
+                errors,
             };
             to_js(&result)
         }
@@ -227,8 +238,9 @@ pub fn expand_pads(source: &str) -> Result<JsValue, JsError> {
 
     let load = load_and_book(source);
 
-    // Return early if there were parse/interpolation errors
-    if !load.errors.is_empty() {
+    // Return early only on actual errors (parse/booking); warnings must not
+    // abort processing.
+    if has_fatal(&load.errors) {
         let result = PadResult {
             directives: Vec::new(),
             padding_transactions: Vec::new(),
@@ -237,8 +249,17 @@ pub fn expand_pads(source: &str) -> Result<JsValue, JsError> {
         return to_js(&result);
     }
 
+    // Carry non-fatal load warnings through to the result.
+    let mut errors = load.errors;
+
     // Process pads
     let pad_result = process_pads(&load.directives);
+    errors.extend(
+        pad_result
+            .errors
+            .iter()
+            .map(|e| Error::new(e.message.clone())),
+    );
 
     let result = PadResult {
         // The source stream, verbatim — `process_pads` no longer
@@ -250,11 +271,7 @@ pub fn expand_pads(source: &str) -> Result<JsValue, JsError> {
             .iter()
             .map(|txn| directive_to_json(&Directive::Transaction(txn.clone())))
             .collect(),
-        errors: pad_result
-            .errors
-            .iter()
-            .map(|e| Error::new(e.message.clone()))
-            .collect(),
+        errors,
     };
     to_js(&result)
 }
@@ -297,8 +314,9 @@ pub fn run_plugin(source: &str, plugin_name: &str) -> Result<JsValue, JsError> {
 
     let load = load_and_book(source);
 
-    // Return early if there were parse/interpolation errors
-    if !load.errors.is_empty() {
+    // Return early only on actual errors (parse/booking); warnings must not
+    // abort processing.
+    if has_fatal(&load.errors) {
         let result = PluginResult {
             directives: Vec::new(),
             errors: load.errors,
@@ -306,15 +324,20 @@ pub fn run_plugin(source: &str, plugin_name: &str) -> Result<JsValue, JsError> {
         return to_js(&result);
     }
 
+    // Carry non-fatal load warnings through every result path.
+    let warnings = load.errors;
+
     // Find and run the plugin
     let registry = NativePluginRegistry::global();
     // External API runs plugins on already-booked input — synth
     // plugins are a loader-internal concern and would re-emit Opens
     // for accounts the booking pass already opened.
     let Some(plugin) = registry.find_regular(plugin_name) else {
+        let mut errors = warnings;
+        errors.push(Error::new(format!("Unknown plugin: {plugin_name}")));
         let result = PluginResult {
             directives: Vec::new(),
-            errors: vec![Error::new(format!("Unknown plugin: {plugin_name}"))],
+            errors,
         };
         return to_js(&result);
     };
@@ -335,26 +358,24 @@ pub fn run_plugin(source: &str, plugin_name: &str) -> Result<JsValue, JsError> {
     let output_directives = match wrappers_to_directives(&materialized_wrappers) {
         Ok(dirs) => dirs,
         Err(e) => {
+            let mut errors = warnings;
+            errors.push(Error::new(format!("Conversion error: {e}")));
             let result = PluginResult {
                 directives: Vec::new(),
-                errors: vec![Error::new(format!("Conversion error: {e}"))],
+                errors,
             };
             return to_js(&result);
         }
     };
 
+    let mut errors = warnings;
+    errors.extend(output.errors.iter().map(|e| match e.severity {
+        rustledger_plugin::PluginErrorSeverity::Warning => Error::warning(e.message.clone()),
+        rustledger_plugin::PluginErrorSeverity::Error => Error::new(e.message.clone()),
+    }));
     let result = PluginResult {
         directives: output_directives.iter().map(directive_to_json).collect(),
-        errors: output
-            .errors
-            .iter()
-            .map(|e| match e.severity {
-                rustledger_plugin::PluginErrorSeverity::Warning => {
-                    Error::warning(e.message.clone())
-                }
-                rustledger_plugin::PluginErrorSeverity::Error => Error::new(e.message.clone()),
-            })
-            .collect(),
+        errors,
     };
     to_js(&result)
 }
@@ -596,7 +617,8 @@ pub fn validate_multi_file(files: JsValue, entry_point: &str) -> Result<JsValue,
     let errors: Vec<Error> = ledger.errors.into_iter().map(Error::from).collect();
 
     let result = ValidationResult {
-        valid: errors.is_empty(),
+        // Warnings do not invalidate a ledger; only actual errors do.
+        valid: !has_fatal(&errors),
         errors,
     };
     to_js(&result)
