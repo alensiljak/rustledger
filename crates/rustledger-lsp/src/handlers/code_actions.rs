@@ -322,6 +322,7 @@ pub fn handle_code_action_resolve(
         let line_index = LineIndex::new(source, encoding);
         resolved.edit = Some(compute_open_directive_edit(
             uri,
+            source,
             &line_index,
             account,
             parse_result,
@@ -335,6 +336,7 @@ pub fn handle_code_action_resolve(
 #[allow(clippy::mutable_key_type)] // Uri is required as key by LSP WorkspaceEdit API
 fn compute_open_directive_edit(
     uri: &Uri,
+    source: &str,
     line_index: &LineIndex,
     account: &str,
     parse_result: &ParseResult,
@@ -344,17 +346,25 @@ fn compute_open_directive_edit(
         find_earliest_date(parse_result).unwrap_or_else(|| "2000-01-01".to_string());
 
     // Find where to insert the open directive
-    let insert_position = find_open_directive_position(line_index, parse_result);
+    let insert = find_open_directive_position(source, line_index, parse_result);
 
-    let new_text = format!("{} open {}\n", earliest_date, account);
+    // Normally the directive sits on its own fresh line (trailing newline).
+    // When inserting at the end of an existing line (a file with no trailing
+    // newline), prefix a newline and drop the trailing one so we don't append
+    // onto — and corrupt — the existing directive.
+    let new_text = if insert.prepend_newline {
+        format!("\n{} open {}", earliest_date, account)
+    } else {
+        format!("{} open {}\n", earliest_date, account)
+    };
 
     let mut changes = HashMap::new();
     changes.insert(
         uri.clone(),
         vec![TextEdit {
             range: Range {
-                start: insert_position,
-                end: insert_position,
+                start: insert.position,
+                end: insert.position,
             },
             new_text,
         }],
@@ -395,8 +405,21 @@ fn find_earliest_date(parse_result: &ParseResult) -> Option<String> {
     earliest.map(|d| d.to_string())
 }
 
+/// Where to insert a new `open` directive.
+struct OpenInsert {
+    position: Position,
+    /// When `true`, the new directive must be prefixed with a newline (it's
+    /// being inserted at the end of an existing line rather than on a fresh
+    /// blank line) and must NOT carry a trailing newline.
+    prepend_newline: bool,
+}
+
 /// Find the position to insert new open directives.
-fn find_open_directive_position(line_index: &LineIndex, parse_result: &ParseResult) -> Position {
+fn find_open_directive_position(
+    source: &str,
+    line_index: &LineIndex,
+    parse_result: &ParseResult,
+) -> OpenInsert {
     // Find the last open directive and insert after it
     let mut last_open_end: Option<usize> = None;
 
@@ -406,13 +429,38 @@ fn find_open_directive_position(line_index: &LineIndex, parse_result: &ParseResu
         }
     }
 
-    if let Some(offset) = last_open_end {
-        let (line, _) = line_index.offset_to_position(offset);
-        // Insert on the next line
-        Position::new(line + 1, 0)
+    let Some(offset) = last_open_end else {
+        // No open directives, insert at the beginning (on its own line).
+        return OpenInsert {
+            position: Position::new(0, 0),
+            prepend_newline: false,
+        };
+    };
+
+    // A directive's span end points at the *start of the next directive*, so it
+    // includes trailing blank lines. Trim back to the open's last content byte
+    // before taking the line; otherwise `line + 1` overshoots and the inserted
+    // `open` lands inside a following transaction (between its header and its
+    // postings). Trimming also keeps it correct for opens that carry an
+    // indented metadata block.
+    let content_end = source[..offset.min(source.len())].trim_end().len();
+    let (line, col) = line_index.offset_to_position(content_end);
+
+    if source[content_end..].contains('\n') {
+        // There's a real next line — insert at its start on a fresh line.
+        OpenInsert {
+            position: Position::new(line + 1, 0),
+            prepend_newline: false,
+        }
     } else {
-        // No open directives, insert at the beginning
-        Position::new(0, 0)
+        // The last `open` is on the final line with no trailing newline, so
+        // `line + 1` would reference a non-existent line. Insert at the end of
+        // that line and prefix a newline so the directive starts on its own
+        // line instead of being appended onto the existing one.
+        OpenInsert {
+            position: Position::new(line, col),
+            prepend_newline: true,
+        }
     }
 }
 
@@ -755,5 +803,57 @@ mod tests {
         assert_eq!(edits.len(), 1);
         assert!(edits[0].new_text.contains("open Expenses:Food"));
         assert!(edits[0].new_text.contains("2024-01-01")); // Earliest date
+
+        // Regression: the insert must land on line 2 (right after the existing
+        // `open` on line 1, before the transaction header) — NOT line 3, which
+        // would split the transaction header from its postings and corrupt the
+        // file. (Source has a leading newline: line0 blank, line1 open,
+        // line2 txn header, line3 postings.)
+        assert_eq!(
+            edits[0].range.start,
+            Position::new(2, 0),
+            "open must be inserted before the transaction, not inside it"
+        );
+        assert_eq!(edits[0].range.end, Position::new(2, 0));
+    }
+
+    #[test]
+    #[allow(clippy::mutable_key_type)] // Uri has interior mutability but is safe in tests
+    fn test_code_action_resolve_no_trailing_newline() {
+        // The only `open` is on the final line with NO trailing newline.
+        // Inserting at `line + 1` would reference a non-existent line; instead
+        // the new directive must be appended at end-of-line with a LEADING
+        // newline so it starts on its own line and doesn't corrupt the last one.
+        let source = "2024-01-15 * \"x\"\n  Assets:Bank  -5 USD\n  Expenses:Food  5 USD\n2024-01-01 open Assets:Bank USD";
+        let result = parse(source);
+        let uri: Uri = "file:///test.beancount".parse().unwrap();
+        let action = CodeAction {
+            title: "Add 'open Expenses:Food' directive".to_string(),
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: None,
+            edit: None,
+            command: None,
+            is_preferred: Some(true),
+            disabled: None,
+            data: Some(serde_json::json!({
+                "kind": "add_open_directive",
+                "account": "Expenses:Food",
+                "uri": uri.as_str(),
+            })),
+        };
+        let resolved =
+            handle_code_action_resolve(action, source, &result, &uri, PositionEncoding::Utf16);
+        let edit = resolved.edit.unwrap();
+        let edits = edit.changes.unwrap().get(&uri).unwrap().clone();
+        assert_eq!(edits.len(), 1);
+        // Inserted at the end of the last line (line 3), with a leading newline.
+        assert_eq!(edits[0].range.start.line, 3);
+        assert!(
+            edits[0].new_text.starts_with('\n'),
+            "must prefix a newline so the directive is on its own line: {:?}",
+            edits[0].new_text
+        );
+        assert!(!edits[0].new_text.ends_with('\n'));
+        assert!(edits[0].new_text.contains("open Expenses:Food"));
     }
 }
