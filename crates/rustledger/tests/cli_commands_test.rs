@@ -1679,3 +1679,72 @@ fn test_query_and_format_handle_broken_pipe() {
         );
     }
 }
+
+/// Regression: `rledger price --undeclared` must not emit a self-referential
+/// `price USD … USD` directive. The `--undeclared` ticker-shape heuristic picks
+/// up the operating/quote currency (USD, held as cash / seen as a cost
+/// currency) as a base candidate; resolving its quote yields itself. A
+/// commodity is never priced in itself — bean-price never fetches a currency
+/// against itself. Exercises the `--source-cmd` fetch path (offline).
+///
+/// Unix-only: the stub source uses `echo`, which is a shell builtin without a
+/// standalone executable on Windows.
+#[cfg(unix)]
+#[test]
+fn test_price_no_self_quote_directive() {
+    let rledger = require_rledger!();
+    let tmp = tempfile::NamedTempFile::new().expect("tempfile");
+    std::fs::write(
+        tmp.path(),
+        "option \"operating_currency\" \"USD\"\n\
+         2024-01-01 open Assets:Stock\n2024-01-01 open Assets:Cash\n\
+         2024-01-02 * \"buy\"\n  Assets:Stock  10 AAPL {100.00 USD}\n  Assets:Cash  -1000.00 USD\n",
+    )
+    .expect("write");
+
+    let output = Command::new(&rledger)
+        .args(["price", "-f"])
+        .arg(tmp.path())
+        .args([
+            "--undeclared",
+            "-b",
+            "--no-cache",
+            "--source-cmd",
+            "echo 150.00 USD",
+        ])
+        .output()
+        .expect("Failed to run rledger price");
+
+    // Skip only when the build genuinely lacks the flag (don't mask real
+    // failures behind an empty-stdout heuristic).
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success()
+        && (stderr.contains("--source-cmd") || stderr.contains("unexpected argument"))
+    {
+        eprintln!("Skipping: --source-cmd not supported in this build");
+        return;
+    }
+
+    // Parse the emitted `<date> price <SYMBOL> <num> <CURRENCY>` directives and
+    // assert on the (symbol, currency) tokens — precise, not substring matching
+    // (which would treat `price USDX …` as a hit).
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut saw_aapl = false;
+    for line in stdout.lines() {
+        let toks: Vec<&str> = line.split_whitespace().collect();
+        if toks.len() >= 5 && toks[1] == "price" {
+            let (symbol, currency) = (toks[2], toks[toks.len() - 1]);
+            assert_ne!(
+                symbol, currency,
+                "self-referential price directive emitted: {line}"
+            );
+            if symbol == "AAPL" {
+                saw_aapl = true;
+            }
+        }
+    }
+    assert!(
+        saw_aapl,
+        "expected a `price AAPL … USD` directive; got: {stdout}"
+    );
+}
