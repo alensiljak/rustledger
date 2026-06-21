@@ -438,8 +438,19 @@ pub fn run_with_writer<W: Write>(args: &Args, stdout: &mut W) -> Result<ExitCode
         }
     }
 
-    // Report option errors (E7001, E7002, E7003)
-    // In Python beancount, invalid options are errors, not warnings
+    // All option warnings collected by `Options::set` (E7001 unknown option,
+    // E7002 invalid value, E7003 duplicate non-repeatable, E7004/E7005/E7006
+    // read-only and related) are surfaced here as hard errors.
+    //
+    // E7001/E7002 match beancount: `bean-check` exits non-zero on an unknown
+    // option or an invalid option value.
+    //
+    // E7003 is a DELIBERATE deviation, stricter than beancount (Python
+    // compatibility policy bucket 1): `bean-check` silently accepts a repeated
+    // non-repeatable option (last value wins, exit 0), but a duplicated
+    // `option "title"` / `option "name_*"` is almost always a copy-paste
+    // mistake, so we surface it as an error. Pinned by
+    // `cli_commands_test::test_check_duplicate_option_is_error`.
     let main_file_str = file.display().to_string();
     let option_error_count = load_result.options.warnings.len();
     for warning in &load_result.options.warnings {
