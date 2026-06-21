@@ -270,6 +270,63 @@ fn test_division_by_zero_returns_null_not_panic() {
 }
 
 #[test]
+fn test_length_counts_chars_not_bytes() {
+    let directives = make_test_directives();
+    // LENGTH must count Unicode characters, not UTF-8 bytes (matches beanquery).
+    let result = execute_query(r#"SELECT length("Café")"#, &directives);
+    assert_eq!(result.rows[0][0], Value::Integer(4));
+    let result = execute_query(r#"SELECT length("Coffee ☕ unicode")"#, &directives);
+    assert_eq!(result.rows[0][0], Value::Integer(16));
+}
+
+#[test]
+fn test_string_funcs_in_aggregate_context_use_char_semantics() {
+    // length()/substr() wrapping an aggregate route through the separate
+    // `evaluate_function_on_values` path — it must use the same char-based /
+    // Python-slice semantics as the normal path (Copilot review on #1498).
+    let directives = vec![
+        Directive::Open(Open::new(date(2024, 1, 1), "Assets:Cash")),
+        Directive::Open(Open::new(date(2024, 1, 1), "Equity:O")),
+        Directive::Transaction(
+            Transaction::new(date(2024, 1, 15), "Café ☕")
+                .with_synthesized_posting(Posting::new("Assets:Cash", Amount::new(dec!(5), "USD")))
+                .with_synthesized_posting(Posting::new("Equity:O", Amount::new(dec!(-5), "USD"))),
+        ),
+    ];
+    // "Café ☕" is 6 chars (more bytes); length must count chars.
+    let result = execute_query("SELECT length(max(narration))", &directives);
+    assert_eq!(result.rows[0][0], Value::Integer(6));
+    // substr arg3 is the END index: [1:4] of "Café ☕" = "afé" (length-semantics
+    // would have returned "afé " with the trailing space).
+    let result = execute_query("SELECT substr(max(narration), 1, 4)", &directives);
+    assert_eq!(result.rows[0][0], Value::String("afé".to_string()));
+}
+
+#[test]
+fn test_substr_python_slice_semantics() {
+    let directives = make_test_directives();
+    // SUBSTR(s, start, end) == Python s[start:end] (beanquery): arg3 is the END
+    // index, not a length; negatives count from the end; bounds clamp.
+    let cases = [
+        (r#"substr("hello", 1, 3)"#, "el"),
+        (r#"substr("hello", 1, -1)"#, "ell"),
+        (r#"substr("hello", -10, 5)"#, "hello"), // negative start clamps to 0
+        (r#"substr("hello", 10, 20)"#, ""),
+        (r#"substr("hello", 3, 1)"#, ""),
+        (r#"substr("Café", 1, 3)"#, "af"),
+        (r#"substr("hello", 1)"#, "ello"), // 2-arg rledger extension: s[start:]
+    ];
+    for (expr, expected) in cases {
+        let result = execute_query(&format!("SELECT {expr}"), &directives);
+        assert_eq!(
+            result.rows[0][0],
+            Value::String(expected.to_string()),
+            "for {expr}"
+        );
+    }
+}
+
+#[test]
 fn test_execute_select_with_date_filter() {
     let directives = make_test_directives();
     let result = execute_query(
