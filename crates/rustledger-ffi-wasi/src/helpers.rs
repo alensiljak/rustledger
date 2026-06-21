@@ -109,12 +109,6 @@ pub fn load_source(source: &str) -> LoadResult {
     // (booking errors surface; semantic validation is `ledger.validate`'s job).
     let mut vfs = rustledger_loader::VirtualFileSystem::new();
     vfs.add_file("<source>", source);
-    for inc in &includes {
-        // Empty stub: include resolution becomes a no-op, so a bare source with
-        // `include` directives lists them (above) without emitting a parse-phase
-        // "file not found" error that would suppress `ledger.validate`.
-        vfs.add_file(inc.path.as_str(), "");
-    }
     let load_opts = rustledger_loader::LoadOptions {
         validate: false,
         ..Default::default()
@@ -128,13 +122,16 @@ pub fn load_source(source: &str) -> LoadResult {
         Ok(ledger) => ledger,
         Err(e) => {
             // Fatal load/process failure is unexpected for an in-memory source,
-            // but surface it rather than panicking.
+            // but surface it rather than panicking. Tag it `validate` (not the
+            // default `parse`): a fatal process/plugin failure must not be
+            // wrongly classified as a parse error, which would make the
+            // `ledger.validate`/`query` handlers suppress validation entirely.
             return LoadResult {
                 directives: Vec::new(),
                 spanned_directives: Vec::new(),
                 directive_lines: Vec::new(),
                 line_lookup: lookup,
-                errors: vec![Error::new(e)],
+                errors: vec![Error::new(e).validate_phase()],
                 options: LedgerOptions::default(),
                 plugins: Vec::new(),
                 includes,
@@ -198,7 +195,33 @@ pub fn load_source(source: &str) -> LoadResult {
         directives.push(spanned.value.clone());
     }
 
-    let errors: Vec<Error> = ledger.errors.iter().map(ledger_error_to_ffi).collect();
+    // The string surface has no filesystem, so declared `include` paths cannot
+    // be resolved. Drop the resulting resolution failures (file-not-found /
+    // glob no-match) for declared includes, preserving the "list includes,
+    // don't resolve, don't error" contract uniformly for literal AND glob
+    // paths (a literal VFS stub can't match a glob pattern). The includes stay
+    // listed in the DTO; only their resolution errors are suppressed. The
+    // filter is targeted — a parse-phase error that both names a declared
+    // include path and reports a resolution failure — so it never masks a real
+    // syntax error in the source itself. Path separators are normalized to `/`
+    // on both sides: the loader renders paths via `Path::display()`, which uses
+    // `\` on Windows, while declared include paths use `/`.
+    let normalized_includes: Vec<String> =
+        includes.iter().map(|i| i.path.replace('\\', "/")).collect();
+    let errors: Vec<Error> = ledger
+        .errors
+        .iter()
+        .filter(|e| {
+            if e.phase != "parse"
+                || !(e.message.contains("not found") || e.message.contains("does not match"))
+            {
+                return true;
+            }
+            let msg = e.message.replace('\\', "/");
+            !normalized_includes.iter().any(|p| msg.contains(p))
+        })
+        .map(ledger_error_to_ffi)
+        .collect();
 
     let mut options = build_ledger_options(&ledger.options);
     let mut commodity_list: Vec<_> = commodities.into_iter().collect();
@@ -378,6 +401,13 @@ fn ledger_error_to_ffi(e: &rustledger_loader::LedgerError) -> Error {
     // "parse", or it would wrongly suppress validation.
     if e.phase != "parse" {
         err = err.validate_phase();
+    }
+    // Preserve severity: the canonical pipeline emits warnings (e.g. the
+    // `unrealized` plugin's gain/loss notices) as `LedgerError`s with
+    // `Warning` severity. Now that the load surface routes through the full
+    // pipeline, these must surface to FFI consumers as warnings, not errors.
+    if matches!(e.severity, rustledger_loader::ErrorSeverity::Warning) {
+        err.severity = "warning".to_string();
     }
     err
 }
