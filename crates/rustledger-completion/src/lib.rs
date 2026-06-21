@@ -271,25 +271,88 @@ pub fn classify_context(before_cursor: &str) -> CompletionContext {
             return CompletionContext::AfterDate;
         }
 
+        // Account-context for a token: segment-complete if it has a `:`,
+        // otherwise offer all accounts.
+        let account_ctx = |tok: &str| match tok.rfind(':') {
+            Some(colon_pos) => CompletionContext::AccountSegment {
+                prefix: tok[..=colon_pos].to_string(),
+            },
+            None => CompletionContext::ExpectingAccount,
+        };
         // Check for directive keywords
         for directive in DIRECTIVES {
-            if let Some(rest) = after_date.strip_prefix(directive) {
-                let after_directive = rest.trim_start();
-                if after_directive.is_empty() || !after_directive.contains(' ') {
-                    // After directive, expecting account for most directives
-                    match *directive {
-                        "open" | "close" | "balance" | "pad" | "note" | "document" => {
-                            if let Some(colon_pos) = after_directive.rfind(':') {
-                                return CompletionContext::AccountSegment {
-                                    prefix: after_directive[..=colon_pos].to_string(),
-                                };
-                            }
-                            return CompletionContext::ExpectingAccount;
-                        }
-                        _ => return CompletionContext::Unknown,
+            let Some(rest) = after_date.strip_prefix(directive) else {
+                continue;
+            };
+            let after_directive = rest.trim_start();
+            // "Past the first argument" = either a second token has started, or
+            // the first token is finished (trailing whitespace). Use
+            // whitespace-aware checks so tab-separated arguments work too.
+            let token_count = after_directive.split_whitespace().count();
+            let past_first_token = token_count > 1
+                || (token_count == 1 && after_directive.ends_with(char::is_whitespace));
+            // The token currently being typed ("" right after trailing
+            // whitespace, i.e. at the start of a fresh token).
+            let typing = if after_directive.ends_with(char::is_whitespace) {
+                ""
+            } else {
+                after_directive
+                    .rsplit(char::is_whitespace)
+                    .next()
+                    .unwrap_or("")
+            };
+
+            if !past_first_token {
+                // Typing the directive's first argument (an account for these).
+                return match *directive {
+                    "open" | "close" | "balance" | "pad" | "note" | "document" => {
+                        account_ctx(after_directive)
                     }
-                }
+                    _ => CompletionContext::Unknown,
+                };
             }
+
+            // Past the first argument — offer the position-appropriate context
+            // for the directives we model, NEVER the directive-keyword list
+            // (which produced bogus keyword suggestions mid-directive). For
+            // anything else (transaction flags `*`/`!`/`txn`, `event`, `query`,
+            // etc.) keep the prior behavior by falling through to `AfterDate`.
+            let ctx = match *directive {
+                // `open Account [CUR, CUR...]` — everything after the account is
+                // a currency.
+                "open" => Some(CompletionContext::ExpectingCurrency),
+                // `pad Account SourceAccount` — the second account.
+                "pad" => Some(account_ctx(typing)),
+                // `balance Account AMOUNT CUR` / `price COMMODITY AMOUNT CUR` —
+                // a currency follows the amount, i.e. once the first two
+                // arguments (account/commodity + amount) are complete.
+                "balance" | "price" => {
+                    let tokens = after_directive.split_whitespace().count();
+                    let complete = if after_directive.ends_with(char::is_whitespace) {
+                        tokens
+                    } else {
+                        tokens.saturating_sub(1)
+                    };
+                    Some(if complete >= 2 {
+                        CompletionContext::ExpectingCurrency
+                    } else {
+                        CompletionContext::Unknown
+                    })
+                }
+                // Transaction bodies (`*`/`!`/`txn`) past the flag are payee/
+                // narration/tag territory — keep the prior `AfterDate` behavior.
+                "*" | "!" | "txn" => None,
+                // Every other directive past its first argument: no completion
+                // rather than the (always-wrong) directive-keyword list. Their
+                // follow-on arguments (e.g. note/document strings, commodity
+                // metadata) aren't modeled, so `Unknown` is the safe answer.
+                _ => Some(CompletionContext::Unknown),
+            };
+            if let Some(ctx) = ctx {
+                return ctx;
+            }
+            // Transaction-flag fall-through to `AfterDate` below.
+            break;
         }
 
         // After date but no recognized directive yet
@@ -606,6 +669,69 @@ mod tests {
     fn classify_expecting_account() {
         assert_eq!(ctx("  "), CompletionContext::ExpectingAccount);
         assert_eq!(ctx("2024-01-15 open "), CompletionContext::ExpectingAccount);
+    }
+
+    #[test]
+    fn classify_directive_arguments_past_first_token() {
+        // Past the first directive argument the context must be position-
+        // appropriate — never the directive-keyword list (the bug: these all
+        // returned `AfterDate`).
+        // open: currencies follow the account.
+        assert_eq!(
+            ctx("2024-01-15 open Assets:Cash "),
+            CompletionContext::ExpectingCurrency
+        );
+        assert_eq!(
+            ctx("2024-01-15 open Assets:Cash USD, "),
+            CompletionContext::ExpectingCurrency
+        );
+        // balance / price: a currency follows the amount.
+        assert_eq!(
+            ctx("2024-01-15 balance Assets:Cash 100 "),
+            CompletionContext::ExpectingCurrency
+        );
+        assert_eq!(
+            ctx("2024-01-15 price AAPL 150 "),
+            CompletionContext::ExpectingCurrency
+        );
+        // balance before the amount is typed → no completion (not keywords).
+        assert_eq!(
+            ctx("2024-01-15 balance Assets:Cash "),
+            CompletionContext::Unknown
+        );
+        // pad: the second account.
+        assert_eq!(
+            ctx("2024-01-15 pad Assets:Cash "),
+            CompletionContext::ExpectingAccount
+        );
+        assert_eq!(
+            ctx("2024-01-15 pad Assets:Cash Equity:O"),
+            CompletionContext::AccountSegment {
+                prefix: "Equity:".to_string()
+            }
+        );
+        // Regression guard: the first account argument still segment-completes.
+        assert_eq!(
+            ctx("2024-01-15 open Assets:Ca"),
+            CompletionContext::AccountSegment {
+                prefix: "Assets:".to_string()
+            }
+        );
+        // close past its account → no completion (not directive keywords).
+        assert_eq!(
+            ctx("2024-01-15 close Assets:Cash "),
+            CompletionContext::Unknown
+        );
+        // Tab-separated arguments are recognized too (not just spaces).
+        assert_eq!(
+            ctx("2024-01-15 open\tAssets:Cash\t"),
+            CompletionContext::ExpectingCurrency
+        );
+        // A transaction body still falls through to AfterDate (unchanged).
+        assert_eq!(
+            ctx("2024-01-15 * \"Payee\" #tag "),
+            CompletionContext::AfterDate
+        );
     }
 
     #[test]
