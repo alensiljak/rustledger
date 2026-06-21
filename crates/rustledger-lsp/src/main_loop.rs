@@ -863,18 +863,66 @@ impl MainLoopState {
         let params: WorkspaceSymbolParams =
             serde_json::from_value(req.params).map_err(|e| e.to_string())?;
 
-        // Collect all open documents with cached parse results
-        let mut vfs = self.vfs.write();
-        let documents: Vec<_> = vfs
-            .iter_with_parse()
-            .map(|(path, content, parse_result)| {
-                let uri_str = format!("file://{}", path.display());
-                let uri: Uri = uri_str
-                    .parse()
-                    .unwrap_or_else(|_| "file:///".parse().unwrap());
-                (uri, content, parse_result)
-            })
+        // Collect all open documents with cached parse results.
+        let mut documents: Vec<(Uri, String, Arc<ParseResult>)> = {
+            let mut vfs = self.vfs.write();
+            vfs.iter_with_parse()
+                .map(|(path, content, parse_result)| {
+                    let uri_str = format!("file://{}", path.display());
+                    let uri: Uri = uri_str
+                        .parse()
+                        .unwrap_or_else(|_| "file:///".parse().unwrap());
+                    (uri, content, parse_result)
+                })
+                .collect()
+        };
+
+        // Add ledger files reachable via `include` that aren't open, so
+        // workspace symbol search spans the whole project — not just the
+        // buffers the user happens to have open. Open buffers are listed first
+        // (and the handler dedups by name), so their live edits take precedence
+        // over the ledger snapshot.
+        let open_canonical: std::collections::HashSet<PathBuf> = self
+            .vfs
+            .read()
+            .paths()
+            .filter_map(|p| p.canonicalize().ok())
             .collect();
+        // Collect the unopened ledger files' (uri, source) UNDER the lock, then
+        // drop the guard before parsing — re-parsing a large ledger while
+        // holding the state read-lock would block journal reloads.
+        let unopened: Vec<(Uri, String)> = {
+            let ledger_guard = self.ledger_state.read();
+            ledger_guard.ledger().map_or_else(Vec::new, |ledger| {
+                ledger
+                    .source_map
+                    .files()
+                    .iter()
+                    .filter(|f| {
+                        f.path
+                            .canonicalize()
+                            .ok()
+                            .is_none_or(|c| !open_canonical.contains(&c))
+                    })
+                    .filter_map(|f| {
+                        match format!("file://{}", f.path.display()).parse::<Uri>() {
+                            Ok(uri) => Some((uri, f.source.to_string())),
+                            Err(_) => {
+                                tracing::warn!(
+                                    "workspace/symbol: skipping ledger file with a non-file:// URI: {}",
+                                    f.path.display()
+                                );
+                                None
+                            }
+                        }
+                    })
+                    .collect()
+            })
+        };
+        for (uri, source) in unopened {
+            let parsed = Arc::new(parse(&source));
+            documents.push((uri, source, parsed));
+        }
 
         let response = handle_workspace_symbols(&params, &documents, self.position_encoding);
 
