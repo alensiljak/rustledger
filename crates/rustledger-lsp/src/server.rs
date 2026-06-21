@@ -90,22 +90,31 @@ impl Server {
             return self.resolve_explicit_journal(journal, workspace_root.as_deref());
         }
 
-        // No explicit config - try auto-discovery in workspace root
-        if let Some(root) = workspace_root
-            && let Some(discovered) = discover_journal_file(&root)
-        {
-            return Some(discovered);
+        // No explicit config - auto-discover, but only in the right directory:
+        // a set workspace folder is authoritative; the process cwd is used ONLY
+        // when there is no workspace folder. Otherwise a stray journal in the
+        // editor's launch directory silently contaminates an unrelated
+        // workspace's state.
+        let discovered = Self::discovery_dir(workspace_root, || std::env::current_dir().ok())
+            .and_then(|dir| discover_journal_file(&dir));
+        if discovered.is_none() {
+            tracing::debug!("No journal file configured or discovered");
         }
+        discovered
+    }
 
-        // Also try current directory as fallback for discovery
-        if let Ok(cwd) = std::env::current_dir()
-            && let Some(discovered) = discover_journal_file(&cwd)
-        {
-            return Some(discovered);
-        }
-
-        tracing::debug!("No journal file configured or discovered");
-        None
+    /// Directory to search for a journal during auto-discovery: the workspace
+    /// folder when set, otherwise the process cwd. The cwd is deliberately
+    /// *not* consulted when a workspace folder exists, so a journal that
+    /// happens to sit in the editor's launch directory cannot leak into an
+    /// unrelated workspace. `cwd` is computed lazily so the `current_dir`
+    /// syscall is skipped entirely (and its failure ignored) when a workspace
+    /// folder is set.
+    fn discovery_dir(
+        workspace_root: Option<std::path::PathBuf>,
+        cwd: impl FnOnce() -> Option<std::path::PathBuf>,
+    ) -> Option<std::path::PathBuf> {
+        workspace_root.or_else(cwd)
     }
 
     /// Get the workspace root path from init params.
@@ -332,4 +341,32 @@ pub fn start_stdio() -> Result<i32, Box<dyn std::error::Error + Send + Sync>> {
     io_threads.join()?;
 
     Ok(exit_code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Server;
+    use std::path::PathBuf;
+
+    #[test]
+    fn discovery_dir_prefers_workspace_and_ignores_cwd() {
+        let ws = PathBuf::from("/work/space");
+        let cwd = PathBuf::from("/tmp/launch");
+        // Workspace set → search the workspace, never the cwd (no contamination).
+        // The cwd closure must not even be invoked in this case.
+        let mut cwd_called = false;
+        let got = Server::discovery_dir(Some(ws.clone()), || {
+            cwd_called = true;
+            Some(cwd.clone())
+        });
+        assert_eq!(got, Some(ws));
+        assert!(
+            !cwd_called,
+            "cwd must not be consulted when a workspace is set"
+        );
+        // No workspace → fall back to the cwd.
+        assert_eq!(Server::discovery_dir(None, || Some(cwd.clone())), Some(cwd));
+        // Neither → nothing to discover.
+        assert_eq!(Server::discovery_dir(None, || None), None);
+    }
 }
