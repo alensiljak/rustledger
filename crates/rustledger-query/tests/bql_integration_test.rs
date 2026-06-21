@@ -4608,7 +4608,10 @@ fn test_safediv_division_by_zero() {
     );
 
     assert_eq!(result.len(), 1);
-    assert!(matches!(&result.rows[0][0], Value::Null));
+    // A zero divisor yields 0 (the "safe" in SAFEDIV) — matching beanquery and
+    // the per-row eval path. This aggregate path previously returned NULL, which
+    // both diverged from beanquery and was inconsistent with the per-row path.
+    assert_eq!(result.rows[0][0], Value::Number(dec!(0)));
 }
 
 #[test]
@@ -9961,4 +9964,24 @@ fn test_null_comparison_excludes_rows() {
     // (was: returned nothing because compare on NULL errored).
     assert_eq!(count(r#"SELECT count(*) WHERE payee > "A""#), 2);
     assert_eq!(count(r#"SELECT count(*) WHERE payee < "z""#), 2);
+}
+
+#[test]
+fn test_safediv_accepts_mixed_int_and_decimal() {
+    let directives = make_test_directives();
+    // beanquery accepts safediv with int↔decimal operands and returns a decimal;
+    // mixed operands used to be rejected with a type error.
+    // Assert on the numeric value directly — Decimal equality ignores scale, so
+    // this isn't sensitive to 2.5 vs 2.50 rendering.
+    for q in ["safediv(10.0, 4)", "safediv(10, 4.0)"] {
+        let result = execute_query(&format!("SELECT {q}"), &directives);
+        assert_eq!(result.rows[0][0], Value::Number(dec!(2.5)), "for {q}");
+    }
+    // Zero divisor → 0 (the "safe" in safediv), for mixed operands too.
+    let result = execute_query("SELECT safediv(10.0, 0)", &directives);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(0)));
+    // The aggregate/subquery path (evaluate_function_on_values) must agree —
+    // a zero divisor yields 0 there too, not NULL.
+    let result = execute_query("SELECT safediv(max(number), 0)", &directives);
+    assert_eq!(result.rows[0][0], Value::Number(dec!(0)));
 }
