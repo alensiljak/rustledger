@@ -172,6 +172,12 @@ pub struct MainLoopState {
     pub sender: Sender<lsp_server::Message>,
     /// Cached diagnostics per file.
     pub diagnostics: HashMap<Uri, Vec<lsp_types::Diagnostic>>,
+    /// URIs of *unopened* ledger files (reachable via `include`) that we last
+    /// published non-empty diagnostics for. Tracked so that, when their errors
+    /// are fixed, we send an explicit empty diagnostic set to clear them — the
+    /// LSP spec has no implicit "clear", and these files have no open buffer of
+    /// their own to drive a clear via `on_did_close`.
+    pub cross_file_diag_uris: std::collections::HashSet<Uri>,
     /// Whether shutdown was requested.
     pub shutdown_requested: bool,
     /// Set by the `exit` notification handler. The main loop checks
@@ -262,6 +268,7 @@ impl MainLoopState {
 
         Self {
             vfs: Arc::new(RwLock::new(Vfs::new())),
+            cross_file_diag_uris: std::collections::HashSet::new(),
             sender,
             diagnostics: HashMap::new(),
             shutdown_requested: false,
@@ -1711,6 +1718,19 @@ impl MainLoopState {
             &other_buffer_overlays,
             self.position_encoding,
         );
+
+        // Compute diagnostics for ledger files reachable via `include` that are
+        // NOT open in any buffer — otherwise validation errors that live in an
+        // unopened included file (e.g. an unbalanced transaction) never surface
+        // anywhere. Open files publish their own diagnostics via didOpen/
+        // didChange, so they're skipped here.
+        let cross_file = self.compute_unopened_ledger_diagnostics(
+            ledger_state,
+            current_canonical_path.as_deref(),
+            current_file_id,
+            &result,
+            &other_buffer_overlays,
+        );
         drop(ledger_guard); // Release lock before sending
 
         tracing::debug!(
@@ -1723,6 +1743,148 @@ impl MainLoopState {
         // Cache and send
         self.diagnostics.insert(uri.clone(), diagnostics.clone());
         self.send_diagnostics(uri, diagnostics);
+
+        // Publish (or clear) diagnostics for unopened included files.
+        self.publish_cross_file_diagnostics(cross_file);
+    }
+
+    /// Compute diagnostics for every ledger file reachable via `include` that
+    /// is NOT currently open in a buffer. Each unopened file is validated
+    /// against the full ledger (reusing [`all_diagnostics`], filtered to that
+    /// file's id and mapped against that file's own source), with the open
+    /// buffers' fresh parses overlaid so unsaved edits are reflected.
+    ///
+    /// Returns one `(uri, diagnostics)` per unopened ledger file (diagnostics
+    /// may be empty — the caller clears those it had previously reported).
+    /// Cost is O(unopened ledger files) validations; real-world ledgers have
+    /// few files, and this only runs when the ledger spans more than one file.
+    fn compute_unopened_ledger_diagnostics(
+        &self,
+        ledger_state: Option<&crate::ledger_state::LedgerState>,
+        current_canonical: Option<&std::path::Path>,
+        current_file_id: Option<u16>,
+        current_parse: &ParseResult,
+        other_buffer_overlays: &[(u16, &[Spanned<Directive>])],
+    ) -> Vec<(Uri, Vec<lsp_types::Diagnostic>)> {
+        let Some(ls) = ledger_state else {
+            return Vec::new();
+        };
+        let Some(ledger) = ls.ledger() else {
+            return Vec::new();
+        };
+        if ledger.source_map.files().len() <= 1 {
+            return Vec::new();
+        }
+
+        // Canonical paths of all open buffers (so we skip files that
+        // self-publish).
+        let open_canonical: std::collections::HashSet<PathBuf> = {
+            let vfs = self.vfs.read();
+            vfs.paths().filter_map(|p| p.canonicalize().ok()).collect()
+        };
+
+        // Overlay applied when validating an unopened file: every open buffer's
+        // fresh parse (current file first, then the others). The current
+        // buffer is overlaid only when its fresh parse is clean — overlaying a
+        // partial/invalid parse would corrupt the validation input for the
+        // other files (matching the parse-error skip applied to the `other`
+        // buffers in `publish_diagnostics`).
+        let mut overlay_all: Vec<(u16, &[Spanned<Directive>])> =
+            Vec::with_capacity(1 + other_buffer_overlays.len());
+        if let Some(fid) = current_file_id
+            && current_parse.errors.is_empty()
+        {
+            overlay_all.push((fid, current_parse.directives.as_slice()));
+        }
+        overlay_all.extend_from_slice(other_buffer_overlays);
+
+        let mut out = Vec::new();
+        for f in ledger.source_map.files() {
+            let canonical = f.path.canonicalize().ok();
+            // Skip the current file and any open buffer — those self-publish.
+            if canonical.as_deref() == current_canonical {
+                continue;
+            }
+            if let Some(c) = &canonical
+                && open_canonical.contains(c)
+            {
+                continue;
+            }
+            // NOTE: this `file://{path}` assembly matches the crate-wide
+            // convention (see `revalidate_open_documents`, `document_links`,
+            // and `uri_to_path`, which strips a plain `file://` prefix without
+            // percent-decoding). A path with characters that aren't URI-safe
+            // (spaces, `#`, `%`) would fail to parse; warn rather than drop it
+            // silently. A proper percent-encoding `path_to_uri` helper applied
+            // consistently across the crate is the broader fix.
+            let Ok(uri) = format!("file://{}", f.path.display()).parse::<Uri>() else {
+                tracing::warn!(
+                    "skipping cross-file diagnostics for {}: path is not a valid file:// URI",
+                    f.path.display()
+                );
+                continue;
+            };
+            let parsed = parse(&f.source);
+            let diags = all_diagnostics(
+                &parsed,
+                &f.source,
+                ledger_state,
+                Some(f.id as u16),
+                Some(f.path.as_path()),
+                &overlay_all,
+                self.position_encoding,
+            );
+            out.push((uri, diags));
+        }
+        out
+    }
+
+    /// Publish or clear diagnostics for unopened included files.
+    ///
+    /// Non-empty sets are published and their URIs tracked in
+    /// [`MainLoopState::cross_file_diag_uris`]. Any previously-tracked URI that
+    /// is NOT erroring this round is then explicitly cleared (empty publish) and
+    /// untracked — this covers a fixed error, an include-graph change, the
+    /// ledger becoming single-file/unavailable (so `cross_file` is empty), all
+    /// of which would otherwise leave stale errors in the client. URIs of files
+    /// currently open in a buffer are left alone: those buffers publish (and
+    /// clear) their own diagnostics via didOpen/didChange/didClose.
+    #[allow(clippy::mutable_key_type)] // Uri has interior mutability but is safe as a set key here
+    fn publish_cross_file_diagnostics(
+        &mut self,
+        cross_file: Vec<(Uri, Vec<lsp_types::Diagnostic>)>,
+    ) {
+        // Publish the files that have errors this round.
+        let mut erroring: std::collections::HashSet<Uri> = std::collections::HashSet::new();
+        for (uri, diags) in cross_file {
+            if diags.is_empty() {
+                continue;
+            }
+            erroring.insert(uri.clone());
+            self.cross_file_diag_uris.insert(uri.clone());
+            self.diagnostics.insert(uri.clone(), diags.clone());
+            self.send_diagnostics(&uri, diags);
+        }
+
+        // Clear any previously-tracked URI that is no longer erroring and is not
+        // currently open (open buffers manage their own diagnostics).
+        let open_uris: std::collections::HashSet<Uri> = self
+            .vfs
+            .read()
+            .paths()
+            .filter_map(|p| format!("file://{}", p.display()).parse::<Uri>().ok())
+            .collect();
+        let stale: Vec<Uri> = self
+            .cross_file_diag_uris
+            .iter()
+            .filter(|u| !erroring.contains(*u) && !open_uris.contains(*u))
+            .cloned()
+            .collect();
+        for uri in stale {
+            self.cross_file_diag_uris.remove(&uri);
+            self.diagnostics.remove(&uri);
+            self.send_diagnostics(&uri, vec![]);
+        }
     }
 
     /// Send diagnostics to the client.
