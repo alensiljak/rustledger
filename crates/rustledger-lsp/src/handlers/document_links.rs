@@ -6,7 +6,7 @@
 //!
 //! Supports resolve for lazy-loading targets and verifying file existence.
 
-use lsp_types::{DocumentLink, DocumentLinkParams, Position, Range, Uri};
+use lsp_types::{DocumentLink, DocumentLinkParams, Range, Uri};
 use rustledger_core::Directive;
 use rustledger_parser::ParseResult;
 use std::path::Path;
@@ -44,7 +44,7 @@ pub fn handle_document_links(
     for (line_num, line) in source.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with("include")
-            && let Some(link) = parse_include_line(line, line_num as u32, &base_dir)
+            && let Some(link) = parse_include_line(line, line_num as u32, &line_index, &base_dir)
         {
             links.push(link);
         }
@@ -144,8 +144,13 @@ fn create_document_link(
         return None;
     }
 
-    let start_col = (quote_start + 1) as u32;
-    let end_col = start_col + path.len() as u32;
+    // Convert the path's byte offsets to encoding-aware `Position`s. Emitting
+    // `quote_start`/`path.len()` directly (raw byte offsets) misplaces the link
+    // under UTF-16 whenever the line contains multibyte characters (a Unicode
+    // account name or an accented path).
+    let quote_byte = quote_start + 1;
+    let start = line_index.byte_in_line_to_position(start_line, quote_byte)?;
+    let end = line_index.byte_in_line_to_position(start_line, quote_byte + path.len())?;
 
     // Store data for resolve - defer target resolution
     let data = serde_json::json!({
@@ -155,10 +160,7 @@ fn create_document_link(
     });
 
     Some(DocumentLink {
-        range: Range {
-            start: Position::new(start_line, start_col),
-            end: Position::new(start_line, end_col),
-        },
+        range: Range { start, end },
         target: None,  // Resolved lazily
         tooltip: None, // Resolved lazily
         data: Some(data),
@@ -170,6 +172,7 @@ fn create_document_link(
 fn parse_include_line(
     line: &str,
     line_num: u32,
+    line_index: &LineIndex<'_>,
     base_dir: &Option<String>,
 ) -> Option<DocumentLink> {
     // Match patterns like: include "path/to/file.beancount"
@@ -184,8 +187,11 @@ fn parse_include_line(
     let quote_end = after_quote.find('"')?;
 
     let path = &after_quote[..quote_end];
-    let start_col = (quote_start + 1) as u32;
-    let end_col = start_col + path.len() as u32;
+    // Convert byte offsets to encoding-aware `Position`s (see
+    // `create_document_link`): raw byte columns misplace the link under UTF-16.
+    let quote_byte = quote_start + 1;
+    let start = line_index.byte_in_line_to_position(line_num, quote_byte)?;
+    let end = line_index.byte_in_line_to_position(line_num, quote_byte + path.len())?;
 
     // Store data for resolve - defer target resolution
     let data = serde_json::json!({
@@ -195,10 +201,7 @@ fn parse_include_line(
     });
 
     Some(DocumentLink {
-        range: Range {
-            start: Position::new(line_num, start_col),
-            end: Position::new(line_num, end_col),
-        },
+        range: Range { start, end },
         target: None,  // Resolved lazily
         tooltip: None, // Resolved lazily
         data: Some(data),
@@ -215,13 +218,15 @@ fn resolve_path_to_uri(path: &str, base_dir: &Option<String>) -> Option<Uri> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lsp_types::Position;
 
     #[test]
     fn test_parse_include_line() {
         let line = r#"include "accounts.beancount""#;
         let base_dir = Some("/home/user/ledger".to_string());
+        let line_index = LineIndex::new(line, PositionEncoding::Utf16);
 
-        let link = parse_include_line(line, 0, &base_dir);
+        let link = parse_include_line(line, 0, &line_index, &base_dir);
         assert!(link.is_some());
 
         let link = link.unwrap();
@@ -232,6 +237,37 @@ mod tests {
         assert!(link.target.is_none());
         // Data should contain the path info
         assert!(link.data.is_some());
+    }
+
+    #[test]
+    fn test_document_link_columns_are_utf16() {
+        // A multibyte account name precedes the path, and the path itself
+        // contains multibyte chars. Under UTF-16, columns must count code
+        // units, not bytes — otherwise the clickable span is misplaced.
+        let source = "2024-01-02 document Assets:Café \"réçu.pdf\"\n";
+        let result = rustledger_parser::parse(source);
+        let params = DocumentLinkParams {
+            text_document: lsp_types::TextDocumentIdentifier {
+                uri: "file:///x/main.beancount".parse().unwrap(),
+            },
+            work_done_progress_params: Default::default(),
+            partial_result_params: Default::default(),
+        };
+        let links =
+            handle_document_links(&params, source, &result, PositionEncoding::Utf16).unwrap();
+        let link = &links[0];
+        // The opening quote sits at UTF-16 col 32 (`Café` is 4 units, not 5
+        // bytes), so the path starts at col 33; `réçu.pdf` is 8 UTF-16 units →
+        // end (exclusive) at col 41. Raw byte offsets would give 34/44 — the
+        // pre-fix bug.
+        assert_eq!(
+            link.range.start.character, 33,
+            "path start must be a UTF-16 column"
+        );
+        assert_eq!(
+            link.range.end.character, 41,
+            "path end must be a UTF-16 column"
+        );
     }
 
     #[test]
