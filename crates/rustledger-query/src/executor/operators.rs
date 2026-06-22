@@ -184,7 +184,7 @@ impl Executor<'_> {
             }
             BinaryOperator::Mul => self.arithmetic_op(&left, &right, |a, b| Some(a * b)),
             BinaryOperator::Div => self.arithmetic_op(&left, &right, Decimal::checked_div),
-            BinaryOperator::Mod => self.arithmetic_op(&left, &right, Decimal::checked_rem),
+            BinaryOperator::Mod => self.modulo_op(&left, &right),
         }
     }
 
@@ -299,6 +299,39 @@ impl Executor<'_> {
         // beanquery, which produces NULL rather than raising — and crucially
         // avoid the underlying `rust_decimal` panic on `a / 0`.
         Ok(op(a, b).map_or(Value::Null, Value::Number))
+    }
+
+    /// Modulo (`%`) matching beanquery/Python semantics.
+    ///
+    /// Integers use Python's FLOORED modulo (the result's sign follows the
+    /// divisor): `-5 % 3 == 1`, `5 % -3 == -1`. Decimal operands keep truncated
+    /// remainder, which matches Python's `Decimal.__mod__`. A zero divisor
+    /// yields NULL (consistent with division). The previous code applied
+    /// `Decimal::checked_rem` to integers too, giving the truncated (wrong) sign.
+    pub(super) fn modulo_op(&self, left: &Value, right: &Value) -> Result<Value, QueryError> {
+        if let (Value::Integer(a), Value::Integer(b)) = (left, right) {
+            let (a, b) = (*a, *b);
+            if b == 0 {
+                return Ok(Value::Null);
+            }
+            // `i64::MIN % -1` overflows the truncated remainder but is
+            // mathematically 0 (every integer is divisible by -1), so map the
+            // overflow case to 0.
+            let Some(rem) = a.checked_rem(b) else {
+                return Ok(Value::Integer(0));
+            };
+            // Floored modulo: when the truncated remainder's sign differs from
+            // the divisor's, shift by the divisor. This `rem + b` cannot
+            // overflow — in the differing-sign branch `|rem| < |b|`, so the sum
+            // stays within range and takes the divisor's sign.
+            let result = if rem != 0 && (rem < 0) != (b < 0) {
+                rem + b
+            } else {
+                rem
+            };
+            return Ok(Value::Integer(result));
+        }
+        self.arithmetic_op(left, right, Decimal::checked_rem)
     }
 
     /// Convert a value to boolean using SQL/beanquery truthiness rules.
@@ -485,7 +518,7 @@ impl Executor<'_> {
             }
             BinaryOperator::Mul => self.arithmetic_op(left, right, |a, b| Some(a * b)),
             BinaryOperator::Div => self.arithmetic_op(left, right, Decimal::checked_div),
-            BinaryOperator::Mod => self.arithmetic_op(left, right, Decimal::checked_rem),
+            BinaryOperator::Mod => self.modulo_op(left, right),
         }
     }
 
