@@ -786,3 +786,43 @@ fn test_query_filename_lineno_columns_resolve() {
 
     std::fs::remove_file(&temp_file).ok();
 }
+
+#[test]
+fn test_query_print_outputs_directives() {
+    // Regression: PRINT returned 0 rows from the CLI after the executor switched
+    // to new_with_sources (execute_print didn't fall back to spanned_directives).
+    let Some(binary) = rledger_binary() else {
+        eprintln!("Skipping: rledger binary not found");
+        return;
+    };
+    let content = "2020-01-01 open Assets:Cash USD\n\
+                   2020-01-01 open Equity:O USD\n\
+                   2020-02-01 * \"p\"\n  \
+                     Assets:Cash  10.00 USD\n  \
+                     Equity:O\n";
+    // Unique temp file (auto-removed on drop) to avoid cross-run collisions.
+    let mut tmp = tempfile::Builder::new()
+        .suffix(".beancount")
+        .tempfile()
+        .expect("create temp file");
+    std::io::Write::write_all(&mut tmp, content.as_bytes()).expect("write temp file");
+
+    let output = Command::new(binary)
+        .arg("query")
+        .arg(tmp.path())
+        .arg("PRINT")
+        .output()
+        .expect("run rledger query PRINT");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        output.status.success(),
+        "PRINT should succeed; stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // PRINT must emit the directives (was empty before the fix).
+    assert!(
+        stdout.contains("open Assets:Cash"),
+        "PRINT should emit directives, got:\n{stdout}"
+    );
+}
